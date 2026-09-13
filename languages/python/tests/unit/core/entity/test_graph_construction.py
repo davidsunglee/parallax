@@ -39,7 +39,6 @@ from parallax.core.entity import (
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._model import DomainModel
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
     RelationshipIdentity,
 )
@@ -49,10 +48,6 @@ from tests._support.model_capabilities import graph_construction_for
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ORDER = sm.SnapOrder.identity
 _ITEM = sm.SnapOrderItem.identity
-
-
-def _attr(entity: EntityIdentity, name: str) -> AttributeIdentity:
-    return AttributeIdentity(entity, name)
 
 
 def _rel(entity: EntityIdentity, name: str) -> RelationshipIdentity:
@@ -378,23 +373,22 @@ def test_a_broad_relationship_row_of_the_wrong_width_is_refused(relationships: A
     assert refusal.value.code == "entity-graph-invalid-member"
 
 
-def test_a_null_on_a_non_nullable_attribute_is_refused() -> None:
+def test_construction_does_not_rejudge_attribute_nullability() -> None:
+    # Member rows are already-judged Entity State. Graph Construction installs
+    # their values without recreating the admission decision at this later seam.
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         order = writer.allocate(_ORDER)
         writer.populate(order, (1, None, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
-        raise AssertionError("unreachable")
+        return (order,)
 
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == _attr(_ORDER, "name")
+    (root,) = _construct(build)
+    assert cast("sm.SnapOrder", root).name is None
 
 
-def test_a_value_outside_the_declared_neutral_type_is_refused() -> None:
-    # Declared-type enforcement on a materialized read is the writer's own
-    # Neutral Value check: construction bypasses Pydantic validation entirely, so
-    # a `str` where a `date` is declared has nothing else standing between it and
-    # the frozen instance.
+def test_construction_does_not_rejudge_an_attribute_neutral_type() -> None:
+    # The producer of Entity State owns scalar admission. Construction bypasses
+    # Pydantic validation deliberately and preserves that earlier judgment rather
+    # than claiming a second source-data boundary.
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         order = writer.allocate(_ORDER)
         writer.populate(
@@ -402,12 +396,10 @@ def test_a_value_outside_the_declared_neutral_type_is_refused() -> None:
             (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, "2024-01-01"),
             _ORDER_UNLOADED,
         )
-        raise AssertionError("unreachable")
+        return (order,)
 
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == _attr(_ORDER, "orderedOn")
+    (root,) = _construct(build)
+    assert cast("sm.SnapOrder", root).ordered_on == "2024-01-01"
 
 
 def test_a_to_many_direction_refuses_a_to_one_arm() -> None:
@@ -556,10 +548,9 @@ def test_a_value_object_member_row_of_the_wrong_width_is_refused(row: Any) -> No
     assert refusal.value.code == "entity-graph-invalid-value"
 
 
-def test_a_value_object_leaf_outside_its_declared_type_is_refused() -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_status(primary=_tag(7)))
-    assert refusal.value.code == "entity-graph-invalid-value"
+def test_construction_does_not_rejudge_a_value_object_leaf() -> None:
+    (root,) = _construct(_status(primary=_tag(7)))
+    assert cast("Any", root).primary_tag.label == 7
 
 
 def test_a_raw_document_mapping_never_crosses_the_construction_seam() -> None:
@@ -584,7 +575,7 @@ def test_a_null_one_occurrence_is_the_documents_own_absent_state() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Native infinity, admitted only where a temporal interval is left open.        #
+# Native infinity in already-judged temporal state.                              #
 # --------------------------------------------------------------------------- #
 
 
@@ -624,14 +615,11 @@ def test_a_temporal_end_attribute_carries_the_open_upper_bound(name: str) -> Non
 
 
 @pytest.mark.parametrize("name", ["txStart", "validStart"])
-def test_a_temporal_start_attribute_admits_no_infinity(name: str) -> None:
-    # Native infinity is the OPEN UPPER BOUND of a temporal interval (m-core);
-    # a milestone's start is a finite instant like any other timestamp, however
-    # framework-owned both endpoints are.
-    with pytest.raises(GraphConstructionError) as refusal:
-        _bound(name)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == _attr(_MILESTONE, name)
+def test_construction_does_not_rejudge_a_temporal_start(name: str) -> None:
+    # Temporal-end admission belongs to snapshot materialization. At this lower
+    # seam every endpoint is already-judged Entity State and is installed as-is.
+    (root,) = _bound(name)
+    assert getattr(root, "tx_start" if name == "txStart" else "valid_start") is INFINITY
 
 
 # --------------------------------------------------------------------------- #

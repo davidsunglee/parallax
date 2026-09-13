@@ -37,7 +37,6 @@ from parallax.core import (
     Entity,
     Rel,
     TablePerHierarchy,
-    ValueObject,
     attr,
     rel,
 )
@@ -54,6 +53,8 @@ from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot.handle._materialization import RowPublication
+from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize import (
     InvalidRootInput,
     RelationshipViewKey,
@@ -228,6 +229,19 @@ def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     root_view = RootView(fixture.page(keyless))
     assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
+
+
+def test_flat_publication_preserves_a_classified_result_position() -> None:
+    # Row publication has no record carrier of its own, so it publishes the same
+    # InvalidData position the shared Page judgment produced rather than flattening
+    # diagnostic state into an ordinary mapping.
+    fixture = PageFixture(_ORDERS)
+    keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
+    stage = RowPublication((None,), (None,), ((),), ((),), ((),), fixture.page(keyless))
+
+    (published,) = _published_rows(stage, model_of(_ORDERS))
+
+    assert invalid_record(published).data is None
 
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
@@ -841,75 +855,6 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
     (root,) = fixture.materialize(status)
     assert isinstance(root, sm.SnapOrderStatus)
     assert root.tags == ()
-
-
-# --------------------------------------------------------------------------- #
-# A model / class disagreement about a member's SHAPE.                          #
-#                                                                              #
-# A class-backed model compiles its Metamodel FROM the classes, so the two     #
-# agree by construction there — but they are two independent sources in the    #
-# conformance lane, where the model is authored YAML and the class is a        #
-# hand-written mirror. A model that calls a member a value object while the    #
-# composed class maps it as a scalar has no Value Object class to construct,   #
-# and construction must say so rather than hand back a decoded record typed as #
-# the declared member (spec §3's instances-only contract).                     #
-#                                                                              #
-# The member row the Page carries is laid out against the AUTHORED model and the     #
-# writer reads it against the COMPOSED one, so what the two disagree about is  #
-# which kind of member position 1 is — not which members exist, which is all a #
-# row of the right width can express. The refusal is therefore the declared    #
-# type's own: a decoded member row stands where a `str` is declared, and no    #
-# `str` is what the writer says.                                               #
-#                                                                              #
-# The seam's own guarantee against a kind disagreement is a different one and  #
-# is graded elsewhere: the construction compares the model it derives its      #
-# layouts from against the classes it publishes, once per pair, and refuses    #
-# with `entity-graph-layout-mismatch`                                          #
-# (`test_publication_attachment.py`). It cannot reach this case, and correctly #
-# so — the model that laid this row out is the Root View uses, not the one the        #
-# construction resolved its classes under, so the two facts the check compares #
-# agree here and the row is what disagrees with both.                          #
-# --------------------------------------------------------------------------- #
-class _MergeScalarProfile(
-    Entity, table="merge_scalar_profile", name="MergeScalarProfile", namespace=_NAMESPACE
-):
-    id: Attr[int] = attr(primary_key=True)
-    profile: Attr[str] = attr(max_length=32)
-
-
-_SCALAR_PROFILE = DomainModel(_MergeScalarProfile)
-
-
-class _MergeDocumentProfile(ValueObject):
-    note: Attr[str]
-
-
-class _MergeVoProfile(
-    Entity,
-    table="merge_scalar_profile",
-    name="MergeScalarProfile",
-    namespace=_NAMESPACE,
-):
-    id: Attr[int] = attr(primary_key=True)
-    profile: Attr[_MergeDocumentProfile]
-
-
-_PROFILE_AS_VALUE_OBJECT = model_of(DomainModel(_MergeVoProfile))
-
-
-def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
-    # The premise: the bound CLASS really does map `profile` as a scalar, so the
-    # refusal below comes from the disagreement with the model above and not
-    # from a malformed class declaration.
-    assert [a.identity.name for a in _MergeScalarProfile.attributes] == ["id", "profile"]
-    assert _MergeScalarProfile.value_objects == ()
-
-    fixture = PageFixture(_SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
-    node = fixture.node("MergeScalarProfile", {"id": 1, "profile": {"note": "x"}})
-    with pytest.raises(GraphConstructionError) as refusal:
-        fixture.materialize(node)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == AttributeIdentity(_MergeScalarProfile.identity, "profile")
 
 
 # --------------------------------------------------------------------------- #

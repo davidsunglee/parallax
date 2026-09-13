@@ -110,7 +110,7 @@ three outcomes it derived from that mechanism.
 guarantee in a per-unit-of-work observation ledger, populated only by a
 transaction-scoped read, and states that `Database.find` "deliberately records
 nothing". Evidence now rides on the **source value** itself, behind a private
-Source Hint that names the object the value denotes, the participation its read
+Read Origin that names the object the value denotes, the participation its read
 licensed, and the observation retained for the state it saw. A standalone
 `Database.find` builds exactly the same hints and retains exactly the same
 observations a participating read does — a value's evidence belongs to the value

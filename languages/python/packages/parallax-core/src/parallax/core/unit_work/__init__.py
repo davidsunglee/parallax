@@ -166,8 +166,8 @@ from parallax.core.unit_work.planner import (
 )
 from parallax.core.unit_work.retain import (
     ParticipationToken,
+    ReadOrigin,
     RetainedObservation,
-    SourceHint,
 )
 from parallax.core.unit_work.strategy import (
     AUTHORED_FROM,
@@ -332,12 +332,12 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
+    "ReadOrigin",
     "RetainedObservation",
     "RollbackOnlyError",
     "SelfIncrement",
     "SettledEvidence",
     "Shortfall",
-    "SourceHint",
     "StaleWrite",
     "StaleWriteError",
     "StepSegment",

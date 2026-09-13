@@ -23,9 +23,13 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.conformance.vo_models import Customer
+from parallax.core.base import PresentDocument
+from parallax.core.entity import Entity
 from parallax.snapshot import connect, prepare_model
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot.handle import InvalidData, Transaction
 from tests._support.corpus import case_fixtures
+from tests._support.db_port import Read, ScriptedAdapter
 
 _CASES = write_value_runner.reachable_write_value_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
@@ -47,8 +51,38 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     )
     steps = write_value_runner.write_value_steps(case)
 
+    def invalid_root() -> Entity:
+        invalid = (
+            connect(
+                ScriptedAdapter(
+                    Read(
+                        rows=[
+                            {
+                                "id": 6,
+                                "name": "Rin",
+                                "address": PresentDocument(
+                                    {
+                                        "street": "6 Kastanien Allee",
+                                        "city": "Berlin",
+                                        "geo": "unknown",
+                                    }
+                                ),
+                            }
+                        ]
+                    )
+                ),
+                model,
+            )
+            .find(Customer.where(Customer.id == 6))
+            .checked()
+            .result()
+        )
+        assert isinstance(invalid, InvalidData)
+        assert invalid.data is not None
+        return invalid.data
+
     def fn(tx: Transaction) -> list[str | None]:
-        return write_value_runner.graded_outcomes(tx, steps, another)
+        return write_value_runner.graded_outcomes(tx, steps, another, invalid_root)
 
     outcomes = db.transact(fn)
     assert outcomes == [step.expect_error for step in steps]
@@ -65,14 +99,28 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     # `version` even carrying no change), and `UNMANAGED_ID` — outside the
     # fixture range precisely so a value no managed read produced cannot address
     # a row one did — holds no row at all.
-    stored, unmanaged = db.transact(
-        lambda tx: (
-            tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),
-            tx.find(Account.where(Account.id == write_value_runner.UNMANAGED_ID)).results(),
+    if Path(case.model).stem == "account":
+        stored, unmanaged = db.transact(
+            lambda tx: (
+                tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),
+                tx.find(Account.where(Account.id == write_value_runner.UNMANAGED_ID)).results(),
+            )
         )
-    )
-    assert (stored.owner, stored.balance, stored.version) == ("Linus", Decimal("250.00"), 1)
-    assert unmanaged == []
+        assert (stored.owner, stored.balance, stored.version) == (
+            "Linus",
+            Decimal("250.00"),
+            1,
+        )
+        assert unmanaged == []
+    else:
+        assert case.case_id == "m-unit-work-028"
+        invalid = db.transact(
+            lambda tx: tx.find(Customer.where(Customer.id == 6)).checked().result()
+        )
+        assert isinstance(invalid, InvalidData)
+        assert isinstance(invalid.data, Customer)
+        customer = invalid.data
+        assert customer.name == "Rin"
 
 
 def test_reachable_write_value_cases_cover_the_closed_vocabulary() -> None:
@@ -84,4 +132,5 @@ def test_reachable_write_value_cases_cover_the_closed_vocabulary() -> None:
         "m-unit-work-018",
         "m-unit-work-019",
         "m-unit-work-020",
+        "m-unit-work-028",
     }

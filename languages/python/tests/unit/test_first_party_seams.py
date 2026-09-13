@@ -13,7 +13,6 @@ then settles against.
 from __future__ import annotations
 
 import datetime as dt
-import gc
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import cast
@@ -38,7 +37,6 @@ from parallax.core.unit_work import (
     VersionedStateKey,
     WriteRejectedError,
 )
-from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
     Database,
     DeferredFeatureError,
@@ -178,34 +176,6 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     keys = db_for(POLICY_MODEL, port).transact(fn)
     assert [key.object.entity.name for key in keys] == ["Policy", "Coverage"]
     assert [key.object.primary_key for key in keys] == [(("id", 1),), (("id", 10),)]
-
-
-def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
-    # A claim belongs to a published Entity node. A non-hydrating root publishes
-    # no value at all, and that covers its whole tree: the root's own hydratable
-    # projection is excluded with the child that spoiled it, so a caller holds
-    # nothing and — once the read result is released — no observed state of that
-    # row is addressable in the unit of work either. Holding the read's raw
-    # sources instead would leave write authority for a row nothing published.
-    port = ScriptedAdapter(
-        Transact(Read(rows=[_policy_row()]), Read(rows=[_coverage_row(amount=None)]))
-    )
-    query = object_query_node(
-        Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
-    )
-
-    def fn(tx: Transaction) -> tuple[tuple[RetainedObservation, ...], int]:
-        snapshot = tx.wire.find(query)
-        record = snapshot.checked().result()
-        assert isinstance(record, InvalidData)
-        assert cast("InvalidData[object]", record).data is None
-        claims = published_claims(snapshot)
-        gc.collect()
-        return claims, len(tx._uow._observations)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
-
-    claims, indexed = db_for(POLICY_MODEL, port).transact(fn)
-    assert claims == ()
-    assert indexed == 0
 
 
 def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:

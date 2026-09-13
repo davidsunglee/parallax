@@ -53,23 +53,42 @@ The hydration rule is equally closed:
 | non-null wrong-kind `One` occurrence | hydrate with the normative occurrence collapse |
 | non-null wrong-kind `Many` occurrence, including an array with a non-object element | hydrate with the normative whole-occurrence collapse |
 | non-null undecodable document leaf | unavailable |
-| non-nullable top-level Entity Attribute absent or null in either physical representation | unavailable |
+| non-nullable top-level Entity Attribute absent or null in a document | unavailable |
 | family tag matching no concrete subtype | unavailable |
-| null primary key | unavailable |
-| undecodable primary key | unavailable |
+| host-checked null primary key | unavailable |
+| host-checked undecodable primary key | unavailable |
 
 Classification never repairs, defaults, substitutes, or fabricates. A root is
 hydrated only when every requested value can be produced by an already-normative
-collapse; otherwise its data is unavailable. The same stored state yields the
-same issue and hydration answer under every Storage Layout. For a non-nullable
-top-level Entity Attribute, SQL `NULL` under `Columns` and an absent or JSON-null
-Entity-document member under `Document` all translate to
-`stored-data-attribute-null` and make hydration unavailable. The codec's local
-required-member finding remains evidence for the latter route; public translation
-is fixed by the logical Entity member, not by its placement. No layout may instead
-publish `stored-data-required-member-absent` or
-`stored-data-required-member-null` with hydratable absence for that Attribute.
-For a non-object Entity document, the member-local input returned by
+collapse; otherwise its data is unavailable.
+
+Materialization trusts a native scalar Column exactly as the database provider
+normalized it. Its installed SQL type and constraints are the admission boundary;
+the host neither decodes it through the Neutral Wire Codec nor re-judges its type,
+nullability, range, precision, or key status. A value that could exist only after
+those database guarantees were bypassed is outside this read contract rather than
+a source of a host-side stored-data issue. Entity Graph Construction consumes the
+resulting already-judged Entity State and performs no second scalar judgment.
+
+A **host-checked position** is one whose installed SQL type and constraints do not
+by themselves establish the managed value. The set comprises an unconstrained
+inheritance discriminator, a refinement not expressed by the installed SQL type
+or constraint, a temporal end whose native infinity is admitted only as an open
+upper bound, an encoded Column whose selected cell is canonical Wire, and every
+document occurrence. Discriminators are checked while resolving the concrete
+Entity. Encoded Columns and temporal ends are checked at their prepared Attribute
+positions. Document-resident Entity members and Value Object occurrences are
+located and classified by `m-document-codec`; no later scalar pass repeats that
+classification.
+
+Consequently, physical layouts need not classify a physically impossible carrier
+the same way. For a non-nullable top-level Entity Attribute, an absent or JSON-null
+Entity-document member under `Document` translates to
+`stored-data-attribute-null` and makes hydration unavailable. The codec's local
+required-member finding remains evidence for that route; public translation is
+fixed by the logical Entity member. Under `Columns`, the database constraint owns
+the same invariant and a provider-returned cell is trusted. For a non-object
+Entity document, the member-local input returned by
 `locateEntityMember` and classified by `decodeLocatedMemberClassified` follows
 this same translation and hydration rule: a requested non-nullable Entity
 Attribute makes hydration unavailable as `stored-data-attribute-null`, while
@@ -106,6 +125,15 @@ while duplicate diagnoses within one root collapse. Classification preserves the
 root's result position; it never prunes the node, silently drops the root, or
 publishes a node-level invalid union. The public result and accessor shapes that
 carry this classification are language-surface concerns built over this contract.
+
+Any finding suppresses write authority for the complete classified root. A
+hydratable root may still publish its collapsed diagnostic data, but neither that
+root nor any node reached only through it carries a Read Origin. Entity State
+sharing does not share this authority decision: when a valid root and an invalid
+root reach one page-owned Entity State, their root-local node graphs are distinct;
+the valid root's node may carry its ordinary Read Origin and the invalid root's
+corresponding node carries none. A diagnostic value is never a route around the
+classification that produced it.
 
 A result also retains the Model Edition it was read under: the whole result is
 served under one prepared selection, adopted before the read started and never
@@ -251,8 +279,10 @@ Each database row occurrence first makes an **identity claim** consisting of its
 resolved concrete Entity, its family-normalized logical key, and the level and
 row ordinal where it occurred. The logical key is **(entity family, primary key,
 lowered as-of coordinate per declared axis)**, degrading to (family, primary
-key) for a non-temporal entity. An unreadable primary key makes the occurrence
-keyless: it shares with nothing and is classified at its own result position.
+key) for a non-temporal entity. An unreadable host-checked primary key makes the
+occurrence keyless: it shares with nothing and is classified at its own result
+position. A native primary-key Column is trusted as provider-normalized identity
+after the database type and constraint boundary.
 
 The remainder of the occurrence is its exact **Payload Witness**: the resolved
 concrete Entity plus the provider-normalized values selected for the Entity's
@@ -383,6 +413,22 @@ surfacing the first bullet above leaves each language spec to fix, answered the
 same way before and after. What composition fixes globally is the behavior —
 same objects, no SQL, the distinction preserved — because otherwise one authored
 program would answer differently per language.
+
+## Whole-result delivery
+
+An eager read has one whole-result publication boundary. It reads and prepares
+every result root before any Typed value, Wire value, classified root, or
+`root_published` observation crosses that boundary. A failure while judging or
+publishing any later root — including a Snapshot Projection Conflict or a
+lifecycle-state construction failure — therefore publishes no root and emits no
+root-publication event for the read. Successfully classified `InvalidData` is a
+result root rather than such a failure: a checked eager result contains every
+valid and invalid root in result order, and a default accessor reports every
+invalid root from that same fully prepared sequence.
+
+This atomicity is specific to eager delivery. A stream retains the root-local
+publication boundary stated below: once one root has crossed it, a later root's
+failure cannot recall the published prefix.
 
 ## Streamed delivery
 
@@ -680,12 +726,13 @@ Three layers, each separately bounded and each released at a stated point:
 | the current Root View judgment and classification | the nodes and issues reachable from that root | `O(G_max)` | when that root is published |
 | the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
 
-Two page-scoped terms sit inside the first layer rather than beside it. A page holds
-one evaluated coordinate per root POSITION it kept — `O(B x T)` for `T` Continuation
-Order terms, and nothing per node below a root — plus the one the delivery carries
-between two pages. And the lookahead root a page read and did not keep is released at
-the page decision, before anything below it is fetched, so it costs one root's raw
-result and nothing converted.
+Two page-scoped terms sit inside the first layer rather than beside it. The page
+decision holds one evaluated coordinate per root POSITION it kept — `O(B x T)` for
+`T` Continuation Order terms, and nothing per node below a root — while it chooses
+the continuation boundary. It releases those coordinates before graph assembly,
+retaining only the boundary the delivery carries between two pages. And the
+lookahead root a page read and did not keep is released at the page decision, before
+anything below it is fetched, so it costs one root's raw result and nothing converted.
 
 The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted
 result rather than its root count, so a page of roots each carrying a large

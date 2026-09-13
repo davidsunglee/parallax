@@ -9,6 +9,7 @@ import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core.entity._model import model_of
+from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView, _convert
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
@@ -32,7 +33,19 @@ def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
 def _context() -> LevelContext:
     meta = model_of(ORDERS_MODEL)
     identity = identity_of(meta, "Order")
-    return LevelContext(layout_of(meta, identity))
+    layout = layout_of(meta, identity)
+    return LevelContext(
+        layout,
+        attribute_reads=tuple(
+            AttributeReadContract(
+                attribute,
+                attribute.storage.name,
+                temporal_end=True,
+                encoded=False,
+            )
+            for attribute in layout.attributes
+        ),
+    )
 
 
 def _page(

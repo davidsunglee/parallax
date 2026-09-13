@@ -450,10 +450,6 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-128",
     }
 )
-# `m-unit-work-028` writes against CLASSIFIED stored data created by out-of-band
-# physical corruption. Its single-connection setup makes it run-only; the API story
-# grades that the corruption remains classified and unrewritten across the write.
-_CLASSIFIED_SOURCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset()
 # The cross-layout Value Object WRITE twins (`m-case-format` *Cross-layout twin
 # proofs*), one logical model authored once per Storage Layout arm. Each pair's
 # authored write and round trips are compared statically by the twin-layout gate;
@@ -476,7 +472,6 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
     | _DOCUMENT_LAYOUT_WRITE_SEQUENCES
-    | _CLASSIFIED_SOURCE_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-

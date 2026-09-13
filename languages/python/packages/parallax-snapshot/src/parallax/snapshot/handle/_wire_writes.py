@@ -29,7 +29,7 @@ whose node carries none because the row it opened had observed nothing — the
 buffered insert licenses the write that follows instead. There is no
 explicit-Entity ordinary-mapping overload: the concrete Entity, the object, the
 participation, the as-of pin, and the observation all come from the source's own
-private Source Hint, so a mapping a caller built, converted with ``dict(...)``,
+private Read Origin, so a mapping a caller built, converted with ``dict(...)``,
 or round-tripped through JSON or pickle carries none of them and is refused
 before any evidence is resolved. That refusal is why a Wire keyed write's
 provenance answer is always ``"this"``: the values a source could be refused for
@@ -100,7 +100,7 @@ from parallax.core.unit_work import (
     KeyedMutation,
     PredicateMutation,
     PredicateWrite,
-    SourceHint,
+    ReadOrigin,
     instructions,
 )
 from parallax.core.unit_work.instructions import (
@@ -125,7 +125,7 @@ from parallax.snapshot.handle._write_inputs import (
     reject_temporal_delete,
     validate_window,
 )
-from parallax.snapshot.materialize import WireEntity, opened_wire_entity, source_hint_of
+from parallax.snapshot.materialize import WireEntity, opened_wire_entity, read_origin_of
 
 __all__ = [
     "PreparedWireKeyedWriteSource",
@@ -231,7 +231,7 @@ def wire_insert(
     just opened. What it publishes is the buffered ROW rather than the payload —
     a ``many`` the payload left out is answered as the empty collection that row
     stores — so writing a member back off it is the restoration it is off a read
-    result. It carries a Source Hint naming the object and this
+    result. It carries a Read Origin naming the object and this
     transaction's participation and NO observation, which is exactly what an
     opening row has observed — the write off it is licensed by the buffered
     insert instead, through the ledger this call records into, and the two
@@ -259,7 +259,7 @@ def wire_keyed_write(
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
-    a read or from the insert that opened it; its private Source Hint supplies
+    a read or from the insert that opened it; its private Read Origin supplies
     the concrete Entity, the object the write addresses, the pin the source
     stands at, and — where a read published it — the evidence the target
     Entity's Effective Concurrency Strategy weighs. A write naming an object this
@@ -363,7 +363,7 @@ class _WireKeyedSource:
     """
 
     node: WireEntity
-    hint: SourceHint
+    hint: ReadOrigin
     resolved: ResolvedKeyedWriteSource
 
 
@@ -625,7 +625,7 @@ class WireKeyedInsertSource:
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         self._meta = model
         self._mutation = mutation
-        published = source_hint_of(self._data) if isinstance(self._data, WireEntity) else None
+        published = read_origin_of(self._data) if isinstance(self._data, WireEntity) else None
         return ResolvedKeyedInsert(
             entity=instructions.resolve_target(model, self._entity_name),
             pin=None if published is None else published.pin,
@@ -651,18 +651,16 @@ class WireKeyedInsertSource:
         return retained(self._meta), retained(self._mutation)
 
 
-def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, SourceHint]:
-    """``observed`` and its own Source Hint, or refuse the value as a keyed source.
+def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, ReadOrigin]:
+    """``observed`` and its own Read Origin, or refuse the value as a keyed source.
 
     One refusal covers every non-source a caller can reach for — an ordinary
     mapping, ``dict(node)``, a JSON or pickle round trip, an
-    :class:`~parallax.snapshot.materialize.InvalidData` wrapper, and the ``None``
-    a non-hydrating root publishes in place of data — because they differ only
-    in how the provenance was lost. A hydratable invalid root's ``data`` is an
-    ordinary published node and passes: classification says what contradicted
-    the model, never who may write.
+    :class:`~parallax.snapshot.materialize.InvalidData` wrapper, and every node
+    published as diagnostic data under an invalid root. They differ only in how
+    the Read Origin is absent; none can authorize a keyed write.
     """
-    hint = source_hint_of(observed) if isinstance(observed, WireEntity) else None
+    hint = read_origin_of(observed) if isinstance(observed, WireEntity) else None
     if hint is None:
         raise instructions.WriteInstructionError(
             f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
@@ -676,7 +674,7 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
     return observed, hint
 
 
-def _concrete_entity(meta: Metamodel, hint: SourceHint) -> EntityMetadata:
+def _concrete_entity(meta: Metamodel, hint: ReadOrigin) -> EntityMetadata:
     """The accepted Metadata for the concrete Entity the source's own hint names.
 
     A hint names the row's OWN Entity — the per-row answer under

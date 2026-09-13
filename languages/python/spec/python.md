@@ -2374,19 +2374,21 @@ of shared edition identity.
   witnesses reached within one root refuse through `SnapshotConsistencyError`
   before that root is published. Comparison and error selection are deterministic
   under reversed row and Include Path order.
-- **Declared-type enforcement on a read is the writer's.** Materialization enters
-  no Pydantic constructor for an Entity or a Value Object — a published node's
-  whole state is assembled and attached once — so a declared member's type is
-  enforced by Entity Graph Construction's
-  own Neutral Value validation — which raises
-  `GraphConstructionError(entity-graph-invalid-value)` — and never by Pydantic.
-  The consequence is stated rather than incidental: an author's
-  `@field_validator` or `@model_validator` does **not** run on a materialized
-  read, while it continues to run on direct construction and on an edited copy
-  (§2's build-time rules), because those are the surfaces where a caller
-  supplies the value. A declared type is therefore still enforced everywhere; a
-  declared *invariant* an author added on top of it is enforced on authored
-  values only.
+- **Read admission follows the storage boundary.** A native scalar Column is
+  accepted exactly as its database provider normalized it after the installed SQL
+  type and constraints have enforced the storage contract. Python does not pass
+  that cell through the Neutral Wire Codec, scalar admission, or Pydantic again.
+  Host checks remain for unconstrained family discriminators, encoded Columns,
+  temporal ends, refinements not expressed by the installed SQL type or
+  constraint, and document occurrences; document-resident members are classified
+  by the Document Codec. `LevelContext.host_checked` fixes the Attribute-position
+  subset once per prepared level. Entity Graph Construction consumes the resulting
+  already-judged Entity State and validates only positional and container shape,
+  relationship arms, and construction scope; it does not re-judge scalar values.
+  Materialization enters no Pydantic constructor for an Entity or Value Object, so
+  an author's `@field_validator` or `@model_validator` does **not** run on a read.
+  Those validators continue to run on direct construction and edited copies (§2),
+  where the caller supplies the value.
 - **Value Object presence.** Within a present Value Object record, an omitted
   scalar or nested-occurrence identity and a present identity mapped to `None`
   are distinct stored-document states. Declared nullability says which of them
@@ -3381,6 +3383,17 @@ of shared edition identity.
   relationships are `tuple` fields on frozen nodes (§3). Nothing is an
   `m-op-list` query-backed lazy list; iteration, indexing, and bulk
   operations are ordinary Python on ordinary lists and tuples.
+- **Eager publication is whole-result atomic.** Typed and Wire `find`, history,
+  and their checked views prepare every root through `Materializer.roots(...,
+  atomic=True)` before constructing the result envelope. If any later root raises
+  during judgment, projection-conflict detection, graph construction, Wire
+  publication, or lifecycle-state derivation, the call returns no Snapshot,
+  exposes no earlier root, and emits no `root_published` event. An `InvalidData`
+  record is a successfully published classified root rather than a publication
+  failure: checked accessors receive every result position in order, while default
+  eager accessors derive one `InvalidDataError` naming every invalid position from
+  that same prepared tuple. Stream publication deliberately does not use this mode
+  and keeps its already-published prefix when a later root fails.
 - **Every result retains the edition it was read under.** A standalone
   `db.find` adopts the Serving Model's current selection once, for its whole
   execution, and `db.read_rows` and the Wire reads do the same; a
@@ -3641,6 +3654,11 @@ of shared edition identity.
   `edge` for a decoded temporal one, so the two never appear together; `ordinal`
   is always the zero-based position in the ordered result. These are diagnostic
   facts only — they expose no observation address and grant no write authority.
+  When `data` is present, publication omits lifecycle state from every Typed node
+  and a Read Origin from every Wire node in that root-local graph. The value is
+  inspectable diagnostic data, but a keyed update refuses it as
+  `write-value-not-stored`. A distinct node published for a valid root may carry
+  its ordinary origin even when both nodes borrow one page-owned Entity State.
   `InvalidDataError.invalid_data` is nonempty and is the exception's sole
   machine-readable report; its message derives a count and an issue-code summary.
   `InvalidDataError.edition` is the edition of the result that raised it,
@@ -4295,10 +4313,15 @@ These feature tests do not claim the deferred `benchmark` command or general
   by a state other than the one it is recording, and the write side reads its
   coordinate off the value through the same derivation.
 - **Evidence belongs to the source value; the transaction holds a weak index.**
-  A graph-form read attaches a private Source Hint to every Entity node it
-  publishes — the concrete Entity, the object the row denotes, the participation
-  its read licensed, and the retained observation for the state it saw. A Typed
-  node reaches its hint through the same private lifecycle state `edge_of` and
+  A graph-form read attaches a private Read Origin to every Entity node it
+  publishes from a valid result root — the concrete Entity, the object the row
+  denotes, the source Pin, the participation its read licensed, and the retained
+  observation for the state it saw. The record identifies provenance and selects
+  retained evidence; it is not itself evidence or authority. An issue anywhere in
+  a root suppresses the Read Origin on every node in that root-local graph, even
+  when invalid data is hydratable. If a valid root reaches the same page-owned
+  Entity State, its distinct root-local node carries the ordinary Read Origin.
+  A Typed node reaches its origin through the same private lifecycle state `edge_of` and
   `pin_of` read, and a pickle reaching Entity's own entry point is refused at
   that door rather than stripped (§3); a frozen `WireEntity` node carries it on
   a slot, never as a mapping entry, so `dict(value)`, JSON, and pickle produce
@@ -4329,7 +4352,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   target Entity's
   Effective Concurrency Strategy cannot use with `WriteEvidenceError`
   (`LookupError`), carrying its `code` and the visible `object_key` the write
-  addressed and never the Source Hint or the Observed State Key behind it. The
+  addressed and never the Read Origin or the Observed State Key behind it. The
   codes are `write-evidence-unavailable` — the Optimistic strategy found no
   retained observation, or the Locking strategy found no participation of this
   transaction — `write-evidence-consumed`, and
@@ -5026,14 +5049,14 @@ These feature tests do not claim the deferred `benchmark` command or general
   consults is one ledger, so an insert through either verb exempts a later write
   through the other.
 
-  **A keyed source is a hinted node Parallax published, and nothing else.** Two
+  **A keyed source is a Read-Origin-bearing node Parallax published, and nothing else.** Two
   doors publish one — a Wire read, and the Wire `insert` that opened the row,
   whose returned node a pure Wire caller revises without re-reading — and they
   differ only in the evidence the node carries: the read-published node carries
   the observation of the state it saw, the insert-published node carries none,
   and the buffered insert licenses the write that follows. The concrete Entity,
   the object addressed, the as-of pin, the participation, and the observed state
-  all come from the value's own private Source Hint, so
+  all come from the value's own private Read Origin, so
   `insert` — which opens a row and has no source — is the one keyed verb that
   names an Entity, and it resolves that name by the reference-position rule
   every write target resolves through: the canonical `<namespace>.<name>`, or a
@@ -5042,9 +5065,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   resolved to a first match. There is no
   explicit-Entity ordinary-mapping overload: a mapping a caller built, a
   `dict(node)` conversion, a JSON or pickle round trip, an `InvalidData` wrapper,
-  and the `None` a non-hydrating root publishes in place of data are all refused
-  for the same reason, that provenance was lost. A hydratable `InvalidData.data`
-  passes: classification says what contradicted the model, never who may write.
+  the diagnostic data a hydratable invalid root exposes, and the `None` a
+  non-hydrating root publishes in place of data are all refused for the same
+  reason: none carries a Read Origin. Classification suppresses write authority
+  for the complete root rather than granting it through diagnostic data.
 
   **Static validation precedes evidence resolution, always.** Verb and source
   shape, the finite-Transaction-Time refusal, the temporal window, member names,

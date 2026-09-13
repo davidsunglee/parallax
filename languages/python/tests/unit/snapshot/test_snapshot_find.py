@@ -686,7 +686,7 @@ def test_find_history_keeps_distinct_roots_that_share_one_edge() -> None:
     ]
 
 
-def test_find_history_keeps_an_undecodable_milestone_as_an_edgeless_root() -> None:
+def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge() -> None:
     port = QueuePort(
         [
             [
@@ -710,12 +710,13 @@ def test_find_history_keeps_an_undecodable_milestone_as_an_edgeless_root() -> No
     result = _find_history(query, INVOICE, port)
     assert tuple(page_edges(result.page, result.milestones)) == (None,)
     (verdict,) = classify_roots(RootView(result.page), INVOICE).roots
-    assert isinstance(verdict, ClassifiedRoot)
+    assert not isinstance(verdict, ClassifiedRoot)
 
 
-def test_find_history_keeps_a_root_whose_own_key_never_decoded() -> None:
-    # A keyless milestone remains a Page root until that result position is
-    # requested, where its lazy root view publishes one invalid-root verdict.
+def test_find_history_does_not_reclassify_a_native_primary_key() -> None:
+    # The provider-facing fake can bypass a real primary-key constraint, but the
+    # materializer still treats the native Column as provider-normalized identity
+    # rather than creating a second host-side validity boundary.
     port = QueuePort(
         [
             [
@@ -738,8 +739,8 @@ def test_find_history_keeps_a_root_whose_own_key_never_decoded() -> None:
     )
     result = _find_history(query, INVOICE, port)
     assert _rows(result.page).roots == (0,)
-    (invalid,) = RootView(result.page, 0).invalid_roots
-    assert invalid.issues[0].code == "stored-data-primary-key-null"
+    assert RootView(result.page, 0).invalid_roots == ()
+    assert _value(_rows(result.page), 0, "InvoiceLine", "id") is None
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -937,23 +938,15 @@ def test_every_execution_reads_the_querys_own_canonical_node(
 # translates a graph-construction or lifecycle failure exactly once,          #
 # publishing nothing.                                                         #
 # --------------------------------------------------------------------------- #
-def test_an_undecodable_columns_leaf_is_a_non_hydrating_root() -> None:
-    # The read itself succeeded, but `balance` lies outside its declared Decimal
-    # value space. Conversion classifies that state before graph construction,
-    # and no conforming scalar exists to hydrate the root from.
+def test_a_native_columns_leaf_is_preserved_without_host_reclassification() -> None:
+    # A real provider reaches this point only after its SQL type has normalized
+    # the cell. The fake can bypass that boundary, but materialization does not
+    # reinterpret the value as fresh Wire or Pydantic input.
     port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
     db = handle.Database.connect(port, ACCOUNT)
     root = db.find(mm.Account.where(mm.Account.id == 1)).checked().result()
-    assert isinstance(root, InvalidData)
-    assert root.data is None
-    assert {(issue.code, issue.member) for issue in root.issues} == {
-        (
-            "stored-data-leaf-undecodable",
-            AttributeIdentity(EntityIdentity("parallax.compatibility", "Account"), "balance"),
-        )
-    }
-    assert root.version == 1
-    assert root.edge is None
+    assert isinstance(root, mm.Account)
+    assert root.balance == "not-a-decimal"
     assert len(port.executed) == 1
 
 
@@ -987,32 +980,21 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     }
 
 
-def test_the_values_lane_classifies_an_invalid_requested_root_key() -> None:
-    # The values lane publishes the same union the graph lanes do, one result
-    # position at a time: a root whose own key never decoded has no converted row
-    # behind its position at all, so it publishes its record carrying nothing.
+def test_the_values_lane_preserves_a_provider_normalized_native_key() -> None:
     port = QueuePort([[{"id": None, "name": "Ada"}]])
     db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
     (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"all": {}}})).rows
-    assert isinstance(row, InvalidData)
-    assert row.data is None
-    assert row.object_key is None
-    assert {issue.code for issue in row.issues} == {"stored-data-primary-key-null"}
+    assert row == {"id": None, "name": "Ada"}
 
 
-def test_the_values_lane_publishes_a_clean_row_beside_a_classified_one() -> None:
-    # Classification is per result position here as it is in a graph: one row
-    # contradicting the model no longer withholds the rows beside it, which is
-    # exactly what the shared publication refusal used to do to the whole read.
+def test_the_values_lane_trusts_each_native_scalar_row() -> None:
     port = QueuePort([[{"id": 1, "name": "Ada"}, {"id": 2, "name": None}]])
     db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
-    clean, classified = db.read_rows(
+    first, second = db.read_rows(
         deserialize_query({"target": "Customer", "predicate": {"all": {}}})
     ).rows
-    assert clean == {"id": 1, "name": "Ada"}
-    assert isinstance(classified, InvalidData)
-    assert classified.ordinal == 1
-    assert {issue.code for issue in classified.issues} == {"stored-data-attribute-null"}
+    assert first == {"id": 1, "name": "Ada"}
+    assert second == {"id": 2, "name": None}
 
 
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
@@ -1570,13 +1552,15 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     # failure escaping that transaction is contextualized under B — and the
     # refusal it carries is still the one the result under A settled, with A's
     # edition on it. Access itself starts no execution and adopts nothing.
-    a = prepare_model(ACCOUNT, edition="ledger-a")
-    b = prepare_model(ACCOUNT, edition="ledger-b")
+    a = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-a")
+    b = prepare_model(vo.CUSTOMER_MODEL, edition="ledger-b")
     serving = ServingModel(a)
-    port = ScriptedAdapter(Read(rows=[{**NEW_ROW, "balance": None}]), Transact())
+    port = ScriptedAdapter(
+        Read(rows=[{"id": 1, "name": "Ada", "address": {"city": 7}}]), Transact()
+    )
     db = handle.Database.connect(port, serving)
 
-    snapshot = db.find(_account_query())
+    snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     serving.publish(b, expected=a)
 
     with raises_contextualized(InvalidDataError) as failed:
@@ -1585,4 +1569,7 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     assert failed.edition == "ledger-b"
     assert failed.value.edition == "ledger-a" == snapshot.edition
     (record,) = failed.value.invalid_data
-    assert {issue.code for issue in record.issues} == {"stored-data-attribute-null"}
+    assert {issue.code for issue in record.issues} == {
+        "stored-data-required-member-absent",
+        "stored-data-leaf-undecodable",
+    }

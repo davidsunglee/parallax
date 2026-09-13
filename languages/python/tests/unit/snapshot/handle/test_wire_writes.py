@@ -466,13 +466,12 @@ def test_a_copy_of_a_published_node_keeps_its_provenance() -> None:
     assert len(_writes(port)) == 1
 
 
-def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_through() -> None:
+def test_a_hydratable_classified_row_cannot_author_its_own_correction() -> None:
     # The stored `address` omits the required `street`, so the read publishes the
     # row as a classified record whose `data` still hydrates. That node is a
-    # keyed source — classification says what contradicted the model, never who
-    # may write — and the update supplying the missing member reaches the buffer.
-    # Nothing else could correct it: the write is addressed against exactly the
-    # state its own classification names.
+    # diagnostic data with no Read Origin. The update supplying the missing
+    # member is refused before buffering rather than treating invalid state as
+    # write authority.
     stored: MappingRow = {
         "id": 1,
         "name": "Ada",
@@ -486,18 +485,19 @@ def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_throu
         "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": [],
     }
-    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[stored])))
 
     def fn(tx: Transaction) -> None:
         published = tx.wire.find(_CONTACT_QUERY).checked().result()
         assert isinstance(published, InvalidData)
         record = cast("InvalidData[object]", published)
         assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
-        tx.wire.update(cast("WireEntity", record.data), {"address": corrected})
+        with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
+            tx.wire.update(cast("WireEntity", record.data), {"address": corrected})
 
     db_for(CONTACT, port).transact(fn)
 
-    assert cast("JsonDocument", _writes(port)[0].binds[0]).value == corrected
+    assert _writes(port) == []
 
 
 def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:

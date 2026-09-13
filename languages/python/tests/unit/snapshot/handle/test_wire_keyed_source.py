@@ -82,7 +82,7 @@ def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> 
 
 def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) -> WireEntity:
     """One frozen Entity mapping as a standalone Wire read of this store
-    publishes it, Source Hint and all."""
+    publishes it, Read Origin and all."""
     port = ScriptedAdapter(Read(rows=[dict(row)]))
     return db_for(model, port).wire.find(query).result()
 

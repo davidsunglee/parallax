@@ -33,6 +33,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
+from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import (
     InvalidData,
@@ -193,9 +194,28 @@ class PageFixture:
         return self._builder
 
     def node(self, entity: str, columns: Mapping[str, object]) -> int:
-        """Convert one row of ``entity`` exactly as a level of a read would."""
+        """Convert one host-checked row of ``entity`` as a read level would.
+
+        These downstream Page/publication suites intentionally author scalar
+        contradictions that a real constrained Column cannot return. Marking
+        every Attribute as host-checked keeps those fixtures about classification;
+        provider-normalized Column trust is covered at the prepared-read boundary.
+        """
         identity = identity_of(self._model, entity)
-        context = LevelContext(self._layouts.entity(identity), documents_of(self._model, identity))
+        layout = self._layouts.entity(identity)
+        context = LevelContext(
+            layout,
+            documents_of(self._model, identity),
+            tuple(
+                AttributeReadContract(
+                    attribute,
+                    attribute.storage.name,
+                    temporal_end=True,
+                    encoded=False,
+                )
+                for attribute in layout.attributes
+            ),
+        )
         return convert_row(dict(columns), context, self._builder, source=ROOT_LEVEL)
 
     def layout_for(self, entity: str) -> EntityLayout:

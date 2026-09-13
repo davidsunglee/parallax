@@ -156,3 +156,47 @@ def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
         assert sum(value for name, value in streamed.events if name == event) == expected
     assert [value for name, value in eager.events if name == "root_published"] == [0, 1]
     assert [value for name, value in streamed.events if name == "root_published"] == [0, 1]
+
+
+def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fails() -> None:
+    # An eager result is one publication boundary. Even though root zero can be
+    # prepared, root one's failure prevents either value or either publication
+    # event from crossing that boundary.
+    observer = _RecordingObserver()
+    page = _page(observer, 1, 2)
+
+    def publish(_root: RootView, position: int) -> Iterator[object]:
+        if position == 1:
+            raise RuntimeError("later root failed")
+        yield position
+
+    received: list[object] = []
+    with pytest.raises(RuntimeError, match="later root failed"):
+        received.extend(Materializer(observer).roots(page, publish, atomic=True))
+
+    assert received == []
+    assert [event for event in observer.events if event[0] == "root_published"] == []
+
+
+def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() -> None:
+    # A streamed Page uses the same root seam without eager atomicity. Root zero
+    # therefore crosses the boundary, and its event is emitted, before root one
+    # fails; the already-delivered prefix remains observable.
+    observer = _RecordingObserver()
+    page = _page(observer, 1, 2)
+    received: list[object] = []
+
+    def publish(_root: RootView, position: int) -> Iterator[object]:
+        if position == 1:
+            raise RuntimeError("later root failed")
+        yield position
+
+    roots = Materializer(observer).roots(page, publish)
+    received.append(next(roots))
+    assert received == [0]
+    with pytest.raises(RuntimeError, match="later root failed"):
+        next(roots)
+
+    assert [event for event in observer.events if event[0] == "root_published"] == [
+        ("root_published", 0)
+    ]

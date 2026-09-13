@@ -168,7 +168,7 @@ from parallax.snapshot.handle._transaction import (
     buffer_prepared_predicate_write,
     buffer_prepared_wire_keyed_write,
 )
-from parallax.snapshot.materialize import source_hint_of
+from parallax.snapshot.materialize import read_origin_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",
@@ -2500,15 +2500,15 @@ def _published_claims(nodes: Sequence[handle.WireEntity]) -> GroupObservations:
     against so the two can never name different states."""
     claims: list[RetainedObservation] = []
     for node in nodes:
-        hint = source_hint_of(node)
+        hint = read_origin_of(node)
         if hint is not None and hint.observation is not None:
             claims.append(hint.observation)
     return claims
 
 
 def _node_object_key(node: handle.WireEntity) -> ObjectKey:
-    hint = source_hint_of(node)
-    assert hint is not None  # every node in this state came from a read or an insert
+    hint = read_origin_of(node)
+    assert hint is not None
     return hint.object_key
 
 
@@ -2522,8 +2522,8 @@ def _writable_source(node: handle.WireEntity) -> bool:
     writable one, so an unreferenced scan skips what the verb would refuse
     rather than reaching for the refusal.
     """
-    hint = source_hint_of(node)
-    assert hint is not None  # as above
+    hint = read_origin_of(node)
+    assert hint is not None
     try:
         validate_source_pin(hint.entity, hint.pin)
     except TransactionTimePinReadOnlyError:
@@ -3471,7 +3471,7 @@ def _conflict_source_nodes(
                 {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
             )
             for root in snapshot.results():
-                hint = source_hint_of(root)
+                hint = read_origin_of(root)
                 assert hint is not None  # a Wire read files a hint on every published Entity node
                 nodes[hint.object_key] = root
         return nodes, observed.round_trips
@@ -3511,7 +3511,7 @@ def _refuse_unobserved_conflict_version(
     statement against a version no read of this lane ever saw.
     """
     declared = None if write.observation is None else write.observation.observed_version
-    hint = source_hint_of(node)
+    hint = read_origin_of(node)
     assert hint is not None  # the node came from :func:`_conflict_source_nodes`
     retained = None if hint.observation is None else hint.observation.evidence
     observed = retained.observed_version if isinstance(retained, VersionObservation) else None

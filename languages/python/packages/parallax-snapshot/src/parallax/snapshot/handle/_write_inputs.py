@@ -25,7 +25,7 @@ of a given question, and one buffer, behind every representation:
   (:func:`source_identity_row`) that a decision taken BEFORE any row derivation
   has to use;
 * the resolution a keyed verb runs over the write evidence its source value
-  carries (:func:`source_hint_of`, :func:`resolve_write_evidence`,
+  carries (:func:`read_origin_of`, :func:`resolve_write_evidence`,
   :class:`WriteEvidenceError`, :data:`WRITE_EVIDENCE_CODES`), and the claim that
   verb then takes at the scope it settles against (:func:`admit_write_claim`,
   :class:`ClaimLedger`);
@@ -93,9 +93,9 @@ from parallax.core.unit_work import (
     KeyedWrite,
     ObjectKey,
     ParticipationToken,
+    ReadOrigin,
     RetainedObservation,
     SettledEvidence,
-    SourceHint,
     WriteIntent,
     buffered_write,
     claim_scope,
@@ -127,10 +127,10 @@ __all__ = [
     "instruction_identity",
     "keyed_instruction",
     "metadata_of_instance",
+    "read_origin_of",
     "refuse_repeated_insert",
     "reject_temporal_delete",
     "resolve_write_evidence",
-    "source_hint_of",
     "source_identity_row",
     "source_pin",
     "validate_provenance",
@@ -206,7 +206,7 @@ def written_object_key(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
-    :class:`~parallax.core.unit_work.ObjectKey` a source's own Source Hints name
+    :class:`~parallax.core.unit_work.ObjectKey` a source's own Read Origins name
     their objects by (the instance's OWN Entity Identity, never
     family-normalized; pk pairs by canonical attribute name, in the
     family-effective primary key's own order) and `unit_work.object_key`
@@ -504,7 +504,7 @@ def cancels_a_pending_assignment(
     ledger: ClaimLedger,
     meta: Metamodel,
     record: EntityMetadata,
-    hint: SourceHint | None,
+    hint: ReadOrigin | None,
     mutation: KeyedMutation,
 ) -> bool:
     """Whether this transaction already buffered an ASSIGNMENT at the scope the
@@ -526,7 +526,7 @@ def cancels_a_pending_assignment(
     that IS there always reaches a scope for an update verb: it names an Object
     Key unconditionally, and it retains an observation for exactly the
     state-keyed targets whose arm needs one
-    (:class:`~parallax.core.unit_work.SourceHint`).
+    (:class:`~parallax.core.unit_work.ReadOrigin`).
     """
     if hint is None:
         return False
@@ -630,7 +630,7 @@ class WriteEvidenceError(LookupError):
     and already spent, or still live but claimed by an intent this unit of work
     already buffered at the scope this write settles against, which this one
     cannot join. ``object_key`` is the object the write addressed, always
-    visible so a caller can say WHICH write was refused; the Source Hint and the
+    visible so a caller can say WHICH write was refused; the Read Origin and the
     claim scope behind it stay implementation state.
 
     Raised synchronously at the verb, before any buffering and before any
@@ -647,8 +647,8 @@ class WriteEvidenceError(LookupError):
         self.object_key: Final = object_key
 
 
-def source_hint_of(instance: object) -> SourceHint | None:
-    """The private :class:`~parallax.core.unit_work.SourceHint` ``instance``
+def read_origin_of(instance: object) -> ReadOrigin | None:
+    """The private :class:`~parallax.core.unit_work.ReadOrigin` ``instance``
     carries, or ``None`` for a value Parallax never published.
 
     An edited copy answers the node's own hint, because an edit preserves every
@@ -665,7 +665,7 @@ def source_hint_of(instance: object) -> SourceHint | None:
 def resolve_write_evidence(
     meta: Metamodel,
     record: EntityMetadata,
-    hint: SourceHint | None,
+    hint: ReadOrigin | None,
     *,
     mutation: KeyedMutation,
     object_key: ObjectKey,
@@ -826,7 +826,7 @@ answers over the values a READ produced, so this answer alone never settles
 whether a row exists for a write to address; the buffered-insert ledger does,
 and :func:`validate_provenance` takes it as its own argument. Deriving the answer
 is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from
-and a Wire source carries a Source Hint — so this is a fact a caller states
+and a Wire source carries a Read Origin — so this is a fact a caller states
 rather than a value this module inspects."""
 
 

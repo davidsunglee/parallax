@@ -1650,13 +1650,16 @@ The `insert` / `update` action verbs name the **keyed write verb** a client call
 and what such a step observes is which verbs accept the **value** it is handed.
 Provenance is a property of that value rather than of a prior step's result, so
 the step names no `on`; it carries a **`value`** token instead, drawn from the
-closed partition `m-unit-work` *Write value provenance* fixes:
+closed arrangement vocabulary over the partition `m-unit-work` *Write value
+provenance* fixes:
 
 - **`unmanaged`** — no managed read produced the value.
 - **`thisSource`** — a read through the **very source this verb writes through**
-  produced it.
+  admitted it as valid stored Entity State.
 - **`anotherSource`** — a read through some **other** framework-managed source
-  produced it, the same store or not.
+  admitted it as valid stored Entity State, the same store or not.
+- **`invalidRoot`** — this source published the value only as diagnostic data
+  inside a hydratable invalid root and did not admit it as a keyed source.
 
 A case states the provenance and never how to obtain it. How an implementation
 retains which source produced a value is its own affair, so an adapter arranges a
@@ -1667,7 +1670,9 @@ through a **second** framework-managed source; an implementation whose runtime i
 one lifecycle **supplies** that second source for the arrangement — the source
 being machinery that materializes values from reads and recognizes its own
 (`m-unit-work`), not a shipped product. `unmanaged` is the one token no read
-arranges, being the absence of one.
+arranges, being the absence of one. `invalidRoot` is arranged through a read
+whose checked result exposes hydratable diagnostic data; it names the first
+provenance answer, NotStored, rather than a fourth source relation.
 
 A value the named read did not produce witnesses nothing, however the
 implementation's own classifier answers for it: a marker, a stub, a synthesized

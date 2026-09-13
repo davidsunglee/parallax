@@ -131,6 +131,12 @@ class LevelContext:
     ``projected_by_position`` is fixed here rather than per row and marks which
     of ``layout.occurrences`` this read carried.
 
+    ``host_checked`` is the Attribute-position subset whose storage contract does
+    not itself establish the managed value: encoded result cells and temporal
+    ends. Native scalar Columns outside that subset are accepted exactly as the
+    provider normalized them. Document-resident members are classified by their
+    document codec before this seam and therefore do not enter this tuple.
+
     ``layout`` stays out of equality and hashing: ``concrete_entity`` already
     distinguishes every context it distinguishes — two layouts for one exact
     Entity are interchangeable — while comparing it would walk a whole shared
@@ -143,6 +149,7 @@ class LevelContext:
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[AttributeReadContract, ...] = ()
     projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
+    host_checked: tuple[int, ...] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "concrete_entity", self.layout.concrete)
@@ -151,6 +158,22 @@ class LevelContext:
             self,
             "projected_by_position",
             tuple(occurrence.storage.name in projected for occurrence in self.layout.occurrences),
+        )
+        object.__setattr__(
+            self,
+            "host_checked",
+            tuple(
+                position
+                for position, attribute in enumerate(self.layout.attributes)
+                if (
+                    self.attribute_reads
+                    and (
+                        self.attribute_reads[position].encoded
+                        or self.attribute_reads[position].temporal_end
+                    )
+                )
+                or (not self.attribute_reads and attribute.identity in self.layout.temporal_ends)
+            ),
         )
 
 
@@ -320,6 +343,7 @@ def _decode_row(
         )
     members: list[object] = []
     reads = level.attribute_reads
+    host_checked = frozenset(level.host_checked)
     identity_positions = tuple(dict.fromkeys((*layout.primary_key, *layout.temporal_starts)))
     identity_by_position = dict(zip(identity_positions, identity_values, strict=True))
     identity_position_set = frozenset(identity_positions)
@@ -341,6 +365,9 @@ def _decode_row(
                 if raw is not None or attribute.nullable
                 else ABSENT
             )
+            continue
+        if position not in host_checked:
+            members.append(raw)
             continue
         try:
             value = (

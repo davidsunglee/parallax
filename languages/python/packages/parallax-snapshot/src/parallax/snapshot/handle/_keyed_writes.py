@@ -18,9 +18,9 @@ row this transaction opened refuses a second opening of it.
 What differs between one representation's keyed verbs and another's is not that
 order but where the facts it consumes come from — a Typed value carries its own
 Change Record and lifecycle, a Wire source carries a frozen published row and a
-Source Hint. A **Keyed Write Source** is that difference and nothing else: three phases,
+Read Origin. A **Keyed Write Source** is that difference and nothing else: three phases,
 run once each in the order above, answering the concrete Entity, the source Pin,
-the Source Hint, the canonical identity row, the value's provenance, which
+the Read Origin, the canonical identity row, the value's provenance, which
 interface stated the write, and the canonical authored and original values of
 every named member. A source exposes
 no codec, carrier, selected model, unit of work, mutation, prepared front door,
@@ -76,8 +76,8 @@ from parallax.core.unit_work import (
     UPDATE_MUTATIONS,
     KeyedMutation,
     ObjectKey,
+    ReadOrigin,
     SettledEvidence,
-    SourceHint,
     UnitOfWork,
     object_key,
 )
@@ -175,7 +175,7 @@ class ResolvedKeyedWriteSource:
 
     entity: EntityMetadata
     pin: Pin | None
-    hint: SourceHint | None
+    hint: ReadOrigin | None
     identity_row: Mapping[str, object] | None
     provenance: Provenance
     representation: WriteRepresentation
@@ -254,7 +254,7 @@ class OpenedKeyedWrite:
     A Typed caller keeps the instance it passed and ignores this; a Wire caller
     has nothing else to hold, so it renders the frozen node it will revise the
     row through. What it publishes is the buffered ROW rather than the payload,
-    and its Source Hint names this transaction's participation with NO
+    and its Read Origin names this transaction's participation with NO
     observation — which is exactly what an opening row has observed. The write
     that follows is licensed by the buffered insert instead.
     """
@@ -262,7 +262,7 @@ class OpenedKeyedWrite:
     identity: EntityIdentity
     row: Mapping[str, object]
     object_key: ObjectKey
-    hint: SourceHint
+    hint: ReadOrigin
 
 
 class KeyedWriteSource(Protocol):
@@ -479,7 +479,7 @@ def keyed_insert(
         identity=resolved.entity.identity,
         row=row,
         object_key=opened,
-        hint=SourceHint(
+        hint=ReadOrigin(
             entity=resolved.entity.identity,
             object_key=opened,
             participation=ctx.uow.participation,

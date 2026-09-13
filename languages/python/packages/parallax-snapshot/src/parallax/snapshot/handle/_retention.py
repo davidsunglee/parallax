@@ -2,7 +2,7 @@
 
 The evidence a graph-form read leaves on the values it publishes: the Write
 Observation each materialized row licensed, filed under the object it observed
-plus that observation's own coordinate, and the Source Hint that selects it. A
+plus that observation's own coordinate, and the Read Origin that selects it. A
 read collects its rows into :class:`ObservedRows` while they are still live,
 then hands the whole collection to :func:`retain_evidence`, which walks it once
 and answers the :data:`ReadSources` a materializer attaches to the values it
@@ -60,8 +60,8 @@ from parallax.core.unit_work import (
     ObservedStateKey,
     ParticipationToken,
     PredecessorRow,
+    ReadOrigin,
     RetainedObservation,
-    SourceHint,
     TemporalObservation,
     VersionObservation,
     WriteObservation,
@@ -159,8 +159,8 @@ class ObservedRows:
         return (observed for observed in self._rows if isinstance(observed, _ObservedRow))
 
 
-type ReadSources = Mapping[int, SourceHint]
-"""The Source Hint each observed projection's value carries, keyed by that
+type ReadSources = Mapping[int, ReadOrigin]
+"""The Read Origin each observed projection's value carries, keyed by that
 projection's own index in the read's sealed Page.
 
 Only the executor can build this pairing: it alone holds the row and the
@@ -183,7 +183,7 @@ class ObservationLedger(Protocol):
     def retain(self, observation: RetainedObservation, /) -> RetainedObservation: ...
 
 
-class _DeferredReadSources(Mapping[int, SourceHint]):
+class _DeferredReadSources(Mapping[int, ReadOrigin]):
     """Evidence retained only after its page-owned Entity State is judged valid."""
 
     __slots__ = (
@@ -212,9 +212,9 @@ class _DeferredReadSources(Mapping[int, SourceHint]):
         self._entity = entity
         self._ledger = ledger
         self._pin = pin
-        self._resolved: dict[int, SourceHint] = {}
+        self._resolved: dict[int, ReadOrigin] = {}
 
-    def __getitem__(self, key: int) -> SourceHint:
+    def __getitem__(self, key: int) -> ReadOrigin:
         if key not in self._resolved:
             self._refresh_one(key)
         return self._resolved[key]
@@ -231,7 +231,8 @@ class _DeferredReadSources(Mapping[int, SourceHint]):
         except IndexError:  # pragma: no cover - Root Views request Page occurrence indices only
             raise KeyError(key) from None
         state = self._admitted(key)
-        if state is None:
+        # Invalid roots suppress their complete origin map before this callback.
+        if state is None:  # pragma: no cover
             return
         fresh = ObservedRows()
         fresh._rows.append(  # pyright: ignore[reportPrivateUsage] - same-module transfer over shared state
@@ -288,7 +289,7 @@ def retain_evidence(
     which is what a developer's later ``tx.update(copy)`` resolves its instance's
     own class to; the coordinate half is derived from the observation itself.
 
-    Every observed row also yields a Source Hint, including an UNVERSIONED
+    Every observed row also yields a Read Origin, including an UNVERSIONED
     Non-Temporal row, which observes no state: what its hint carries is the
     object it denotes and the participation its read licensed, which is the whole
     of what an effective-Locking write asks of it. A row whose (family-effective)
@@ -326,7 +327,7 @@ def retain_evidence(
     refusal every keyed verb runs.
     """
     participation = None if ledger is None else ledger.participation
-    hints: dict[int, SourceHint] = {}
+    hints: dict[int, ReadOrigin] = {}
     # One observed state, one retained observation within this pass, so two
     # projections of one row answer one claim exactly as graph aliases do.
     pass_states: dict[ObservedStateKey, RetainedObservation] = {}
@@ -337,7 +338,7 @@ def retain_evidence(
         object_key, declaring_entity, observation = resolved
         observed_pin = pin if is_temporal(declaring_entity) else None
         if observation is None:
-            hints[observed.node] = SourceHint(
+            hints[observed.node] = ReadOrigin(
                 observed.entity, object_key, participation, None, observed_pin
             )
             continue
@@ -348,7 +349,7 @@ def retain_evidence(
             if ledger is not None:
                 held = ledger.retain(held)
             pass_states[key] = held
-        hints[observed.node] = SourceHint(
+        hints[observed.node] = ReadOrigin(
             observed.entity, object_key, participation, held, observed_pin
         )
     return MappingProxyType(hints)

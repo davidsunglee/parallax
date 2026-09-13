@@ -1075,7 +1075,7 @@ def _retained(
 ) -> WriteObservation | None:
     """The evidence ``observations`` retained for the SpotQuote milestone.
 
-    Read off the source hint the retention answered, and cross-checked against
+    Read off the read origin the retention answered, and cross-checked against
     the unit of work's own index: the two are one object, because the index is a
     weak view of what the sources hold rather than a second copy.
     """

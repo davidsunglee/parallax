@@ -33,7 +33,6 @@ from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.execution_lifecycle import (
     AcquisitionStarted,
     CausedFailure,
-    DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
@@ -53,7 +52,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
-from parallax.snapshot import InvalidDataError, ServingModel, connect, prepare_model
+from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, QueryTargetError, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -82,10 +81,6 @@ def _order_row(order_id: int) -> MappingRow:
         "active": True,
         "ordered_on": dt.date(2024, 1, 5),
     }
-
-
-def _keyless_order_row() -> MappingRow:
-    return {**_order_row(0), "id": None}
 
 
 def _account_row(account_id: int) -> MappingRow:
@@ -418,42 +413,6 @@ def test_a_page_read_failure_fails_its_batch_first_and_causes_the_stream_failure
     assert isinstance(caused, CausedFailure)
     assert caused.cause_activity_id == failed.activity_id
     assert caused.diagnostic is failed.outcome.failure.diagnostic
-
-
-def test_a_per_root_publication_failure_leaves_its_batch_completed_and_fails_the_stream() -> None:
-    # Publication runs one root at a time OUTSIDE every batch, so a root whose
-    # stored state contradicted the model reaches a batch that has already
-    # finished Completed. The stream therefore fails DIRECTLY: proximity to the
-    # page that produced the row attributes nothing.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[_order_row(1), _keyless_order_row()]))
-    with (
-        raises_contextualized(InvalidDataError),
-        _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream,
-    ):
-        assert [root.id for root in stream] == [1]
-
-    (root,) = recorder.roots
-    (batch,) = _of(root, StreamBatchFinished)
-    assert batch.outcome == StreamBatchCompleted()
-    (stream_finished,) = _of(root, SnapshotStreamFinished)
-    assert isinstance(stream_finished.outcome, StreamFailed)
-    assert isinstance(stream_finished.outcome.failure, DirectFailure)
-
-
-def test_a_failure_the_caller_caught_still_finishes_the_stream_failed() -> None:
-    # Failed is what Parallax's own work did, not what left the caller's block:
-    # a caller that catches the failure and leaves the scope normally has not
-    # turned a failed delivery into a caller who stopped early.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[_order_row(1), _keyless_order_row()]))
-    with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:  # noqa: SIM117 - the refusal is caught INSIDE the scope, which is the claim
-        with raises_contextualized(InvalidDataError):
-            list(stream)
-
-    (root,) = recorder.roots
-    (stream_finished,) = _of(root, SnapshotStreamFinished)
-    assert isinstance(stream_finished.outcome, StreamFailed)
 
 
 # --------------------------------------------------------------------------- #

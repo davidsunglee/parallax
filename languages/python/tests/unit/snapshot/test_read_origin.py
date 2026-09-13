@@ -42,7 +42,7 @@ from parallax.core.unit_work import (
 from parallax.snapshot import InvalidData, WireEntity, connect
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction, WriteEvidenceError
-from parallax.snapshot.materialize import source_hint_of
+from parallax.snapshot.materialize import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -109,7 +109,7 @@ def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() 
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         wire = tx.wire.find(mm.Account.where(mm.Account.id == 1)).result()
         assert isinstance(wire, WireEntity)
-        return _typed_hint(typed), source_hint_of(wire)
+        return _typed_hint(typed), read_origin_of(wire)
 
     typed_hint, wire_hint = (cast("Any", hint) for hint in account_db(port).transact(fn))
     assert wire_hint is not None
@@ -141,7 +141,7 @@ def test_wire_copy_answers_the_same_value_and_therefore_the_same_claim() -> None
     assert isinstance(node, WireEntity)
     for copied in (cast("Any", node).copy(), copy_module.copy(node), copy_module.deepcopy(node)):
         assert copied is node
-        assert source_hint_of(cast("WireEntity", copied)) is source_hint_of(node)
+        assert read_origin_of(cast("WireEntity", copied)) is read_origin_of(node)
 
 
 def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None:
@@ -854,12 +854,11 @@ def test_an_unconditional_delete_is_spelled_through_the_predicate_verb() -> None
 # --------------------------------------------------------------------------- #
 # Classified sources.                                                         #
 # --------------------------------------------------------------------------- #
-def test_a_hydratable_invalid_root_carries_its_ordinary_claim() -> None:
-    # A hydratable violation's collapse produced legal member values, so the row
-    # behind it is an ordinary stored row: the node in `data` carries the same
-    # evidence any conforming node of that read would, and stays an ordinary
-    # write source. Only a non-hydrating position, which has no conforming value
-    # at all, carries none.
+def test_a_hydratable_invalid_root_carries_no_write_authority() -> None:
+    # Diagnostic data may be hydratable, but a root classified as invalid is not
+    # a valid observation of Entity State. Its node therefore carries no Read
+    # Origin and cannot become a keyed write source merely because publication
+    # can expose the collapsed data beside its issues.
     port = ScriptedAdapter(
         Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}])
     )
@@ -870,6 +869,53 @@ def test_a_hydratable_invalid_root_carries_its_ordinary_claim() -> None:
         .result()
     )
     assert isinstance(record, InvalidData)
-    hint = cast("Any", _typed_hint(record.data))
-    assert hint is not None
-    assert hint.object_key.primary_key == (("id", 1),)
+    assert _typed_hint(record.data) is None
+
+
+def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
+    # Two root-local graphs borrow one page-owned Customer state. The first root
+    # is hydratably invalid, so neither it nor its Customer child carries a Read
+    # Origin; the second root is valid and its distinct Customer node does. The
+    # invalid graph cannot borrow authority through shared Entity State.
+    port = ScriptedAdapter(
+        Transact(
+            Read(
+                rows=[
+                    {
+                        "id": 100,
+                        "customer_id": 1,
+                        "label": "Invalid",
+                        "address": PresentDocument({"city": "Oslo"}),
+                    },
+                    {"id": 101, "customer_id": 1, "label": "Valid", "address": None},
+                ]
+            ),
+            Read(rows=[{"id": 1, "name": "Ada", "address": None}]),
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        invalid, valid = (
+            tx.find(vo.Location.where(vo.Location.all).include(vo.Location.customer))
+            .checked()
+            .results()
+        )
+        assert isinstance(invalid, InvalidData)
+        assert isinstance(invalid.data, vo.Location)
+        invalid_location = invalid.data
+        assert isinstance(valid, vo.Location)
+        invalid_customer = invalid_location.customer
+        valid_customer = valid.customer
+        assert isinstance(invalid_customer, vo.Customer)
+        assert isinstance(valid_customer, vo.Customer)
+        assert invalid_customer is not valid_customer
+        assert _typed_hint(invalid_location) is None
+        assert _typed_hint(invalid_customer) is None
+        assert _typed_hint(valid) is not None
+        assert _typed_hint(valid_customer) is not None
+        tx.update(invalid_customer.edit(name="Rejected"))
+
+    with raises_contextualized(KeyedWriteValueError) as refusal:
+        connect(port, vo.CUSTOMER_MODEL).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+    assert not any(isinstance(op, WriteCall) for op in port.calls)

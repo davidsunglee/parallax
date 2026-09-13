@@ -428,12 +428,10 @@ def test_a_diagnosis_names_its_member_by_the_path_the_corpus_addresses_one_by() 
     )
 
 
-def test_run_read_case_refuses_a_row_form_position_the_read_classified() -> None:
-    # The row-form observation has no place to carry a record, so the lane names
-    # the shape rather than grading a classification as though it were a row.
+def test_run_read_case_accepts_provider_normalized_native_columns() -> None:
     port = FakeDbPort([{"id": 4, "name": None}])
-    with pytest.raises(EngineError, match="published an InvalidData record"):
-        reads.run_read_case(_load_case("m-value-object-007"), port)
+    _emissions, rows, _round_trips = reads.run_read_case(_load_case("m-value-object-007"), port)
+    assert rows == [{"id": 4, "name": None}]
 
 
 def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:

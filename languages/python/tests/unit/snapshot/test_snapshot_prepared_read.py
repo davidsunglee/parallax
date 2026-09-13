@@ -381,16 +381,13 @@ def test_an_unrecognized_family_tag_converts_under_the_family_root() -> None:
     assert [issue.code for issue in unknown.issues] == ["stored-data-family-tag-unknown"]
 
 
-def test_an_unknown_tag_and_a_null_key_both_reach_the_projection() -> None:
-    # The tag verdict the transform handed over and the judgment conversion makes
-    # itself are two issues on one projection, the transform's first: a row whose
-    # tag named no composed concrete AND whose key column is null publishes both.
+def test_an_unknown_tag_is_host_checked_but_its_native_key_is_trusted() -> None:
+    # The unconstrained family discriminator remains host-checked. The direct key
+    # Column does not: its SQL type and primary-key constraint establish the value
+    # space, so materialization trusts what the provider normalized there.
     prepared = _prepared(BEAST, "Beast")
     node = _converted(prepared, {"id": None, "kind": "bear", "howl": None})
-    assert [issue.code for issue in node.issues] == [
-        "stored-data-family-tag-unknown",
-        "stored-data-primary-key-null",
-    ]
+    assert [issue.code for issue in node.issues] == ["stored-data-family-tag-unknown"]
 
 
 # --------------------------------------------------------------------------- #
@@ -462,12 +459,10 @@ def test_a_classified_member_the_transform_made_unavailable_is_absent() -> None:
     assert [issue.code for issue in node.issues] == ["stored-data-leaf-undecodable"]
 
 
-def test_identity_cells_are_admitted_once_before_payload_judgment() -> None:
-    # The count is the claim, and no result can carry it: a re-admission agreeing
-    # with the classification is invisible in the converted row. So the rule is
-    # replaced for this conversion and its arguments recorded — a document-layout
-    # row must reach it for its direct key Column and for nothing else, however
-    # many members the document carried.
+def test_native_identity_and_document_members_need_no_scalar_admission() -> None:
+    # A direct primary-key Column is established by its installed SQL type and
+    # constraint, while document members arrive classified by the document codec.
+    # Neither reaches the host scalar-admission rule.
     identity_admitted: list[object] = []
     payload_admitted: list[object] = []
 
@@ -487,7 +482,7 @@ def test_identity_cells_are_admitted_once_before_payload_judgment() -> None:
         patched.setattr(_identity, "admits_stored_scalar", _record)
         patched.setattr(_convert, "admits_stored_scalar", _payload_record)
         node = _register(_ADA)
-    assert identity_admitted == [1]
+    assert identity_admitted == []
     assert payload_admitted == []
     assert set(node.members) == {"id", "label", "note", "stamp", "marks"}
 
@@ -683,8 +678,8 @@ def _workload(
     return model, plan, reads, rows_per_level(layout, model, plan, reads, owners)
 
 
-def _payload_cells_judged(layout: Layout, owners: int) -> int:
-    """Non-identity Attribute cells the batch carries without prior classification."""
+def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
+    """Non-identity Attribute cells whose storage contract needs a host check."""
     model, _plan, reads, rows = _workload(layout, owners)
     total = 0
     seen: set[object] = set()
@@ -693,20 +688,18 @@ def _payload_cells_judged(layout: Layout, owners: int) -> int:
             continue
         for driver in level_rows:
             resolved, _variant, _unknown, _document = compiled.row_identity(driver)
-            values, _findings, classified = compiled.decode_payload(driver)
             entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)
             )
             contracts = compiled.attribute_reads(resolved)
-            keys: Sequence[str] = (
-                [contract.result_key for contract in contracts]
-                if contracts
-                else [attribute.storage.name for attribute in entity_layout.attributes]
-            )
+            keys: Sequence[str] = [contract.result_key for contract in contracts]
             occurrence: object = (
                 resolved,
-                tuple(values.get(keys[position]) for position in identity_positions),
+                tuple(
+                    driver[compiled.result_keys.index(keys[position])]
+                    for position in identity_positions
+                ),
             )
             if not identity_positions:
                 occurrence = id(driver)
@@ -715,24 +708,25 @@ def _payload_cells_judged(layout: Layout, owners: int) -> int:
             seen.add(occurrence)
             total += sum(
                 1
-                for position, key in enumerate(keys)
-                if position not in identity_positions and key in values and key not in classified
+                for position, contract in enumerate(contracts)
+                if position not in identity_positions
+                and (contract.encoded or contract.temporal_end)
             )
     return total
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
-def test_the_conforming_path_decodes_no_declaration_and_admits_nothing_twice(
+def test_the_conforming_path_checks_only_host_checked_payload_positions(
     layout: Layout,
 ) -> None:
     # Work fixed by a layout, a member declaration, or a Neutral Type does not
     # scale with rows, measured over the report's own workload. Every
     # document a conforming row carries is classified only if its deferred state
-    # is reached. The admissions that remain are exactly the direct stored cells,
-    # so doubling the rows doubles them and nothing else moves.
+    # is reached. The admissions that remain are exactly encoded Columns and
+    # temporal ends, so doubling the rows doubles them and nothing else moves.
     one = _conversion_calls(layout, OWNERS)
     twice = _conversion_calls(layout, OWNERS * 2)
     assert [one[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
     assert [twice[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
-    assert one["admits_stored_scalar"] == _payload_cells_judged(layout, OWNERS)
-    assert twice["admits_stored_scalar"] == _payload_cells_judged(layout, OWNERS * 2)
+    assert one["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS)
+    assert twice["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS * 2)

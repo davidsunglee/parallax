@@ -119,11 +119,13 @@ less than one retained root, with no term for either dial in its survivor model.
 
 **The page size is the whole cost.** The working set's dominant rate is about
 3,784 bytes per root position of the page at fan-out 5, in both lanes, because a
-sealed Page holds every projection for that page's roots and their
-children, and the page holds one evaluated coordinate per root beside it. A caller who wants a smaller working set asks for a smaller page and
-pays for it in round trips, which the `us/root` column prices in the other
-direction: at page size 1 a delivery costs one round trip per root and reads more
-than twice as slowly per root as at page size 32.
+sealed Page holds every projection for that page's roots and their children. The
+page decision also captures one evaluated coordinate per root, then releases all
+but the continuation boundary before graph assembly. A caller who wants a smaller
+working set asks for a smaller page and pays for it in round trips, which the
+`us/root` column prices in the other direction: at page size 1 a delivery costs
+one round trip per root and reads more than twice as slowly per root as at page
+size 32.
 
 **The exclusion is why the delta means anything.** Keeping every root of the same
 200-root result costs 839 KiB in the Typed lane, while multiplying the delivered

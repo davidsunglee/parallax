@@ -597,7 +597,8 @@ class Materializer:
                 ),
                 None,
             )
-            if key is None or state is None or not hydrates(state.findings):
+            # Invalid roots suppress their complete origin map before this callback.
+            if key is None or state is None or not hydrates(state.findings):  # pragma: no cover
                 return None
             held = state_rows.get(key)
             if held is None:
@@ -676,12 +677,23 @@ class Materializer:
         page: Page,
         publish: Callable[[RootView, int], Iterator[T]],
         *,
+        atomic: bool = False,
         ordinal_offset: int = 0,
         pins: Sequence[Pin | None] | None = None,
     ) -> Iterator[T]:
         """Judge and publish one Page root at a time through one shared seam."""
         if pins is not None and len(pins) != page.root_count:
             raise ValueError("root pin count must match the Page root count")
+        if atomic:
+            prepared: list[tuple[int, tuple[T, ...]]] = []
+            for position in range(page.root_count):
+                pin = None if pins is None else pins[position]
+                root = RootView(page, position, pin=pin)
+                prepared.append((position, tuple(publish(root, position))))
+            for position, roots in prepared:
+                yield from roots
+                self.observer.root_published(ordinal_offset + position)
+            return
         for position in range(page.root_count):
             pin = None if pins is None else pins[position]
             root = RootView(page, position, pin=pin)

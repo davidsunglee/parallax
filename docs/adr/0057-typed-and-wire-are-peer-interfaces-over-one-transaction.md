@@ -6,7 +6,7 @@ transient Execution Lifecycle. Each keyed write takes an observed source from
 its own
 representation, while writes from both representations coalesce and flush
 through the shared transaction machinery. A Wire Entity returned by a Parallax
-Wire read may carry an opaque Source Hint identifying its exact concrete Entity
+Wire read may carry an opaque Read Origin identifying its exact concrete Entity
 and original Object Key and, when the Entity requires write evidence, selecting
 its observed state. The hint is not itself a Write Observation or public
 authority; it selects the authentic source's privately retained evidence, which
@@ -29,9 +29,9 @@ nested dictionary or list raises `TypeError`. Python preserves ordinary
 dictionary/list structural equality and unhashability; freezing does not invent
 hash semantics. The write verb's separate changes mapping is therefore the sole
 assignment input, and the frozen source remains a reliable statement of the
-values that were observed. Immutable copy operations may return the same hinted
+values that were observed. Immutable copy operations may return the same retained
 value. Converting or serializing it produces ordinary
-Wire data without the Source Hint; that data may still be used for inserts,
+Wire data without the Read Origin; that data may still be used for inserts,
 changes, predicates, and Object Query input, but not as a keyed write source. A
 caller that crosses a serialization boundary rereads the object through
 `tx.wire.find` before updating, deleting, or terminating it.
@@ -58,7 +58,7 @@ of evidence state. Typed `edit()` already enforces its assignment legality
 before a transaction verb receives the value.
 
 Wire Entity mappings expose no temporal milestone coordinate. The frozen
-source's private Source Hint selects the exact temporal state. Losing that hint
+source's private Read Origin selects the exact temporal state. Losing that origin
 loses keyed-source status rather than starting an Object Key candidate search.
 Temporal bounds authored as verb arguments remain ordinary static write input
 and do not identify source provenance.
@@ -72,10 +72,11 @@ older source's evidence. A successful flush consumes the observations used by
 surviving writes, while a write coalesced away before DML consumes none. This
 bounds retained read evidence while the representation-specific source object
 selects the evidence its corresponding keyed verb validates and adopts.
-An `InvalidData` wrapper never claims an observation. When `data=None`, no
-writable node exists and no eligible evidence is retained, regardless of the
-diagnostic Object Key, version, or Edge. When data hydrates, its independently
-writable Entity nodes claim observations exactly as ordinary read results do.
+An `InvalidData` root never claims an observation. Its diagnostic graph carries
+no Read Origin at any node, whether or not `data` hydrates and regardless of a
+diagnostic Object Key, version, or Edge. If valid and invalid roots reach the same
+page-owned Entity State, their separately published nodes remain root-local: only
+the node reached through the valid root may select retained evidence.
 
 Several compatible updates may claim the same observed state before one flush.
 The planner coalesces them into one surviving write when their temporal bounds
@@ -125,7 +126,7 @@ Wire or Typed source names evidence already used by a successful flush.
 `write-evidence-already-claimed` means that a buffered write already depends on
 the exact evidence and the new intent neither coalesces nor deduplicates safely.
 Each failure identifies the attempted visible Object Key but exposes neither the
-Source Hint nor the Observed State Key. Evidence resolution and every such
+Read Origin nor the Observed State Key. Evidence resolution and every such
 refusal occur synchronously at the keyed write verb, before buffering or
 database access. A database change discovered after buffering remains the
 existing optimistic-lock or temporal flush conflict; it is not reclassified as

@@ -256,7 +256,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
     # The Snapshot slice's own node-inspection surface is scoped apart from both
     # snapshot packages: it reads a node's loaded views, pin, milestone edge, and
-    # retained Source Hint through the advanced Entity seam and nothing else, so
+    # retained Read Origin through the advanced Entity seam and nothing else, so
     # its row proves it reaches no driver, no read planner, no SQL, and no
     # dialect. The Database Port is NOT one of those: the granted Entity frontend
     # reaches it through `_formation_profile -> opt_lock -> unit_work -> db_port`,

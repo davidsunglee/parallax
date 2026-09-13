@@ -651,7 +651,10 @@ _Avoid_: Snapshot Graph, public page, result batch, cursor buffer
 **Entity State**:
 One judged positional member row for a logical Entity key at one lowered as-of
 coordinate. Equal Payload Witnesses in one Page share one Entity State and one
-decode; relationship loadedness is outside it and belongs to a Root View.
+decode; relationship loadedness is outside it and belongs to a Root View. Native
+scalar Columns enter as provider-normalized values after database enforcement;
+host checks remain for discriminators, encoded cells, temporal ends, refinements
+the installed SQL shape does not express, and document occurrences.
 _Avoid_: entity node, merged graph, provider row, relationship state
 
 **Root View**:
@@ -719,19 +722,11 @@ carries the hydrated root exactly when a value can be produced without
 invention. It also carries the result root's decodable Object Key, mutually
 exclusive observed version or milestone Edge, and always-present ordered-result
 ordinal for diagnosis. Those locator facts grant no write authority.
-When present, the hydrated root is an ordinary observed source, not a repair
-command. Ordinary no-op rules apply even when an assignment equal to a hydrated
-collapse could have replaced malformed storage. A keyed Wire assignment is
-compared with its frozen hydrated source just as a Typed assignment is compared
-with its Change Record original. An effective ordinary write may incidentally
-replace the bad representation, but neither interface makes a general repair
-guarantee and no repair-sensitive bookkeeping is retained. A later read
-classifies what remains.
-The wrapper itself is not writable; storage-aware administrative repair is
-outside this contract.
-The wrapper's diagnostic locators never claim write evidence. `data=None`
-retains no eligible observation, while a hydrated data graph gives each
-independently writable Entity node its ordinary source-liveness claim.
+When present, the hydrated root is diagnostic data, not a repair command or
+keyed write source. Every node in the invalid root-local graph lacks a Read
+Origin; a separate valid root reaching the same page-owned Entity State may
+publish its own distinct origin-bearing node. The wrapper itself is not writable,
+and storage-aware administrative repair is outside this contract.
 _Avoid_: invalid node, skipped row, validation error, repaired value
 
 **Checked Result View**:
@@ -1040,27 +1035,30 @@ is the key for write coalescing, cancellation, and buffered-insert recognition;
 it deliberately carries no version or milestone.
 _Avoid_: observed state, object ID, row key, primary-key mapping, entity spelling
 
-**Source Hint**:
-The opaque, non-authoritative provenance associated with a frozen Wire Entity
-value returned by a Wire read, identifying its concrete Entity and original
-Object Key and, when write evidence is required, selecting its exact observed
-state so a transaction can validate its own retained evidence. It neither
-contains nor grants a Write Observation and is absent from serialized Wire data.
+**Read Origin**:
+The opaque, non-authoritative record of where a read value came from: its
+concrete Entity, Object Key, source Pin, read participation, and exact observed
+state when one was retained. It may select a retained Write Observation but is
+not itself evidence or authority, and it is absent from serialized Wire data.
 Every existing-object keyed write requires proof that the source was read
 through Parallax. Under the effective Locking strategy it must have participated in the current Unit
 Work, proving that the read acquired the shared row lock that makes the otherwise
 ungated write safe. Under the effective Optimistic strategy, an authentic versioned or temporal
 source may instead contribute its retained version or milestone evidence even
 when `db.find` produced it outside the transaction; the database gate remains
-the concurrency authority. The Source Hint selects that privately retained
+the concurrency authority. The Read Origin selects that privately retained
 evidence but is not itself evidence. An unversioned Non-Temporal source has no
 optimistic gate and therefore must participate in a read in the current Unit
 Work, proving that the required shared row lock is held; it contributes no
 retained evidence. Copy
 operations on the immutable value may return the same value, while conversion
 or serialization produces ordinary data that is not a keyed write source.
-Callers cannot construct or attach a Source Hint.
-_Avoid_: Observation Hint, Observation Key, capability token, metadata field
+Callers cannot construct or attach a Read Origin. Any finding suppresses Read
+Origins for the complete invalid root-local graph, including hydratable
+diagnostic data. A separate valid root reaching the same page-owned Entity State
+publishes a distinct node that may carry its own origin.
+_Avoid_: Source Hint, Observation Hint, Observation Key, capability token,
+metadata field
 
 **Observed State Key**:
 The internal Unit Work address of one exact observed state: either an Object Key
@@ -1068,7 +1066,7 @@ plus its observed positive version or an Object Key plus its milestone Edge.
 It keys observation eligibility and consumption while the Object Key alone keys
 cross-state coalescing. It is neither caller-facing, the evidence itself, nor a
 read pin.
-_Avoid_: Observation Key, public provenance, Source Hint, Object Key, snapshot
+_Avoid_: Observation Key, public provenance, Read Origin, Object Key, snapshot
 pin, Write Observation
 
 **Write Observation**:
@@ -1096,7 +1094,7 @@ Wire source whose evidence a successful flush already used
 already carried by a buffered write is `write-evidence-already-claimed`;
 compatible updates coalesce and identical destructive intents deduplicate
 instead. The failure identifies the attempted visible Object Key but exposes
-neither Source Hint nor Observed State Key.
+neither Read Origin nor Observed State Key.
 Resolution succeeds or raises at the keyed write verb before buffering or
 database access; a later flush conflict retains its database-write
 classification. A keyed Wire verb rejects an ordinary, converted, or serialized

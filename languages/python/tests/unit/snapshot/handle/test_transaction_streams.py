@@ -36,8 +36,8 @@ from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.unit_work import FixedClock, ObservedStateKey, RetainedObservation, instructions
 from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
-from parallax.snapshot.materialize import source_hint_of
+from parallax.snapshot.handle import Database, KeyedWriteValueError, Transaction
+from parallax.snapshot.materialize import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -287,7 +287,7 @@ def test_a_wire_streamed_value_and_a_typed_find_of_one_row_carry_one_observation
         with tx.wire.stream(mm.Account.where(mm.Account.id == 1), batch_size=1) as stream:
             streamed = next(iter(stream))
         found = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        return cast("Any", source_hint_of(streamed)), _observation(found)
+        return cast("Any", read_origin_of(streamed)), _observation(found)
 
     streamed_hint, found_hint = account_db(port).transact(fn)
     assert streamed_hint is not None
@@ -404,13 +404,13 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
     def typed(tx: Transaction) -> None:
         with tx.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
-        with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        with pytest.raises(KeyedWriteValueError, match="write-value-not-stored"):
             tx.update(root.edit(value=Decimal("1.00")))
 
     def wire(tx: Transaction) -> None:
         with tx.wire.stream(_milestone_query(), batch_size=2) as stream:
             root = next(iter(stream))
-        assert source_hint_of(root) is None
+        assert read_origin_of(root) is None
         with pytest.raises(instructions.WriteInstructionError, match="no such provenance"):
             tx.wire.update(root, {"value": "1.00"})
 

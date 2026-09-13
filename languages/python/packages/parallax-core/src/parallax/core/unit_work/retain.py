@@ -27,7 +27,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 
-__all__ = ["ParticipationToken", "RetainedObservation", "SourceHint"]
+__all__ = ["ParticipationToken", "ReadOrigin", "RetainedObservation"]
 
 
 class ParticipationToken:
@@ -90,7 +90,7 @@ class RetainedObservation:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceHint:
+class ReadOrigin:
     """What one source value privately retains about the read that produced it.
 
     Never authority of its own: it names the concrete Entity the read resolved
