@@ -39,9 +39,10 @@ The preorder is fixed: roots in result order; each projection's relationship
 views in accepted metadata declaration order; the broad view before that
 relationship's narrowed views; narrowed views by their canonical derived key;
 children in to-many result order. Nothing here sorts or unions to achieve it —
-the execution's view schema fixed both a projection's slot order and its merged
-node's before any row was converted, so a walk carries each written slot across
-through a precomputed translation and reads the merged layout off the schema.
+the execution's view schema fixed both a projection's slot order and its Root
+View node's before any row was converted. A walk carries each written slot
+across through a precomputed translation and reads the Root View layout off the
+schema.
 
 A repeated logical node reuses its first index, and every projection is walked
 exactly once, so a projection reached late still contributes its own children at
@@ -51,7 +52,7 @@ Before payload judgment, every occurrence claiming one logical key compares its
 exact Payload Witness in canonical source order. Unequal witnesses refuse the
 Snapshot with ``snapshot-projection-conflict``; equal witnesses decode once into
 one Page-owned Entity State reused by every Root View. Relationship views are
-unioned — a view any projection loaded is loaded on the merged node — with the
+unioned — a view any projection loaded is loaded on the resolved node — with the
 first projection to carry a given view key deciding that view's value.
 """
 
@@ -71,9 +72,11 @@ from parallax.snapshot.materialize._page import (
     Page,
     PageRows,
     StoredDataIssueInput,
+    dedupe_issues,
+    exact_stored_equal,
     page_rows,
 )
-from parallax.snapshot.materialize._views import MergedViewLayout
+from parallax.snapshot.materialize._views import RootViewLayout
 
 __all__ = ["SNAPSHOT_PROJECTION_CONFLICT", "RootView", "SnapshotConsistencyError"]
 
@@ -104,16 +107,11 @@ class SnapshotConsistencyError(RuntimeError):
 
 
 class RootView:
-    """One root's view over a sealed Page: allocation order, roots, and states.
-
-    ``order`` position *is* the allocation index the caller allocates in, so
-    nothing recomputes an index the writer already owns.
-    """
+    """One root's view over a sealed Page: allocation order, roots, and states."""
 
     __slots__ = (
         "_invalid_roots",
         "_issues",
-        "_logical",
         "_order",
         "_pin",
         "_resolved",
@@ -132,30 +130,71 @@ class RootView:
         self._rows = rows
         self._pin = rows.pin if pin is None else pin
         self._winner: list[int] = []
-        self._logical: dict[int, int] = {}
         self._resolved: dict[int, int] = {}
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._states: list[EntityState] = []
-        self._view_layouts: list[MergedViewLayout] = []
+        self._view_layouts: list[RootViewLayout] = []
         invalid_roots: list[InvalidRootInput] = []
-        winners: list[list[object]] = []
         root_indices: list[int | None] = []
-        roots = rows.roots if root_position is None else (rows.roots[root_position],)
-        for root in roots:
-            if isinstance(root, InvalidRootInput):
-                invalid_roots.append(root)
+        root_entries = (
+            tuple(enumerate(rows.roots))
+            if root_position is None
+            else ((root_position, rows.roots[root_position]),)
+        )
+        valid_roots: list[int] = []
+        for ordinal, root in root_entries:
+            if rows.keys[root] is None and any(
+                issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
+            ):
+                state = self._decode(root)
+                invalid_roots.append(InvalidRootInput(ordinal, state.findings))
                 root_indices.append(None)
             else:
-                self._walk(root, winners)
-                root_indices.append(self._resolved[root])
+                valid_roots.append(root)
+                root_indices.append(root)
+
+        winners: list[list[object]] = []
+        state_nodes: dict[int, int] = {}
+        reached: set[int] = set()
+        for root in valid_roots:
+            reachable = self._reachable([root])
+            reached.update(reachable)
+            occurrences: dict[int, list[int]] = {}
+            for projection in reachable:
+                occurrences.setdefault(rows.logical_ids[projection], []).append(projection)
+            root_states = {
+                logical: self._state(tuple(group)) for logical, group in occurrences.items()
+            }
+            for projection in reachable:
+                logical = rows.logical_ids[projection]
+                winner, state = root_states[logical]
+                index = state_nodes.get(id(state))
+                if index is None:
+                    index = len(self._winner)
+                    state_nodes[id(state)] = index
+                    self._winner.append(winner)
+                    self._states.append(state)
+                    self._issues.append(state.findings)
+                    root_view_layout = rows.schema.root_view(rows.layouts[winner])
+                    self._view_layouts.append(root_view_layout)
+                    winners.append([ABSENT] * len(root_view_layout.slots))
+                self._resolved[projection] = index
+                values = rows.view_rows[projection]
+                carried_views = winners[index]
+                to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+                for slot, value in enumerate(values):
+                    root_view_slot = to_root_view[slot]
+                    if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
+                        carried_views[root_view_slot] = value
+
         self._invalid_roots = tuple(invalid_roots)
-        self._roots = tuple(root_indices)
+        self._roots = tuple(None if root is None else self._resolved[root] for root in root_indices)
         self._order = tuple(rows.layouts[winner].concrete for winner in self._winner)
         self._view_rows = [tuple(self._allocation(value) for value in row) for row in winners]
-        _notify(rows.observer, "occurrences_reached", len(self._resolved))
+        _notify(rows.observer, "occurrences_reached", len(reached))
 
     # ----------------------------------------------------------------------- #
-    # The whole-graph surface.                                                  #
+    # The whole-Root-View surface.                                                  #
     # ----------------------------------------------------------------------- #
 
     @property
@@ -219,7 +258,7 @@ class RootView:
         """The findings from ``node``'s one Page-owned payload judgment."""
         return self._issues[node]
 
-    def view_layout(self, node: int) -> MergedViewLayout:
+    def view_layout(self, node: int) -> RootViewLayout:
         """``node``'s relationship view slots, in canonical order."""
         return self._view_layouts[node]
 
@@ -238,62 +277,51 @@ class RootView:
     # Pass 1.                                                                   #
     # ----------------------------------------------------------------------- #
 
-    def _walk(self, projection: int, winners: list[list[object]]) -> None:
-        if projection in self._resolved:
-            return
-        rows = self._rows
-        logical = rows.logical_ids[projection]
-        index = self._logical.get(logical)
-        if index is None:
-            index = len(self._winner)
-            self._logical[logical] = index
-            winner, state = self._state(logical, projection)
-            self._winner.append(winner)
-            self._states.append(state)
-            self._issues.append(state.findings)
-            merged = rows.schema.merged(rows.layouts[winner])
-            self._view_layouts.append(merged)
-            winners.append([ABSENT] * len(merged.slots))
-        self._resolved[projection] = index
-        values = rows.view_rows[projection]
-        carried_views = winners[index]
-        to_merged = self._view_layouts[index].to_merged[rows.sources[projection]]
-        for slot, value in enumerate(values):
-            merged_slot = to_merged[slot]
-            if value is not ABSENT and carried_views[merged_slot] is ABSENT:
-                carried_views[merged_slot] = value
-        for value in values:
-            for child in _edges(value):
-                self._walk(child, winners)
+    def _reachable(self, roots: list[int]) -> tuple[int, ...]:
+        """Projection preorder reachable from this view's roots alone."""
+        order: list[int] = []
+        seen: set[int] = set()
 
-    def _state(self, logical: int, projection: int) -> tuple[int, EntityState]:
+        def walk(projection: int) -> None:
+            if projection in seen:
+                return
+            seen.add(projection)
+            order.append(projection)
+            for value in self._rows.view_rows[projection]:
+                for child in _edges(value):
+                    walk(child)
+
+        for root in roots:
+            walk(root)
+        return tuple(order)
+
+    def _decode(self, projection: int) -> EntityState:
         rows = self._rows
-        key = rows.keys[projection]
-        if key is None:
-            member_row, findings = rows.decoders[projection]()
-            if rows.issues[projection]:
-                findings = tuple(dict.fromkeys((*findings, *rows.issues[projection])))
-            _notify(rows.observer, "states_decoded")
-            return projection, EntityState(member_row, findings)
-        claimed = rows.claims[logical]
-        occurrences = (claimed,) if isinstance(claimed, int) else claimed
-        canonical = occurrences[0]
-        state = rows.judged_states.get(key)
-        if state is not None:
-            _notify(rows.observer, "states_shared")
-            return canonical, state
-        if key not in rows.validated_keys:
-            _notify(rows.observer, "witnesses_compared", max(0, len(occurrences) - 1))
-            for candidate in occurrences:
-                if candidate != canonical and not _same_witness(rows, canonical, candidate):
-                    raise self._conflict(canonical, candidate)
-            rows.validated_keys.add(key)
-        member_row, findings = rows.decoders[canonical]()
-        if rows.issues[canonical]:
-            findings = tuple(dict.fromkeys((*findings, *rows.issues[canonical])))
-        state = EntityState(member_row, findings)
-        rows.judged_states[key] = state
+        member_row, findings = rows.decoders[projection]()
+        findings = dedupe_issues((*findings, *rows.issues[projection]))
         _notify(rows.observer, "states_decoded")
+        return EntityState(member_row, findings)
+
+    def _state(self, occurrences: tuple[int, ...]) -> tuple[int, EntityState]:
+        rows = self._rows
+        canonical, *candidates = sorted(
+            occurrences,
+            key=lambda projection: (rows.sources[projection], rows.source_ordinals[projection]),
+        )
+        key = rows.keys[canonical]
+        if key is None:
+            return canonical, self._decode(canonical)
+        if candidates:
+            _notify(rows.observer, "witnesses_compared", len(candidates))
+        for candidate in candidates:
+            if not _same_witness(rows, canonical, candidate):
+                raise self._conflict(canonical, candidate)
+        for stored_projection, state in rows.judged_states.get(key, ()):
+            if _same_witness(rows, canonical, stored_projection):
+                _notify(rows.observer, "states_shared")
+                return canonical, state
+        state = self._decode(canonical)
+        rows.judged_states.setdefault(key, []).append((canonical, state))
         return canonical, state
 
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
@@ -307,7 +335,9 @@ class RootView:
         differing = tuple(
             member
             for member in dict.fromkeys((*left_layout.members, *right_layout.members))
-            if left_by_member.get(member, ABSENT) != right_by_member.get(member, ABSENT)
+            if not exact_stored_equal(
+                left_by_member.get(member, ABSENT), right_by_member.get(member, ABSENT)
+            )
         )
         logical_key = rows.keys[left]
         primary_key = None if logical_key is None else logical_key.primary_key
@@ -374,5 +404,5 @@ def _same_witness(rows: PageRows, left: int, right: int) -> bool:
     return (
         left_layout.concrete == right_layout.concrete
         and left_layout.members == right_layout.members
-        and rows.witnesses[left] == rows.witnesses[right]
+        and exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
     )

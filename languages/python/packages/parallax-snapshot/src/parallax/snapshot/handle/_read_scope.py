@@ -86,8 +86,8 @@ from parallax.snapshot.handle._connection_lifecycle import (
     exit_connection,
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._materialization import Materializer
-from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan, read_delivery_page
+from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
+from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
@@ -394,14 +394,14 @@ class ReadScope:
 
         def body(calls: DatabaseCallScope, inputs: ReadInputs) -> DeliveryPage:
             return Materializer().read_page(
-                lambda _observer: read_delivery_page(
+                StreamPageRead(
                     page_plan,
                     at,
                     model,
                     inputs.connection,
-                    preference=inputs.preference,
-                    ledger=inputs.ledger,
-                    calls=calls,
+                    inputs.preference,
+                    inputs.ledger,
+                    calls,
                 )
             )
 

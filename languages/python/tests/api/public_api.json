@@ -161,7 +161,6 @@
     "PoolMetricsSource",
     "PoolSample",
     "PoolUnavailable",
-    "PositionalRow",
     "RESOURCE_LOGGER_NAME",
     "ResourceCondition",
     "Returned",

@@ -51,8 +51,8 @@ each root of a scan stands at, or its absence for a root at the Page's own pin.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
@@ -85,6 +85,8 @@ __all__ = [
     "RelationshipViewKey",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
+    "dedupe_issues",
+    "exact_stored_equal",
     "page_edges",
     "page_rows",
 ]
@@ -181,10 +183,9 @@ class PageRows:
     sources: tuple[SourceLevel, ...]
     view_rows: tuple[tuple[object, ...], ...]
     schema: ViewSchema
-    roots: tuple[int | InvalidRootInput, ...]
+    roots: tuple[int, ...]
     pin: Pin
-    judged_states: dict[LogicalKey, EntityState]
-    validated_keys: set[LogicalKey]
+    judged_states: dict[LogicalKey, list[tuple[int, EntityState]]]
     observer: object | None = None
     witnesses: tuple[object, ...] = ()
     source_ordinals: tuple[int, ...] = ()
@@ -230,8 +231,8 @@ class Page:
         return len(self._rows.roots)
 
     @property
-    def judged_states(self) -> dict[LogicalKey, EntityState]:
-        """The states judged so far, shared for this Page's lifetime."""
+    def judged_states(self) -> dict[LogicalKey, list[tuple[int, EntityState]]]:
+        """The witness-distinct states judged so far for this Page."""
         return self._rows.judged_states
 
     @property
@@ -262,7 +263,7 @@ def page_edges(page: Page, declaring: EntityMetadata | None) -> Iterator[Edge | 
     """
     rows = page_rows(page)
     for root in rows.roots:
-        if declaring is None or isinstance(root, InvalidRootInput):
+        if declaring is None:
             yield None
             continue
         yield _root_edge(declaring, rows, root)
@@ -486,15 +487,6 @@ class PageBuilder:
         count = len(self._layouts)
         for root in roots:
             _require_index(root, count, "a root")
-        for root in dict.fromkeys(roots):
-            if self._keys[root] is not None:
-                continue
-            member_values, issues = self._decoders[root]()
-            if self._issues[root]:
-                issues = tuple(dict.fromkeys((*issues, *self._issues[root])))
-            self._member_rows[root] = member_values
-            self._issues[root] = issues
-            self._decoders[root] = lambda values=member_values, held=issues: (values, held)
         claims: list[list[int]] = [[] for _ in self._first]
         for projection, logical in enumerate(self._logical_ids):
             claims[logical].append(projection)
@@ -507,15 +499,9 @@ class PageBuilder:
             sources=tuple(self._sources),
             view_rows=tuple(tuple(row) for row in self._views),
             schema=self._schema,
-            roots=tuple(
-                InvalidRootInput(ordinal, self._issues[root])
-                if _keyless(self._issues[root])
-                else root
-                for ordinal, root in enumerate(roots)
-            ),
+            roots=roots,
             pin=pin,
             judged_states={},
-            validated_keys=set(),
             observer=self._observer,
             witnesses=tuple(self._witnesses),
             source_ordinals=tuple(position[1] for position in self._occurrence_positions),
@@ -616,5 +602,52 @@ def _require_index(value: object, count: int, holder: str) -> None:
         )
     if not 0 <= value < count:
         raise ValueError(
-            f"{holder} names projection {value}, outside this graph's {count} projections"
+            f"{holder} names projection {value}, outside this Page's {count} projections"
         )
+
+
+def exact_stored_equal(left: object, right: object) -> bool:
+    """Type-sensitive structural equality for provider-normalized stored values."""
+    if type(left) is not type(right):
+        return False
+    if is_dataclass(left) and not isinstance(left, type):
+        return all(
+            exact_stored_equal(getattr(left, item.name), getattr(right, item.name))
+            for item in fields(left)
+        )
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        left_mapping = cast("Mapping[object, object]", left)
+        right_mapping = cast("Mapping[object, object]", right)
+        if len(left_mapping) != len(right_mapping) or left_mapping.keys() != right_mapping.keys():
+            return False
+        return all(
+            exact_stored_equal(left_mapping[key], right_mapping[key]) for key in left_mapping
+        )
+    if isinstance(left, Sequence) and not isinstance(left, (str, bytes, bytearray)):
+        values = cast("Sequence[object]", left)
+        other = cast("Sequence[object]", right)
+        return len(values) == len(other) and all(
+            exact_stored_equal(one, two) for one, two in zip(values, other, strict=True)
+        )
+    return cast("object", left) == right
+
+
+def dedupe_issues(
+    issues: Sequence[StoredDataIssueInput],
+) -> tuple[StoredDataIssueInput, ...]:
+    """Remove equal issues in first-seen order without requiring hashable evidence."""
+    unique: list[StoredDataIssueInput] = []
+    for issue in issues:
+        if not any(_same_issue(issue, held) for held in unique):
+            unique.append(issue)
+    return tuple(unique)
+
+
+def _same_issue(left: StoredDataIssueInput, right: StoredDataIssueInput) -> bool:
+    return (
+        left.code == right.code
+        and left.entity == right.entity
+        and left.member == right.member
+        and left.path == right.path
+        and exact_stored_equal(left.stored_value, right.stored_value)
+    )

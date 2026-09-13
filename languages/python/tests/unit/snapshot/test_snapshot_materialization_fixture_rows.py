@@ -20,7 +20,13 @@ def _rows(layout: Layout) -> tuple[tuple[MappingRow, ...], ...]:
     model = read_projection(prepare_model(workload(layout), edition=f"fixture-rows-{layout}")).model
     plan = fetch_plan(query(layout, meta), meta)
     reads = compiled_levels(layout, plan, meta)
-    return rows_per_level(layout, model, plan, reads)
+    positional = rows_per_level(layout, model, plan, reads)
+    return tuple(
+        ()
+        if read is None
+        else tuple(dict(zip(read.result_keys, row, strict=True)) for row in level_rows)
+        for read, level_rows in zip(reads, positional, strict=True)
+    )
 
 
 # The stress fixtures author only Owner id/name/favoriteId and Node

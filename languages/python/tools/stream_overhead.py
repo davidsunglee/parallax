@@ -1,7 +1,7 @@
 """What a streamed delivery holds, and what the page size buys, in bytes and time.
 
 `m-snapshot-read` bounds the Parallax-owned working set of a streamed read at
-`O(P_B + G_max)` — one page's sealed graph, plus the merge and publication of the
+`O(P_B + G_max)` — one sealed Page, plus Root View judgment and publication of the
 one root the caller is holding — and names three exclusions. This measures both
 halves of that on one machine: the working set while a delivery is running, and
 the growth the exclusions decline to prevent, read beside it so the bound has a
@@ -30,7 +30,7 @@ port would grow on its own and would be most of every number below.
 claim about the caller's program rather than about Parallax. The retaining arm
 prices one root — what a caller pays to keep what it was handed — and is what
 turns "the delivery holds a constant" into a statement with a unit: the constant
-is worth so many roots of this graph.
+is worth so many roots of this shape.
 
 Run it through `just python-report-stream-overhead`.
 """
@@ -106,8 +106,8 @@ PAGE_SIZES: Final = _WORKLOAD.page_sizes
 """Every delivery size the benchmark fixture declares."""
 
 FANOUT: Final = _WORKLOAD.fanout
-"""Included children per root, so every page graph carries relationship fan-out
-and the root the caller holds is a graph rather than a row."""
+"""Included children per root, so every Page carries relationship fan-out
+and the root the caller holds is a value tree rather than a row."""
 
 ROOTS: Final = max(_WORKLOAD.roots, 3 * max(PAGE_SIZES))
 """Enough fixture-generated roots to sample inside the third declared-size
@@ -135,7 +135,7 @@ direction only — nothing here is enforced against elapsed time."""
 
 RETAINED_AT: Final = (20, 200)
 """Result sizes the retaining control is priced from: the caller-retention
-exclusion, whose slope is what one root of this graph costs."""
+exclusion, whose slope is what one root of this shape costs."""
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -312,7 +312,7 @@ LANES: Final = (Lane("typed", _typed), Lane("wire", _wire))
 
 def paused(lane: Lane, total: int, *, batch_size: int) -> Seam:
     """A delivery of ``total`` roots sampled inside its third page, with that
-    page's graph sealed, that root published, and the caller still holding it."""
+    Page sealed, that root published, and the caller still holding it."""
     at = sample_after(batch_size)
 
     def seam(sample: Callable[[], None]) -> None:
@@ -380,7 +380,7 @@ def read(lane: Lane, batch_size: int) -> Reading:
 
 
 def per_root_price(lane: Lane) -> float:
-    """Bytes one retained root of this graph costs, from the caller-retention
+    """Bytes one retained root of this shape costs, from the caller-retention
     exclusion's own slope."""
     smaller, larger = RETAINED_AT
     low = retained(draining(lane, smaller, batch_size=8, retaining=True))
@@ -419,7 +419,7 @@ def _lane_lines(lane: Lane, readings: dict[int, Reading], price: float) -> list[
         )
     lines.append("")
     lines.append(
-        f"  one retained root of this graph = {price:,.0f} B, so the `roots` column is "
+        f"  one retained root of this shape = {price:,.0f} B, so the `roots` column is "
         f"what ten times the result moved the working set by, in roots"
     )
     return lines

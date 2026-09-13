@@ -21,7 +21,19 @@ import pytest
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr, deep_fetch
+from parallax.core import (
+    LATEST,
+    ONE_TO_MANY,
+    TX_TIME,
+    Attr,
+    DomainModel,
+    Entity,
+    Rel,
+    ValueObject,
+    attr,
+    deep_fetch,
+    rel,
+)
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -33,6 +45,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -128,13 +141,26 @@ class ProfileOwner(Entity, table="profile_owner", namespace="parallax.compatibil
 _PROFILE_OWNER_MODEL = DomainModel(ProfileOwner)
 
 
-def _rows(page: Page) -> PageRows:
-    """The sealed arrays behind ``graph``.
+class EncodedParent(Entity, table="encoded_parent", namespace="parallax.compatibility"):
+    id: Attr[bytes] = attr(primary_key=True)
+    children: Rel[tuple[EncodedChild, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "parent_id"))
 
-    This suite grades what the EXECUTOR built — fan-back, guards, and milestone
-    partitioning — so it reads the graph's own rows rather than a merge's view
-    of them, which would fold exactly the duplicates a fan-back has to keep
-    apart.
+
+class EncodedChild(Entity, table="encoded_child", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    parent_id: Attr[bytes]
+    parent: Rel[EncodedParent | None] = rel(reverse_of="children")
+
+
+_ENCODED_RELATIONSHIP_MODEL = DomainModel(EncodedParent, EncodedChild)
+
+
+def _rows(page: Page) -> PageRows:
+    """The sealed Page arrays behind an executor result.
+
+    This suite grades fan-back, guards, and the flat history order directly from
+    Page storage; a Root View would intentionally fold the duplicate occurrences
+    those executor assertions need to distinguish.
     """
     return page_rows(page)
 
@@ -249,6 +275,38 @@ def test_find_collects_the_whole_pages_claims_before_decoding_payloads(
     assert decoded == 2
 
 
+def test_a_later_root_document_is_not_classified_before_its_root_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoded = 0
+    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        nonlocal decoded
+        decoded += 1
+        return decode(*args, **kwargs)
+
+    monkeypatch.setattr(_convert, "_decode_row", counting)
+    result = _find(
+        deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
+        model_of(_PROFILE_OWNER_MODEL),
+        QueuePort(
+            [
+                [
+                    {"id": 1, "profile": {"label": "ready"}},
+                    {"id": 2, "profile": {"label": 7}},
+                ]
+            ]
+        ),
+    )
+
+    assert decoded == 0
+    RootView(result.page, 0)
+    assert decoded == 1
+    RootView(result.page, 1)
+    assert decoded == 2
+
+
 class PipelineQueuePort(QueuePort):
     def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         super().__init__(responses)
@@ -289,6 +347,38 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     rows = _rows(result.page)
     items = _refs(_view(rows, _root(result), "items"))
     assert [_value(rows, ref, "OrderItem", "id") for ref in items] == [11]
+
+
+def test_encoded_relationship_keys_use_decoded_identity_for_gather_and_fanback() -> None:
+    port = QueuePort(
+        [
+            [{"id_hex": "0a1b"}],
+            [{"id": 7, "parent_id_hex": "0a1b"}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "EncodedParent",
+            "predicate": {"all": {}},
+            "includes": [
+                {
+                    "segments": [
+                        {"rel": "EncodedParent.children"},
+                        {"rel": "EncodedChild.parent"},
+                    ]
+                }
+            ],
+        }
+    )
+
+    result = _find(query, model_of(_ENCODED_RELATIONSHIP_MODEL), port)
+    rows = _rows(result.page)
+    root = _root(result)
+    (child,) = _refs(_view(rows, root, "children"))
+
+    assert port.executed[1][1][-1] == [b"\n\x1b"]
+    assert _value(rows, root, "EncodedParent", "id") == b"\n\x1b"
+    assert _view(rows, child, "parent") == root
 
 
 def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
@@ -511,7 +601,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     )
 
 
-def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:
+def test_find_history_returns_chronologically_ordered_edge_pinned_roots() -> None:
     port = QueuePort(
         [
             [
@@ -557,11 +647,10 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
     ]
 
 
-def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph() -> None:
-    # Two DIFFERENT physical InvoiceLine rows (ids 1000 and 2000) sharing the
-    # exact same Transaction-Time edge (in_z) belong to the SAME milestone graph —
-    # the "edge already seen" branch of the grouping loop (as opposed to the
-    # "first row at this edge" branch the single-row-per-edge test above pins).
+def test_find_history_keeps_distinct_roots_that_share_one_edge() -> None:
+    # Two different physical rows may carry the same Transaction-Time edge;
+    # the flat result preserves both database-arrival positions without creating
+    # an edge-keyed materialization partition.
     port = QueuePort(
         [
             [
@@ -624,10 +713,9 @@ def test_find_history_keeps_an_undecodable_milestone_as_an_edgeless_root() -> No
     assert isinstance(verdict, ClassifiedRoot)
 
 
-def test_find_history_keeps_a_root_whose_own_key_never_decoded_in_band() -> None:
-    # The arm of the shared publication gate with no converted node behind the
-    # result position at all: a milestone read has no in-band channel to publish a
-    # verdict through, so it refuses the whole batch before partitioning it.
+def test_find_history_keeps_a_root_whose_own_key_never_decoded() -> None:
+    # A keyless milestone remains a Page root until that result position is
+    # requested, where its lazy root view publishes one invalid-root verdict.
     port = QueuePort(
         [
             [
@@ -649,7 +737,9 @@ def test_find_history_keeps_a_root_whose_own_key_never_decoded_in_band() -> None
         }
     )
     result = _find_history(query, INVOICE, port)
-    assert isinstance(_rows(result.page).roots[0], InvalidRootInput)
+    assert _rows(result.page).roots == (0,)
+    (invalid,) = RootView(result.page, 0).invalid_roots
+    assert invalid.issues[0].code == "stored-data-primary-key-null"
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -1226,7 +1316,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The view-slot seam: a plan in, a slot table out, and the schema every graph  #
+# The view-slot seam: a plan in, a slot table out, and one Page schema.        #
 # of one execution is laid out by.                                            #
 # --------------------------------------------------------------------------- #
 def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[ChildSlot, ...], ...]:
@@ -1358,7 +1448,7 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     # A broad path and a guarded sibling are distinct hops that attach under one
     # name, so each runs its own statement and each writes the same slot. The
     # slot retains the LAST of them — two projections of one row, and the plan's
-    # own order decides which the graph holds.
+    # own order decides which node the result publishes.
     port = QueuePort(
         [
             [{**_ANIMAL_ROW, "id": 1, "name": "Rex", "bark_volume": 7, "kind": "dog"}],
@@ -1388,10 +1478,9 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     assert _view(rows, _valid_root(rows), "owner") == people[-1]
 
 
-def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> None:
-    # A schema is a fact about the PLAN, so partitioning one batch's rows into
-    # milestones derives none: the staging graph's own schema is what every
-    # milestone builder lays its imported rows out against.
+def test_every_history_root_of_one_read_uses_the_same_page_schema() -> None:
+    # A schema is a fact about the plan. Distinct Root Views over the flat
+    # history Page therefore expose the same execution-owned layout object.
     port = QueuePort(
         [
             [
@@ -1421,7 +1510,9 @@ def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> No
     )
     result = _find_history(query, INVOICE, port)
     assert len(_rows(result.page).roots) == 2
-    assert _rows(result.page).schema is _rows(result.page).schema
+    first = RootView(result.page, 0)
+    second = RootView(result.page, 1)
+    assert first.view_layout(0) is second.view_layout(0)
 
 
 # --------------------------------------------------------------------------- #

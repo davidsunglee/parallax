@@ -100,7 +100,6 @@ from parallax.core.db_port import (
     DatabaseConnection,
     IsolationLevel,
     MappingRow,
-    PositionalRow,
 )
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.metamodel import (
@@ -3171,7 +3170,7 @@ def read_table_state(
         projection = ActualWireProjection(model)
         keys = tuple(slot.column.name for slot in layout.columns)
         state[layout.table.name] = [
-            projection.table_row(layout, PositionalRow(keys, row)) for row in rows
+            projection.table_row(layout, dict(zip(keys, row, strict=True))) for row in rows
         ]
     return state
 

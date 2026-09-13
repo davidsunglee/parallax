@@ -42,7 +42,7 @@ by a transaction outcome — is an instance shared with no other invocation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -111,7 +111,6 @@ __all__ = [
     "PoolMetricsSource",
     "PoolSample",
     "PoolUnavailable",
-    "PositionalRow",
     "ResourceCondition",
     "Returned",
     "RollbackFailed",
@@ -131,36 +130,6 @@ Bind = object
 # A managed result row in statement select-list order.
 Row = tuple[object, ...]
 MappingRow = Mapping[str, object]
-
-
-class PositionalRow(Mapping[str, object]):
-    """A no-copy name-keyed view over one positional provider row."""
-
-    __slots__ = ("_keys", "_row")
-
-    def __init__(self, keys: Sequence[str], row: Row) -> None:
-        frozen_keys = tuple(keys)
-        if len(frozen_keys) != len(row):
-            raise ValueError(
-                f"result key count {len(frozen_keys)} does not match row arity {len(row)}"
-            )
-        for index, key in enumerate(frozen_keys):
-            if any(frozen_keys[prior] == key for prior in range(index)):
-                raise ValueError(f"duplicate result key {key!r}")
-        self._keys = frozen_keys
-        self._row = row
-
-    def __getitem__(self, key: str) -> object:
-        try:
-            return self._row[self._keys.index(key)]
-        except ValueError as error:
-            raise KeyError(key) from error
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._keys)
-
-    def __len__(self) -> int:
-        return len(self._keys)
 
 
 @dataclass(frozen=True, slots=True)

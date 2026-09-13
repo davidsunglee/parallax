@@ -361,7 +361,7 @@ def test_the_package_exports_only_statement_and_error_values() -> None:
     assert not hasattr(sql_gen, "AttributeReadContract")
     assert not hasattr(sql_gen, "CompiledPredicate")
     assert not hasattr(sql_gen, "CompiledRead")
-    assert not hasattr(sql_gen, "MaterializedReadRow")
+    assert not hasattr(sql_gen, "PreparedRow")
     assert not hasattr(sql_gen, "compile_read")
     assert not hasattr(sql_gen, "compile_write_predicate")
 
@@ -396,6 +396,18 @@ def test_compiled_read_is_an_equatable_hashable_value() -> None:
     assert first != compile_read(oa.NoneOp(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
+def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() -> None:
+    compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    materializer = cast("Any", compiled)._materializer
+
+    with pytest.raises(ValueError, match="duplicate result key 'id'"):
+        dataclasses.replace(materializer, result_keys=("id", "id"))
+    with pytest.raises(ValueError, match="does not match row arity"):
+        materializer.header(())
+    with pytest.raises(ValueError, match="does not match row arity"):
+        materializer.identity_header(())
+
+
 def test_compiled_read_repr_is_exact_and_stable() -> None:
     # The default generated dataclass repr, pinned exactly. The materializer is a
     # stored FIELD, not a closure, which is why it reprs at all — a stored
@@ -412,7 +424,8 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
         "_materializer=RowMaterializer(stages=RowStages(resolve=None, shared_document=None, "
         f"direct_documents=None), fallback_entity={order}, resolvable=({order},), "
-        "coordinate_reads=()))"
+        "coordinate_reads=(), result_keys=('id', 'name', 'sku', 'qty', "
+        "'price', 'active', 'ordered_on')))"
     )
 
 

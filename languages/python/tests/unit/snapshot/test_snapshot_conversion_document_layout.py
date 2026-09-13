@@ -43,7 +43,7 @@ from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit.snapshot._snapshot_graph_support import documents_of, rendered_members
+from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()
@@ -63,7 +63,9 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
     prepared = bind(CatalogedModel(model), compiled)
     builder = PageBuilder(ViewSchema.of())
-    index = prepared.convert(prepared.materialize(stored), builder, source=ROOT_LEVEL)
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
+    )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)

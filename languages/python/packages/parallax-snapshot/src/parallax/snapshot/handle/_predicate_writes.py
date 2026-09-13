@@ -47,7 +47,7 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
@@ -118,6 +118,7 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
+from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._read import (
     RowPublication,
     entity_read_lock,
@@ -126,6 +127,7 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import reject_temporal_delete, validate_window
+from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._page import ABSENT
 
 # The predicate mutations that carry Assignments; the rest take none at all and
@@ -558,21 +560,27 @@ def _materialize_predicate_write(
                 result_form="row",
                 lock=lock,
             )
-            driver_rows = execute_read(conn, compiled, read)
-            return compiled, publishable_rows(model, compiled, driver_rows, pin=Pin())
+            return compiled, publishable_rows(
+                model,
+                compiled,
+                lambda: execute_read(conn, compiled, read),
+                pin=Pin(),
+            )
 
     compiled, stage = uow.read(resolve)
     structured_column = compiled.structured_column
-    resolved = stage.rows
+    resolved = stage.documents
     if not resolved:
         return
-    rows = [
-        EntityStateRow.over_members(
-            stage.root.layout(root), stage.root.member_values(root), absent=ABSENT
-        )
-        for root in stage.root.roots
-        if root is not None
-    ]
+
+    def state_row(root: RootView, _position: int) -> Iterator[EntityStateRow]:
+        (node,) = root.roots
+        if node is not None:
+            yield EntityStateRow.over_members(
+                root.layout(node), root.member_values(node), absent=ABSENT
+            )
+
+    rows = list(Materializer().roots(stage.page, state_row))
     if len(rows) != len(
         resolved
     ):  # pragma: no cover - publishable staging has one valid root per row
@@ -626,7 +634,7 @@ def _materialize_predicate_write(
     attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for materialized, row in zip(resolved, rows, strict=True):
+    for document, row in zip(resolved, rows, strict=True):
         if assignment_bearing and _is_no_op_assignment(
             shape, member_columns, comparison_assignments, row
         ):
@@ -638,7 +646,7 @@ def _materialize_predicate_write(
         for name in value_object_names:
             value_object_builders[name].append(payload[name])
         if structured_column is not None:
-            document_builder.append(materialized.document)
+            document_builder.append(document)
         select_state(row, TemporalObservation(predecessor=PredecessorRow(payload)))
         matched += 1
     if matched == 0:

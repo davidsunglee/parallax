@@ -56,79 +56,42 @@ with cross-language reach, so neither belongs in an incidental fix.
 `lock == "locking"`, matching the append site's own check, and an ordered or
 limited union wraps as a derived table: `m-inheritance-134` / `-135`.)*
 
-### D-67 — A deep-fetch or snapshot CHILD level's graph node shape is authored per projection, and production materializes one merged, narrowed node
+### D-67 — A CHILD-level result node is authored per projection while one Root View publishes one logical node
 
 *Medium — a corpus-versus-production divergence with no defect on either side.*
 Relates to `core/spec/m-case-format.md` *Read targeting*,
-`parallax.snapshot.materialize`, the conformance engine's graph lane, and the
-reference harness's own deep-fetch grader.
+`parallax.snapshot.materialize`, and the reference harness deep-fetch grader.
 
-**What.** `then.graph` now grades the graph production materializes, and eleven
-cases disagree with it structurally: `m-inheritance-065` / `-066` / `-067` /
-`-068` / `-073` / `-074` / `-075` / `-076` / `-077` / `-078` and
-`m-snapshot-read-012`. Three divergences, each an instance of one difference —
-the corpus authors a child level's nodes PER PROJECTION and production
-materializes one node per LOGICAL ROW:
+**What.** Eleven `then.graph` cases author a child node separately for each
+projection: `m-inheritance-065` / `-066` / `-067` / `-068` / `-073` /
+`-074` / `-075` / `-076` / `-077` / `-078` and
+`m-snapshot-read-012`. A production Root View instead allocates one node per
+logical key reached by that root, narrows it to its resolved concrete Entity,
+and lets every route in that root reference the same node. Separate result roots
+still construct separate nodes, even when their Page borrows one exactly equal
+Entity State for both.
 
-- a multi-concrete level's node is authored as the unnarrowed concrete superset
-  with a sibling branch's `null` padding, while a materialized node carries its
-  own variant's declared members alone;
-- `familyVariant` is authored by the VIEW that reached the node — present on a
-  polymorphic view, absent on a single-concrete narrowed one — while a
-  materialized node's variant spelling is its own, the same through every view;
-- one logical row reached through two views is authored twice with different
-  values, and materializes as ONE shared node, so both positions render that
-  node's own merged members rather than each view's own projection.
+The remaining mismatches are consequently about the authored result shape, not
+a removed merge stage: a multi-concrete projection carries sibling-null padding;
+`familyVariant` is authored by the view that reached the node; and a logical row
+reached through two views may be authored twice with projection-specific values.
+Production publishes the concrete node shape and its concrete variant spelling
+through every route in that Root View.
 
-**Why it is deferred rather than fixed.** `m-case-format` *Read targeting*
-already names this as open: the per-variant node shape "is scoped, for now, to a
-read case's own top-level `then.graph` leaves", and "a deep-fetch or snapshot
-CHILD level's graph node shape (`m-snapshot-read-012`'s narrowed-vs-broad
-diamond, for example) is a distinct, already-established convention this decision
-does not touch; reconciling the two … is left open for a follow-up." Reconciling
-it moves the corpus AND the reference harness's deep-fetch grader
-(`reference_harness.object_query_oracle.graph.assemble_graph`), whose node
-registry is deliberately keyed per view, so it is a core-specification decision
-rather than an adapter one. Until it is taken, the Python run sweep grades
-everything else these eleven assert — every level's SQL and binds, the
-round-trip count — and withholds the `then.graph` comparison alone
-(`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`).
+**Why it is deferred rather than fixed.** `m-case-format` deliberately scopes
+its per-variant convention to a read case's own top-level `then.graph` leaves and
+leaves CHILD-level reconciliation open. Changing it moves the corpus and the
+reference harness oracle together, while changing production would contradict
+`m-snapshot-read` root-local identity. The Python run sweep therefore continues
+to grade SQL, binds, and round trips while withholding only the known result-
+shape comparison for these cases. The two multi-subtype path-root-guard cases
+(`m-inheritance-073` and `-077`) still have no typed authoring spelling, so their
+result shape cannot be covered by an API story until that separate authoring
+limit changes.
 
-**What that leaves ungraded.** Nine of the eleven carry a graph story
-(`parallax.conformance.graph_stories`), so `tests/api/test_story_run.py` still
-walks the same merged graph through the typed developer surface against a real
-database, and only the wire rendering goes ungraded. `m-inheritance-073` and
-`-077` carry no story, and cannot: each needs a path-root guard resolving to two
-or more concrete subtypes (`to: [Cat, Dog]` for both, plus `to: [Pet]` for `-073`
-and `to: [Dog, WildBoar]` for `-077`), and the idiomatic developer surface
-authors a path-root guard only by reaching an inherited relationship through ONE
-subtype class (`Dog.owner`) — `ObjectQuery._source_guard`
-(`parallax.core.object_query._fluent`) and `RelationshipPath.source`
-(`parallax.core.entity._expressions`) admit no multi-subtype union. This is not an unwritten story but the same structural
-non-fit `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for
-both ids (`_ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON`), so no Python
-gate observes their graph at all, and none can be added in this shape. The
-reference harness proves the goldens self-consistent against fixture data; it
-grades no language implementation, so it covers none of this either.
-
-**What COR-83 does not settle.** COR-83 ("Stream deep fetch reads at fixed
-memory") is likely to remove the graph-level node-uniqueness requirement
-(`parallax.snapshot.materialize._merge`) so each route in memory carries its own
-full deep-fetch tree. That bears on divergence (c) alone — one logical row
-reached twice sharing a node — and only on `m-inheritance-078`, the one case
-among the eleven that reaches a row a second time by revisiting an ANCESTOR
-(`m-snapshot-read-012`'s diamond reaches its shared row through two independent
-views instead, and the include tree renders it in full at both positions either
-way). Divergences (a) and (b) are decided
-upstream of any merge — by `convert_row`'s per-row, per-concrete-entity
-narrowing (`parallax.snapshot.materialize._convert`) and by
-`_family_variant`'s per-node, per-concrete-entity spelling
-(`parallax.snapshot.materialize._wire`) — and neither reads whether
-the resulting node was merged with another, so removing the merge leaves all
-nine (a)/(b) cases diverging exactly as they do now. `m-inheritance-078` itself
-carries an (a) mismatch in its own `pets` child level besides its (c) sharing, so
-even it would not go green on the merge change alone. D-67 therefore survives
-COR-83 and still needs the `m-case-format` reconciliation it names.
+**When.** With the cross-language case-format decision that chooses whether
+CHILD-level expected nodes describe projection shapes or root-local published
+nodes, updating the oracle and all eleven cases in the same change.
 
 ### D-69 — A hand-written skip-reason bucket states a cause untrue of some member, once per review round
 
@@ -220,25 +183,27 @@ whether the framework is permitted to issue a read on a keyed write's behalf,
 which every other rule in this area says it is not. The gap predates the write
 surface's own rework and no acceptance criterion reaches it.
 
-### D-72 — Milestone-set staging and predicate-write staging still refuse an issue-bearing read instead of classifying it
+### D-72 — Predicate-write staging still refuses an issue-bearing read instead of classifying it
 
-*Medium — one stored state is classified on the ordinary read lane and refused on
-two others.* Relates to `parallax.snapshot.materialize` staging seams,
+*Medium — an invalid stored row is classified by read surfaces but refused by a
+write-only staging lane.* Relates to `parallax.snapshot.materialize` staging and
 `core/spec/m-snapshot-read.md`.
 
-**What.** A read whose stored state contradicts the declared model is classified
-at the result root and published as an ordinary union member. Two staging paths
-keep the older shared publication refusal instead: milestone-set staging, which
-must decode a temporal edge before it can partition, and predicate-write staging,
-which has no channel to put a classified verdict on. So the same row reads as a
-classified result through one door and raises through the other two.
+**What.** Ordinary eager, streamed, values, and milestone-set reads classify
+invalid stored state at the individual Root View. A milestone root whose edge
+cannot decode remains an in-band `InvalidData` at its arrival ordinal and carries
+no edge; it is not partitioned or refused as a whole read. Predicate-write
+staging is the one remaining refusing lane because a write has no result union
+in which to publish a classified row.
 
-**Why it is deferred rather than fixed.** Converting either now would move a
-refusal without giving the verdict anywhere to go: a milestone partition needs an
-edge it cannot decode from an unhydratable row, and a predicate-selected write
-needs a decision about what selecting an invalid row even means, which is a write
-contract rather than a read one. Only the values lane was required, and it was
-converted.
+**Why it is deferred rather than fixed.** Selecting an invalid row for mutation
+needs a write-contract decision: either refuse the write before deriving Object
+Keys, skip that row and make affected-row accounting partial, or add a new
+per-row write result channel. Those choices have different atomicity and
+accounting semantics, so the read-contract change does not decide among them.
+
+**When.** With the predicate-write contract that defines whether selected
+invalid rows refuse, are skipped, or become explicit per-row write results.
 
 ### D-74 — No corpus model pairs a versioned root with an unversioned relationship target, so one preference resolving two ways has a single grader
 
@@ -352,83 +317,6 @@ meanwhile is that neither lane can silently grow a second: every `handle.Databas
 the engine builds installs a Provider, asserted over the source
 (`tests/unit/test_lifecycle_observation.py`), so an unobserved lane is one that
 opens no Handle at all and says so.
-
-### D-80 — A logical node's whole member row is first-projection-wins, and nothing states the equal-positions premise that makes it sound
-
-*Low today, latent — sound for every read shape this target compiles now, and
-silently lossy for the first one that projects a proper subset of a concrete's
-members.* Relates to
-`parallax.snapshot.materialize._merge.GraphMerge.member_values`,
-`parallax.snapshot.materialize._merge.GraphMerge._walk`.
-
-**What.** Merging duplicate projections of one logical node used to union member
-*sets* across those projections, first-wins per member. The indexed merge picks
-ONE winning projection for the node's whole member row and answers
-`member_values(node)` as that projection's own row by reference, comparing
-nothing. The two rules agree only while every projection of one concrete Entity
-carries the same positions: row width is fixed by the exact-model member layout,
-and a concrete's compiled attribute reads and projected documents are a function
-of the concrete rather than of which read reached it, so a member a read did not
-project occupies its declared position and reads `ABSENT` rather than being
-absent from the row. Where that premise fails — one projection holding `ABSENT`
-at a position another projection holds a value at, with the first walked winning
-— the merged node silently drops what the other carried, with no issue recorded
-and no refusal.
-
-No unit test states the premise. The corpus compile and run sweeps, the graph
-stories against real Postgres, and the database suites all grade its consequence
-over the shapes production compiles today, which is what makes the representation
-cutover safe; none of them would name the rule if a future read shape broke it.
-
-**Why it is deferred rather than fixed.** A witness needs a graph whose two
-projections of one logical row genuinely disagree by position, and no read this
-target compiles is known to produce one. Manufacturing one means either doctoring
-a member layout after the catalog answered it, which grades the merge against a
-row shape no accepted model can hold, or widening a compiled read to project a
-proper subset of its concrete — which is exactly the change
-[COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory)
-makes when it streams a deep fetch at fixed memory. The witness belongs with that
-change, where the disagreeing shape is a real read rather than a fixture, and it
-is owed before that change lands rather than after.
-
-### D-81 — The retained-graph gate proves no carrier per member, record, occurrence or slot, and cannot prove none per projection
-
-*Low, and a limit of the instrument rather than a suspected defect.* Relates to
-`tests/unit/test_snapshot_graph_retention.py`,
-`languages/python/docs/snapshot-graph-baseline.md`.
-
-**What.** The gate reads a retained total against the same graph declaring no
-Value Object, prices the whole declared tree by the recursion the reduction
-descends it with, and steps each population — members, leaves, records,
-occurrences of each multiplicity, view slots — with a negative control per step.
-That closes a carrier charged per member, per record, per occurrence, or per
-slot, at any depth, in any state a conforming read can leave a position in.
-
-It cannot close a carrier held exactly **once per projection**. Such a wrapper
-scales with the projection count every step holds fixed, so it lands in the fit's
-origin and moves no difference; and being a built-in `tuple` or `dict` it is
-indistinguishable by type from the graph's own arrays, so the survivor census
-— which keeps only Parallax's own types — does not name it either. Two readings
-bound it without closing it: the retained total is affine in the populations with
-no per-projection term the layout does not explain, and the census names every
-surviving type and its count.
-
-Two narrower shapes sit beside it. A state point puts a whole population in one
-state, so rows mixing zero and carried members across one row are unread — what
-is closed is that each kind of position reaches each state its contract admits.
-And the primary key and the three join Attributes stay carried in every state,
-because a row holding one of them zero is one no query would have returned, so
-their own zero states are reached through the other Attributes.
-
-**Why it is deferred rather than fixed.** Closing it needs an instrument that
-distinguishes a graph's own arrays from a wrapper over them by provenance rather
-than by type — the census filter would have to know which `tuple` a sealed graph
-allocated, which `tracemalloc` and the gc do not record. The bound the affine fit
-and the census already give is what a byte-level instrument can state, and the
-representation this gate was written for allocates no such wrapper: the sealed
-graph's arrays are its rows. The gap is worth an entry because it is the one part
-of "zero retained per-cell carriers" that is argued rather than measured, and a
-future representation could reintroduce exactly the shape it cannot see.
 
 ### D-82 — A published dump builds the same presentation twice, and removing the second build needs no bracket
 
@@ -974,7 +862,7 @@ coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
 
-### D-96 — The materialization report reads what a graph retains after its own timed seams, so that cell states a level and not a difference
+### D-96 — The materialization report reads what a Page retains after its own timed seams, so that cell states a level and not a difference
 
 *Low — one reported cell needs a controlled reading beside it before two
 recordings of it can be compared.* Relates to
@@ -984,13 +872,13 @@ recordings of it can be compared.* Relates to
 
 **What.** `measure` runs its four timed seams — model preparation, compilation,
 `bind`, and twenty batches — before it starts `tracemalloc` and reads what the
-sealed graph retains, and what those repetitions leave behind the reading then
-charges to the graph. On the current code the retained seam reads about 1.9 kB
+sealed Page retains, and what those repetitions leave behind the reading then
+charges to the Page. On the current code the retained seam reads about 1.9 kB
 above the same seam read in a process that has done nothing else (170,368 B
 against 168,453 B on 3.13 `Columns`, over 64 projections); on the code the
 baseline document's "before" half measured, the two readings agree inside their
 own spread. Two recorded cells therefore cannot be differenced, which is why the
-"retained graph bytes per projection must not increase" comparison in that
+"retained Page bytes per projection must not increase" comparison in that
 document is settled by a controlled A/B in fresh child interpreters and says so.
 
 **Why it is deferred rather than fixed.** Both obvious repairs change what the
@@ -1045,6 +933,9 @@ would exclude is decidable from the candidate's bits alone.
 
 ## Forwarding pointers
 
+- **D-80** → fixed. Duplicate projections are compared before decode by their exact, type-sensitive positional Payload Witness. Equal witnesses share one Page-owned Entity State; unequal witnesses in one Root View raise `SnapshotConsistencyError`, so no first-projection-wins premise remains.
+- **D-81** → fixed. Production conversion consumes positional provider tuples through compiled ordinals, retains raw witnesses for deferred root-local judgment, and allocates no `PositionalRow`, materialized-row wrapper, or member dictionary per judged row. The production materialization and stream-retention instruments now grade the Page/Root View representation rather than the deleted retained-graph suite.
+
 Removed entries whose number a live document still cites. One line each; drop a
 line once nothing cites it. This section is not an entry list and must never grow
 prose.
@@ -1055,7 +946,7 @@ prose.
 - **D-40** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P4. Eager `fetchall` at the adapter boundary; port-level streaming is [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).
 - **D-44** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P2. Deep-fetch depth beyond two hops.
 - **D-45** → [COR-86](https://linear.app/flimflam/issue/COR-86/implement-history-with-includes-execution-and-empty-the-deferred). History-with-includes execution.
-- **D-46**, **D-48** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model; the staging residue is D-72.
+- **D-46**, **D-48** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/report-nodes-whose-stored-state-violates-the-declared-model-instead-of). Stored state violating the declared model; the predicate-write staging residue is D-72.
 - **D-47** → fixed. `reduce_declared_members` preserves member presence at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
@@ -1063,7 +954,8 @@ prose.
 - **D-54** → fixed. A subtype's Pydantic field for a member it inherits is the declaring class's own — same default, same requiredness, at every depth — as `python.md` §2's realization-technique paragraph states. Class creation empties the inherited names out of the namespace it hands Pydantic and restores them once the class exists, so Pydantic's own inheritance path supplies each field; the entry's `Tug()` now raises for its missing required members, and a family whose root declares a Value Object occurrence can hydrate a subtype at all, which the undeep-copyable expression made impossible.
 - **D-55** → closed by [COR-115](https://linear.app/flimflam/issue/COR-115/reference-harness-object-query-oracle). The harness work the entry said no Python-target ticket could carry: a Scenario read step is presented as the read it is and materialized by `reference_harness.object_query_oracle`, so a family-target find publishes `familyVariant` rather than the raw tag or branch literal, and an instance-form step projects its `Document` slots. The per-variant narrowing stays deliberately absent — `m-case-format` scopes that node shape to a read case's own `then.graph` leaves, and a step publishes the specified positional superset.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
-- **D-58** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 4. The holistic decision was taken rather than postponed, and it is neither shape alone: the merged graph keeps graph-local node identity, and the Wire read renders a FINITE value tree by unwinding the requested include tree (`parallax.snapshot.materialize._wire`), so a back-reference terminates because the tree strictly shrinks rather than because a cycle detector fired. Aliasing survives the tree — positions reaching one merged node under one subtree answer the identical frozen object — so the cost this entry accepted in advance (one logical node materializing as distinct objects) is not paid, and `then.graph` grades JSON-renderable values directly. Bounded-memory streaming is the one part left, and [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory) carries it: what it revisits is graph-level node uniqueness, not the wire shape this settled.
+- **D-58** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout) Phase 4 and [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory). A Page retains positional projections and each Root View resolves identity from only the occurrences its root reaches; typed construction preserves node aliasing within that Root View. The Wire lane renders a finite value tree by unwinding the requested Include Paths, so back-references terminate as the tree shrinks. Streaming publishes one Page at a time under the same contract, so no bounded-memory residue remains deferred.
+
 - **D-60** → closed by this claim, and the module it named is since retired (ADR 0060): `MODULE_SCOPE` carries `parallax.core.execution_lifecycle`, the generated `[tool.importlinter]` block contracts it, and `core/spec/modules.md` carries `m-snapshot-read --> m-execution-lifecycle`. One consequence the entry did not foresee outlived the rename: the module reaches `m-sql`, so mapping the tag to `parallax.snapshot.materialize` would put SQL generation inside the closure of the grant `parallax.snapshot.handle._materializer` holds, dissolving the containment that child scope exists for. The tag therefore maps to `parallax.snapshot._read_result` — the scope that actually names the lifecycle seam — while `parallax.snapshot.materialize` carries the remaining `m-snapshot-read` edges as a support row.
 - **D-59** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). `then.execution` has one grader; `spec/python.md` §1 carries the single-witness limit.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.

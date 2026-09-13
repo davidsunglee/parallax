@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, overload
 
-from parallax.snapshot.materialize import Page
+from parallax.core.temporal_read import Pin
+from parallax.snapshot.materialize import Page, RootView
 
-__all__ = ["INERT", "MaterializationObserver", "Materializer"]
+if TYPE_CHECKING:
+    from parallax.core.db_port import DatabaseConnection, Row
+    from parallax.core.entity._layout import CatalogedModel
+    from parallax.core.execution_lifecycle._activity import DatabaseCallScope
+    from parallax.core.object_query._validated import ValidatedObjectQuery
+    from parallax.core.sql_gen._compile import CompiledRead
+    from parallax.core.unit_work import Concurrency
+    from parallax.snapshot._read_result import FindResult
+    from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan
+    from parallax.snapshot.handle._read import RowPublication
+    from parallax.snapshot.handle._retention import ObservationLedger
+
+__all__ = [
+    "INERT",
+    "EagerPageRead",
+    "FlatPageRead",
+    "MaterializationObserver",
+    "Materializer",
+    "StreamPageRead",
+]
 
 
 class MaterializationObserver(Protocol):
@@ -62,23 +82,120 @@ INERT: MaterializationObserver = _InertObserver()
 
 
 @dataclass(frozen=True, slots=True)
+class EagerPageRead:
+    """Inputs for one eager Page read."""
+
+    query: ValidatedObjectQuery
+    model: CatalogedModel
+    port: DatabaseConnection
+    preference: Concurrency | None
+    ledger: ObservationLedger | None
+    calls: DatabaseCallScope
+
+
+@dataclass(frozen=True, slots=True)
+class FlatPageRead:
+    """Inputs for one statement whose rows form a root-only Page."""
+
+    model: CatalogedModel
+    compiled: CompiledRead
+    read: Callable[[], Sequence[Row]]
+    pin: Pin
+
+
+@dataclass(frozen=True, slots=True)
+class StreamPageRead:
+    """Inputs for one bounded Page in an already prepared delivery."""
+
+    plan: PagePlan
+    at: At
+    model: CatalogedModel
+    port: DatabaseConnection
+    preference: Concurrency | None
+    ledger: ObservationLedger | None
+    calls: DatabaseCallScope
+
+
+@dataclass(frozen=True, slots=True)
 class Materializer:
-    """One delivery's two operations: build a Page, then publish its roots."""
+    """The two delivery operations: build a Page, then publish its roots."""
 
     observer: MaterializationObserver = INERT
 
-    def read_page[T](self, read: Callable[[MaterializationObserver], T]) -> T:
-        """Run the one callback that reads and assembles this delivery's Page."""
-        return read(self.observer)
+    @overload
+    def read_page(self, request: EagerPageRead) -> FindResult: ...
 
-    def roots(
+    @overload
+    def read_page(self, request: FlatPageRead) -> RowPublication: ...
+
+    @overload
+    def read_page(self, request: StreamPageRead) -> DeliveryPage: ...
+
+    def read_page(
+        self, request: EagerPageRead | FlatPageRead | StreamPageRead
+    ) -> FindResult | RowPublication | DeliveryPage:
+        """Prepare, execute, and assemble one lane Page from typed inputs."""
+        if isinstance(request, EagerPageRead):
+            from parallax.snapshot.handle._read import build_page, read_roots
+
+            roots = read_roots(
+                request.query,
+                request.model,
+                request.port,
+                preference=request.preference,
+                calls=request.calls,
+                observer=self.observer,
+            )
+            return build_page(
+                roots,
+                request.model,
+                request.port,
+                preference=request.preference,
+                ledger=request.ledger,
+                calls=request.calls,
+            )
+        if isinstance(request, FlatPageRead):
+            from parallax.snapshot.handle._read import judge_rows
+            from parallax.snapshot.materialize._views import ROOT_LEVEL
+
+            self.observer.prepared(1)
+            self.observer.statement_rendered(ROOT_LEVEL)
+            rows = request.read()
+            self.observer.statement_executed(ROOT_LEVEL, len(rows))
+            return judge_rows(
+                request.model,
+                request.compiled,
+                rows,
+                pin=request.pin,
+                observer=self.observer,
+            )
+
+        from parallax.snapshot.handle._paging import read_delivery_page
+
+        return read_delivery_page(
+            request.plan,
+            request.at,
+            request.model,
+            request.port,
+            preference=request.preference,
+            ledger=request.ledger,
+            calls=request.calls,
+            observer=self.observer,
+        )
+
+    def roots[T](
         self,
         page: Page,
-        publish: Callable[[], Iterator[object]],
+        publish: Callable[[RootView, int], Iterator[T]],
         *,
         ordinal_offset: int = 0,
-    ) -> Iterator[object]:
-        """Publish ``page`` one root at a time and report completed roots."""
-        for position, root in enumerate(publish()):
+        pins: Sequence[Pin | None] | None = None,
+    ) -> Iterator[T]:
+        """Judge and publish one Page root at a time through one shared seam."""
+        if pins is not None and len(pins) != page.root_count:
+            raise ValueError("root pin count must match the Page root count")
+        for position in range(page.root_count):
+            pin = None if pins is None else pins[position]
+            root = RootView(page, position, pin=pin)
+            yield from publish(root, position)
             self.observer.root_published(ordinal_offset + position)
-            yield root

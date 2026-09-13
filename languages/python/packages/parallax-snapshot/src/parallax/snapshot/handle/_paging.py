@@ -28,9 +28,10 @@ caller of a Snapshot Stream holds, so neither the eager
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import cast
+from dataclasses import dataclass, field, replace
+from typing import Any, cast
 
+from parallax.core import deep_fetch
 from parallax.core.continuation import ContinuationPlan
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
@@ -38,8 +39,20 @@ from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate, compile_read
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle._read import RootRead, build_page, read_roots
+from parallax.snapshot.handle._materialization import (
+    INERT as MATERIALIZATION_INERT,
+)
+from parallax.snapshot.handle._materialization import (
+    MaterializationObserver,
+)
+from parallax.snapshot.handle._read import (
+    RootRead,
+    build_page,
+    entity_read_lock,
+    read_roots,
+)
 from parallax.snapshot.handle._retention import ObservationLedger, ReadSources
 from parallax.snapshot.materialize import Page, UnwindTree
 
@@ -107,6 +120,23 @@ class PageVerdict:
 
 
 @dataclass(frozen=True, slots=True)
+class _RootTemplate:
+    plan: deep_fetch.ObjectQueryPlan
+    compiled: CompiledRead
+    positions: tuple[tuple[int, int], ...]
+
+    def render(
+        self, coordinate: ContinuationCoordinate, size: int
+    ) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
+        binds = list(self.compiled.statement.binds)
+        for bind, carrier in self.positions:
+            binds[bind] = coordinate.carriers[carrier]
+        binds[-1] = size
+        statement = replace(self.compiled.statement, binds=tuple(binds))
+        return self.plan, replace(self.compiled, statement=statement)
+
+
+@dataclass(frozen=True, slots=True)
 class PagePlan:
     """How one delivery pages: its page nodes and the two counts bounding them.
 
@@ -121,6 +151,12 @@ class PagePlan:
     plan: ContinuationPlan
     batch_size: int
     limit: int | None
+    root_after: dict[tuple[bool, ...], _RootTemplate] = field(
+        default_factory=lambda: {}, compare=False, repr=False
+    )
+    children: dict[int, CompiledTemplate] = field(
+        default_factory=lambda: {}, compare=False, repr=False
+    )
 
     def page_request(self, emitted: int) -> PageRequest:
         """What the page after ``emitted`` asks the database for.
@@ -199,6 +235,61 @@ class DeliveryPage:
         return len(self.coordinates)
 
 
+def _compiled_root(
+    page_plan: PagePlan,
+    query: object,
+    coordinate: ContinuationCoordinate | None,
+    request: PageRequest,
+    model: CatalogedModel,
+    port: DatabaseConnection,
+    preference: Concurrency | None,
+) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
+    meta = model.meta
+    if coordinate is None:
+        planned = deep_fetch.plan(
+            cast("Any", query),
+            meta,
+            projection=deep_fetch.ReadProjectionRequest("all", True),
+        )
+        return planned, compile_read(
+            planned.root,
+            meta,
+            port.dialect,
+            result_form="instance",
+            lock=entity_read_lock(meta, cast("Any", query).root.identity, preference),
+        )
+    pattern = tuple(carrier is None for carrier in coordinate.carriers)
+    template = page_plan.root_after.get(pattern)
+    if template is None:
+        markers = tuple(None if missing else object() for missing in pattern)
+        template_query = page_plan.plan.after(ContinuationCoordinate(markers), limit=request.size)
+        planned = deep_fetch.plan(
+            template_query,
+            meta,
+            projection=deep_fetch.ReadProjectionRequest("all", True),
+        )
+        compiled = compile_read(
+            planned.root,
+            meta,
+            port.dialect,
+            result_form="instance",
+            lock=entity_read_lock(meta, template_query.root.identity, preference),
+        )
+        positions = tuple(
+            (bind_index, carrier_index)
+            for bind_index, bind in enumerate(compiled.statement.binds)
+            for carrier_index, marker in enumerate(markers)
+            if marker is not None and bind is marker
+        )
+        if {carrier for _bind, carrier in positions} != {
+            index for index, marker in enumerate(markers) if marker is not None
+        }:
+            raise SqlGenError("compiled continuation lost a non-null coordinate bind")
+        template = _RootTemplate(planned, compiled, positions)
+        page_plan.root_after[pattern] = template
+    return template.render(coordinate, request.size)
+
+
 def read_delivery_page(
     page_plan: PagePlan,
     at: At,
@@ -208,6 +299,7 @@ def read_delivery_page(
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
     calls: DatabaseCallScope = INERT,
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
 ) -> DeliveryPage:
     """Read and seal the page of ``page_plan`` that follows ``at``.
 
@@ -231,12 +323,36 @@ def read_delivery_page(
         if at.coordinate is None
         else page_plan.plan.after(at.coordinate, limit=request.size)
     )
-    root_read = read_roots(query, model, port, preference=preference, calls=calls)
+    planned, compiled = _compiled_root(
+        page_plan, query, at.coordinate, request, model, port, preference
+    )
+    root_read = read_roots(
+        query,
+        model,
+        port,
+        preference=preference,
+        calls=calls,
+        plan=planned,
+        compiled=compiled,
+        observer=observer,
+    )
     coordinates = _coordinates(root_read)
     terms = tuple(term.member.identity for term in query.order_by)
     verdict = page_decision(request, terms, coordinates)
-    kept = replace(root_read, rows=root_read.rows[: verdict.keep])
-    result = build_page(kept, model, port, preference=preference, ledger=ledger, calls=calls)
+    kept = replace(
+        root_read,
+        rows=root_read.rows[: verdict.keep],
+        coordinates=root_read.coordinates[: verdict.keep],
+    )
+    result = build_page(
+        kept,
+        model,
+        port,
+        preference=preference,
+        ledger=ledger,
+        calls=calls,
+        templates=page_plan.children,
+    )
     return DeliveryPage(
         page=result.page,
         includes=result.includes,
@@ -294,7 +410,7 @@ def _coordinates(root_read: RootRead) -> tuple[ContinuationCoordinate, ...]:
     contract rather than an ordinary stored-data state — invalid stored data
     reaches here with its coordinate intact, which is the whole point.
     """
-    coordinates = tuple(row.coordinate for row in root_read.rows)
+    coordinates = root_read.coordinates
     if any(coordinate is None for coordinate in coordinates):  # pragma: no cover - see above
         raise SqlGenError("a paging read returned a root carrying no evaluated coordinate")
     return cast("tuple[ContinuationCoordinate, ...]", coordinates)

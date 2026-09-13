@@ -105,7 +105,7 @@ live:
 The Wire result vocabulary — :class:`WireEntity`, the frozen Entity node every
 Wire read publishes, and :data:`WireValue`, the recursive plain-value shape its
 positions carry — is :mod:`parallax.snapshot.materialize`'s, built by the wire
-materializer beside the merge every materializer consumes, and re-exported here
+materializer from the Root View every materializer consumes, and re-exported here
 beside the views that answer it. The invalid-result vocabulary a classified root
 publishes — :class:`InvalidData`, :class:`StoredDataIssue`,
 :class:`InvalidDataError`, and :class:`~parallax.core.unit_work.ObjectKey`, the

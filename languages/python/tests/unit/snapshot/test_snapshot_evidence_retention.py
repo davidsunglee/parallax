@@ -46,7 +46,7 @@ from tests.unit.memory_instruments import (
     retained,
     serve_one_measurement,
 )
-from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
+from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
 _NARROW: Final = 8
 _WIDE: Final = 40
@@ -76,13 +76,13 @@ def _row(width: int) -> MappingRow:
 def _publication(width: int) -> Seam:
     """The published record of one invalid root, held at the sample point.
 
-    The graph, the merge, and the builder are all transient in production and
+    The Page, Root View, and builder are all transient in production and
     none is held here, so what the sample sees through the record is what a
     caller who kept one keeps.
     """
 
     def run(sample: Callable[[], None]) -> None:
-        fixture = GraphFixture(vo.CUSTOMER_MODEL)
+        fixture = PageFixture(vo.CUSTOMER_MODEL)
         record = invalid_record(fixture.materialize(fixture.node("Customer", _row(width)))[0])
         del fixture
         sample()

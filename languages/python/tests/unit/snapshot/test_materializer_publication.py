@@ -1,11 +1,11 @@
-"""Projection merging and Entity graph construction over the sealed Snapshot graph.
+"""Root View judgment and Entity graph construction over a sealed Snapshot Page.
 
-Drives the production materializer end to end — merge, allocate, populate, and
-the per-node state factory — over graphs built exactly as a read driver
+Drives the production materializer end to end — judge, allocate, populate, and
+the per-node state factory — over Pages built exactly as a read driver
 builds them: diamond collapse onto one instance, cycle closure by object
 identity, narrowed views across every authoring route, loaded-null versus
 loaded-empty versus unloaded, polymorphic concrete-class resolution, Value Object
-construction, whole-graph pin and per-node edge, and the Payload Witness /
+construction, Page pin and per-node edge, and the Payload Witness /
 view-union split the Root View is stated in.
 
 Per-row conversion lives in `test_snapshot_conversion.py`; the inspection surface
@@ -51,8 +51,9 @@ from parallax.snapshot.materialize import (
     StoredDataIssueInput,
 )
 from parallax.snapshot.materialize._page import ABSENT, PageBuilder, page_rows
+from parallax.snapshot.materialize._publication import publication_issue
 from tests._support import snapshot_models as sm
-from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
+from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
@@ -95,8 +96,8 @@ _CAT_ROW: dict[str, object] = {
 # --------------------------------------------------------------------------- #
 # Construction: frozen instances, closed-world arms, cycle closure.            #
 # --------------------------------------------------------------------------- #
-def test_a_merged_node_becomes_a_frozen_instance_of_its_registered_class() -> None:
-    fixture = GraphFixture(_ORDERS)
+def test_a_resolved_node_becomes_a_frozen_instance_of_its_registered_class() -> None:
+    fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW)
     (root,) = fixture.materialize(order)
     assert isinstance(root, sm.SnapOrder)
@@ -104,7 +105,7 @@ def test_a_merged_node_becomes_a_frozen_instance_of_its_registered_class() -> No
 
 
 def test_an_included_to_many_is_a_tuple_and_its_back_reference_closes_the_cycle() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _ORDERS,
         "parallax.compatibility.SnapOrder.items",
         "parallax.compatibility.SnapOrderItem.order",
@@ -121,14 +122,14 @@ def test_an_included_to_many_is_a_tuple_and_its_back_reference_closes_the_cycle(
 
 
 def test_a_relationship_no_projection_carried_stays_unloaded() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     (root,) = fixture.materialize(fixture.node("SnapOrder", _ORDER_ROW))
     assert isinstance(root, sm.SnapOrder)
     assert is_view_loaded(root, sm.SnapOrder.items) is False
 
 
 def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _ORDERS,
         "parallax.compatibility.SnapOrder.items",
         "parallax.compatibility.SnapOrderItem.order",
@@ -147,10 +148,10 @@ def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
 
 
 def test_roots_publish_in_the_order_they_were_given() -> None:
-    # Every `find` today answers a single-root graph, so root order is a
+    # Every `find` today answers a single-root Page, so root order is a
     # structural consequence there rather than a pinned property; a multi-root
-    # graph is what states it.
-    fixture = GraphFixture(_ORDERS)
+    # multi-root Page is what states it.
+    fixture = PageFixture(_ORDERS)
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
     roots = cast("tuple[Any, ...]", fixture.materialize(second, first))
@@ -161,21 +162,49 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
     # The keyless row sits BETWEEN two valid ones, so the hole it leaves is a
     # result position rather than a truncation, and the two survivors keep the
     # allocation indices their own walk order gives them.
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
 
-    merge = RootView(fixture.graph(first, keyless, second))
-    assert merge.roots == (0, None, 1)
-    assert [issue.code for record in merge.invalid_roots for issue in record.issues] == [
+    root_view = RootView(fixture.page(first, keyless, second))
+    assert root_view.roots == (0, None, 1)
+    assert [issue.code for record in root_view.invalid_roots for issue in record.issues] == [
         "stored-data-primary-key-null"
     ]
-    assert [record.ordinal for record in merge.invalid_roots] == [1]
-    assert merge.order == (
+    assert [record.ordinal for record in root_view.invalid_roots] == [1]
+    assert root_view.order == (
         EntityIdentity(_NAMESPACE, "SnapOrder"),
         EntityIdentity(_NAMESPACE, "SnapOrder"),
     )
+
+
+def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
+    fixture = PageFixture(_ORDERS)
+    keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
+    root_view = RootView(fixture.page(keyless))
+    assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
+
+
+def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
+    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
+    keyless = fixture.node(
+        "Customer",
+        {
+            "id": None,
+            "name": "Ada",
+            "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
+        },
+    )
+
+    root = RootView(fixture.page(keyless))
+
+    assert root.roots == (None,)
+    assert [issue.code for issue in root.invalid_roots[0].issues] == [
+        "stored-data-many-wrong-kind",
+        "stored-data-primary-key-null",
+    ]
+    assert root.invalid_roots[0].issues[0].stored_value == {"type": "home"}
 
 
 def test_invalid_root_carriers_require_a_position_and_an_issue() -> None:
@@ -192,24 +221,24 @@ def test_invalid_root_carriers_require_a_position_and_an_issue() -> None:
 
 def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> None:
     # A caller never spells one: sealing derives the ordinal from the position
-    # the root occupies, so the mismatch a whole-graph validation pass used to
+    # the root occupies, so the mismatch a whole-Page validation pass used to
     # look for is unrepresentable rather than checked.
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     valid = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
-    merge = RootView(fixture.graph(valid, keyless))
-    assert [record.ordinal for record in merge.invalid_roots] == [1]
+    root_view = RootView(fixture.page(valid, keyless))
+    assert [record.ordinal for record in root_view.invalid_roots] == [1]
 
 
 # --------------------------------------------------------------------------- #
-# Diamond projection merge: two SIBLING include paths reach the SAME logical    #
+# Diamond projection judgment: two SIBLING include paths reach the SAME logical    #
 # row through two DIFFERENT projections (a driver never dedupes across sibling  #
 # levels — each attach position converts its own row). `Order`/`OrderItem`      #
 # declare TWO sibling relationships over the same join (`items` /               #
 # `itemsByShipDate`), the shape m-snapshot-read-001 itself exercises.           #
 # --------------------------------------------------------------------------- #
 def test_a_diamond_collapses_onto_one_instance_and_unions_the_views() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
         "parallax.compatibility.Order.itemsByShipDate",
@@ -230,7 +259,7 @@ def test_a_diamond_collapses_onto_one_instance_and_unions_the_views() -> None:
 
 
 def test_a_view_both_projections_carried_wires_exactly_once() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
         "parallax.compatibility.Order.itemsByShipDate",
@@ -249,13 +278,13 @@ def test_a_view_both_projections_carried_wires_exactly_once() -> None:
     assert root.items[0].order is root
 
 
-def test_each_to_many_view_keeps_its_own_order_through_the_merge() -> None:
+def test_each_to_many_view_keeps_its_own_order_through_the_root_view() -> None:
     # The diamond's two views are ordered differently by their own declared
-    # `orderBy`, and both reach the same two logical rows. Merging shares one
+    # `orderBy`, and both reach the same two logical rows. The Root View shares one
     # instance per row, so a per-view order that survived only because the two
     # tuples happened to hold distinct objects would be indistinguishable from
     # one that did not — which is what a REVERSED sibling states.
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
         "parallax.compatibility.Order.itemsByShipDate",
@@ -284,7 +313,7 @@ def test_unequal_scalar_witnesses_refuse_instead_of_selecting_a_projection() -> 
     by_ship_date = "parallax.compatibility.Order.itemsByShipDate"
 
     def conflict(*views: str) -> SnapshotConsistencyError:
-        fixture = GraphFixture(_STORY_ORDERS, *views)
+        fixture = PageFixture(_STORY_ORDERS, *views)
         order = fixture.node("Order", _ORDER_ROW)
         first = fixture.node("OrderItem", _ITEM_ROW)
         second = fixture.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
@@ -311,9 +340,9 @@ def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
     # Two sibling levels can project one invalid row twice, and each row is
     # judged and frozen before anything can know the two are one node. The
     # duplicate carries the first projection's issue record itself, so the node
-    # holds one rejected value rather than an equal second for the graph's life,
-    # and the merge lists it once.
-    fixture = GraphFixture(
+    # holds one rejected value rather than an equal second for the Page's life,
+    # and the Root View lists it once.
+    fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
         "parallax.compatibility.Order.itemsByShipDate",
@@ -329,19 +358,19 @@ def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
         (via_ship_date,),
     )
 
-    graph = fixture.graph(order)
-    root = RootView(graph)
+    page = fixture.page(order)
+    root = RootView(page)
     item = _sole_node(root, "OrderItem")
     assert [issue.code for issue in root.issues(item)] == ["stored-data-leaf-undecodable"]
-    assert len(graph.judged_states) == 2
+    assert len(page.judged_states) == 2
 
 
 def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> None:
     # Sibling levels project different columns, so two projections of one node
     # may see different stored state. Sharing is what two equal judgments earn,
     # not what arriving second costs: a distinct rejected value is a distinct
-    # fact about the stored row and both reach the merged node.
-    fixture = GraphFixture(
+    # fact about the stored row and both reach the same resolved node.
+    fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
         "parallax.compatibility.Order.itemsByShipDate",
@@ -353,32 +382,49 @@ def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> Non
     fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
 
     with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.graph(order))
+        RootView(fixture.page(order))
     assert raised.value.code == "snapshot-projection-conflict"
 
 
-def test_a_duplicate_with_one_different_document_member_conflicts() -> None:
-    # One row can hold several rejected occurrences at once, and two reads of it
-    # agree about some and not others: both reject the identical stored `geo`
-    # subtree while rejecting different `phones` ones. Sharing is earned per
-    # rejected occurrence rather than per projection, so the repeated `geo`
-    # evidence is retained once while both `phones` findings stay distinct
-    # facts about the stored row.
-    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+def test_exact_witness_comparison_distinguishes_bool_from_int() -> None:
+    # Python considers True equal to 1, but the stored carriers are different
+    # facts. Two projections reachable from one root must therefore conflict.
+    fixture = PageFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+    )
+    order = fixture.node("Order", _ORDER_ROW)
+    via_items = fixture.node("OrderItem", {**_ITEM_ROW, "quantity": True})
+    via_ship_date = fixture.node("OrderItem", {**_ITEM_ROW, "quantity": 1})
+    fixture.attach(order, "parallax.compatibility.Order.items", (via_items,))
+    fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
+
+    with pytest.raises(SnapshotConsistencyError) as raised:
+        RootView(fixture.page(order))
+    assert raised.value.members == (
+        AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "quantity"),
+    )
+
+
+def test_unequal_document_witnesses_in_separate_roots_coexist() -> None:
+    # Two result roots may name one logical key at different stored states. They
+    # are distinct root-local claims, so neither root imports evidence from the
+    # other and both remain publishable verdicts.
+    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
     first = fixture.node("Customer", _customer_row("home"))
     second = fixture.node("Customer", _customer_row("work"))
 
-    with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.graph(first, second))
-    assert raised.value.code == "snapshot-projection-conflict"
+    root_view = RootView(fixture.page(first, second))
+    assert root_view.roots == (0, 1)
+    assert len(root_view.order) == 2
 
 
-def test_clean_and_rejected_witnesses_for_one_key_conflict_before_judgment() -> None:
-    # The projection a node is first reached through may reject nothing, which
-    # says nothing about the ones behind it. Retention belongs to the node
-    # rather than to its first projection, so the second read of one rejected
-    # occurrence collapses onto the first read that rejected it.
-    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+def test_equal_witnesses_share_across_roots_but_unequal_witnesses_do_not() -> None:
+    # Page-owned state sharing is earned by exact witness equality; root-local
+    # conflict detection does not forbid another result root from carrying a
+    # different state for the same logical key.
+    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
     clean = fixture.node(
         "Customer",
         {"id": 1, "name": "Ada", "address": {"street": "1 Park Ave", "phones": []}},
@@ -386,16 +432,16 @@ def test_clean_and_rejected_witnesses_for_one_key_conflict_before_judgment() -> 
     rejected = fixture.node("Customer", _customer_row("home"))
     rejected_again = fixture.node("Customer", _customer_row("home"))
 
-    with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.graph(clean, rejected, rejected_again))
-    assert raised.value.code == "snapshot-projection-conflict"
+    root_view = RootView(fixture.page(clean, rejected, rejected_again))
+    assert root_view.roots == (0, 1, 1)
+    assert len(root_view.order) == 2
 
 
 def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
     # Classification is root-granular: a clean root cannot hide an invalid
     # included child merely because the root's own members are constructible,
     # and the child's undecodable leaf leaves no value to hydrate the root from.
-    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
+    fixture = PageFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     invalid = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     fixture.attach(order, "parallax.compatibility.Order.items", (invalid,))
@@ -412,7 +458,7 @@ def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
 
 
 def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> None:
-    fixture = GraphFixture(_STORY_ORDERS)
+    fixture = PageFixture(_STORY_ORDERS)
     order = fixture.node("Order", _ORDER_ROW)
     fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
 
@@ -422,15 +468,15 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
 
 def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
     # A child with no usable primary key remains a classified projection rather
-    # than being merged under a synthetic `(None,)` logical key.
-    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
+    # than being shared under a synthetic `(None,)` logical key.
+    fixture = PageFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     invalid = fixture.node("OrderItem", {**_ITEM_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.Order.items", (invalid,))
 
-    merge = RootView(fixture.graph(order))
-    item = _sole_node(merge, "OrderItem")
-    assert [issue.code for issue in merge.issues(item)] == ["stored-data-primary-key-null"]
+    root_view = RootView(fixture.page(order))
+    item = _sole_node(root_view, "OrderItem")
+    assert [issue.code for issue in root_view.issues(item)] == ["stored-data-primary-key-null"]
     published = invalid_record(fixture.materialize(order)[0])
     assert published.data is None
     # The child's own identity never decoded, so its diagnosis locates no object
@@ -442,7 +488,7 @@ def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
 # Polymorphic concrete resolution and narrowed views.                          #
 # --------------------------------------------------------------------------- #
 def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
-    fixture = GraphFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
+    fixture = PageFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     cat = fixture.node("Cat", _CAT_ROW)
@@ -456,7 +502,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
 
 
 def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
-    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
@@ -473,7 +519,7 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
 
 
 def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _ANIMAL,
         ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"),
         ("parallax.compatibility.AnimalOwner.pets", "pets[Cat]"),
@@ -493,7 +539,7 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
     # A `RelationshipPath` is a frozen value carrying nothing but its segments,
     # its target spelling and its source, so a directly built path and a copy
     # each key the same view as the class-derived one.
-    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
     owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
@@ -511,9 +557,7 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
 
 
 def test_a_narrowed_to_one_view_carries_a_single_node_or_loaded_null() -> None:
-    fixture = GraphFixture(
-        _ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]")
-    )
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]"))
     alice = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     dog = fixture.node("Dog", _DOG_ROW)
@@ -532,7 +576,7 @@ def test_a_table_per_concrete_subtype_row_materializes_its_resolved_concrete() -
     # A table-per-concrete-subtype position resolving to exactly ONE concrete
     # emits no `familyVariant` at all (`m-sql`'s `_compile_tpcs_single`); the
     # concrete Entity the compiled read resolved is what still selects the class.
-    fixture = GraphFixture(_DOCUMENT)
+    fixture = PageFixture(_DOCUMENT)
     invoice = fixture.node(
         "Invoice",
         {
@@ -552,7 +596,7 @@ def test_a_table_per_concrete_subtype_row_materializes_its_resolved_concrete() -
 # Value Object construction.                                                   #
 # --------------------------------------------------------------------------- #
 def test_entity_level_value_object_members_construct_into_their_declared_classes() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     status = fixture.node(
         "SnapOrderStatus",
         {
@@ -587,7 +631,7 @@ def test_a_materialized_value_object_names_exactly_what_storage_held() -> None:
     # edit that authors an explicit `geo` differ from what was read, and lets
     # `phones` be carried through re-serialization without gaining a `type` key
     # storage never held.
-    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
     customer = fixture.node(
         "Customer",
         {
@@ -606,7 +650,7 @@ def test_a_materialized_value_object_names_exactly_what_storage_held() -> None:
 
 
 def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     status = fixture.node(
         "SnapOrderStatus",
         {
@@ -634,7 +678,7 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
 # and construction must say so rather than hand back a decoded record typed as #
 # the declared member (spec §3's instances-only contract).                     #
 #                                                                              #
-# The row the graph carries is laid out against the AUTHORED model and the     #
+# The member row the Page carries is laid out against the AUTHORED model and the     #
 # writer reads it against the COMPOSED one, so what the two disagree about is  #
 # which kind of member position 1 is — not which members exist, which is all a #
 # row of the right width can express. The refusal is therefore the declared    #
@@ -646,7 +690,7 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
 # layouts from against the classes it publishes, once per pair, and refuses    #
 # with `entity-graph-layout-mismatch`                                          #
 # (`test_publication_attachment.py`). It cannot reach this case, and correctly #
-# so — the model that laid this row out is the merge's, not the one the        #
+# so — the model that laid this row out is the Root View uses, not the one the        #
 # construction resolved its classes under, so the two facts the check compares #
 # agree here and the row is what disagrees with both.                          #
 # --------------------------------------------------------------------------- #
@@ -684,7 +728,7 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
     assert [a.identity.name for a in _MergeScalarProfile.attributes] == ["id", "profile"]
     assert _MergeScalarProfile.value_objects == ()
 
-    fixture = GraphFixture(_SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
+    fixture = PageFixture(_SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
     node = fixture.node("MergeScalarProfile", {"id": 1, "profile": {"note": "x"}})
     with pytest.raises(GraphConstructionError) as refusal:
         fixture.materialize(node)
@@ -693,10 +737,10 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Whole-graph pin and per-node edge.                                            #
+# Page pin and per-node edge.                                            #
 # --------------------------------------------------------------------------- #
-def test_a_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
-    fixture = GraphFixture(read_models.BALANCE_MODEL)
+def test_a_temporal_node_carries_the_page_pin_and_its_own_edge() -> None:
+    fixture = PageFixture(read_models.BALANCE_MODEL)
     balance = fixture.node(
         "Balance",
         {
@@ -714,7 +758,7 @@ def test_a_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 
 
 def test_temporal_starts_distinguish_page_logical_identity() -> None:
-    fixture = GraphFixture(read_models.BALANCE_MODEL)
+    fixture = PageFixture(read_models.BALANCE_MODEL)
     first_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     second_start = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     first = fixture.node(
@@ -737,7 +781,7 @@ def test_temporal_starts_distinguish_page_logical_identity() -> None:
             "out_z": dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         },
     )
-    page = fixture.graph(first, second)
+    page = fixture.page(first, second)
 
     RootView(page, 0)
     RootView(page, 1)
@@ -776,7 +820,7 @@ _TEMPORAL_TPCS = DomainModel(_MergeTemporalRoot, _MergeTemporalLeaf)
 
 
 def test_a_temporal_concrete_reads_its_edge_off_the_family_roots_own_axes() -> None:
-    fixture = GraphFixture(_TEMPORAL_TPCS)
+    fixture = PageFixture(_TEMPORAL_TPCS)
     leaf = fixture.node(
         "MergeTemporalLeaf",
         {
@@ -801,7 +845,7 @@ def test_a_temporal_concrete_reads_its_edge_off_the_family_roots_own_axes() -> N
 
 
 # --------------------------------------------------------------------------- #
-# The graph boundary: edges and roots are exact in-range projection indexes.   #
+# The Page boundary: edges and roots are exact in-range projection indexes.   #
 # --------------------------------------------------------------------------- #
 _ORDER_IDENTITY = EntityIdentity(_NAMESPACE, "SnapOrder")
 _ITEMS = RelationshipViewKey(RelationshipIdentity(_ORDER_IDENTITY, "items"))
@@ -813,7 +857,7 @@ class _Ordinal(IntEnum):
 
 def _one_projection() -> tuple[PageBuilder, int]:
     """One builder holding exactly one projection, so ``1`` is out of range."""
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     return fixture.builder, fixture.node("SnapOrder", _ORDER_ROW)
 
 
@@ -837,7 +881,7 @@ def test_an_edge_that_is_not_an_exact_int_is_refused_where_it_is_written(value: 
 )
 def test_an_out_of_range_edge_is_refused_where_it_is_written(value: int) -> None:
     builder, order = _one_projection()
-    with pytest.raises(ValueError, match="outside this graph's 1 projections"):
+    with pytest.raises(ValueError, match="outside this Page's 1 projections"):
         builder.write_view(order, _ITEMS, value)
 
 
@@ -851,7 +895,7 @@ def test_a_view_this_projections_own_level_never_attaches_is_refused() -> None:
     # A view row has no position for a level that does not attach here, and the
     # refusal is what keeps that a fact about the plan rather than a silent
     # write into whichever slot happened to be nearby.
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     with pytest.raises(ValueError, match="no level below source 0 attaches 'order'"):
         fixture.attach(order, "parallax.compatibility.SnapOrderItem.order", None)
@@ -864,7 +908,7 @@ def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> Non
     # so writing that slot is a disagreement the row can only meet when the name
     # is translated to a position. It stays a closed construction code there
     # rather than becoming a `KeyError` out of the index the translation reads.
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.zzz")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.zzz")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrder.zzz", None)
     with pytest.raises(GraphConstructionError) as refusal:
@@ -881,7 +925,7 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     # locates a position, so this is the same refusal an unknown name takes
     # rather than a silent write of the foreign arm at the declared one's index.
     foreign = RelationshipIdentity(EntityIdentity(_NAMESPACE, "SnapOrderItem"), "statuses")
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrderItem.statuses", ())
     with pytest.raises(GraphConstructionError) as refusal:
@@ -891,14 +935,14 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     assert refusal.value.identity == foreign
 
 
-def test_a_root_outside_the_graph_is_refused_at_sealing() -> None:
+def test_a_root_outside_the_page_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
     with pytest.raises(ValueError, match="a root names projection 3"):
         builder.finish((3,), Pin())
 
 
 def test_a_sealed_builder_refuses_every_further_use() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW)
     builder = fixture.builder
     builder.finish((order,), Pin())
@@ -913,12 +957,12 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
 
 def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     # Sealing transfers the accumulation, so a caller who keeps the sealed
-    # builder keeps nothing the sealed graph carries — the interned issue
+    # builder keeps nothing the sealed Page carries — the interned issue
     # records and their frozen evidence included, which is the only accumulator
     # a caller cannot reach through the refusals above. Read over the declared
     # slots rather than a list written here, so an accumulator added later is
     # held to this without the case being remembered.
-    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
+    fixture = PageFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
     order = fixture.node("Order", _ORDER_ROW)
     item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     fixture.attach(order, "parallax.compatibility.Order.items", (item,))
@@ -927,67 +971,67 @@ def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     accumulators = tuple(name for name in PageBuilder.__slots__ if name not in kept)
 
     assert any(getattr(builder, name) for name in accumulators)
-    fixture.graph(order)
+    fixture.page(order)
     assert [name for name in accumulators if getattr(builder, name)] == []
 
 
-def test_a_merge_refuses_a_builder_that_has_published_no_graph() -> None:
+def test_a_root_view_refuses_an_unfinished_builder() -> None:
     builder, _ = _one_projection()
     with pytest.raises(TypeError, match="requires a finished Page"):
         RootView(builder)  # pyright: ignore[reportArgumentType]
 
 
 # --------------------------------------------------------------------------- #
-# The indexed merge answers by reference, never by composition.                #
+# The indexed Root View answers by reference, never by composition.                #
 # --------------------------------------------------------------------------- #
-def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() -> None:
+def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call() -> None:
     # The interface exists to remove per-node composition, so equality would
     # pass over exactly the defect it forbids: two equal answers built twice.
-    # The whole-graph properties are held to the same rule as the per-node
-    # reads, over a graph whose every one of them is nonempty — a merged node
+    # The root-wide properties are held to the same rule as the per-node
+    # reads, over a Root View whose every one of them is nonempty — a resolved node
     # with duplicate projections, a loaded to-many, and a keyless root.
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     first = fixture.node("SnapOrderItem", _ITEM_ROW)
     second = fixture.node("SnapOrderItem", {**_ITEM_ROW, "id": 12})
     duplicate = fixture.node("SnapOrder", _ORDER_ROW)
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
-    merge = RootView(fixture.graph(order, keyless, duplicate))
+    root_view = RootView(fixture.page(order, keyless, duplicate))
 
-    assert merge.layout(0) is merge.layout(0)
-    assert merge.member_values(0) is merge.member_values(0)
-    assert merge.issues(0) is merge.issues(0)
-    assert merge.view_layout(0) is merge.view_layout(0)
-    assert merge.view(0, 0) is merge.view(0, 0)
-    assert merge.view(0, 0) == (1, 2)
+    assert root_view.layout(0) is root_view.layout(0)
+    assert root_view.member_values(0) is root_view.member_values(0)
+    assert root_view.issues(0) is root_view.issues(0)
+    assert root_view.view_layout(0) is root_view.view_layout(0)
+    assert root_view.view(0, 0) is root_view.view(0, 0)
+    assert root_view.view(0, 0) == (1, 2)
 
-    assert merge.order is merge.order
-    assert merge.roots is merge.roots
-    assert merge.invalid_roots is merge.invalid_roots
-    assert merge.roots == (0, None, 0)
-    assert len(merge.order) == 3
-    assert [record.ordinal for record in merge.invalid_roots] == [1]
+    assert root_view.order is root_view.order
+    assert root_view.roots is root_view.roots
+    assert root_view.invalid_roots is root_view.invalid_roots
+    assert root_view.roots == (0, None, 0)
+    assert len(root_view.order) == 3
+    assert [record.ordinal for record in root_view.invalid_roots] == [1]
 
 
 def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
-    # Two Orders reached one way carry one merged view layout, so the ordering
+    # Two Orders reached one way carry one shared view layout, so the ordering
     # rule runs once per shape rather than once per node.
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2})
     fixture.attach(first, "parallax.compatibility.SnapOrder.items", ())
     fixture.attach(second, "parallax.compatibility.SnapOrder.items", ())
-    merge = RootView(fixture.graph(first, second))
-    assert merge.view_layout(0) is merge.view_layout(1)
+    root_view = RootView(fixture.page(first, second))
+    assert root_view.view_layout(0) is root_view.view_layout(1)
 
 
 def test_a_member_the_read_did_not_carry_reads_absent_rather_than_null() -> None:
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", {key: _ORDER_ROW[key] for key in ("id", "name")})
-    merge = RootView(fixture.graph(order))
-    layout = merge.layout(0)
-    values = merge.member_values(0)
+    root_view = RootView(fixture.page(order))
+    layout = root_view.layout(0)
+    values = root_view.member_values(0)
     assert values[layout.index_of[AttributeIdentity(_ORDER_IDENTITY, "name")]] == "Ada"
     assert values[layout.index_of[AttributeIdentity(_ORDER_IDENTITY, "sku")]] is ABSENT
     # A failed assertion over a row has to name the absence it found, so the
@@ -995,40 +1039,40 @@ def test_a_member_the_read_did_not_carry_reads_absent_rather_than_null() -> None
     assert repr(ABSENT) == "ABSENT"
 
 
-def test_two_unreadable_projections_of_one_row_never_merge_with_each_other() -> None:
+def test_two_unreadable_projections_of_one_row_never_share_with_each_other() -> None:
     # An invalid key short-circuits identity entirely, so a second read of the
     # identical unreadable row is a second logical node rather than the same one
     # diagnosed twice — which is what keeps each physical finding attributable.
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     unreadable = {**_ORDER_ROW, "id": None}
     first = fixture.node("SnapOrder", unreadable)
     second = fixture.node("SnapOrder", unreadable)
     readable = fixture.node("SnapOrder", _ORDER_ROW)
     again = fixture.node("SnapOrder", _ORDER_ROW)
-    merge = RootView(fixture.graph(first, second, readable, again))
+    root_view = RootView(fixture.page(first, second, readable, again))
     # Both unreadable roots are invalid-root holes, and the two readable ones
-    # collapse onto one allocation — so the graph allocated one node, not three.
-    assert merge.roots == (None, None, 0, 0)
-    assert len(merge.order) == 1
-    assert [record.ordinal for record in merge.invalid_roots] == [0, 1]
+    # collapse onto one allocation — so the Root View allocated one node, not three.
+    assert root_view.roots == (None, None, 0, 0)
+    assert len(root_view.order) == 1
+    assert [record.ordinal for record in root_view.invalid_roots] == [0, 1]
 
 
 def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
     # A scalar rejected value costs nothing to hold twice, and Python may hand
     # two rows the identical string anyway. A rejected document subtree is the
     # shape the retention rule is about: two rows decode two independent
-    # structures and each freezes its own, and only the copy the merged node
+    # structures and each freezes its own, and only the copy the resolved node
     # retains stays alive once the second row's conversion returns.
     stored: dict[str, object] = {
         "id": 1,
         "name": "Ada",
         "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
     }
-    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+    fixture = PageFixture(vo_models.CUSTOMER_MODEL)
     first = fixture.node("Customer", dict(stored))
     second = fixture.node("Customer", dict(stored))
-    graph = fixture.graph(first, second)
-    root = RootView(graph)
+    page = fixture.page(first, second)
+    root = RootView(page)
     (frozen,) = root.issues(0)
     assert frozen.stored_value == {"type": "home"}
     assert root.issues(0) == (frozen,)
@@ -1038,7 +1082,7 @@ def test_no_published_value_is_the_absent_sentinel() -> None:
     # ABSENT is this runtime's own spelling of a position a read did not carry,
     # and it is never a value: a consumer skips the position, so what publishes
     # is a member the value does not have rather than a member holding a marker.
-    fixture = GraphFixture(_ORDERS)
+    fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", {key: _ORDER_ROW[key] for key in ("id", "name")})
     (root,) = fixture.materialize(order)
     assert isinstance(root, sm.SnapOrder)
@@ -1061,6 +1105,6 @@ def _customer_row(phone_type: str) -> dict[str, object]:
     }
 
 
-def _sole_node(merge: Any, name: str) -> int:
-    (index,) = [index for index, entity in enumerate(merge.order) if entity.name == name]
+def _sole_node(root_view: Any, name: str) -> int:
+    (index,) = [index for index, entity in enumerate(root_view.order) if entity.name == name]
     return index

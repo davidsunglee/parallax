@@ -443,10 +443,10 @@ def test_a_tampered_prose_row_alone_fails_generation(
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, ",
-        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-auto-retry`, `m-metamodel`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
+        "`parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
+        "`m-auto-retry`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
         1,
     )
     assert edited != original
@@ -532,10 +532,10 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> 
     shutil.copy(dag.MODULES_MD, tmp_path / "core" / "spec" / dag.MODULES_MD.name)
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, ",
-        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-auto-retry`, `m-metamodel`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
+        "`parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
+        "`m-auto-retry`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
         1,
     )
     assert edited != original
@@ -766,12 +766,16 @@ def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
         if declared_parent != "parallax.snapshot.handle":
             continue
         assert parent < set(forbidden[child]), child
-    # `_materialization` owns read preparation and may reach SQL generation, but
-    # it still cannot reach read locking or write-policy modules. The lowering
-    # cluster may not reach the read side, and none of these restrictions exists
-    # on the parent.
+    # `_materialization` owns read preparation, SQL generation, read locking,
+    # and execution lifecycle, but still cannot reach write-policy modules. The
+    # lowering cluster may not reach the read side, and none of these restrictions
+    # exists on the parent.
     assert "parallax.core.sql_gen" not in forbidden["parallax.snapshot.handle._materialization"]
-    assert "parallax.core.read_lock" in forbidden["parallax.snapshot.handle._materialization"]
+    assert "parallax.core.read_lock" not in forbidden["parallax.snapshot.handle._materialization"]
+    assert (
+        "parallax.core.execution_lifecycle"
+        not in forbidden["parallax.snapshot.handle._materialization"]
+    )
     assert "parallax.core.batch_write" in forbidden["parallax.snapshot.handle._materialization"]
     assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
 

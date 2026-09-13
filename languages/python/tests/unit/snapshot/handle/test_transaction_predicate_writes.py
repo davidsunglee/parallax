@@ -1278,7 +1278,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
 
 def test_materializing_terminate_where_audit_only_observes_the_whole_document() -> None:
     # An AUDIT-ONLY terminate is close-only (`txtime_write.plan` — no chained
-    # row, `materialize_row`'s own `assignment_bearing` set excludes it), so it
+    # row, the predicate-write lane's `assignment_bearing` set excludes it), so it
     # carries no payload forward and writes no document. Its resolving read
     # still projects one, because a Temporal Observation retains a COMPLETE
     # Predecessor MappingRow (`m-unit-work`) whatever the topology does with it —

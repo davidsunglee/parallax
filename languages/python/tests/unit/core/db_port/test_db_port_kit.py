@@ -20,7 +20,6 @@ from parallax.core.db_port import (
     Committed,
     DatabaseConnection,
     PipelineStatement,
-    PositionalRow,
     RollbackFailed,
     RolledBack,
     Row,
@@ -101,21 +100,6 @@ def test_mapping_fixtures_reach_the_caller_as_positional_rows() -> None:
 
     assert _read(port) == [(1,)]
     assert _read(port) == [(1,)]
-
-
-def test_positional_row_exposes_mapping_semantics_and_contract_diagnostics() -> None:
-    row = PositionalRow(("id", "name"), (1, "Ada"))
-
-    assert tuple(row) == ("id", "name")
-    assert len(row) == 2
-    assert row["name"] == "Ada"
-    assert dict(row) == {"id": 1, "name": "Ada"}
-    with pytest.raises(KeyError, match="missing"):
-        _ = row["missing"]
-    with pytest.raises(ValueError, match="row arity"):
-        PositionalRow(("id",), (1, "Ada"))
-    with pytest.raises(ValueError, match="duplicate result key"):
-        PositionalRow(("id", "id"), (1, 2))
 
 
 def test_scripted_pipeline_returns_one_ordered_batch_per_statement() -> None:

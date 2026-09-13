@@ -2,9 +2,9 @@
 
 Drives the real seam end to end — the production executor against a canned
 `m-db-port`, then the wire materializer — so what these assert is what a Wire
-read answers. The typed materializer runs over the same merge in the graph
-suites, which is what makes "peers over one merge" checkable rather than
-asserted.
+read answers. The typed materializer crosses the same Page and Root View seams
+in its own suites, which is what makes the two publication lanes checkable peers
+rather than merely asserted as such.
 
 Three claims bound what is asserted here: keys are declared member names and
 leaves are canonical Wire Values (`m-wire`); a back-reference unwinds finitely
@@ -75,7 +75,7 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit.snapshot._snapshot_graph_support import documents_of, identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import documents_of, identity_of, layout_of
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
@@ -857,19 +857,19 @@ _VARIANT_MODEL = form_metamodel(
 
 def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
     compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL))
-    materialized = compiled.materialize_row(
-        {
-            "id": 1,
-            "kind": "archive-shared",
-            "familyVariant": PresentDocument({"label": "mail"}),
-            "archive_profile": PresentDocument({"label": "archive"}),
-        }
-    )
+    stored = {
+        "id": 1,
+        "kind": "archive-shared",
+        "familyVariant": PresentDocument({"label": "mail"}),
+        "archive_profile": PresentDocument({"label": "archive"}),
+    }
+    resolved, _variant, _unknown, _document = compiled.row_identity(stored)
+    values, _findings, _classified = compiled.decode_payload(stored)
     builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
-        materialized.values,
+        values,
         LevelContext(
-            layout_of(_VARIANT_MODEL, materialized.resolved_entity),
+            layout_of(_VARIANT_MODEL, resolved),
             compiled.documents,
         ),
         builder,

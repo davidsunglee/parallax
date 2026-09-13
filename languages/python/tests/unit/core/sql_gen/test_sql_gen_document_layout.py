@@ -26,6 +26,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import MISSING
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
@@ -113,9 +114,10 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     # The column is still never a result field: it fans out no member here and the
     # raw value leaves the row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}
-    materialized = compiled.materialize_row({"id": 1, "payload": PresentDocument(document)})
-    assert materialized.values == {"id": 1}
-    assert materialized.document == document
+    row = {"id": 1, "payload": PresentDocument(document)}
+    values, _findings, _classified = compiled.decode_payload(row)
+    assert values == {"id": 1}
+    assert compiled.row_identity(row)[3] == document
 
 
 def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs() -> None:
@@ -158,10 +160,10 @@ def test_a_direct_document_carrier_is_classified_before_flat_publication() -> No
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     row = {**_COLUMNS_ROW, "tags": PresentDocument({})}
-    materialized = compiled.materialize_row(row)
-    assert materialized.values["tags"] == []
-    assert materialized.classified_members.issuperset({"address", "tags"})
-    assert [(finding.code, finding.path) for finding in materialized.findings] == [
+    values, findings, classified = compiled.decode_payload(row)
+    assert values["tags"] == []
+    assert classified.issuperset({"address", "tags"})
+    assert [(finding.code, finding.path) for finding in findings] == [
         ("many-wrong-kind", ("tags",))
     ]
     with pytest.raises(SqlGenError, match="invalid stored data"):
@@ -185,8 +187,8 @@ def test_a_direct_document_classifies_nested_invalid_state(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     row = {**_COLUMNS_ROW, "address": address}
-    materialized = compiled.materialize_row(row)
-    assert [(finding.code, finding.path) for finding in materialized.findings] == [expected]
+    _values, findings, _classified = compiled.decode_payload(row)
+    assert [(finding.code, finding.path) for finding in findings] == [expected]
     with pytest.raises(SqlGenError, match="invalid stored data"):
         compiled.transform_row(row)
 
@@ -217,8 +219,8 @@ def test_a_required_direct_document_member_is_classified_before_publication() ->
         oa.All(), model, POSTGRES, entity(model, "Required"), result_form="instance"
     )
     row = {"id": 1, "address": PresentDocument({})}
-    materialized = compiled.materialize_row(row)
-    assert [(finding.code, finding.path) for finding in materialized.findings] == [
+    _values, findings, _classified = compiled.decode_payload(row)
+    assert [(finding.code, finding.path) for finding in findings] == [
         ("required-member-absent", ("address", "city"))
     ]
     with pytest.raises(SqlGenError, match="invalid stored data"):
@@ -230,7 +232,31 @@ def test_a_direct_document_column_requires_a_folded_document_read() -> None:
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.materialize_row({**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+        compiled.decode_payload({**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+
+
+def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() -> None:
+    person = entity(DOCUMENT, "Person").identity
+    marker = entity(DOCUMENT, "Marker").identity
+    document = compile_read(
+        oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+    )
+
+    assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is MISSING
+    with pytest.raises(KeyError, match="missing"):
+        document.raw_member_of(_DOCUMENT_ROW, person, "missing")
+    with pytest.raises(KeyError, match="missing"):
+        document.raw_member_of(_DOCUMENT_ROW, marker, "missing")
+    with pytest.raises(KeyError, match="missing"):
+        document.classify_member_of(_DOCUMENT_ROW, marker, "missing")
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        document.raw_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
+
+    columns = compile_read(
+        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
+    )
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        columns.classify_member_of({**_COLUMNS_ROW, "address": {}}, person, "address")
 
 
 def test_the_fan_out_decodes_by_declared_type_rather_than_by_the_json_values_shape() -> None:
@@ -300,9 +326,9 @@ def test_a_row_transform_refuses_a_raw_document_outside_the_database_port_contra
 
 def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    materialized = compiled.materialize_row({"id": 1, "payload": SQL_NULL})
-    assert materialized.values["display_name"] is None
-    assert materialized.classified_members == frozenset({"display_name", "score", "joined_on"})
+    values, _findings, classified = compiled.decode_payload({"id": 1, "payload": SQL_NULL})
+    assert values["display_name"] is None
+    assert classified == frozenset({"display_name", "score", "joined_on"})
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -333,13 +359,13 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
         oa.All(), model, POSTGRES, entity(model, "Holder"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.materialize_row({"id": 1, "payload": {"profile": {"label": "x"}}})
+        compiled.decode_payload({"id": 1, "payload": {"profile": {"label": "x"}}})
 
 
 def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
     compiled = _instance_form(entity(DOCUMENT, "Marker"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.materialize_row({"id": 1, "payload": {}})
+        compiled.decode_payload({"id": 1, "payload": {}})
 
 
 @pytest.mark.parametrize(

@@ -69,7 +69,6 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     IsolationLevel,
     MappingRow,
-    PositionalRow,
     Row,
 )
 from parallax.core.dialect import Dialect
@@ -286,7 +285,7 @@ def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[Mappin
             raw_rows = session.execute(driver_sql, binds)
             if step.expect_rows is not None:
                 keys = tuple(step.expect_rows[0])
-                rows = tuple(PositionalRow(keys, row) for row in raw_rows)
+                rows = tuple(dict(zip(keys, row, strict=True)) for row in raw_rows)
     return rows
 
 
