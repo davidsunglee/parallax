@@ -9,7 +9,7 @@ Pages materialized. Beside it, *execution-owned view slots* draws the other line
 a query shape belongs to one execution and MUST NOT be cached for the lifetime of
 a model. This is the SIZE half of those two requirements measured over the
 production materialization path, from ``prepare_model`` through ``compile_read``
-and ``bind`` to ``PreparedRead.materialize`` and conversion: what is retained
+and ``bind`` to ``PreparedRead.convert_driver`` and conversion: what is retained
 must not grow with rows, with Pages, or with executions.
 
 **Two axes, one claim each.** The first varies rows through one prepared

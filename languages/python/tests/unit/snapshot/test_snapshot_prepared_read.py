@@ -51,7 +51,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import UNAVAILABLE
+from parallax.core.document_codec import MISSING, UNAVAILABLE
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen._compile import CompiledRead
@@ -394,7 +394,7 @@ def test_an_unknown_tag_and_a_null_key_both_reach_the_projection() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A classified member is translated, never judged a second time.               #
+# A retained raw member is classified once, only after witness comparison.               #
 # --------------------------------------------------------------------------- #
 _ADA: Final[Mapping[str, object]] = {
     "label": "ada",
@@ -408,6 +408,20 @@ def _register(document: Mapping[str, object]) -> _Converted:
     return _converted(
         _prepared(REGISTER, "Register"), {"id": 1, "payload": _stored_document(document)}
     )
+
+
+def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> None:
+    # A shared Structured Column's SQL-null carrier and a present document that
+    # omits the same member collapse to the same read value, but they are distinct
+    # stored structure and must remain distinct before witness comparison.
+    compiled = _compiled(REGISTER, "Register")
+    identity = target(REGISTER, "Register").identity
+
+    sql_null = compiled.raw_member_of({"id": 1, "payload": SQL_NULL}, identity, "label")
+    missing = compiled.raw_member_of({"id": 1, "payload": PresentDocument({})}, identity, "label")
+
+    assert sql_null is SQL_NULL
+    assert missing is MISSING
 
 
 def test_a_classified_member_is_carried_as_the_transform_classified_it() -> None:
@@ -713,9 +727,8 @@ def test_the_conforming_path_decodes_no_declaration_and_admits_nothing_twice(
 ) -> None:
     # Work fixed by a layout, a member declaration, or a Neutral Type does not
     # scale with rows, measured over the report's own workload. Every
-    # document a conforming row carries reaches conversion already classified, so
-    # conversion asks the codec for none of them at either batch size — and the
-    # admissions that remain are exactly the stored cells no transform classified,
+    # document a conforming row carries is classified only if its deferred state
+    # is reached. The admissions that remain are exactly the direct stored cells,
     # so doubling the rows doubles them and nothing else moves.
     one = _conversion_calls(layout, OWNERS)
     twice = _conversion_calls(layout, OWNERS * 2)

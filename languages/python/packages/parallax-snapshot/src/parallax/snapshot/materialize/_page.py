@@ -1,4 +1,4 @@
-"""The sealed Snapshot graph: compact positional rows, and the builder that seals them.
+"""The sealed Snapshot Page: compact positional rows, and the builder that seals them.
 
 One projection is a reference to its exact Entity's member layout plus one
 ``member_values`` tuple read against it — Attributes in the layout's order first,
@@ -33,15 +33,15 @@ is stated — and the four spellings stay mutually distinct at every depth:
 
 Edges and roots are exact nonnegative built-in ``int`` projection indexes, and
 :class:`PageBuilder` refuses ``bool``, a non-``int``, a negative, and an
-out-of-range index where the edge is recorded — so a graph that exists is a graph
-whose references resolve, and no whole-graph validation pass stands between
-building one and merging it.
+out-of-range index where the edge is recorded — so a Page that exists is a Page
+whose references resolve, and no whole-Page validation pass stands between
+building and sealing it.
 
 :meth:`PageBuilder.finish` transfers the accumulated arrays into an opaque
 :class:`Page` and invalidates the builder in one step, so nothing
-observes a half-published graph and nothing writes to a published one. The
+observes a half-published Page and nothing writes to a published one. The
 per-family key map the builder assigns logical identity through is discarded
-there: identity is computed once, while building, and a merge consumes the dense
+there: identity is computed once, while building, and each Root View consumes the dense
 IDs without re-extracting or re-hashing a key.
 
 A Page is also where result scope is expressed. A Root View selects one root
@@ -118,10 +118,9 @@ class StoredDataIssueInput:
     ``path`` keeps declared member names distinct from integer array positions.
     ``stored_value`` is the already-frozen evidence of what was rejected, frozen
     where conversion translated the finding: nothing downstream re-reads or
-    re-freezes it. Whether this record is the one its logical node publishes is
-    settled by :meth:`PageBuilder.add`, which answers a repeated judgment with
-    the record that node already retains and drops the arriving copy. The
-    retained record is what every seam above shares by reference.
+    re-freezes it. Exact equal witnesses share the Page-owned Entity State and
+    its issue record; witness-distinct states under one logical key remain
+    separate. The retained record is what every seam above shares by reference.
     """
 
     code: StoredDataIssueCode
@@ -301,10 +300,10 @@ class PageBuilder:
     holds them. Nothing beyond that fan-out may reach for the three.
 
     Page-local identity resolution promises projection reuse within one builder
-    and never beyond it, so the builder is the unit a caller chooses: a ``find``
-    gives its whole result one, and a milestone-set read gives each milestone its
-    own. The FIRST projection registered for a logical key is the one a later
-    back-reference resolves to.
+    and never beyond it, so the builder is the unit a caller chooses: eager and
+    milestone-set reads each give their whole flat result one Page. The FIRST
+    projection registered for a logical key is the one a later back-reference
+    resolves to.
 
     Relationship views accumulate beside the rows rather than inside them,
     because a parent's views are only known once its child level lands and the
@@ -324,11 +323,9 @@ class PageBuilder:
         "_logical_ids",
         "_member_rows",
         "_observer",
-        "_occurrence_positions",
         "_schema",
         "_sealed",
         "_slots",
-        "_source_ordinals",
         "_sources",
         "_views",
         "_witnesses",
@@ -351,8 +348,6 @@ class PageBuilder:
             Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
         ] = []
         self._witnesses: list[object] = []
-        self._occurrence_positions: list[tuple[int, int]] = []
-        self._source_ordinals: dict[int, int] = {}
         self._sealed = False
 
     # ----------------------------------------------------------------------- #
@@ -374,7 +369,7 @@ class PageBuilder:
         will write.
 
         The logical-node ID is assigned here, through the layout's own key rule,
-        so identity is computed once for the life of the graph. Duplicates of one
+        so identity is computed once for the life of the Page. Duplicates of one
         row within one Entity family share an ID; a projection whose key did not
         decode takes an ID of its own and keeps its diagnosis, so it merges with
         nothing — not even a second read of the identical unreadable row.
@@ -434,9 +429,6 @@ class PageBuilder:
         self._views.append([ABSENT] * len(slots.slots))
         self._logical_ids.append(logical)
         self._keys.append(key)
-        source_ordinal = self._source_ordinals.get(source, 0)
-        self._source_ordinals[source] = source_ordinal + 1
-        self._occurrence_positions.append((source, source_ordinal))
         self._witnesses.append(witness)
         return projection
 
@@ -476,7 +468,7 @@ class PageBuilder:
         accumulated into is dropped with it — the key map it assigned identity
         through and the pool it interned issue records against included: what a
         sealed Page carries is what a Root View reads, nothing observes a
-        half-published graph or writes to a published one, and a caller holding
+        half-published Page or writes to a published one, and a caller holding
         the sealed builder holds none of what it published.
 
         A root whose own key did not decode becomes an :class:`InvalidRootInput`
@@ -490,6 +482,7 @@ class PageBuilder:
         claims: list[list[int]] = [[] for _ in self._first]
         for projection, logical in enumerate(self._logical_ids):
             claims[logical].append(projection)
+        occurrence_positions = _canonical_occurrence_positions(self._sources, self._witnesses)
         rows = PageRows(
             layouts=tuple(self._layouts),
             member_rows=tuple(self._member_rows),
@@ -504,11 +497,11 @@ class PageBuilder:
             judged_states={},
             observer=self._observer,
             witnesses=tuple(self._witnesses),
-            source_ordinals=tuple(position[1] for position in self._occurrence_positions),
+            source_ordinals=tuple(position[1] for position in occurrence_positions),
             claims=tuple(
                 group[0]
                 if len(group) == 1
-                else tuple(sorted(group, key=self._occurrence_positions.__getitem__))
+                else tuple(sorted(group, key=occurrence_positions.__getitem__))
                 for group in claims
             ),
             decoders=tuple(self._decoders),
@@ -526,8 +519,6 @@ class PageBuilder:
         self._first = []
         self._decoders = []
         self._witnesses = []
-        self._occurrence_positions = []
-        self._source_ordinals = {}
         return Page(rows)
 
     # ----------------------------------------------------------------------- #
@@ -604,6 +595,52 @@ def _require_index(value: object, count: int, holder: str) -> None:
         raise ValueError(
             f"{holder} names projection {value}, outside this Page's {count} projections"
         )
+
+
+def _canonical_occurrence_positions(
+    sources: Sequence[SourceLevel], witnesses: Sequence[object]
+) -> tuple[tuple[SourceLevel, int], ...]:
+    positions: list[tuple[SourceLevel, int]] = [(0, 0)] * len(sources)
+    by_source: dict[SourceLevel, list[int]] = {}
+    for projection, source in enumerate(sources):
+        by_source.setdefault(source, []).append(projection)
+    for source, projections in by_source.items():
+        ordered = sorted(
+            projections,
+            key=lambda projection: (stored_order_key(witnesses[projection]), projection),
+        )
+        for ordinal, projection in enumerate(ordered):
+            positions[projection] = (source, ordinal)
+    return tuple(positions)
+
+
+def stored_order_key(value: object) -> str:
+    kind = f"{type(value).__module__}.{type(value).__qualname__}"
+    if is_dataclass(value) and not isinstance(value, type):
+        parts = tuple(
+            _packed((item.name, stored_order_key(getattr(value, item.name))))
+            for item in fields(value)
+        )
+        return _packed((kind, "dataclass", *parts))
+    if isinstance(value, Mapping):
+        items = sorted(
+            _packed((stored_order_key(key), stored_order_key(item)))
+            for key, item in cast("Mapping[object, object]", value).items()
+        )
+        return _packed((kind, "mapping", *items))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return _packed(
+            (
+                kind,
+                "sequence",
+                *(stored_order_key(item) for item in cast("Sequence[object]", value)),
+            )
+        )
+    return _packed((kind, "scalar", repr(value)))
+
+
+def _packed(parts: Sequence[str]) -> str:
+    return "".join(f"{len(part)}:{part}" for part in parts)
 
 
 def exact_stored_equal(left: object, right: object) -> bool:
