@@ -4,14 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 
+import pytest
+
 from parallax.conformance.story_models import ORDERS_MODEL
+from parallax.core import deep_fetch
+from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.object_query import deserialize
+from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._materialization import MaterializationObserver, Materializer
+from parallax.snapshot.handle._materialization import (
+    FlatPageRead,
+    MaterializationObserver,
+    Materializer,
+)
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import Page, PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
-from tests.unit.snapshot._snapshot_graph_support import identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import identity_of, layout_of
 
 
 class _RecordingObserver:
@@ -71,11 +83,9 @@ def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     return builder.finish(roots, Pin())
 
 
-def _publish(page: Page) -> Callable[[], Iterator[object]]:
-    def publish() -> Iterator[object]:
-        for position in range(page.root_count):
-            RootView(page, position)
-            yield position
+def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
+    def publish(_root: RootView, position: int) -> Iterator[object]:
+        yield position
 
     return publish
 
@@ -84,19 +94,23 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     observer = _RecordingObserver()
     materializer = Materializer(observer)
 
-    def read(observed: MaterializationObserver) -> Page:
-        observed.prepared(1)
-        observed.statement_rendered(ROOT_LEVEL)
-        observed.statement_executed(ROOT_LEVEL, 2)
-        return _page(observed, 1, 1)
+    meta = model_of(ORDERS_MODEL)
+    model = CatalogedModel(meta)
+    query = preflight(
+        deserialize({"target": "Order", "predicate": {"all": {}}}),
+        model=meta,
+        form="graph",
+    )
+    plan = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
+    compiled = compile_read(plan.root, meta, POSTGRES, result_form="instance")
+    rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
 
-    page = materializer.read_page(read)
+    page = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin())).page
     assert list(materializer.roots(page, _publish(page))) == [0, 1]
     assert observer.events == [
         ("prepared", 1),
         ("statement_rendered", ROOT_LEVEL),
         ("statement_executed", 2),
-        ("witnesses_compared", 1),
         ("states_decoded", 1),
         ("occurrences_reached", 1),
         ("root_published", 0),
@@ -105,6 +119,13 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
         ("root_published", 1),
     ]
     assert all(type(value) is int for _event, value in observer.events)
+
+
+def test_root_publication_requires_one_pin_per_page_root() -> None:
+    observer = _RecordingObserver()
+    page = _page(observer, 1)
+    with pytest.raises(ValueError, match="pin count must match"):
+        list(Materializer(observer).roots(page, _publish(page), pins=()))
 
 
 def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:

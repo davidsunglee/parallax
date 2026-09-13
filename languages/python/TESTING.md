@@ -80,7 +80,7 @@ of `tests/unit/` sits in that directory — `conformance/_lanes/_scripted_port.p
 `core/entity/value_object_bad_models.py`,
 `core/execution_lifecycle/_lifecycle_cost_support.py`,
 `snapshot/_layout_twin_columns.py`, `snapshot/_layout_twin_document.py`,
-`snapshot/_snapshot_graph_support.py`,
+`snapshot/_snapshot_page_support.py`,
 `snapshot/handle/_keyed_write_drivers.py`,
 `snapshot/handle/_mixed_strategy_model.py`,
 `snapshot/handle/observation_models.py`. A helper whose consumers span

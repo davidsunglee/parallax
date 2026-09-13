@@ -240,16 +240,16 @@ def _diagnosis(issue: StoredDataIssueInput, key: ObjectKey | None) -> StoredData
     )
 
 
-def _children(merge: RootView, node: int) -> tuple[int, ...]:
+def _children(root_view: RootView, node: int) -> tuple[int, ...]:
     """The allocation indices ``node``'s loaded relationship views reach.
 
     Every populated slot, broad and narrowed alike: the include tree a root
-    requested is exactly what the merged view layout enumerates, so a slot's
+    requested is exactly what the Root View layout enumerates, so a slot's
     position is all this walk needs of it.
     """
     reached: dict[int, None] = {}
-    for slot in range(len(merge.view_layout(node).slots)):
-        value = merge.view(node, slot)
+    for slot in range(len(root_view.view_layout(node).slots)):
+        value = root_view.view(node, slot)
         if isinstance(value, tuple):
             reached.update(dict.fromkeys(cast("tuple[int, ...]", value)))
         elif value is not None and value is not ABSENT:

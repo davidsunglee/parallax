@@ -22,7 +22,7 @@ from parallax.core.base import (
     admits_stored_scalar,
     inert_scalar,
 )
-from parallax.core.db_port import PositionalRow, Row
+from parallax.core.db_port import Row
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding, is_text_compared
@@ -95,7 +95,6 @@ __all__ = [
     "CompiledRead",
     "CompiledTemplate",
     "LoweredStatement",
-    "MaterializedReadRow",
     "SqlGenError",
     "compile_read",
     "compile_template",
@@ -131,44 +130,6 @@ class CompiledPredicate:
 
 
 @dataclass(frozen=True, slots=True)
-class MaterializedReadRow:
-    """One instance-form row with exact concrete identity and field provenance.
-
-    ``values`` excludes the synthetic ``familyVariant`` key so a Value Object
-    document column with that physical spelling remains intact. ``family_variant``
-    is the optional wire/graph spelling and ``resolved_entity`` is always the exact
-    accepted Entity Identity the row denotes.
-
-    ``document`` is the raw Structured Column this row arrived with under
-    Relational Document Layout, kept beside ``values`` for the same reason
-    ``family_variant`` is: it is provenance rather than a field, and the fan-out
-    drops it from the values a result form renders. Absent for every read that
-    projected no Structured Column. ``findings`` and ``unknown_family_tag`` are
-    classified provenance that a consumer must propagate to publication;
-    ``classified_members`` names values already judged by the document codec so
-    conversion translates them without judging their synthesized collapse again.
-
-    ``unknown_family_tag`` and ``coordinate`` take one shape for one reason:
-    both are lifted off the driver row by a framework-owned name, and both are
-    ABSENT for most reads. Their presence IS the fact — that the discriminator
-    resolved to no composed concrete subtype, that this read paged — and what
-    they hold is the value behind it. A flag beside a value would let the two
-    disagree, and neither has a resting value that could stand for absence: a
-    stored ``NULL`` discriminator is a real unknown tag, and a captured NULL
-    carrier is a real coordinate.
-    """
-
-    values: dict[str, object]
-    resolved_entity: EntityIdentity
-    family_variant: str | None
-    document: object | None = None
-    findings: tuple[DocumentFinding, ...] = ()
-    unknown_family_tag: UnknownFamilyTag | None = None
-    classified_members: frozenset[str] = frozenset()
-    coordinate: ContinuationCoordinate | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class AttributeReadContract:
     """One projected Attribute's driver-result contract.
 
@@ -198,63 +159,137 @@ _NOTHING_CLASSIFIED: frozenset[str] = frozenset()
 
 @dataclass(frozen=True, slots=True)
 class RowMaterializer:
-    """One read's driver rows, turned into :class:`MaterializedReadRow` values.
-
-    Holds the stages the projection filled and the three facts about the read
-    itself that materializing a row needs: the concrete a row names when no
-    discriminator named one, the closed set of concretes its rows can name, and
-    the hidden aliases its continuation coordinate was captured under. Each is a
-    compile-time fact of one statement, so a row runs the stages over its own
-    values and allocates that dict and its carrier alone — save the row that
-    arrives without a projected occurrence Column, which narrows the compiled
-    classified-key set to the keys it held.
-    """
+    """Compiled ordinal access and deferred payload stages for one read."""
 
     stages: _RowStages
     fallback_entity: EntityIdentity
     resolvable: tuple[EntityIdentity, ...]
     coordinate_reads: tuple[str, ...]
+    result_keys: tuple[str, ...]
+    index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
-    def materialize(self, row: Mapping[str, object]) -> MaterializedReadRow:
-        """Resolve one driver row into its concrete identity and provenance."""
+    def __post_init__(self) -> None:
+        if len(set(self.result_keys)) != len(self.result_keys):
+            duplicate = next(
+                key
+                for position, key in enumerate(self.result_keys)
+                if key in self.result_keys[:position]
+            )
+            raise ValueError(f"duplicate result key {duplicate!r}")
+        object.__setattr__(
+            self, "index_by_key", {key: index for index, key in enumerate(self.result_keys)}
+        )
+
+    def header(
+        self, row: Row | Mapping[str, object]
+    ) -> tuple[
+        EntityIdentity,
+        str | None,
+        UnknownFamilyTag | None,
+        ContinuationCoordinate | None,
+        object | None,
+    ]:
+        """Resolve one positional row identity without allocating a carrier."""
+        if isinstance(row, tuple) and len(row) != len(self.result_keys):
+            raise ValueError(
+                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
+            )
+        resolved, variant, unknown_tag, document = self.identity_header(row)
+        return resolved, variant, unknown_tag, self._coordinate(row), document
+
+    def identity_header(
+        self, row: Row | Mapping[str, object]
+    ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
+        """Resolve identity and document provenance without a coordinate."""
+        if isinstance(row, tuple) and len(row) != len(self.result_keys):
+            raise ValueError(
+                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
+            )
         stages = self.stages
-        values = dict(row)
         resolved, variant, unknown_tag = self.fallback_entity, None, None
         if stages.resolve is not None:
-            resolved, variant, unknown_tag = stages.resolve.resolve(values)
+            resolved, variant, unknown_tag = stages.resolve.resolve_value(
+                self._value(row, stages.resolve.column)
+            )
+        shared = stages.shared_document
+        document = (
+            None
+            if shared is None
+            else _observed_document(self._value(row, stages.result_key(resolved, shared.column)))
+        )
+        return resolved, variant, unknown_tag, document
+
+    def raw_member_of(
+        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
+    ) -> object:
+        shared = self.stages.shared_document
+        if shared is not None:
+            try:
+                return shared.raw_member_from(
+                    self._value(row, self.stages.result_key(resolved, shared.column)),
+                    resolved,
+                    key,
+                )
+            except KeyError:
+                pass
+        return self._value(row, self.stages.result_key(resolved, key))
+
+    def classify_member_of(
+        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        shared = self.stages.shared_document
+        if shared is not None:
+            try:
+                return shared.classify_member_from(
+                    self._value(row, self.stages.result_key(resolved, shared.column)),
+                    resolved,
+                    key,
+                )
+            except KeyError:
+                pass
+        direct = self.stages.direct_documents
+        if direct is None:
+            raise KeyError(key)
+        return direct.classify_member_from(
+            self._value(row, self.stages.result_key(resolved, key)), resolved, key
+        )
+
+    def decode_payload(
+        self, row: Row | Mapping[str, object], resolved: EntityIdentity
+    ) -> tuple[dict[str, object], tuple[DocumentFinding, ...], frozenset[str]]:
+        values = (
+            dict(row)
+            if isinstance(row, Mapping)
+            else {key: row[position] for position, key in enumerate(self.result_keys)}
+        )
+        stages = self.stages
+        if stages.resolve is not None:
+            stages.resolve.resolve(values)
         shared = stages.shared_document
         findings = () if shared is None else shared.fan_out(values, resolved)
         classified = stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
         if stages.direct_documents is not None:
             direct, complete = stages.direct_documents.classify(values, resolved)
-            if direct:
-                findings += direct
+            findings += direct
             if not complete:
                 classified = frozenset(key for key in classified if key in values)
-        return MaterializedReadRow(
-            values,
-            resolved,
-            variant,
-            None if shared is None else _observed_document(row.get(shared.column)),
-            findings,
-            unknown_tag,
-            classified,
-            self._coordinate(values),
-        )
+        for alias in self.coordinate_reads:
+            values.pop(alias, None)
+        return values, findings, classified
 
-    def _coordinate(self, values: dict[str, object]) -> ContinuationCoordinate | None:
-        """Lift this read's captured coordinate off ``values``, by name.
+    def _value(self, row: Row | Mapping[str, object], key: str) -> object:
+        if isinstance(row, tuple):
+            try:
+                return row[self.index_by_key[key]]
+            except KeyError as error:
+                raise KeyError(key) from error
+        return row[key]
 
-        The same move the inheritance discriminator takes: a framework-owned
-        cell is popped so it never reaches a consumer as a field, and it is
-        normalized here — at capture, by the module that chose the expression
-        that produced it — so a provider buffer is not handed onward as a
-        carrier a later page would rebind.
-        """
+    def _coordinate(self, row: Row | Mapping[str, object]) -> ContinuationCoordinate | None:
         if not self.coordinate_reads:
             return None
         return ContinuationCoordinate(
-            tuple(inert_scalar(values.pop(alias)) for alias in self.coordinate_reads)
+            tuple(inert_scalar(self._value(row, alias)) for alias in self.coordinate_reads)
         )
 
 
@@ -263,6 +298,7 @@ def _row_materializer(
     position: tuple[EntityIdentity, ...],
     target: EntityIdentity,
     coordinate_reads: tuple[str, ...],
+    result_keys: tuple[str, ...],
 ) -> RowMaterializer:
     """The materializer for a read of ``position`` under ``target``.
 
@@ -279,6 +315,7 @@ def _row_materializer(
         fallback,
         tuple(dict.fromkeys((*position, fallback, *stages.resolvable))),
         coordinate_reads,
+        result_keys,
     )
 
 
@@ -291,14 +328,14 @@ class CompiledRead:
     observed rows travels WITH the compiled statement. The flat lane publishes a
     transformed row through :meth:`transform_row`; every materializing consumer —
     the typed and wire snapshot lanes and the write lanes alike — uses
-    :meth:`materialize_row`, row conversion, and the staging graph its own lane
-    classifies or refuses. Neither re-derives what the statement projected.
+    raw ordinal access and deferred conversion through the Page its lane owns.
+    Neither re-derives what the statement projected.
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
     no `familyVariant` column at all, so this is what lets
-    :attr:`MaterializedReadRow.resolved_entity` still name the row's own concrete
-    identity. A deep-fetch CHILD level takes its narrow from its own
+    :meth:`row_identity` still names the row's own concrete identity. A deep-fetch
+    CHILD level takes its narrow from its own
     ``FetchLevel.narrow_to`` instead.
 
     ``documents`` is the top-level Value Object occurrences the resolved position
@@ -308,8 +345,8 @@ class CompiledRead:
     or the layout: a default row-form read projects no document column, while the
     explicit materializing-write widening lane projects the documents it needs.
     An occurrence is just as much a member when the layout stores it inside a
-    shared Structured Column rather than in one of its own. ``materialize_row`` is the metadata-
-    preserving contract for graph and write consumers; ``transform_row`` is only
+    shared Structured Column rather than in one of its own. Raw ordinal access is the
+    metadata-preserving contract for Page and write consumers; ``transform_row`` is only
     for clean flat publication and refuses classified invalid state.
     ``projected_documents`` is the demand-specific subset the statement actually
     selected; conversion receives that subset so an unrequested occurrence is
@@ -365,31 +402,34 @@ class CompiledRead:
         and always returns a FRESH ``dict``, including when there is nothing to
         materialize.
         """
-        materialized = self.materialize_row(row)
+        resolved, variant, unknown, _coordinate, _document = self.row_header(row)
+        values, findings, classified = self._materializer.decode_payload(row, resolved)
         if (
-            materialized.findings
-            or materialized.unknown_family_tag is not None
-            or self._has_invalid_direct_scalar(materialized)
+            findings
+            or unknown is not None
+            or self._has_invalid_direct_scalar(resolved, values, classified)
         ):
             raise SqlGenError("a row carrying invalid stored data cannot be flattened")
-        if materialized.family_variant is not None:
-            if "familyVariant" in materialized.values:  # pragma: no cover - formation rejects it
+        if variant is not None:
+            if "familyVariant" in values:  # pragma: no cover - formation rejects it
                 raise SqlGenError(
                     "a flat row cannot represent both a declared `familyVariant` field and "
                     "the polymorphic synthetic key; Model Formation should reject the collision"
                 )
-            materialized.values["familyVariant"] = materialized.family_variant
-        return materialized.values
+            values["familyVariant"] = variant
+        return values
 
-    def _has_invalid_direct_scalar(self, row: MaterializedReadRow) -> bool:
-        for contract in self.attribute_reads(row.resolved_entity):
-            if (
-                contract.result_key not in row.values
-                or contract.result_key in row.classified_members
-            ):
+    def _has_invalid_direct_scalar(
+        self,
+        resolved: EntityIdentity,
+        values: Mapping[str, object],
+        classified: frozenset[str],
+    ) -> bool:
+        for contract in self.attribute_reads(resolved):
+            if contract.result_key not in values or contract.result_key in classified:
                 continue
             attribute = contract.attribute
-            value = row.values[contract.result_key]
+            value = values[contract.result_key]
             if contract.encoded and value is not None:
                 try:
                     value = decode_canonical_wire(attribute.type, cast("WireValue", value))
@@ -417,10 +457,38 @@ class CompiledRead:
         """
         return next((reads for identity, reads in self._scalar_contracts if identity == entity), ())
 
-    def materialize_row(self, row: Row | Mapping[str, object]) -> MaterializedReadRow:
-        """Resolve one driver row without flattening synthetic field provenance."""
-        values = PositionalRow(self.result_keys, row) if isinstance(row, tuple) else row
-        return self._materializer.materialize(values)
+    def row_header(
+        self, row: Row | Mapping[str, object]
+    ) -> tuple[
+        EntityIdentity,
+        str | None,
+        UnknownFamilyTag | None,
+        ContinuationCoordinate | None,
+        object | None,
+    ]:
+        return self._materializer.header(row)
+
+    def row_identity(
+        self, row: Row | Mapping[str, object]
+    ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
+        return self._materializer.identity_header(row)
+
+    def raw_member_of(
+        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
+    ) -> object:
+        return self._materializer.raw_member_of(row, resolved, key)
+
+    def classify_member_of(
+        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        return self._materializer.classify_member_of(row, resolved, key)
+
+    def decode_payload(
+        self, row: Row | Mapping[str, object]
+    ) -> tuple[dict[str, object], tuple[DocumentFinding, ...], frozenset[str]]:
+        """Decode one row into the flat publication lane's result mapping."""
+        resolved, _variant, _unknown, _document = self.row_identity(row)
+        return self._materializer.decode_payload(row, resolved)
 
 
 @dataclass(frozen=True, slots=True)
@@ -617,7 +685,13 @@ def compile_read(
             document_reads,
             (*result_keys, *captured),
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
-            _row_materializer(stages, plan_position, target.identity, captured),
+            _row_materializer(
+                stages,
+                plan_position,
+                target.identity,
+                captured,
+                (*result_keys, *captured),
+            ),
         )
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
@@ -660,7 +734,13 @@ def compile_read(
         document_reads,
         (*result_keys, *captured),
         _scalar_read_contracts(model, facet, storage, dialect, position),
-        _row_materializer(stages, position, target.identity, captured),
+        _row_materializer(
+            stages,
+            position,
+            target.identity,
+            captured,
+            (*result_keys, *captured),
+        ),
     )
 
 

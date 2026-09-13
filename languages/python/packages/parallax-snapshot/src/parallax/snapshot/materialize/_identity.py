@@ -56,6 +56,8 @@ class IdentityClaim:
     key: LogicalKey | None
     witness: PayloadWitness
     identity_values: tuple[object, ...]
+    payload_values: tuple[object, ...]
+    routing_values: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...] = ()
 
 
@@ -65,20 +67,33 @@ def claim_identity(
     *,
     unknown_family_tag: UnknownFamilyTag | None = None,
     classified_members: frozenset[str] = frozenset(),
+    witness_values: tuple[object, ...] | None = None,
+    raw_member_values: tuple[object, ...] | None = None,
+    correlation_members: tuple[MemberIdentity, ...] = (),
 ) -> IdentityClaim:
-    """Build a logical-key claim without decoding non-identity payload members."""
+    """Build a logical-key claim and decoded routing values without judging payload."""
     layout = level.layout
-    raw_values = _raw_member_values(values, level)
+    raw_values = (
+        _raw_member_values(values, level) if raw_member_values is None else raw_member_values
+    )
     identity_positions = tuple(dict.fromkeys((*layout.primary_key, *layout.temporal_starts)))
+    correlation_positions = tuple(
+        position
+        for member in correlation_members
+        if (position := layout.index_of.get(member)) is not None
+        and position < layout.attribute_count
+    )
+    routing_positions = tuple(dict.fromkeys((*identity_positions, *correlation_positions)))
     decoded: dict[int, object] = {}
+    routing = list(raw_values)
     findings: list[StoredDataIssueInput] = []
-    for position in identity_positions:
+    for position in routing_positions:
         attribute = layout.attributes[position]
         raw = raw_values[position]
         if raw is ABSENT:
             decoded[position] = ABSENT
             continue
-        value = _identity_value(raw, position, values, classified_members, level)
+        value = _identity_value(raw, position, classified_members, level)
         admission = admits_stored_scalar(
             value,
             attribute.type,
@@ -90,41 +105,46 @@ def claim_identity(
             ),
         )
         if not admission.admitted:
-            findings.append(
-                StoredDataIssueInput(
-                    "stored-data-primary-key-null"
-                    if value is None and isinstance(attribute.primary_key, PrimaryKey)
-                    else "stored-data-primary-key-undecodable"
-                    if isinstance(attribute.primary_key, PrimaryKey)
-                    else "stored-data-attribute-null"
-                    if value is None
-                    else "stored-data-leaf-undecodable",
-                    layout.concrete,
-                    attribute.identity,
-                    stored_value=freeze_evidence(admission.rejected),
+            if position in identity_positions:
+                findings.append(
+                    StoredDataIssueInput(
+                        "stored-data-primary-key-null"
+                        if value is None and isinstance(attribute.primary_key, PrimaryKey)
+                        else "stored-data-primary-key-undecodable"
+                        if isinstance(attribute.primary_key, PrimaryKey)
+                        else "stored-data-attribute-null"
+                        if value is None
+                        else "stored-data-leaf-undecodable",
+                        layout.concrete,
+                        attribute.identity,
+                        stored_value=freeze_evidence(admission.rejected),
+                    )
                 )
-            )
             decoded[position] = ABSENT
         else:
             decoded[position] = value
+        routing[position] = decoded[position]
 
-    witness = PayloadWitness(layout.concrete, layout.members, raw_values)
+    witness = PayloadWitness(
+        layout.concrete,
+        layout.members,
+        raw_values if witness_values is None else witness_values,
+    )
     identity_values = tuple(decoded[position] for position in identity_positions)
+    common = (witness, identity_values, raw_values, tuple(routing), tuple(findings))
     if (
         unknown_family_tag is not None
         or any(issue.code.startswith("stored-data-primary-key-") for issue in findings)
         or any(decoded[position] is ABSENT for position in layout.primary_key)
     ):
-        return IdentityClaim(None, witness, identity_values, tuple(findings))
+        return IdentityClaim(None, *common)
     return IdentityClaim(
         LogicalKey(
             layout.family,
             _key_value(layout, decoded),
             tuple(decoded[position] for position in layout.temporal_starts),
         ),
-        witness,
-        identity_values,
-        tuple(findings),
+        *common,
     )
 
 
@@ -143,7 +163,6 @@ def _raw_member_values(values_by_key: Mapping[str, object], level: _Level) -> tu
 def _identity_value(
     raw: object,
     position: int,
-    values_by_key: Mapping[str, object],
     classified_members: frozenset[str],
     level: _Level,
 ) -> object:

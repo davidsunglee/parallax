@@ -56,10 +56,9 @@ from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsResult
-from parallax.snapshot.handle import _paging as handle_page
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan
+from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
 from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope
 from parallax.snapshot.handle._retention import ObservationLedger
@@ -284,22 +283,16 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
     reason."""
     page_reads: list[_PageRead] = []
 
-    def recording_read_delivery_page(
-        page_plan: PagePlan,
-        at: At,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        *,
-        preference: Concurrency | None = None,
-        ledger: ObservationLedger | None = None,
-        calls: DatabaseCallScope = INERT,
-    ) -> DeliveryPage:
-        page_reads.append(_PageRead(model, port, preference, ledger))
-        return handle_page.read_delivery_page(
-            page_plan, at, model, port, preference=preference, ledger=ledger, calls=calls
-        )
+    read_page = Materializer.read_page
 
-    patch.setattr(read_scope_module, "read_delivery_page", recording_read_delivery_page)
+    def recording_read_page(materializer: Materializer, request: Any) -> Any:
+        assert isinstance(request, StreamPageRead)
+        page_reads.append(
+            _PageRead(request.model, request.port, request.preference, request.ledger)
+        )
+        return read_page(materializer, request)
+
+    patch.setattr(Materializer, "read_page", recording_read_page)
     return page_reads
 
 

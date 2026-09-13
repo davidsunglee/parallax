@@ -1,10 +1,10 @@
 """Typed publication of one Root View into frozen Entity nodes.
 
 Private handle implementation, never re-exported: ``_read`` is its only caller,
-and the frozen graphs it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
+and the frozen value trees it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
 roots.
 
-It owns nothing about row layout, identity, merging, or root classification —
+It owns nothing about row layout, root-local identity, view union, or root classification —
 :mod:`parallax.snapshot.materialize` settles all four before this module runs —
 and nothing about Pydantic, cycle
 closure, or the private lifecycle slot, which
@@ -34,7 +34,7 @@ it out against that node's exact Entity member layout, which is the same layout
 the writer reads it against, so no node pays a copy and nothing translates. The
 broad-relationship row is built here, one position per direction in the layout's
 canonical order, and dies with the ``populate`` call it is handed to. Nothing
-here is retained by Snapshot or the merge.
+here is retained by Snapshot or the Root View.
 
 Hashability is conditional, exactly per spec §3: nothing here makes a node hashable
 or guards against one — a back-reference closing a cycle makes the derived hash

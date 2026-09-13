@@ -49,12 +49,12 @@ from parallax.core.base import (
     PresentDocument,
     admits_stored_scalar,
 )
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import UNAVAILABLE
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import EntityStateRow
 from parallax.descriptor._records import (
@@ -93,7 +93,7 @@ from tests.unit._snapshot_materialization_support import (
     query,
     rows_per_level,
 )
-from tests.unit.snapshot._snapshot_graph_support import rendered_members
+from tests.unit.snapshot._snapshot_page_support import rendered_members
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")
@@ -232,9 +232,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     )
 
 
-def _prepared(
-    model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()
-) -> PreparedRead[MaterializedReadRow]:
+def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> PreparedRead:
     """The read of ``name``, compiled and bound as a find binds it."""
     return bind(CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
 
@@ -254,13 +252,12 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(
-    prepared: PreparedRead[MaterializedReadRow], stored: Mapping[str, object]
-) -> _Converted:
-    """One stored row through the whole prepared seam: materialize, convert, seal."""
-    row = prepared.materialize(stored)
+def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Converted:
+    """One stored row through the whole prepared seam: convert and seal."""
     builder = PageBuilder(ViewSchema.of())
-    index = prepared.convert(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
+    )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     layout = rows.layouts[index]
@@ -270,13 +267,12 @@ def _converted(
     return _Converted(layout.concrete, rendered_members(layout, values), issues)
 
 
-def _observed(
-    prepared: PreparedRead[MaterializedReadRow], stored: Mapping[str, object]
-) -> dict[str, object]:
+def _observed(prepared: PreparedRead, stored: Mapping[str, object]) -> dict[str, object]:
     """One stored row's shared Entity State viewed under physical storage keys."""
-    materialized = prepared.materialize(stored)
     builder = PageBuilder(ViewSchema.of())
-    index = prepared.convert(materialized, builder, source=ROOT_LEVEL)
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
+    )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
@@ -664,7 +660,7 @@ def _workload(
     CatalogedModel,
     Any,
     tuple[CompiledRead | None, ...],
-    tuple[tuple[MappingRow, ...], ...],
+    tuple[tuple[Row, ...], ...],
 ]:
     meta = metamodel(layout)
     model = CatalogedModel(meta)
@@ -674,50 +670,39 @@ def _workload(
 
 
 def _payload_cells_judged(layout: Layout, owners: int) -> int:
-    """Non-identity Attribute cells the batch carries without prior classification.
-
-    Identity positions are admitted while claims are formed; every remaining
-    unclassified cell is admitted exactly once when its Entity State is judged.
-    """
+    """Non-identity Attribute cells the batch carries without prior classification."""
     model, _plan, reads, rows = _workload(layout, owners)
-    prepared = prepared_levels(model, reads)
     total = 0
     seen: set[object] = set()
-    for prepared_read, level_rows in zip(prepared, rows, strict=True):
-        if prepared_read is None:
+    for compiled, level_rows in zip(reads, rows, strict=True):
+        if compiled is None:
             continue
         for driver in level_rows:
-            row = prepared_read.materialize(driver)
-            level = prepared_read._level(row)  # pyright: ignore[reportPrivateUsage] - derives the prepared seam's own cadence contract
-            claim = claim_identity(
-                row.values,
-                level,
-                unknown_family_tag=row.unknown_family_tag,
-                classified_members=row.classified_members,
-            )
-            occurrence = claim.key if claim.key is not None else (id(row),)
-            if occurrence in seen:
-                continue
-            seen.add(occurrence)
-            entity_layout = level.layout
+            resolved, _variant, _unknown, _document = compiled.row_identity(driver)
+            values, _findings, classified = compiled.decode_payload(driver)
+            entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)
             )
-            contracts = level.attribute_reads
+            contracts = compiled.attribute_reads(resolved)
             keys: Sequence[str] = (
                 [contract.result_key for contract in contracts]
                 if contracts
-                else [
-                    attribute.storage.name
-                    for attribute in model.layouts.entity(row.resolved_entity).attributes
-                ]
+                else [attribute.storage.name for attribute in entity_layout.attributes]
             )
+            occurrence: object = (
+                resolved,
+                tuple(values.get(keys[position]) for position in identity_positions),
+            )
+            if not identity_positions:
+                occurrence = id(driver)
+            if occurrence in seen:
+                continue
+            seen.add(occurrence)
             total += sum(
                 1
                 for position, key in enumerate(keys)
-                if position not in identity_positions
-                and key in row.values
-                and key not in row.classified_members
+                if position not in identity_positions and key in values and key not in classified
             )
     return total
 

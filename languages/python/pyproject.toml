@@ -2043,21 +2043,15 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._materialization"]
 forbidden_modules = [
     "parallax.conformance",
-    "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.execution_lifecycle",
     "parallax.core.execution_lifecycle.testing",
     "parallax.core.pk_gen",
-    "parallax.core.read_lock",
     "parallax.core.txtime_write",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
     "parallax.postgres",
-    "parallax.snapshot._read_result",
 ]
 
 [[tool.importlinter.contracts]]

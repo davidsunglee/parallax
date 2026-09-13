@@ -258,13 +258,17 @@ The remainder of the occurrence is its exact **Payload Witness**: the resolved
 concrete Entity plus the provider-normalized values selected for the Entity's
 positional member row. Witness equality is exact positional structural equality,
 including stored-document structure and presence. It is independent of arrival
-order and Include Path order. Before decoding a payload, a Page groups every
-reachable claim by logical key:
+order and Include Path order. When a Root View reaches a logical key, it compares only the claims that
+root reaches. The Page keeps exact witnesses beside the key so an already-judged,
+exactly equal state may be borrowed by another root without extending either
+root reachability:
 
-- One witness establishes one Entity State and is decoded and judged once.
-- Equal witnesses establish the same Entity State and reuse that one decode and
-  its findings.
-- Unequal witnesses are a **Snapshot Projection Conflict**. The read refuses
+- One root-local witness establishes one Entity State and is decoded and judged once.
+- Equal witnesses in that root establish the same Entity State and reuse that one
+  decode and its findings. A later root with the same witness may borrow it.
+- Unequal witnesses reached by the same root are a **Snapshot Projection Conflict**.
+  Unequal witnesses reached only by separate roots coexist in the Page and neither
+  root conflicts. A conflicting Root View refuses
   with the logical Object Key and lowered coordinates, the member identities at
   every differing witness position, and the two occurrence positions (level and
   ordinal), but with no raw stored value. The selected pair and differing-member
@@ -675,7 +679,7 @@ Three layers, each separately bounded and each released at a stated point:
 | Layer | Holds | Bound | Released |
 |---|---|---|---|
 | the page's converted result | every projection for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
-| the current root's merge and classification | the merged nodes and issues reachable from that root | `O(G_max)` | when that root is published |
+| the current Root View judgment and classification | the nodes and issues reachable from that root | `O(G_max)` | when that root is published |
 | the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
 
 Two page-scoped terms sit inside the first layer rather than beside it. A page holds

@@ -40,8 +40,8 @@ from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 __all__ = [
     "ROOT_LEVEL",
     "ChildSlot",
-    "MergedViewLayout",
     "RelationshipViewKey",
+    "RootViewLayout",
     "SourceLevel",
     "SourceViewLayout",
     "ViewSchema",
@@ -107,8 +107,8 @@ class SourceViewLayout:
 
 
 @dataclass(frozen=True, slots=True)
-class MergedViewLayout:
-    """One merged logical node's relationship view slots, in canonical order.
+class RootViewLayout:
+    """One root-local logical node's relationship view slots, in canonical order.
 
     ``slots`` is the union of every source layout the node's concrete Entity has,
     ordered by the member layout's own rule, so a walk that visits slots by index
@@ -124,16 +124,16 @@ class MergedViewLayout:
     A view it carries at some level the node was never projected at has a slot
     holding ``ABSENT``. Both are unloaded; only the second occupies a position.
 
-    ``to_merged`` translates a source row into this one, indexed by source level
+    ``to_root_view`` translates a source row into this one, indexed by source level
     and then by that level's own slot: a projection's view row is positional
-    against its :class:`SourceViewLayout`, and merging carries each written
-    position across once, where the merged row is built, rather than at each
+    against its :class:`SourceViewLayout`, and Root View assembly carries each written
+    position across once, where the Root View row is built, rather than at each
     read.
     """
 
     slots: tuple[RelationshipViewKey, ...]
     index_of: Mapping[RelationshipViewKey, int]
-    to_merged: tuple[tuple[int, ...], ...]
+    to_root_view: tuple[tuple[int, ...], ...]
 
 
 class ViewSchema:
@@ -146,13 +146,13 @@ class ViewSchema:
     source level.
     """
 
-    __slots__ = ("_interned", "_levels", "_merged", "_source")
+    __slots__ = ("_interned", "_levels", "_root_views", "_source")
 
     def __init__(self, levels: Sequence[tuple[ChildSlot, ...]]) -> None:
         self._levels: tuple[tuple[ChildSlot, ...], ...] = tuple(levels)
         self._interned: dict[tuple[RelationshipViewKey, ...], SourceViewLayout] = {}
         self._source: dict[tuple[SourceLevel, EntityIdentity], SourceViewLayout] = {}
-        self._merged: dict[EntityIdentity, MergedViewLayout] = {}
+        self._root_views: dict[EntityIdentity, RootViewLayout] = {}
 
     @classmethod
     def of(cls, *views: RelationshipViewKey) -> ViewSchema:
@@ -189,21 +189,21 @@ class ViewSchema:
         self._source[memo] = built
         return built
 
-    def merged(self, layout: EntityLayout) -> MergedViewLayout:
-        """The merged view row a logical node resolving to ``layout``'s Entity
+    def root_view(self, layout: EntityLayout) -> RootViewLayout:
+        """The Root View row a logical node resolving to ``layout``'s Entity
         carries, with the translation of every source level's row into it."""
-        cached = self._merged.get(layout.concrete)
+        cached = self._root_views.get(layout.concrete)
         if cached is not None:
             return cached
         sources = tuple(self.source(level, layout) for level in range(len(self._levels)))
         slots = layout.ordered(dict.fromkeys(view for source in sources for view in source.slots))
         index_of = _index_of(slots)
-        built = MergedViewLayout(
+        built = RootViewLayout(
             slots,
             index_of,
             tuple(tuple(index_of[view] for view in source.slots) for source in sources),
         )
-        self._merged[layout.concrete] = built
+        self._root_views[layout.concrete] = built
         return built
 
     def _interned_layout(self, slots: tuple[RelationshipViewKey, ...]) -> SourceViewLayout:
