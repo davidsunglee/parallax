@@ -79,8 +79,8 @@ class _CompiledRead(Protocol):
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
     ) -> object: ...
 
-    def classify_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
+    def classify_raw_member(
+        self, raw: object, resolved: EntityIdentity, key: str
     ) -> tuple[object, tuple[DocumentFinding, ...]]: ...
 
 
@@ -113,29 +113,37 @@ class PreparedRead:
         """Convert one provider row without allocating a per-row carrier."""
         resolved, variant, unknown, document = self._compiled.row_identity(row)
         level = self._levels[resolved]
-        witness = tuple(
-            self._raw_driver(
-                row,
-                resolved,
+        classifiable: set[str] = set()
+        attribute_witness: list[object] = []
+        for position, attribute in enumerate(level.layout.attributes):
+            key = (
                 attribute.storage.name
                 if not level.attribute_reads
-                else level.attribute_reads[position].result_key,
+                else level.attribute_reads[position].result_key
             )
-            for position, attribute in enumerate(level.layout.attributes)
-        ) + tuple(
-            self._raw_driver(row, resolved, occurrence.storage.name, default=None)
-            if projected
-            else ABSENT
-            for occurrence, projected in zip(
-                level.layout.occurrences, level.projected_by_position, strict=True
-            )
-        )
+            raw, present = self._raw_driver_presence(row, resolved, key)
+            attribute_witness.append(raw)
+            if present:
+                classifiable.add(key)
+        occurrence_witness: list[object] = []
+        for occurrence, projected in zip(
+            level.layout.occurrences, level.projected_by_position, strict=True
+        ):
+            if not projected:
+                occurrence_witness.append(ABSENT)
+                continue
+            key = occurrence.storage.name
+            raw, present = self._raw_driver_presence(row, resolved, key, default=None)
+            occurrence_witness.append(raw)
+            if present:
+                classifiable.add(key)
+        witness = (*attribute_witness, *occurrence_witness)
         ref = convert_deferred(
             witness,
             level,
             builder,
             source=source,
-            load=lambda: self._driver_payload(row, resolved, level, witness),
+            load=lambda: self._driver_payload(resolved, level, witness, frozenset(classifiable)),
             unknown_family_tag=unknown,
             correlation_members=correlation_members,
         )
@@ -143,10 +151,10 @@ class PreparedRead:
 
     def _driver_payload(
         self,
-        row: Row | Mapping[str, object],
         resolved: EntityIdentity,
         level: LevelContext,
         witness: tuple[object, ...],
+        classifiable: frozenset[str],
     ) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]:
         values = list(witness)
         findings: list[DocumentFinding] = []
@@ -158,8 +166,11 @@ class PreparedRead:
                 if position < len(level.attribute_reads)
                 else member.storage.name
             )
+            raw = witness[position]
+            if raw is ABSENT or key not in classifiable:
+                continue
             try:
-                value, member_findings = self._compiled.classify_member_of(row, resolved, key)
+                value, member_findings = self._compiled.classify_raw_member(raw, resolved, key)
             except KeyError:
                 continue
             values[position] = value
@@ -167,18 +178,18 @@ class PreparedRead:
             classified.add(key)
         return tuple(values), tuple(findings), frozenset(classified)
 
-    def _raw_driver(
+    def _raw_driver_presence(
         self,
         row: Row | Mapping[str, object],
         resolved: EntityIdentity,
         key: str,
         *,
         default: object = ABSENT,
-    ) -> object:
+    ) -> tuple[object, bool]:
         try:
-            return self._compiled.raw_member_of(row, resolved, key)
+            return self._compiled.raw_member_of(row, resolved, key), True
         except KeyError:
-            return default
+            return default, False
 
 
 def bind(model: CatalogedModel, compiled: _CompiledRead) -> PreparedRead:

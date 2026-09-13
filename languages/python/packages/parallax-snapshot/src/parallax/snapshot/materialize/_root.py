@@ -49,7 +49,7 @@ exactly once, so a projection reached late still contributes its own children at
 its own position.
 
 Before payload judgment, every occurrence claiming one logical key compares its
-exact Payload Witness in canonical source order. Unequal witnesses refuse the
+exact Payload Witness in canonical witness order. Unequal witnesses refuse the
 Snapshot with ``snapshot-projection-conflict``; equal witnesses decode once into
 one Page-owned Entity State reused by every Root View. Relationship views are
 unioned — a view any projection loaded is loaded on the resolved node — with the
@@ -62,7 +62,12 @@ from collections.abc import Mapping
 from typing import cast
 
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, MemberIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    MemberIdentity,
+    ValueObjectIdentity,
+)
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey
 from parallax.snapshot.materialize._page import (
@@ -75,6 +80,7 @@ from parallax.snapshot.materialize._page import (
     dedupe_issues,
     exact_stored_equal,
     page_rows,
+    stored_order_key,
 )
 from parallax.snapshot.materialize._views import RootViewLayout
 
@@ -134,7 +140,7 @@ class RootView:
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._states: list[EntityState] = []
         self._view_layouts: list[RootViewLayout] = []
-        invalid_roots: list[InvalidRootInput] = []
+        invalid_entries: list[tuple[int, int]] = []
         root_indices: list[int | None] = []
         root_entries = (
             tuple(enumerate(rows.roots))
@@ -146,24 +152,40 @@ class RootView:
             if rows.keys[root] is None and any(
                 issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
             ):
-                state = self._decode(root)
-                invalid_roots.append(InvalidRootInput(ordinal, state.findings))
+                invalid_entries.append((ordinal, root))
                 root_indices.append(None)
             else:
                 valid_roots.append(root)
                 root_indices.append(root)
 
-        winners: list[list[object]] = []
-        state_nodes: dict[int, int] = {}
         reached: set[int] = set()
+        root_plans: list[tuple[tuple[int, ...], dict[int, int]]] = []
         for root in valid_roots:
             reachable = self._reachable([root])
             reached.update(reachable)
             occurrences: dict[int, list[int]] = {}
             for projection in reachable:
                 occurrences.setdefault(rows.logical_ids[projection], []).append(projection)
+            root_plans.append(
+                (
+                    reachable,
+                    {
+                        logical: self._canonical(tuple(group))
+                        for logical, group in occurrences.items()
+                    },
+                )
+            )
+
+        invalid_roots = tuple(
+            InvalidRootInput(ordinal, self._decode(root).findings)
+            for ordinal, root in invalid_entries
+        )
+        winners: list[list[object]] = []
+        state_nodes: dict[int, int] = {}
+        for reachable, canonical_by_logical in root_plans:
             root_states = {
-                logical: self._state(tuple(group)) for logical, group in occurrences.items()
+                logical: (canonical, self._state(canonical))
+                for logical, canonical in canonical_by_logical.items()
             }
             for projection in reachable:
                 logical = rows.logical_ids[projection]
@@ -187,7 +209,7 @@ class RootView:
                     if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                         carried_views[root_view_slot] = value
 
-        self._invalid_roots = tuple(invalid_roots)
+        self._invalid_roots = invalid_roots
         self._roots = tuple(None if root is None else self._resolved[root] for root in root_indices)
         self._order = tuple(rows.layouts[winner].concrete for winner in self._winner)
         self._view_rows = [tuple(self._allocation(value) for value in row) for row in winners]
@@ -214,7 +236,7 @@ class RootView:
 
     @property
     def has_issues(self) -> bool:
-        """Whether conversion classified any issue in the reachable graph."""
+        """Whether conversion classified any issue in the reachable root view."""
         return bool(self._invalid_roots) or any(self._issues)
 
     @property
@@ -302,41 +324,58 @@ class RootView:
         _notify(rows.observer, "states_decoded")
         return EntityState(member_row, findings)
 
-    def _state(self, occurrences: tuple[int, ...]) -> tuple[int, EntityState]:
+    def _canonical(self, occurrences: tuple[int, ...]) -> int:
         rows = self._rows
         canonical, *candidates = sorted(
             occurrences,
-            key=lambda projection: (rows.sources[projection], rows.source_ordinals[projection]),
+            key=lambda projection: (
+                stored_order_key(rows.witnesses[projection]),
+                rows.sources[projection],
+                rows.source_ordinals[projection],
+            ),
         )
-        key = rows.keys[canonical]
-        if key is None:
-            return canonical, self._decode(canonical)
         if candidates:
             _notify(rows.observer, "witnesses_compared", len(candidates))
         for candidate in candidates:
             if not _same_witness(rows, canonical, candidate):
                 raise self._conflict(canonical, candidate)
+        return canonical
+
+    def _state(self, canonical: int) -> EntityState:
+        rows = self._rows
+        key = rows.keys[canonical]
+        if key is None:
+            return self._decode(canonical)
         for stored_projection, state in rows.judged_states.get(key, ()):
             if _same_witness(rows, canonical, stored_projection):
                 _notify(rows.observer, "states_shared")
-                return canonical, state
+                return state
         state = self._decode(canonical)
         rows.judged_states.setdefault(key, []).append((canonical, state))
-        return canonical, state
+        return state
 
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
         rows = self._rows
         left_layout = rows.layouts[left]
         right_layout = rows.layouts[right]
+        if right_layout.concrete.sort_key < left_layout.concrete.sort_key:
+            left, right = right, left
+            left_layout, right_layout = right_layout, left_layout
         left_values = cast("tuple[object, ...]", rows.witnesses[left])
         right_values = cast("tuple[object, ...]", rows.witnesses[right])
         left_by_member = dict(zip(left_layout.members, left_values, strict=True))
         right_by_member = dict(zip(right_layout.members, right_values, strict=True))
         differing = tuple(
-            member
-            for member in dict.fromkeys((*left_layout.members, *right_layout.members))
-            if not exact_stored_equal(
-                left_by_member.get(member, ABSENT), right_by_member.get(member, ABSENT)
+            sorted(
+                (
+                    member
+                    for member in {*left_layout.members, *right_layout.members}
+                    if not exact_stored_equal(
+                        left_by_member.get(member, ABSENT),
+                        right_by_member.get(member, ABSENT),
+                    )
+                ),
+                key=_member_order,
             )
         )
         logical_key = rows.keys[left]
@@ -376,6 +415,21 @@ class RootView:
         if isinstance(value, tuple):
             return tuple(self._resolved[child] for child in cast("tuple[int, ...]", value))
         return self._resolved[cast("int", value)]
+
+
+def _member_order(
+    member: MemberIdentity,
+) -> tuple[int, str, str, tuple[str, ...], str]:
+    if isinstance(member, AttributeIdentity):
+        return (0, *member.entity.sort_key, (member.name,), "")
+    if isinstance(member, ValueObjectIdentity):
+        return (1, *member.entity.sort_key, member.path, "")
+    return (
+        2,
+        *member.value_object.entity.sort_key,
+        member.value_object.path,
+        member.name,
+    )
 
 
 def _notify(observer: object | None, name: str, *args: object) -> None:

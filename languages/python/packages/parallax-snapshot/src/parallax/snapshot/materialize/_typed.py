@@ -68,7 +68,7 @@ from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
-    GraphClassification,
+    RootClassifications,
     classify_roots,
 )
 from parallax.snapshot.materialize._invalid import InvalidData
@@ -92,7 +92,7 @@ def typed_root(
     closes on an object that already exists, and everything constructible
     publishes at once or not at all.
 
-    ``ordinal_offset`` is where this graph's roots start in the ordered result the
+    ``ordinal_offset`` is where this Root View's roots start in the ordered result the
     caller publishes, which is nonzero only where one Snapshot spans several
     graphs. ``sources`` is the Source Hint the executor retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
@@ -130,7 +130,7 @@ class _Materialization:
         self,
         root: RootView,
         model: Metamodel,
-        classification: GraphClassification,
+        classification: RootClassifications,
         sources: Mapping[int, SourceHint],
     ) -> None:
         self._root = root

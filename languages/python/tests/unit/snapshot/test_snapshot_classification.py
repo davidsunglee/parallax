@@ -1,8 +1,8 @@
 """Root classification and the in-band invalid-result surface (m-snapshot-read).
 
 Three seams, in the order a read crosses them. `classify_roots` attributes the
-issues a merge carries to the result roots whose requested include trees reach
-them, and settles which allocation indices construction covers. The typed
+issues a Root View carries to the result roots whose requested include trees
+reach them, and settles which allocation indices construction covers. The typed
 materializer then publishes each root as itself or as its `InvalidData` record.
 Finally a layout twin — one logical model authored twice, differing only in its
 root-owned `layout` — proves the whole verdict is layout-independent: the same
@@ -10,8 +10,8 @@ stored state classifies identically whether it lives in its own columns or insid
 one Structured Column.
 
 Per-row detection lives in `test_snapshot_conversion.py`, propagation through the
-merge in `test_snapshot_merge.py`, and the accessors that consume what publishes
-here in `test_snapshot_find.py`.
+Root View in `test_materializer_roots.py`, and the accessors that consume what
+publishes here in `test_snapshot_find.py`.
 """
 
 from __future__ import annotations
@@ -49,8 +49,8 @@ from parallax.snapshot import (
 from parallax.snapshot.materialize import (
     ClassifiedRoot,
     ConformingRoot,
-    GraphClassification,
     RootClassification,
+    RootClassifications,
     RootView,
     classify_roots,
 )
@@ -92,7 +92,7 @@ def _classified(root: RootClassification) -> ClassifiedRoot:
     return root
 
 
-def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> GraphClassification:
+def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> RootClassifications:
     graph = fixture.page(*cast("Any", roots))
     return classify_roots(
         RootView(graph),

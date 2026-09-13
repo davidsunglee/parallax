@@ -39,13 +39,15 @@ from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate, compile_read
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle._materialization import (
     INERT as MATERIALIZATION_INERT,
 )
 from parallax.snapshot.handle._materialization import (
+    CompiledRead,
+    CompiledTemplate,
     MaterializationObserver,
+    compile_read,
 )
 from parallax.snapshot.handle._read import (
     RootRead,
@@ -344,6 +346,8 @@ def read_delivery_page(
         rows=root_read.rows[: verdict.keep],
         coordinates=root_read.coordinates[: verdict.keep],
     )
+    discarded_rows = root_read.take_rows()
+    del discarded_rows, root_read
     result = build_page(
         kept,
         model,

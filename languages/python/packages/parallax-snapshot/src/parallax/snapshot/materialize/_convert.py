@@ -6,12 +6,12 @@ seam sees a physical column, a storage key, or a Document Path again. Any bulk
 path is a thin loop over :func:`convert_row`, and the Page-local identity scope
 it registers into is an explicit argument rather than a whole-result index.
 
-SQL row transforms classify and decode projected Entity-document members first,
-then pass their findings, classified-member set, and transformed values here.
-Conversion owns Value Object occurrence reduction after that boundary:
-stored-document presence, container shape, and leaf decoding resolve into
-positional member rows laid out by the exact, path-specific Value Object layout,
-recursively at every depth. An undeclared stored key never contributes, and every
+A compiled read first extracts provider-neutral member carriers into an exact
+Payload Witness and establishes identity from that positional row. Only after a
+Root View has compared every reached witness does conversion classify and decode
+Entity-document members and Value Object occurrences into positional member rows
+laid out by the exact, path-specific Value Object layout, recursively at every
+depth. An undeclared stored key never contributes, and every
 declared one occupies its own position — holding the value exactly where the read
 contract says the value carries it, and ``ABSENT`` where the stored document held
 nothing (`m-snapshot-read` *What a materialized value carries*). This is the seam

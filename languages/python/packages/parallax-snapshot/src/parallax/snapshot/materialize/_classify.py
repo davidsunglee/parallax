@@ -53,8 +53,8 @@ from parallax.snapshot.materialize._root import RootView
 __all__ = [
     "ClassifiedRoot",
     "ConformingRoot",
-    "GraphClassification",
     "RootClassification",
+    "RootClassifications",
     "classify_roots",
     "hydrates",
 ]
@@ -137,7 +137,7 @@ type RootClassification = ConformingRoot | ClassifiedRoot
 
 
 @dataclass(frozen=True, slots=True)
-class GraphClassification:
+class RootClassifications:
     """One Root View's verdicts and the construction scope they imply.
 
     ``excluded`` names the allocation indices construction leaves out. ``roots``
@@ -151,22 +151,22 @@ class GraphClassification:
 
 
 def classify_roots(
-    merge: RootView, model: Metamodel, *, ordinal_offset: int = 0
-) -> GraphClassification:
-    """``merge``'s per-root verdicts, attributed over each root's reachable tree.
+    root_view: RootView, model: Metamodel, *, ordinal_offset: int = 0
+) -> RootClassifications:
+    """``root_view``'s per-root verdicts, attributed over each root's reachable tree.
 
     ``ordinal_offset`` is where this Page's roots start in the ordered result a
     Snapshot publishes.
     """
-    if not merge.has_issues:
-        return GraphClassification(
-            roots=tuple(ConformingRoot(index) for index in merge.roots if index is not None),
+    if not root_view.has_issues:
+        return RootClassifications(
+            roots=tuple(ConformingRoot(index) for index in root_view.roots if index is not None),
             conforming=True,
         )
-    count = len(merge.order)
-    carried = tuple(merge.issues(index) for index in range(count))
-    children = tuple(_children(merge, index) for index in range(count))
-    keys = tuple(_object_key(model, merge, index) for index in range(count))
+    count = len(root_view.order)
+    carried = tuple(root_view.issues(index) for index in range(count))
+    children = tuple(_children(root_view, index) for index in range(count))
+    keys = tuple(_object_key(model, root_view, index) for index in range(count))
     diagnoses = tuple(
         frozenset(_diagnosis(issue, key) for issue in issues)
         for issues, key in zip(carried, keys, strict=True)
@@ -175,8 +175,8 @@ def classify_roots(
 
     roots: list[RootClassification] = []
     reached_by_published: set[int] = set()
-    keyless_roots = iter(merge.invalid_roots)
-    for position, index in enumerate(merge.roots):
+    keyless_roots = iter(root_view.invalid_roots)
+    for position, index in enumerate(root_view.roots):
         ordinal = ordinal_offset + position
         if index is None:
             roots.append(_keyless_root(next(keyless_roots), ordinal))
@@ -188,20 +188,20 @@ def classify_roots(
             reached_by_published |= reachable
             continue
         hydrating = not any(blocking[node] for node in reachable)
-        declaring = _declaring(model, merge.layout(index).concrete)
+        declaring = _declaring(model, root_view.layout(index).concrete)
         roots.append(
             ClassifiedRoot(
                 ordinal=ordinal,
                 issues=issues,
                 object_key=keys[index],
-                version=_version(declaring, merge, index),
-                edge=_edge(declaring, merge, index),
+                version=_version(declaring, root_view, index),
+                edge=_edge(declaring, root_view, index),
                 node=index if hydrating else None,
             )
         )
         if hydrating:
             reached_by_published |= reachable
-    return GraphClassification(
+    return RootClassifications(
         roots=tuple(roots),
         excluded=frozenset(range(count)) - reached_by_published,
     )
@@ -274,15 +274,15 @@ def _reachable(children: tuple[tuple[int, ...], ...], root: int) -> frozenset[in
     return frozenset(seen)
 
 
-def _object_key(model: Metamodel, merge: RootView, node: int) -> ObjectKey | None:
+def _object_key(model: Metamodel, root_view: RootView, node: int) -> ObjectKey | None:
     """``node``'s object identity, or absence where nothing trustworthy decoded.
 
     Derived exactly as a keyed write derives its own: the row's OWN resolved
     concrete Entity, never family-normalized, paired with the family-declared
     primary key's ``(name, value)`` pairs in declaration order (`m-unit-work`).
     """
-    layout = merge.layout(node)
-    if any(issue.code in _UNIDENTIFIED_CODES for issue in merge.issues(node)):
+    layout = root_view.layout(node)
+    if any(issue.code in _UNIDENTIFIED_CODES for issue in root_view.issues(node)):
         return None
     declaring = _declaring(model, layout.concrete)
     if declaring is None:  # pragma: no cover - a family root is always accepted
@@ -294,7 +294,7 @@ def _object_key(model: Metamodel, merge: RootView, node: int) -> ObjectKey | Non
     )
     if not primary_key:  # pragma: no cover - formation refuses a primary-key-less Entity
         return None
-    values = merge.member_values(node)
+    values = root_view.member_values(node)
     return ObjectKey(
         layout.concrete,
         tuple(
@@ -304,7 +304,7 @@ def _object_key(model: Metamodel, merge: RootView, node: int) -> ObjectKey | Non
     )
 
 
-def _version(declaring: EntityMetadata | None, merge: RootView, node: int) -> int | None:
+def _version(declaring: EntityMetadata | None, root_view: RootView, node: int) -> int | None:
     """``node``'s observed explicit version, or absence for every other shape.
 
     A temporal family derives its concurrency coordinate from its own axis rather
@@ -319,16 +319,16 @@ def _version(declaring: EntityMetadata | None, merge: RootView, node: int) -> in
     )
     if version is None:
         return None
-    value = _member(merge.layout(node), merge.member_values(node), version.identity)
+    value = _member(root_view.layout(node), root_view.member_values(node), version.identity)
     return value if isinstance(value, int) else None
 
 
-def _edge(declaring: EntityMetadata | None, merge: RootView, node: int) -> Edge | None:
+def _edge(declaring: EntityMetadata | None, root_view: RootView, node: int) -> Edge | None:
     """``node``'s observed milestone, or absence where no temporal edge decoded."""
     if declaring is None or not declaring.declared_as_of_axes:
         return None
     try:
-        return milestone_edge_of(declaring, _values(merge, node))
+        return milestone_edge_of(declaring, _values(root_view, node))
     except TemporalReadError:
         return None
 
@@ -347,11 +347,11 @@ def _member(layout: EntityLayout, values: tuple[object, ...], member: AttributeI
     return None if value is ABSENT else value
 
 
-def _values(merge: RootView, node: int) -> dict[AttributeIdentity, object]:
+def _values(root_view: RootView, node: int) -> dict[AttributeIdentity, object]:
     """``node``'s carried Attribute values by identity, for the temporal
     primitives that read a whole row rather than a named position."""
-    layout = merge.layout(node)
-    values = merge.member_values(node)
+    layout = root_view.layout(node)
+    values = root_view.member_values(node)
     return {
         attribute.identity: values[position]
         for position, attribute in enumerate(layout.attributes)

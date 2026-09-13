@@ -118,9 +118,8 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
-from parallax.snapshot.handle._materialization import Materializer
+from parallax.snapshot.handle._materialization import Materializer, RowPublication
 from parallax.snapshot.handle._read import (
-    RowPublication,
     entity_read_lock,
     execute_read,
     publishable_rows,

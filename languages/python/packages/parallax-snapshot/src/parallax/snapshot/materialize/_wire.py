@@ -338,14 +338,14 @@ members and no relationship at all."""
 
 
 def wire_roots(
-    merge: RootView,
+    root_view: RootView,
     model: Metamodel,
     includes: UnwindTree = EMPTY_UNWIND,
     *,
     ordinal_offset: int = 0,
     sources: Mapping[int, SourceHint] = MappingProxyType({}),
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    """``merge``'s roots as Wire values, in result order.
+    """``root_view``'s roots as Wire values, in result order.
 
     Classification runs first and exactly once, so this materializer publishes
     the same verdicts the typed one does: a conforming root answers as itself, a
@@ -358,8 +358,8 @@ def wire_roots(
     materializer attaches to the node of the same row, so the two representations
     license exactly the same writes.
     """
-    classification = classify_roots(merge, model, ordinal_offset=ordinal_offset)
-    unwind = _Unwind(merge, model, sources)
+    classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
+    unwind = _Unwind(root_view, model, sources)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):

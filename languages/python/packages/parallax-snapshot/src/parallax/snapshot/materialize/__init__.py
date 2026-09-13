@@ -60,8 +60,8 @@ from __future__ import annotations
 from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
-    GraphClassification,
     RootClassification,
+    RootClassifications,
     classify_roots,
     hydrates,
 )
@@ -114,7 +114,6 @@ __all__ = [
     "SNAPSHOT_PROJECTION_CONFLICT",
     "ClassifiedRoot",
     "ConformingRoot",
-    "GraphClassification",
     "InvalidData",
     "InvalidDataError",
     "InvalidRootInput",
@@ -123,6 +122,7 @@ __all__ = [
     "PageRows",
     "RelationshipViewKey",
     "RootClassification",
+    "RootClassifications",
     "RootView",
     "SnapshotConsistencyError",
     "SnapshotDecodingError",
