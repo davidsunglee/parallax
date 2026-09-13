@@ -1050,6 +1050,14 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "the API suite's existing locking-mode object-find story already proves the "
     "developer Concurrency Preference surface, while this case isolates SQL shape"
 )
+_READ_LOCK_STREAM_CONTINUATION_REASON: Final[str] = (
+    "the Scenario-owned locking stream is graded end-to-end by the compatibility "
+    "run sweep, including both page statements and their binds; "
+    "test_snapshot_delivery_contract independently drives the same multi-page "
+    "developer surface against live PostgreSQL and spends a published unversioned "
+    "root's pessimistic authority on an update, so another narrative example would "
+    "duplicate that dedicated contract proof"
+)
 # The read-lock module's two-session behavioral proofs
 # (`m-read-lock-006`/`-007`/`-011`/`-012`/`-013`/`-015`) cover a genuine
 # two-connection concurrency property (a shared lock blocking/admitting a writer or
@@ -1634,6 +1642,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-012": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-013": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-015": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-016": _READ_LOCK_STREAM_CONTINUATION_REASON,
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,

@@ -171,7 +171,7 @@ def _is_streamed(case: case_format.Case) -> bool:
 # A page's root statement carries the page's own bound; a child level inside one
 # never does, a page size bounding root positions and never the rows a level
 # gathers (`m-snapshot-read`).
-_PAGE_BOUND: Final = re.compile(r"\blimit \?$")
+_PAGE_BOUND: Final = re.compile(r"\blimit \?(?: for share of t0| lock in share mode)?$")
 
 
 def _stated_roots(then: dict[str, Any]) -> int:

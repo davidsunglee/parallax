@@ -604,6 +604,23 @@ without omitting a root from the ordered result, including a stored `NULL` under
 dropped `NOT NULL` constraint. Where placement ranks `NULL` first, the range arm alone
 is complete because the NULL region is already behind the coordinate.
 
+When PostgreSQL's Effective Concurrency Strategy requires a shared row lock, the
+two-arm form keeps both union inputs unlocked: PostgreSQL permits no locking
+clause on a `UNION` result or either input. The outer SELECT joins the derived
+relation back to the read's one physical base Table as `t0`, equating EVERY
+column of that Table Layout's `physical_primary_key` in canonical key order,
+then orders and caps the derived result and ends with `for share of t0`. The
+derived relation continues to carry the read projection and hidden capture cells,
+so result ordinals and capture order do not move; the join exists solely to name
+and lock the exact base rows the arms selected. A temporal key therefore includes
+all of its physical edge components, and a TPH or single-concrete inheritance read
+uses its shared or concrete Table's complete key. A key projected through an
+encoded result alias compares the base key through that same lossless projection.
+The form remains one statement and one atomic shared-lock acquisition, so every
+published unversioned row retains the pessimistic authority `m-read-lock`
+requires. It does not make a table-per-concrete-subtype union lockable: that read
+has multiple base Tables and remains refused below.
+
 Nothing is hoisted where the leading term is **document-resident**. Its extraction
 evaluates to `NULL` for a missing member, an explicit JSON null, or a parent document
 of the wrong kind — ordinary invalid stored data that `m-snapshot-read` guarantees is
@@ -641,11 +658,13 @@ Continuation Order names and still author the pages that continue past it
 Seek binds append after the caller's authored predicate binds, so bind order stays
 caller-first; the ordering clause's own path binds follow them, and the cap last.
 In a two-arm continuing page all binds of the non-NULL range arm precede all binds of
-the NULL-tail arm, and the outer cap follows both; all three cap binds carry the same
-requested page size. A capture cell's path binds precede every bind below them in its
-arm — a wrapped `union all`'s branch binds included — because the cell's holes precede
-them in the text. A statement whose fragments are assembled in any other order sends
-one fragment's data to another's placeholder.
+the NULL-tail arm. In PostgreSQL's locking form, any encoded base-key expressions in
+the identity join follow both arms in physical-key order; the outer cap follows the
+join. All three cap binds carry the same requested page size. A capture cell's path
+binds precede every bind below them in its arm — a wrapped `union all`'s branch binds
+included — because the cell's holes precede them in the text. A statement whose
+fragments are assembled in any other order sends one fragment's data to another's
+placeholder.
 
 ### Clause order
 

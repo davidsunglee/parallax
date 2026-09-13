@@ -286,15 +286,24 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         if composed is not None:
             if arms is None:  # pragma: no cover - a composed seek exists only after page one
                 raise AssertionError("a continuing page has no parsed arms")
+            arm_baseline = first_root_sql
+            if len(arms) == 2 and dialect == "postgres" and case.concurrency_mode == "locking":
+                suffix = " for share of t0"
+                if not arm_baseline.endswith(suffix):
+                    raise CaseFailure(
+                        f"{case.path.name}: {source} (postgres) first locking page does "
+                        "not end with `for share of t0`"
+                    )
+                arm_baseline = arm_baseline.removesuffix(suffix)
             seek.refuse_a_drifting_page(
-                seek.PageText(case, dialect, source, page, first_root_sql, arms[0]),
+                seek.PageText(case, dialect, source, page, arm_baseline, arms[0]),
                 composed,
                 cursor,
                 seek_shapes,
             )
             if len(arms) == 2:
                 seek.refuse_a_drifting_page(
-                    seek.PageText(case, dialect, source, page, first_root_sql, arms[1]),
+                    seek.PageText(case, dialect, source, page, arm_baseline, arms[1]),
                     seek.null_tail_seek(terms),
                     (None,),
                     null_tail_shapes,

@@ -770,13 +770,14 @@ def _as_read(case: Case, when: Mapping[str, Any], statements: Any, *, row_form: 
     }
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
+    read_when = {**({"uow": case.uow} if case.uow else {}), **when}
     return replace(
         case,
         raw=frozen_view(
             {
                 "model": case.raw["model"],
                 "shape": "read",
-                "when": dict(when),
+                "when": read_when,
                 "then": then,
             }
         ),

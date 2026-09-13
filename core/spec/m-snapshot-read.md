@@ -676,6 +676,15 @@ nothing about roots not yet reached, and locking every root of an unbounded
 delivery is a different problem. This contract states per-page stability; what
 a level adds on top of it is `m-db-port`'s.
 
+That shared lock is nevertheless mandatory authority for every root a
+participating locking page DID read, including its lookahead. On PostgreSQL a
+continuing page whose root statement needs the two-arm NULL-tail form uses
+`m-sql`'s outer physical-identity join: both arms remain unlocked, the one outer
+base alias is joined on its complete physical key and locked with `for share`,
+and the derived capture order and cap still choose the page. It is one statement,
+not an unlocked selection followed by a resolving lock read, so the unit of work
+may retain pessimistic write authority from the row it published.
+
 What per-page stability admits is stated against the delivery's **position** —
 the Continuation Order coordinate the last delivered root stood at, which is
 what the next page seeks from:

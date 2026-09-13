@@ -1,18 +1,18 @@
 # A streamed page's roots still hold their shared row lock when the unit of work
 # asks for Repeatable Read (m-read-lock / m-snapshot-read / m-unit-work). Round 1:
-# transaction A, opened at `when.uow.isolation: repeatable-read`, issues the first
-# keyset page of a transactional stream over every account — the ordered, capped
-# read a page is, carrying the locking suffix its unit of work's Concurrency
-# Preference derives — and HOLDS. Round 2: transaction B updates account 1, a root
-# that page delivered, blocks on the page's shared lock, and raises
-# lockWaitTimeout.
+# transaction A, opened at `when.uow.isolation: repeatable-read`, issues two
+# keyset pages of a transactional stream over every account and HOLDS. Its
+# continuing PostgreSQL page keeps both UNION arms unlocked, joins their complete
+# physical identity back to account, and locks that outer base alias. Round 2:
+# transaction B updates account 3, a root reached only by that continuing page,
+# blocks on its shared lock, and raises lockWaitTimeout.
 #
 # A page is where a stream and a lock could most plausibly come apart: the delivery
 # is per-page while the transaction outlives it, so a lock that ended with the page
 # would leave a transaction that had read rows it no longer protects, and one that
-# was never taken would make a locking stream a locking read in name only. The page
-# here asks for one more root than its batch size, so its lock spans exactly the
-# roots it delivered plus the lookahead — B's target among them.
+# was never taken would make a locking stream a locking read in name only. The
+# second PostgreSQL page is also where a lock on either UNION input would be
+# syntactically invalid and a silently omitted lock would lose write authority.
 #
 # The third of three cases varying only the READ that holds the lock
 # (m-read-lock-013 a plain object find, m-read-lock-014 a deep fetch's child level).
@@ -37,13 +37,19 @@ when:
             - sql:
                 postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? for share of t0
                 mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? lock in share mode
-              binds: [3]
+              binds: [2]
+            - sql:
+                postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id is null order by t0.id asc limit ?)) u join account t0 on u.id = t0.id order by u.parallax_seek_0 asc limit ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ? lock in share mode
+              binds:
+                postgres: [1, 1, 2, 2, 2]
+                mariadb: [1, 1, 2]
       - B:
           statements:
             - sql:
                 postgres: update account set balance = ? where id = ?
                 mariadb: update account set balance = ? where id = ?
-              binds: ["999.00", 1]
+              binds: ["999.00", 3]
 then:
   errorClass: lockWaitTimeout
   nativeCode:

@@ -71,3 +71,29 @@ def test_moving_an_authored_sort_key_can_skip_or_duplicate_a_root(
         assert delivered == [1, 3, 4, 5, 42]
     else:
         assert delivered == [1, 2, 3, 4, 5, 42, 1]
+
+
+def test_a_postgres_locking_stream_continues_and_retains_write_authority(
+    profile_run: Any,
+) -> None:
+    # A participating PostgreSQL delivery crosses more than one two-arm page in
+    # one transaction, so successful publication proves the union inputs carry no
+    # illegal lock clause. Updating a published unversioned root in that attempt
+    # proves the outer base-row lock retained pessimistic write authority.
+    _seeded(profile_run)
+    query = Order.where(Order.all).order_by(Order.sku.asc())
+
+    with connect(profile_run.port, ORDERS_MODEL) as db:
+
+        def deliver_and_update(tx: Any) -> list[int]:
+            with tx.stream(query, batch_size=2) as stream:
+                roots = list(stream.checked())
+            typed = cast("list[Order]", roots)
+            tx.update(typed[0].edit(name="Locked Ada"))
+            return [root.id for root in typed]
+
+        delivered = db.transact(deliver_and_update, concurrency="locking")
+        stored = db.find(Order.where(Order.id == 1)).result()
+
+    assert delivered == [1, 3, 42, 2, 5, 4]
+    assert stored.name == "Locked Ada"

@@ -6331,6 +6331,18 @@ alias in one outer SELECT. This preserves one statement and one round trip while
 ensuring no variant-specific cast observes a sibling row and the returned base
 rows receive the transaction's shared lock.
 
+**Locking continuing pages.** PostgreSQL two-arm NULL-tail continuations use the
+same outer-lock principle without variant partitioning. SQL lowering compiles
+both range and NULL-tail arms without a lock, keeps their complete projected rows
+and capture cells under `u`, joins `u` to the one base Table as `t0` on every
+`TableLayout.physical_primary_key` slot, reapplies capture ordering and the page
+cap, and emits `for share of t0` last. Ordinary, TPH, single-concrete
+inheritance, and temporal reads share this path; temporal edge columns therefore
+participate wherever the physical key names them. Projection binds in each arm
+remain before predicate/seek/cap binds, encoded join-key binds follow both arms
+in physical-key order, and the outer cap is last. Table-per-concrete-subtype
+locking unions retain the core refusal.
+
 ## 10. Mandatory quality toolchain
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
