@@ -25,6 +25,7 @@ from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_preflight import preflight_case_literals
 from reference_harness.object_query_oracle import assert_case_read
+from reference_harness.object_query_oracle import stream as stream_oracle
 
 from .conftest import ScriptedReads
 
@@ -523,6 +524,68 @@ def test_a_locking_continuation_omitting_a_physical_key_component_is_refused(
 
     with pytest.raises(CaseFailure, match="malformed continuing wrapper"):
         assert_case_read(case, reads)
+
+
+def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
+    damaged_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A bytes primary key adds one `hex` bind to each arm projection and another to
+    # the outer identity join. The join bind follows both complete arm bind lists and
+    # precedes the outer cap; this scripted delivery proves that exact eight-value
+    # sequence without relying on the rows authored by the int64 Account fixture.
+    case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
+    case.model.entity_defs[0]["attributes"][0]["type"] = "bytes"
+    first, second = _statements(case)
+    first["sql"]["postgres"] = first["sql"]["postgres"].replace(
+        "select t0.id, t0.owner", "select encode(t0.id, ?) id_hex, t0.owner", 1
+    )
+    first["binds"] = ["hex", 3]
+    second_sql = second["sql"]["postgres"].replace(
+        "select u.id, u.owner", "select u.id_hex, u.owner", 1
+    )
+    second_sql = second_sql.replace(
+        "select t0.id, t0.owner", "select encode(t0.id, ?) id_hex, t0.owner"
+    )
+    second["sql"]["postgres"] = second_sql.replace(
+        "join account t0 on u.id = t0.id",
+        "join account t0 on u.id_hex = encode(t0.id, ?)",
+        1,
+    )
+    second["binds"]["postgres"] = [
+        "hex",
+        b"\x02",
+        b"\x02",
+        3,
+        "hex",
+        3,
+        "hex",
+        3,
+    ]
+    pages = iter(
+        [
+            stream_oracle._StreamPage([], [], [(b"\x02",)], 0, 3),
+            stream_oracle._StreamPage([], [], [], 0, 1),
+        ]
+    )
+    monkeypatch.setattr(stream_oracle, "_stream_page", lambda *_args, **_kwargs: next(pages))
+
+    stream_oracle.deliver_stream(case, ScriptedReads(results=[]), "then.statements")
+
+
+def test_a_default_unversioned_continuation_uses_the_locking_wrapper_oracle(
+    damaged_case: CaseLoader,
+) -> None:
+    # Removing Account's version facet makes the default Optimistic preference fall
+    # back to the effective Locking strategy. Both pages retain their shared lock, the
+    # continuing wrapper is graded against physical identity, and its unlocked arms
+    # are compared with page one's shape only after that outer lock suffix is removed.
+    case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
+    case.model.entity_defs[0]["attributes"][3].pop("optimisticLocking")
+    case.raw["when"]["uow"] = {}
+    rows = _rows(_ACCOUNTS, 1, 2, 3)
+    reads = ScriptedReads(results=[rows, _rows(_ACCOUNTS, 3), rows])
+
+    assert_case_read(case, reads)
 
 
 def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_test(

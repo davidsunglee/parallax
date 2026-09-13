@@ -1,12 +1,14 @@
-"""The oracle for the derived table an ordered or limited abstract read wraps its
-``union all`` as (m-sql).
+"""The oracle for the derived table an ordered, limited, or locking continuation
+wraps its ``union all`` as (m-sql).
 
 A ``union all`` carries no clause tail of its own, so the table-per-concrete-subtype
 lowering of a read that authored Sort Keys or a cap wraps the whole union as the
-derived table ``u`` and applies the result-shape tail against that alias. This module
-holds what recognizing and grading that wrap takes: the model and query facts no
-statement carries (:class:`WrapFacts`, :class:`WrapOrderKey`), the m-dialect decisions
-the tail turns on, and the projection, ordering, and cap verifiers.
+derived table ``u`` and applies the result-shape tail against that alias. PostgreSQL's
+two-arm locking continuation additionally joins ``u`` back to its one physical base
+Table and locks that Table alias. This module holds what recognizing and grading both
+forms takes: the model and query facts no statement carries (:class:`WrapFacts`,
+:class:`WrapOrderKey`), the m-dialect decisions the tail turns on, and the projection,
+ordering, cap, physical-identity, and lock verifiers.
 
 :func:`wrapped_union_source` is the entry point. Called with facts it grades the wrap
 against the read it lowers; called without them — as ``sql_normalize`` does, holding no
@@ -25,8 +27,10 @@ from sqlglot.expressions.core import Expr
 
 from .sql_canonical import NonCanonicalError, sqlglot_dialect
 
-# The alias m-sql gives the derived table an ordered or limited abstract read wraps
-# its union as, and the clauses that wrap may carry outward.
+# The alias m-sql gives the derived table a result-shaping or locking read wraps its
+# union as, and the ordinary clauses either wrap may carry outward. The locking form's
+# one base-table join and lock are validated separately because they are not clauses
+# the table-per-concrete-subtype result-shape form admits.
 _WRAP_ALIAS = "u"
 _WRAP_TAIL = ("order", "limit")
 _WRAP_FORBIDDEN = ("where", "group", "having", "distinct", "offset")
@@ -69,12 +73,13 @@ class WrapFacts:
 
     ``limit`` is the authored cap itself, not merely whether one exists, so the tail's
     cap bind is compared with the row count the query asked for. ``binds`` is the whole
-    statement's bind list in order; the tail's own binds are its trailing entries,
-    because a wrap's binds follow every branch's (m-sql). ``None`` where the caller has
+    statement's bind list in order; the outer wrap's own binds are its trailing
+    entries, because they follow every branch's (m-sql). ``None`` where the caller has
     no bind list to grade against. ``lock_table`` and ``physical_identity`` are
     present together for PostgreSQL's locking continuation: each identity pair is
     the derived result alias and base Column, in the Table Layout's physical-key
-    order.
+    order. ``identity_binds`` carries the structural binds those key expressions
+    require in the same order.
     """
 
     document_aliases: frozenset[str]
@@ -83,6 +88,7 @@ class WrapFacts:
     binds: tuple[object, ...] | None = None
     lock_table: str | None = None
     physical_identity: tuple[tuple[str, str], ...] = ()
+    identity_binds: tuple[object, ...] = ()
 
 
 def _conjuncts(expression: Expr | None) -> list[Expr]:
@@ -130,6 +136,11 @@ def _assert_locking_identity_join(
             "may accompany the result-shape tail"
         )
     join = joins[0]
+    if join.args.get("side") is not None or join.args.get("kind") is not None:
+        raise NonCanonicalError(
+            "wrapped `union all`: the locking identity relation uses the unqualified "
+            "inner `join` form"
+        )
     table = join.this
     if not isinstance(table, exp.Table) or table.alias != "t0":
         raise NonCanonicalError(
@@ -505,18 +516,21 @@ def _assert_authored_wrap_order(
             )
 
 
-def _assert_wrap_tail_binds(facts: WrapFacts, expected: list[_OrderTerm], dialect: str) -> None:
-    """The tail's binds are the ones the read it lowers puts there.
+def _assert_wrap_binds(facts: WrapFacts, expected: list[_OrderTerm], dialect: str) -> None:
+    """The outer wrap's binds are the ones the read it lowers puts there.
 
-    The tail's holes are the Document paths its ``order by`` extracts under, in term
-    order, then the cap — and a wrap's binds follow every branch's (m-sql), so they are
-    the bind list's trailing entries. Comparing the VALUES is what refuses a tail whose
-    shape is canonical but whose path addresses another member of the same arity, or
-    whose cap is not the row count the query asked for.
+    PostgreSQL's encoded physical-identity expressions bind first, in physical-key
+    order, followed by the Document paths its ``order by`` extracts under, in term
+    order, then the cap. A wrap's binds follow every branch's (m-sql), so those are the
+    bind list's trailing entries. Comparing the VALUES is what refuses an encoded key,
+    path, or cap whose shape is canonical but whose value belongs to another fragment.
     """
     if facts.binds is None:
         return
-    values: list[object] = [bind for term in expected for bind in term.binds]
+    values: list[object] = [
+        *facts.identity_binds,
+        *(bind for term in expected for bind in term.binds),
+    ]
     if facts.limit is not None:
         values.append(facts.limit)
     if not values:
@@ -524,9 +538,10 @@ def _assert_wrap_tail_binds(facts: WrapFacts, expected: list[_OrderTerm], dialec
     found = list(facts.binds)[len(facts.binds) - len(values) :]
     if len(facts.binds) < len(values) or found != values:
         raise NonCanonicalError(
-            f"wrapped `union all`: the tail binds {values!r} in {dialect} — the Document "
-            f"path(s) its `order by` extracts under, then the read's cap, after every "
-            f"branch bind — got {found!r} (m-sql / m-dialect / m-object-query)"
+            f"wrapped `union all`: the outer wrap binds {values!r} in {dialect} — the "
+            f"locking identity projection(s), the Document path(s) its `order by` "
+            f"extracts under, then the read's cap, after every branch bind — got "
+            f"{found!r} (m-sql / m-dialect / m-object-query)"
         )
 
 
@@ -653,7 +668,7 @@ def _assert_wrap_tail(
         )
     expected = [term for key in facts.order_keys for term in _expected_order_terms(key, seam)]
     _assert_authored_wrap_order(terms, dialect, expected)
-    _assert_wrap_tail_binds(facts, expected, dialect)
+    _assert_wrap_binds(facts, expected, dialect)
 
 
 def wrapped_union_source(
@@ -663,18 +678,24 @@ def wrapped_union_source(
 
     A ``union all`` has no clause tail of its own, so an ordered or limited
     table-per-concrete-subtype read wraps the whole union as the derived table ``u``
-    and applies the result-shape tail against that alias (m-sql). Recognized so, the
-    wrap is a SCOPE boundary rather than a source of its own: the outer select names
-    no table, and each branch keeps restarting its own ``t0, t1, …`` sequence.
+    and applies the result-shape tail against that alias (m-sql). That tableless form
+    is a SCOPE boundary rather than a source of its own: the outer select names no
+    table, and each branch keeps restarting its own ``t0, t1, …`` sequence.
+
+    PostgreSQL's two-arm locking continuation uses the same derived alias and tail but
+    adds one unqualified inner join from ``u`` to its one physical base Table as ``t0``
+    over the complete physical identity, then ``for share of t0``. Its branches remain
+    unlocked; the outer relation exists only to name and lock the rows they selected.
 
     ``None`` means *select* does not take a set operation as its sole ``from`` source
     at all — the locking table-per-hierarchy partitioned read JOINS its derived
     identity relation, so that union is a source among others and its branches share
     the outer scope's alias sequence. Anything that DOES take one is judged as the
-    wrap and raises :class:`NonCanonicalError` unless it is the wrap in full: aliased
-    ``u``, joined to nothing, carrying the tail that is the only reason to wrap and no
-    clause the wrap does not move outward, projecting each of the union's result
-    aliases through exactly once, and carrying a tail *dialect* renders that way.
+    wrap and raises :class:`NonCanonicalError` unless it is one recognized wrap in
+    full: aliased ``u``, carrying the tail that is the only reason to wrap and no
+    unrelated clause, projecting each union result alias through exactly once, and
+    carrying a tail *dialect* renders that way. The TPCS form is joined to nothing;
+    only the PostgreSQL locking-continuation form carries the exact join and lock above.
     Refusing here is what keeps a malformed wrapper from falling through to be scored
     as an ordinary select whose branch aliases happen to run ``t0, t1, …`` globally.
 

@@ -745,6 +745,53 @@ def continuing_arms(sql: str) -> tuple[str, ...]:
     return (sql[start:split], sql[split + len(separator) : end])
 
 
+@dataclass(frozen=True, slots=True)
+class LockingContinuationFacts:
+    """PostgreSQL facts contributed by one effective Locking read strategy."""
+
+    table: str
+    physical_identity: tuple[tuple[str, str], ...]
+    identity_binds: tuple[object, ...]
+
+
+def locking_continuation_facts(
+    case: Case, dialect: str, query: dict[str, Any], root: Entity
+) -> LockingContinuationFacts | None:
+    """Derive the outer locking relation from preference and target facets.
+
+    An explicit Locking preference always selects the strategy. Under the default
+    Optimistic preference, a temporal target's Transaction-Time start or an
+    ``optimisticLocking`` Attribute supplies a version source; only a non-temporal,
+    unversioned target falls back to Locking (m-read-lock / m-unit-work).
+    """
+    if "uow" not in case.when:
+        return None
+    has_version_source = root.is_temporal or any(
+        attribute.get("optimisticLocking") for attribute in root.attributes
+    )
+    locking = case.concurrency_mode == "locking" or not has_version_source
+    if dialect != "postgres" or not locking:
+        return None
+    resolved = _read_resolved_entities(case, query, root)
+    view = None if not resolved else case.model.storage_layout.entity(resolved[0].canonical_name)
+    if view is None:
+        raise CaseFailure(f"{case.path.name}: a locking continuation resolves no physical Table")
+    pairs: list[tuple[str, str]] = []
+    binds: list[object] = []
+    for slot in view.layout.physical_primary_key:
+        contributor = slot.contributor
+        if not isinstance(contributor, AttributeContributor):
+            raise CaseFailure(
+                f"{case.path.name}: physical key column {slot.column!r} is not Attribute-owned"
+            )
+        attribute = case.model.entity(contributor.owner).attribute_by_name(contributor.name)
+        encoded = attribute["type"] == "bytes"
+        pairs.append((f"{slot.column}_hex" if encoded else slot.column, slot.column))
+        if encoded:
+            binds.append("hex")
+    return LockingContinuationFacts(view.layout.table, tuple(pairs), tuple(binds))
+
+
 def refuse_a_malformed_continuing_wrapper(
     case: Case,
     dialect: str,
@@ -757,31 +804,9 @@ def refuse_a_malformed_continuing_wrapper(
     terms: list[ContinuationTerm],
     aliases: list[str],
     requested: int,
+    locking: LockingContinuationFacts | None,
 ) -> None:
     """Grade a two-arm continuation's complete wrapper against its read facts."""
-    lock_table: str | None = None
-    physical_identity: tuple[tuple[str, str], ...] = ()
-    if dialect == "postgres" and case.concurrency_mode == "locking":
-        resolved = _read_resolved_entities(case, query, root)
-        view = (
-            None if not resolved else case.model.storage_layout.entity(resolved[0].canonical_name)
-        )
-        if view is None:
-            raise CaseFailure(
-                f"{case.path.name}: a locking continuation resolves no physical Table"
-            )
-        lock_table = view.layout.table
-        pairs: list[tuple[str, str]] = []
-        for slot in view.layout.physical_primary_key:
-            contributor = slot.contributor
-            if not isinstance(contributor, AttributeContributor):
-                raise CaseFailure(
-                    f"{case.path.name}: physical key column {slot.column!r} is not Attribute-owned"
-                )
-            attribute = case.model.entity(contributor.owner).attribute_by_name(contributor.name)
-            result_alias = f"{slot.column}_hex" if attribute["type"] == "bytes" else slot.column
-            pairs.append((result_alias, slot.column))
-        physical_identity = tuple(pairs)
     document_aliases = frozenset(
         column
         for entity in _read_resolved_entities(case, query, root)
@@ -801,8 +826,9 @@ def refuse_a_malformed_continuing_wrapper(
         ),
         limit=requested,
         binds=tuple(binds),
-        lock_table=lock_table,
-        physical_identity=physical_identity,
+        lock_table=None if locking is None else locking.table,
+        physical_identity=() if locking is None else locking.physical_identity,
+        identity_binds=() if locking is None else locking.identity_binds,
     )
     try:
         tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))

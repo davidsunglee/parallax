@@ -336,6 +336,7 @@ def _facts(
     binds: tuple[object, ...] | None = None,
     lock_table: str | None = None,
     physical_identity: tuple[tuple[str, str], ...] = (),
+    identity_binds: tuple[object, ...] = (),
 ) -> WrapFacts:
     return WrapFacts(
         document_aliases=document_aliases,
@@ -344,6 +345,7 @@ def _facts(
         binds=binds,
         lock_table=lock_table,
         physical_identity=physical_identity,
+        identity_binds=identity_binds,
     )
 
 
@@ -410,6 +412,24 @@ def test_a_locking_wrap_requires_the_complete_outer_physical_identity() -> None:
     assert not is_canonical(_LOCKED_WRAP.replace("for share of t0", "for share of u", 1))
 
 
+@pytest.mark.parametrize("side", ["left", "right", "full"])
+def test_a_locking_wrap_refuses_an_outer_physical_identity_join(side: str) -> None:
+    # PostgreSQL's locking relation names only the rows selected by the union arms:
+    # an outer join can admit a base or derived row with no identity match, while the
+    # canonical unqualified inner join preserves that exact selected-row boundary.
+    facts = _facts(
+        order_keys=_ID_KEY,
+        limit=2,
+        binds=(1, 2, 2, 2),
+        lock_table="history",
+        physical_identity=(("id", "id"), ("out_z", "out_z")),
+    )
+    sql = _LOCKED_WRAP.replace(" u join history", f" u {side} join history", 1)
+
+    with pytest.raises(NonCanonicalError, match="unqualified inner"):
+        wrapped_union_source(sqlglot.parse_one(sql, read="postgres"), "postgres", facts)
+
+
 def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None:
     # An encoded key's derived alias is deliberately not the base Column spelling:
     # the join must compare it to PostgreSQL's canonical encode(t0.key, ?) form,
@@ -427,6 +447,7 @@ def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None
         binds=("hex", b"1", 2, "hex", 2, "hex", 2),
         lock_table="encoded_key",
         physical_identity=(("id_hex", "id"),),
+        identity_binds=("hex",),
     )
 
     assert is_canonical(_ENCODED_LOCKED_WRAP, "postgres")
@@ -438,6 +459,19 @@ def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None
         )
         is not None
     )
+    with pytest.raises(NonCanonicalError, match="outer wrap binds"):
+        wrapped_union_source(
+            sqlglot.parse_one(_ENCODED_LOCKED_WRAP, read="postgres"),
+            "postgres",
+            _facts(
+                order_keys=facts.order_keys,
+                limit=2,
+                binds=("hex", b"1", 2, "hex", 2, "base64", 2),
+                lock_table="encoded_key",
+                physical_identity=(("id_hex", "id"),),
+                identity_binds=("hex",),
+            ),
+        )
 
 
 def test_a_presence_pair_is_admitted_only_over_a_named_document_alias() -> None:
