@@ -356,7 +356,8 @@ def wire_roots(
     ``sources`` is the Source Hint the read retained per allocation index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
-    license exactly the same writes.
+    license exactly the same writes. ``ordinal_offset`` is nonzero when this Root
+    View begins after earlier result positions, including later streamed Pages.
     """
     classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
     unwind = _Unwind(root_view, model, sources)

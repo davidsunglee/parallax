@@ -242,6 +242,7 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     )
 
     assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is SQL_NULL
+    assert document.classify_member_of(_DOCUMENT_ROW, person, "display_name") == ("Ada", ())
     with pytest.raises(KeyError, match="missing"):
         document.classify_raw_member(SQL_NULL, marker, "missing")
     with pytest.raises(KeyError, match="missing"):
@@ -250,6 +251,8 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         document.raw_member_of(_DOCUMENT_ROW, marker, "missing")
     with pytest.raises(KeyError, match="missing"):
         document.classify_member_of(_DOCUMENT_ROW, marker, "missing")
+    with pytest.raises(KeyError, match="missing"):
+        document.classify_member_of(_DOCUMENT_ROW, person, "missing")
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         document.raw_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
     with pytest.raises(SqlGenError, match="not a DocumentRead"):

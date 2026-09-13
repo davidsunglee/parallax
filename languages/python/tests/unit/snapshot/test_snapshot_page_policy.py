@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -29,7 +30,8 @@ from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.predicate import All
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.snapshot.handle import _paging
+from parallax.snapshot.handle import _materialization
+from parallax.snapshot.handle._materialization import DeliveryPlan, Materializer
 from parallax.snapshot.handle._paging import PagePlan, PageRequest, page_decision
 from tests._support.db_port import RefusingAdapter
 from tests.unit._corpus_model_support import model as accepted_model
@@ -99,21 +101,27 @@ def test_the_smallest_page_still_reads_two_roots() -> None:
     )
 
 
+def test_a_paging_root_without_an_evaluated_coordinate_is_refused() -> None:
+    coordinates = cast("Callable[[object], object]", vars(Materializer)["_coordinates"])
+    with pytest.raises(SqlGenError, match="returned a root carrying no evaluated coordinate"):
+        coordinates(SimpleNamespace(coordinates=(None,)))
+
+
 def test_a_compiled_seek_must_retain_every_non_null_coordinate_bind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    compile_read = cast("Callable[..., CompiledRead]", vars(_paging)["compile_read"])
+    compile_read = cast("Callable[..., CompiledRead]", vars(_materialization)["compile_read"])
 
     def losing_coordinate(*args: Any, **kwargs: Any) -> CompiledRead:
         compiled = compile_read(*args, **kwargs)
         statement = replace(compiled.statement, binds=tuple(0 for _ in compiled.statement.binds))
         return replace(compiled, statement=statement)
 
-    monkeypatch.setattr(_paging, "compile_read", losing_coordinate)
-    compiled_root = cast("Callable[..., object]", vars(_paging)["_compiled_root"])
+    monkeypatch.setattr(_materialization, "compile_read", losing_coordinate)
+    compiled_root = cast("Callable[..., object]", vars(Materializer)["_compiled_root"])
     with pytest.raises(SqlGenError, match="lost a non-null coordinate bind"):
         compiled_root(
-            _page_plan(batch_size=2),
+            DeliveryPlan(_page_plan(batch_size=2)),
             object(),
             ContinuationCoordinate((1,)),
             PageRequest(size=3, lookahead=True, emitted=2),

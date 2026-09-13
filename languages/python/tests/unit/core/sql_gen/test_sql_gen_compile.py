@@ -406,6 +406,8 @@ def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() 
         materializer.header(())
     with pytest.raises(ValueError, match="does not match row arity"):
         materializer.identity_header(())
+    with pytest.raises(KeyError, match="missing"):
+        compiled.raw_member_of((), compiled.target, "missing")
 
 
 def test_compiled_read_repr_is_exact_and_stable() -> None:
