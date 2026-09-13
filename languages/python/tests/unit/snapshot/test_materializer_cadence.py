@@ -11,6 +11,7 @@ from parallax.core import deep_fetch
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materialization import (
@@ -21,7 +22,13 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
-from parallax.snapshot.materialize import Page, PageBuilder, RootView
+from parallax.snapshot.materialize import (
+    Page,
+    PageBuilder,
+    RootClassifications,
+    RootView,
+    classify_roots,
+)
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit.snapshot._snapshot_page_support import identity_of, layout_of
@@ -121,12 +128,42 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence(
         ("statement_executed", 2),
         ("states_decoded", 1),
         ("occurrences_reached", 1),
-        ("root_published", 0),
         ("states_shared", 1),
         ("occurrences_reached", 1),
+        ("root_published", 0),
         ("root_published", 1),
     ]
     assert all(type(value) is int for _event, value in observer.events)
+
+
+def test_eager_row_publication_withholds_events_when_a_later_root_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = _RecordingObserver()
+    meta = model_of(ORDERS_MODEL)
+    model = CatalogedModel(meta)
+    query = preflight(
+        deserialize({"target": "Order", "predicate": {"all": {}}}),
+        model=meta,
+        form="graph",
+    )
+    plan = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
+    compiled = compile_read(plan.root, meta, POSTGRES, result_form="instance")
+    rows = tuple(tuple(_row(order_id)[key] for key in compiled.result_keys) for order_id in (1, 2))
+    stage = Materializer(observer).read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+
+    def fail_on_second_root(
+        root: RootView, accepted: Metamodel, *, ordinal_offset: int = 0
+    ) -> RootClassifications:
+        if ordinal_offset == 1:
+            raise RuntimeError("later row failed")
+        return classify_roots(root, accepted, ordinal_offset=ordinal_offset)
+
+    monkeypatch.setattr("parallax.snapshot.handle._read.classify_roots", fail_on_second_root)
+    with pytest.raises(RuntimeError, match="later row failed"):
+        _published_rows(stage, meta)
+
+    assert [event for event in observer.events if event[0] == "root_published"] == []
 
 
 def test_root_publication_requires_one_pin_per_page_root() -> None:

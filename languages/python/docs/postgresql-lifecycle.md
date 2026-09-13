@@ -171,27 +171,28 @@ Each operation acquires a connection and gives it back:
 | Operation | Holds a connection |
 |---|---|
 | Eager read (`db.find`, `db.wire.find`, `db.read_rows`) | For the whole read, materialization included |
-| Standalone delivery (`db.stream`, `db.wire.stream`) | From its first page to its exhaustion, failure, or early close |
+| Standalone delivery (`db.stream`, `db.wire.stream`) | For one page at a time, through that page's materialization |
 | Transaction attempt (`db.transact`) | For the attempt, every participating read, write and delivery inside it included |
 
 Work that INHERITS a connection takes none of its own: a read inside a
-transaction runs on the attempt's connection, and a delivery's later pages run
-on the one its first page took. A retry acquires afresh — and so is refused
-outright once the handle is closed, rather than replaying.
+transaction and every page of a participating delivery run on the attempt's
+connection. A standalone delivery instead acquires afresh for each page. A retry
+also acquires afresh — and so is refused outright once the handle is closed,
+rather than replaying.
 
-**A delivery holds its slot for as long as it is being read.** That is the one
-pooling consequence an application has to design around: an independent
-`db.transact(...)` inside a streaming loop needs ANOTHER connection and will time
-out where the delivery occupies them all. A delivery that has exhausted or failed
-releases at that point rather than at the end of its `with` block, so the slot
-comes back where the delivery ends.
+**A standalone delivery holds no slot while caller code processes published
+roots.** Each page returns its slot before publishing any root, so independent
+work inside the consuming loop can use even a one-slot pool before the next page
+is requested. A page that fails still releases its own lease, while a delivery
+closed before its first advance has acquired nothing.
 
-A delivery's pages run on one backend session, which is what gives them a
-consistent read of a stable table. That affinity is a fact about a direct
-connection to a backend; a transaction-multiplexing proxy between you and the
-server can move statements between backends and takes it away. Parallax adds no
-snapshot guarantee of its own, no server cursor, and no resumption: a connection
-lost mid-delivery fails the delivery rather than reconnecting and continuing.
+The statements of one standalone page run on one backend session. A later page
+may use another session and observe another committed database state; Parallax
+adds no delivery-wide snapshot guarantee, server cursor, or connection affinity.
+A caller needing one database snapshot across all pages uses a participating
+delivery inside `db.transact`, whose pages inherit the attempt's connection. A
+connection lost while a page is running fails that page rather than reconnecting
+and continuing.
 
 If a connection string already points at a reader endpoint, that is where its
 connections go; Parallax adds no replica routing and no second runtime to route

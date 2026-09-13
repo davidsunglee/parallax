@@ -29,7 +29,8 @@ from .. import portable_literal
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure
 from ..inheritance import Family, query_position
-from ..sql_canonical import sqlglot_dialect
+from ..sql_canonical import NonCanonicalError, sqlglot_dialect
+from ..sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
 from ..storage_layout import DocumentMember, MemberAddress, member_address
 from . import execute, materialize
 
@@ -735,6 +736,54 @@ def continuing_arms(sql: str) -> tuple[str, ...]:
     split = sql.index(separator, start)
     end = sql.rindex(")) u order by ")
     return (sql[start:split], sql[split + len(separator) : end])
+
+
+def refuse_a_malformed_continuing_wrapper(
+    case: Case,
+    dialect: str,
+    source: str,
+    page: int,
+    sql: str,
+    binds: Sequence[Any],
+    query: dict[str, Any],
+    root: Entity,
+    terms: list[ContinuationTerm],
+    aliases: list[str],
+    requested: int,
+) -> None:
+    """Grade a two-arm continuation's complete wrapper against its read facts."""
+    document_aliases = frozenset(
+        column
+        for entity in _read_resolved_entities(case, query, root)
+        if (column := case.model.storage_layout.document(entity.canonical_name).column)
+    )
+    facts = WrapFacts(
+        document_aliases=document_aliases,
+        order_keys=tuple(
+            WrapOrderKey(
+                alias=alias,
+                descending=term.direction == "desc",
+                nulls_first=term.nulls == "first",
+                nullable=term.nullable,
+                neutral_type=term.neutral_type,
+            )
+            for term, alias in zip(terms, aliases, strict=True)
+        ),
+        limit=requested,
+        binds=tuple(binds),
+    )
+    try:
+        tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
+        wrapped = (
+            wrapped_union_source(tree, dialect, facts) if isinstance(tree, exp.Select) else None
+        )
+        if wrapped is None:
+            raise NonCanonicalError("the two arms are not the sole source of a wrapped select")
+    except (NonCanonicalError, SqlglotError) as error:
+        raise CaseFailure(
+            f"{case.path.name}: {source} ({dialect}) page {page + 1} has a malformed "
+            f"continuing wrapper: {error}"
+        ) from error
 
 
 def seek_splice(first_page_sql: str, later_page_sql: str) -> tuple[int, int]:

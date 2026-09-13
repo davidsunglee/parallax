@@ -24,7 +24,7 @@ from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.unit_work import FixedClock
-from parallax.snapshot import InvalidData, connect, prepare_model
+from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Database, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -35,6 +35,7 @@ from tests._support.db_port import (
     Transact,
     WriteCall,
 )
+from tests._support.write_values import invalid_customer_root
 from tests.unit._transact_support import FIXED
 
 _CASES = write_value_runner.reachable_write_value_cases()
@@ -59,37 +60,6 @@ _ORDERS = prepare_model(ORDERS_MODEL, edition="orders")
 _CUSTOMER = prepare_model(vo_models.CUSTOMER_MODEL, edition="customer")
 
 
-def _invalid_root() -> Entity:
-    record = (
-        connect(
-            ScriptedAdapter(
-                Read(
-                    rows=[
-                        {
-                            "id": 6,
-                            "name": "Rin",
-                            "address": PresentDocument(
-                                {
-                                    "street": "6 Kastanien Allee",
-                                    "city": "Berlin",
-                                    "geo": "unknown",
-                                }
-                            ),
-                        }
-                    ]
-                )
-            ),
-            vo_models.CUSTOMER_MODEL,
-        )
-        .find(vo_models.Customer.where(vo_models.Customer.id == 6))
-        .checked()
-        .result()
-    )
-    assert isinstance(record, InvalidData)
-    assert record.data is not None
-    return record.data
-
-
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     case: case_format.Case,
@@ -103,7 +73,9 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     another = AnotherSource(prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port)
 
     def fn(tx: Transaction) -> list[str | None]:
-        return write_value_runner.graded_outcomes(tx, steps, another, _invalid_root)
+        return write_value_runner.graded_outcomes(
+            tx, steps, another, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL)
+        )
 
     domain_model = (
         vo_models.CUSTOMER_MODEL if Path(case.model).stem == "customer" else ACCOUNT_MODEL

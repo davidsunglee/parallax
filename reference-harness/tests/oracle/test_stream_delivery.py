@@ -587,6 +587,27 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
 # --- a delivery that reached the right rows the wrong way --------------------
 
 
+@pytest.mark.parametrize(
+    ("authored", "damaged"),
+    [
+        ("order by u.parallax_seek_0 asc", "order by u.id asc"),
+        ("order by u.parallax_seek_0 asc", "order by u.parallax_seek_0 desc"),
+        ("limit ?", "limit 2"),
+    ],
+    ids=["wrong-alias", "wrong-direction", "literal-cap"],
+)
+def test_a_continuing_wrapper_must_match_its_order_and_cap(
+    damaged_case: CaseLoader, authored: str, damaged: str
+) -> None:
+    case = damaged_case(_EXACT_MULTIPLE)
+    entry = _statements(case)[2]
+    entry["sql"]["postgres"] = entry["sql"]["postgres"].replace(authored, damaged)
+    reads = ScriptedReads(results=_exact_multiple_script())
+
+    with pytest.raises(CaseFailure, match="malformed continuing wrapper"):
+        assert_case_read(case, reads)
+
+
 def test_a_page_seeking_from_the_wrong_root_is_refused(damaged_case: CaseLoader) -> None:
     """The continuation is the previous page's LAST root, derived rather than trusted."""
     case = damaged_case(_DEEP_FETCH)

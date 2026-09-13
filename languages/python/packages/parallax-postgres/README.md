@@ -25,10 +25,11 @@ equivalent, and both are idempotent. Every `connect` over one configuration
 opens an independent runtime, so closing one handle leaves another working.
 
 Each operation acquires a connection and gives it back — an eager read for its
-whole execution, a stream from its first page to its exhaustion or failure, a
-transaction attempt for the attempt. Capacity a stream is holding is capacity
-other work waits for: an independent `db.transact(...)` inside a streaming loop
-needs another connection and will time out where the stream occupies them all.
+whole execution, each standalone stream page through its materialization, and a
+transaction attempt for the attempt. A standalone page gives the connection back
+before publishing roots, so caller work between pages can use even a one-slot
+pool. A participating stream instead inherits its transaction attempt's
+connection for every page.
 
 `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
@@ -42,7 +43,8 @@ down:
 
 - the full retention settings and their defaults, and what the driver's own
   maintenance settings mean;
-- what each operation holds, held stream slots, and connection affinity;
+- what each operation holds, standalone per-page leases, and participating
+  connection affinity;
 - the five distinct timeouts, and the one driver precedence that surprises
   people;
 - process and application-server lifetime — post-fork construction, the ASGI

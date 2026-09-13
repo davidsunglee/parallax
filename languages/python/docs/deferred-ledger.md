@@ -555,23 +555,26 @@ The entry exists so that a later pass reading the ratio in the report finds the
 decomposition, the two real repairs, and the reason the obvious third one is
 forbidden, rather than rediscovering all three.
 
-### D-85 — The stability table is graded in no language, because no case shape sequences a write between two pages
+### D-85 — The stability table has no portable case sequencing, and its insert/delete rows remain ungraded
 
-*Medium — one portable contract a second language target would be held to none
-of, and whose insert and delete rows are graded nowhere at all.* Relates to
+*Medium — one portable contract still has no cross-language case, and its insert
+and delete rows are graded nowhere at all.* Relates to
 `core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-snapshot-read.md`
 *Stability under concurrent writing*, `tests/unit/test_transaction_streams.py`,
-`tests/unit/test_continuation.py`.
+`tests/unit/test_continuation.py`, `tests/api/test_snapshot_delivery_contract.py`.
 
 **What.** A scenario step now admits `when.stream`, so a streamed READ step
 exists — but nothing places any other step BETWEEN two pages of one delivery:
 `given.apply` runs once, before the lane's first golden statement. So
-`m-snapshot-read` *Stability under concurrent writing* — five per-position
-effects of a concurrent write, the caller-as-writer case, attempt-local delivery
-— cannot be authored. Its two insert rows and its delete row are graded by
-nothing, in any language; the remaining rows are graded only by
-`tests/unit/test_continuation.py`'s mutating page loop, which contrasts an
-authored `orderBy` against the primary-key order that is immune to it.
+`m-snapshot-read` *Stability under concurrent writing* cannot be authored as a
+portable case. Python now grades both authored-Sort-Key movement rows against
+real PostgreSQL in `tests/api/test_snapshot_delivery_contract.py`: a committed
+move from ahead to behind between separately leased pages skips the root, while
+a move from behind to ahead delivers it twice. The two insert rows and the
+delete row remain graded by nothing in any language. The primary-key contrast
+remains in `tests/unit/test_continuation.py`, while caller-as-writer and
+attempt-local delivery behavior remain language-level transaction tests rather
+than portable cases.
 
 **Why it is deferred rather than fixed.** It needs a second cross-language
 normative change — a sequencing point letting a step run between two pages —

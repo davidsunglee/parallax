@@ -575,7 +575,7 @@ def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRo
         "MaterializationObserver",
         stage.page.observer if stage.page.observer is not None else MATERIALIZATION_INERT,
     )
-    return tuple(Materializer(cadence).roots(stage.page, publish))
+    return tuple(Materializer(cadence).roots(stage.page, publish, atomic=True))
 
 
 def find_history(
