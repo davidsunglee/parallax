@@ -27,6 +27,7 @@ from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
 from parallax.conformance.story_models import OrderItem as _soOrderItem
 from parallax.core import (
+    ONE_TO_MANY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
     Attr,
@@ -34,8 +35,11 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
+    Rel,
+    TablePerHierarchy,
     ValueObject,
     attr,
+    rel,
 )
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._model import model_of
@@ -102,6 +106,38 @@ _CAT_ROW: dict[str, object] = {
 }
 
 
+class ConflictAnimal(
+    Entity,
+    table="conflict_animal",
+    namespace=_NAMESPACE,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    owner_id: Attr[int]
+
+
+class ConflictAlpha(ConflictAnimal, inheritance=ConcreteSubtype(tag_value="alpha")):
+    alpha: Attr[int | None]
+
+
+class ConflictBeta(ConflictAnimal, inheritance=ConcreteSubtype(tag_value="beta")):
+    beta: Attr[int | None]
+
+
+class ConflictGamma(ConflictAnimal, inheritance=ConcreteSubtype(tag_value="gamma")):
+    gamma: Attr[int | None]
+
+
+class ConflictAnimalOwner(Entity, table="conflict_owner", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    animals: Rel[tuple[ConflictAnimal, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+
+
+_CONFLICT_ANIMALS = DomainModel(
+    ConflictAnimal, ConflictAlpha, ConflictBeta, ConflictGamma, ConflictAnimalOwner
+)
+
+
 # --------------------------------------------------------------------------- #
 # Construction: frozen instances, closed-world arms, cycle closure.            #
 # --------------------------------------------------------------------------- #
@@ -157,9 +193,8 @@ def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
 
 
 def test_roots_publish_in_the_order_they_were_given() -> None:
-    # Every `find` today answers a single-root Page, so root order is a
-    # structural consequence there rather than a pinned property; a multi-root
-    # Page is what states it.
+    # A multi-root Page states that Root View publication preserves the database
+    # result order rather than projection insertion order.
     fixture = PageFixture(_ORDERS)
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
@@ -424,6 +459,41 @@ def test_concrete_disagreement_canonicalizes_the_diagnostic_entity() -> None:
         RootView(fixture.page(owner))
 
     assert raised.value.object_key.entity == EntityIdentity(_NAMESPACE, "Cat")
+
+
+# Three supported concrete siblings carry value-identical positional witnesses
+# under one family key. Reordering their source occurrences must still select the
+# same concrete pair, Object Key Entity, differing-member sequence, and occurrence
+# positions; otherwise source/include order leaks into the public conflict.
+def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
+    relationship = "parallax.compatibility.ConflictAnimalOwner.animals"
+    occurrences = (
+        ("ConflictAlpha", {"id": 1, "owner_id": 10, "alpha": None}),
+        ("ConflictBeta", {"id": 1, "owner_id": 10, "beta": None}),
+        ("ConflictGamma", {"id": 1, "owner_id": 10, "gamma": None}),
+    )
+    conflicts: list[SnapshotConsistencyError] = []
+    for ordered in permutations(occurrences):
+        fixture = PageFixture(_CONFLICT_ANIMALS, relationship)
+        owner = fixture.node("ConflictAnimalOwner", {"id": 10})
+        children = tuple(fixture.node(entity, row) for entity, row in ordered)
+        fixture.attach(owner, relationship, children)
+        with pytest.raises(SnapshotConsistencyError) as raised:
+            RootView(fixture.page(owner))
+        conflicts.append(raised.value)
+
+    first, *rest = conflicts
+    assert all(
+        (
+            conflict.object_key,
+            conflict.coordinates,
+            conflict.members,
+            conflict.occurrences,
+        )
+        == (first.object_key, first.coordinates, first.members, first.occurrences)
+        for conflict in rest
+    )
+    assert first.object_key.entity.name == "ConflictAlpha"
 
 
 def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
@@ -1047,7 +1117,7 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
 
 def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     # Sealing transfers the accumulation, so a caller who keeps the sealed
-    # builder keeps nothing the sealed Page carries — the interned issue
+    # builder keeps nothing the sealed Page carries — the stored-data issue
     # records and their frozen evidence included, which is the only accumulator
     # a caller cannot reach through the refusals above. Read over the declared
     # slots rather than a list written here, so an accumulator added later is

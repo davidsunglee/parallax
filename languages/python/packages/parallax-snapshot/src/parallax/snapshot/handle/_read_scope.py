@@ -86,8 +86,13 @@ from parallax.snapshot.handle._connection_lifecycle import (
     exit_connection,
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
-from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan
+from parallax.snapshot.handle._materialization import (
+    DeliveryPage,
+    DeliveryPlan,
+    Materializer,
+    StreamPageRead,
+)
+from parallax.snapshot.handle._paging import At
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
@@ -379,7 +384,7 @@ class ReadScope:
         return publication_for(selected, interface)
 
     def page(
-        self, read: _BegunRead, page_plan: PagePlan, at: At, batch: StreamBatchActivity
+        self, read: _BegunRead, page_plan: DeliveryPlan, at: At, batch: StreamBatchActivity
     ) -> DeliveryPage:
         """One page of a delivery, read inside its begun read's own bracket.
 

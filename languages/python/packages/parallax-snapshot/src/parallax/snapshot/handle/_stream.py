@@ -3,7 +3,7 @@
 A streamed read is the eager read surrounded rather than replaced. Above the
 executor sits a page loop that says where the delivery stands and gets back a
 page; below it sits publication, which walks the Page through one Root View per
-root at a time. :func:`~parallax.snapshot.handle._paging.read_delivery_page` between
+root at a time. :meth:`~parallax.snapshot.handle._materialization.Materializer.read_page` between
 them plans, issues its `1 + L` statements, and seals one Page exactly as an
 eager read does — so a page's child levels are the same ``IN (gathered keys)``
 lookups, and only the root statement differs.
@@ -50,7 +50,8 @@ from parallax.core.temporal_read import (
     scans_validated_axis,
     validated_query_pin,
 )
-from parallax.snapshot.handle._paging import At, DeliveryPage, PagePlan
+from parallax.snapshot.handle._materialization import DeliveryPage, DeliveryPlan
+from parallax.snapshot.handle._paging import At, PagePlan
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import ResultPublication, declaring_metadata
@@ -129,7 +130,7 @@ class StreamScope[R: StreamRead](Protocol):
     def page(
         self,
         read: R,
-        page_plan: PagePlan,
+        page_plan: DeliveryPlan,
         at: At,
         batch: StreamBatchActivity,
         /,
@@ -337,7 +338,7 @@ class SnapshotStream[T]:
         self._state: _State = _CREATED
         self._read: StreamRead | None = None
         self._publication: ResultPublication | None = None
-        self._page_plan: PagePlan | None = None
+        self._page_plan: DeliveryPlan | None = None
         self._pin: Pin = Pin()
         self._milestones: EntityMetadata | None = None
         self._activity: SnapshotStreamActivity = INERT
@@ -367,8 +368,8 @@ class SnapshotStream[T]:
         validated = preflight(self._node, model=meta, form="graph")
         entity = self._entity(meta)
         declaring = declaring_metadata(meta, entity.identity)
-        self._page_plan = PagePlan(
-            continuation.plan(validated, meta), self._batch_size, self._node.limit
+        self._page_plan = DeliveryPlan(
+            PagePlan(continuation.plan(validated, meta), self._batch_size, self._node.limit)
         )
         if scans_validated_axis(validated.temporal):
             self._milestones = declaring

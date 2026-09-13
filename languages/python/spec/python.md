@@ -2460,12 +2460,12 @@ of shared edition identity.
   `bool`, a non-`int`, a negative index, and an index past the Page's own
   occurrences are each refused where the edge or root is recorded, so a Page
   that exists is one whose references resolve and no whole-page validation
-  pass stands between building one and merging it. Two entries for one member or
+  pass stands between building one and publishing its Root Views. Two entries for one member or
   one view within a projection are unrepresentable rather than rejected: each has
   exactly one position. `roots` order and the tuple
   inside a loaded-many relationship view are semantic and preserved; projection
-  order is not. Separate projections may resolve to one logical node; those are
-  the duplicate projections the materializer merges. A view never written is
+  order is not. Separate projections may resolve to one logical node; a Root View
+  judges their witnesses and reuses one Entity State when they are equal. A view never written is
   unloaded, while a written `None` or empty tuple is loaded-null or loaded-empty.
   A root whose primary key is null or undecodable is represented by
   `InvalidRootInput`, whose ordinal IS its result position: its result ordinal and

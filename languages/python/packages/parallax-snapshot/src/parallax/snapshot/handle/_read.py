@@ -13,9 +13,9 @@ loop exists exactly once on the developer-facing path.
 
 Included Page levels materialize and convert rows one at a time: a converted
 node names its correlation members, so the next level gathers keys from the
-converted parent rather than a retained row. An object-form read's own ROOTS instead
-stage as one tuple across :func:`read_roots` / :func:`build_page`, the one joint
-a whole-result read has. Flat-row, history, and predicate-write lanes
+converted parent rather than a retained row. The shared
+:class:`~parallax.snapshot.handle._materialization.Materializer` owns root
+execution, per-level fetching, and Page assembly. Flat-row, history, and predicate-write lanes
 instead stage one tuple of positional provider rows into one Page, before any
 consumer-specific derivation, so each lane classifies or refuses that one staging
 Page rather than judging rows as it walks them. The port's raw
@@ -77,7 +77,6 @@ failed-call rules.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import ExitStack
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -86,7 +85,6 @@ from parallax.core import continuation, deep_fetch, inheritance, opt_lock, read_
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import (
     DatabaseConnection,
-    PipelineStatement,
     Row,
 )
 from parallax.core.dialect import LockMode
@@ -95,7 +93,6 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
-    DatabaseCallActivity,
     DatabaseCallScope,
     ReadActivity,
 )
@@ -106,14 +103,11 @@ from parallax.core.metamodel import (
     Metamodel,
 )
 from parallax.core.object_query._validated import (
-    ContinuationCoordinate,
     ValidatedObjectQuery,
-    ValidatedTemporalSelection,
 )
 from parallax.core.temporal_read import (
     Edge,
     Pin,
-    scans_validated_axis,
     validated_query_pin,
 )
 from parallax.core.unit_work import Concurrency, EntityStateRow
@@ -134,20 +128,17 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._materialization import (
     CompiledRead,
-    CompiledTemplate,
     EagerPageRead,
     FlatPageRead,
     MaterializationObserver,
     Materializer,
     RowPublication,
     compile_read,
-    compile_template,
 )
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
     ObservedRows,
     ReadSources,
-    deferred_evidence,
 )
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
@@ -160,21 +151,18 @@ from parallax.snapshot.materialize import (
     RootView,
     UnwindTree,
     classify_roots,
-    hydrates,
     page_edges,
-    page_rows,
     require_publishable,
     unwind_tree,
     wire_roots,
 )
-from parallax.snapshot.materialize._page import ABSENT, exact_stored_equal
+from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
     ChildSlot,
     SourceLevel,
-    ViewSchema,
 )
 
 __all__ = [
@@ -424,9 +412,9 @@ def find(
 ) -> FindResult:
     """The whole-result read: every root ``query`` matches, with its included values.
 
-    `Materializer.read_page` owns the two internal halves: `read_roots` executes
-    the root statement, then `build_page` converts its positional rows and reads
-    each planned level into one Page without a second executor.
+    `Materializer.read_page` executes the root statement, converts its positional
+    rows, and reads each planned level into one Page through one orchestration
+    path.
 
     ``query`` is the read's canonical Object Query: one carrying Include Paths,
     or any other query planned with zero levels (root-only instance-form
@@ -467,302 +455,6 @@ def find(
     """
     return Materializer(observer).read_page(
         EagerPageRead(query, model, port, preference, ledger, calls)
-    )
-
-
-@dataclass(slots=True)
-class RootRead:
-    """One root statement already executed, together with what the Page built from
-    its provider rows must be built under.
-
-    The whole-result pairing made by one statement execution: the ``plan`` whose
-    levels descend below these roots, the ``prepared`` read they convert under,
-    and the ``temporal`` selection that settles their pin and retained evidence
-    all reach conversion as one value. No half of a find can therefore run
-    against another half's query.
-    """
-
-    plan: deep_fetch.ObjectQueryPlan
-    prepared: PreparedRead
-    rows: tuple[Row, ...]
-    coordinates: tuple[ContinuationCoordinate | None, ...]
-    temporal: tuple[ValidatedTemporalSelection, ...]
-    observer: MaterializationObserver = MATERIALIZATION_INERT
-
-    def take_rows(self) -> tuple[Row, ...]:
-        """Transfer the provider rows to Page assembly and retain none here."""
-        rows = self.rows
-        self.rows = ()
-        return rows
-
-
-def read_roots(
-    query: ValidatedObjectQuery,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    *,
-    preference: Concurrency | None = None,
-    calls: DatabaseCallScope = INERT,
-    observer: MaterializationObserver = MATERIALIZATION_INERT,
-    plan: deep_fetch.ObjectQueryPlan | None = None,
-    compiled: CompiledRead | None = None,
-) -> RootRead:
-    """Plan ``query``, issue its ROOT statement, and materialize the rows it returned.
-
-    Canonicalizes the root query (`m-temporal-read` + `m-navigate`, composed
-    here), compiles it, binds it, and runs it. Nothing here converts, judges, or
-    attaches anything, and no level's SQL is issued: what comes back is one
-    statement's rows and the prepared read they belong to.
-
-    The rows come back whole rather than as the lazy materialization a level
-    converts out of: an iterator crossing this seam would have to be consumed by
-    conversion, which is the one pass the seam exists to separate.
-    """
-    meta = model.meta
-    plan_ = (
-        deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
-        if plan is None
-        else plan
-    )
-    if compiled is None:
-        compiled = compile_read(
-            plan_.root,
-            meta,
-            port.dialect,
-            result_form="instance",
-            lock=entity_read_lock(meta, query.root.identity, preference),
-        )
-    prepared = bind(model, compiled)
-    observer.prepared(len(plan_.levels) + 1)
-    observer.statement_rendered(ROOT_LEVEL)
-    driver_rows = execute_read(port, compiled, calls)
-    observer.statement_executed(ROOT_LEVEL, len(driver_rows))
-    return RootRead(
-        plan=plan_,
-        prepared=prepared,
-        rows=tuple(driver_rows),
-        coordinates=tuple(compiled.row_header(row)[3] for row in driver_rows),
-        temporal=query.temporal,
-        observer=observer,
-    )
-
-
-def build_page(
-    root_read: RootRead,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    *,
-    preference: Concurrency | None = None,
-    ledger: ObservationLedger | None = None,
-    calls: DatabaseCallScope = INERT,
-    templates: dict[int, CompiledTemplate] | None = None,
-) -> FindResult:
-    """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
-    "one query per non-empty relationship level"; m-snapshot-read "round trips").
-
-    Converts ``root_read``'s rows, then for each planned level: restricts the
-    parent nodes to the ones a path-root guard admits
-    (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
-    key and receives no attachment, so its view stays unset); gathers the distinct
-    non-null parent keys; an empty gathered
-    set attaches the empty/null relationship result and issues no child SQL; a
-    back-reference level issues no SQL either (resolved through the Page's own
-    identity map); otherwise compiles and executes ONE child query
-    (carrying the level's declared relationship ordering), applies
-    `familyVariant` materialization (`m-sql`) to its rows, and converts them.
-    Every level is the same three steps — compile, execute, convert — with
-    `familyVariant` materialization and each row's resolved concrete Entity coming
-    from that level's OWN `~parallax.core.sql_gen._compile.CompiledRead`, never re-derived
-    here from the query a second time. The root level's own three steps are
-    :func:`read_roots`'s, which is why its compiled read arrives here rather than
-    being compiled a second time.
-
-    Keys are gathered and fanned back by MEMBER identity
-    (`FetchLevel.owner` / `related`), which is what lets each
-    level's rows be converted one at a time: no column-to-member
-    inversion happens here, and no row outlives its own level.
-
-    Returns the whole sealed Page — every occurrence, the root
-    indexes in result order, and the query's own lowered pin — plus the
-    Source Hint each observed projection's value will carry.
-
-    ``model``, ``preference``, ``ledger``, and ``calls`` are :func:`find`'s own,
-    and every level below the root derives its read lock, its retained evidence,
-    and its Database Call bracket from them exactly as the root did.
-    """
-    meta = model.meta
-    plan_ = root_read.plan
-    builder = PageBuilder(ViewSchema(_slot_table(plan_)), root_read.observer)
-    observations = ObservedRows()
-    correlations = _correlation_table(plan_, meta)
-
-    root_rows = root_read.take_rows()
-    root_refs = _convert_rows(
-        builder,
-        ROOT_LEVEL,
-        root_read.prepared,
-        root_rows,
-        observations,
-        correlations[ROOT_LEVEL],
-    )
-    del root_rows
-
-    level_refs: list[tuple[int, ...]] = [()] * len(plan_.levels)
-    completed: set[int] = set()
-    while len(completed) < len(plan_.levels):
-        ready = [
-            index
-            for index, level in enumerate(plan_.levels)
-            if index not in completed
-            and (isinstance(level.parent, deep_fetch.RootRef) or level.parent.index in completed)
-        ]
-        pending: list[tuple[int, deep_fetch.FetchLevel, tuple[int, ...], CompiledRead]] = []
-        for index in ready:
-            level = plan_.levels[index]
-            parents = _guarded_parents(
-                builder, level, _parent_refs(level.parent, root_refs, level_refs)
-            )
-            if level.is_back_reference:
-                _attach_back_reference(builder, meta, level, parents)
-                completed.add(index)
-                continue
-            keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
-            if not keys:
-                _attach_empty(builder, level, parents)
-                completed.add(index)
-                continue
-            child_query = level.query_template()
-            template = None if templates is None else templates.get(index)
-            if template is None:
-                template = compile_template(
-                    child_query,
-                    meta,
-                    port.dialect,
-                    result_form="instance",
-                    lock=entity_read_lock(meta, child_query.target, preference),
-                )
-                if templates is not None:
-                    templates[index] = template
-            root_read.observer.statement_rendered(index + 1)
-            pending.append((index, level, parents, template.render(keys)))
-
-        if len(pending) == 1:
-            for index, level, parents, compiled in pending:
-                child_refs = _convert_level(
-                    builder,
-                    index + 1,
-                    model,
-                    port,
-                    compiled,
-                    calls,
-                    observations,
-                    root_read.observer,
-                    correlations[index + 1],
-                )
-                _attach_children(builder, meta, level, parents, child_refs)
-                level_refs[index] = child_refs
-                completed.add(index)
-        elif pending:
-            with ExitStack() as stack:
-                call_contexts: list[DatabaseCallActivity] = []
-                for _index, _level, _parents, compiled in pending:
-                    context = calls.database_call(compiled.statement, "read", compiled.target)
-                    call_contexts.append(context.__enter__())
-                    stack.push(context.__exit__)
-                batches = port.execute_pipeline(
-                    tuple(
-                        PipelineStatement(
-                            port.dialect.to_driver_sql(compiled.statement.sql),
-                            compiled.statement.binds,
-                            compiled.document_reads,
-                        )
-                        for _index, _level, _parents, compiled in pending
-                    )
-                )
-                for call, rows in zip(call_contexts, batches, strict=True):
-                    call.read_completed(rows)
-            for (index, level, parents, compiled), rows in zip(pending, batches, strict=True):
-                root_read.observer.statement_executed(index + 1, len(rows))
-                child_refs = _convert_level_rows(
-                    builder,
-                    index + 1,
-                    model,
-                    compiled,
-                    rows,
-                    observations,
-                    correlations[index + 1],
-                )
-                _attach_children(builder, meta, level, parents, child_refs)
-                level_refs[index] = child_refs
-                completed.add(index)
-
-    pin = validated_query_pin(root_read.temporal)
-    page = builder.finish(root_refs, pin)
-    return FindResult(
-        page=page,
-        includes=_include_tree(plan_.levels),
-        sources=_retained(
-            meta,
-            root_read.temporal,
-            observations,
-            page=page,
-            ledger=ledger,
-            pin=pin,
-        ),
-    )
-
-
-def _retained(
-    meta: Metamodel,
-    temporal: tuple[ValidatedTemporalSelection, ...],
-    observations: ObservedRows,
-    *,
-    page: Page,
-    ledger: ObservationLedger | None,
-    pin: Pin,
-) -> ReadSources:
-    """What ``query``'s rows retain for the write side.
-
-    Nothing at all for a MILESTONE-SET read, which is what
-    :func:`find_history` retains for the same query: a scan stands at no single
-    coordinate, so the pin every hint would carry names none of the milestones
-    the rows are — and each of those rows is at a finite Transaction-Time edge
-    and read-only through every keyed verb anyway. Retaining the query's own
-    coordinate instead would make a streamed milestone writable where the whole
-    result of the same query is not, which is a difference the delivery is not
-    allowed to make.
-    """
-    if scans_validated_axis(temporal):
-        return MappingProxyType({})
-    rows = page_rows(page)
-    state_rows: dict[object, EntityStateRow] = {}
-
-    def admitted(node: int) -> EntityStateRow | None:
-        key = rows.keys[node]
-        states = () if key is None else rows.judged_states.get(key, ())
-        state = next(
-            (
-                value
-                for witness, value in states
-                if exact_stored_equal(rows.witnesses[node], rows.witnesses[witness])
-            ),
-            None,
-        )
-        if key is None or state is None or not hydrates(state.findings):
-            return None
-        held = state_rows.get(key)
-        if held is None:
-            held = EntityStateRow.over_state(rows.layouts[node], state, absent=ABSENT)
-            state_rows[key] = held
-        return held
-
-    return deferred_evidence(
-        meta,
-        observations,
-        admitted,
-        lambda node: rows.layouts[node].concrete,
-        ledger=ledger,
-        pin=pin,
     )
 
 
@@ -927,7 +619,7 @@ def find_history(
     return HistoryFindResult(page=stage.page, milestones=entity)
 
 
-def _convert_level(
+def convert_level(
     builder: PageBuilder,
     source: SourceLevel,
     model: CatalogedModel,
@@ -954,12 +646,12 @@ def _convert_level(
     """
     rows = execute_read(port, compiled, calls)
     observer.statement_executed(source, len(rows))
-    return _convert_level_rows(
+    return convert_level_rows(
         builder, source, model, compiled, rows, observations, correlation_members
     )
 
 
-def _convert_level_rows(
+def convert_level_rows(
     builder: PageBuilder,
     source: SourceLevel,
     model: CatalogedModel,
@@ -969,7 +661,7 @@ def _convert_level_rows(
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> tuple[int, ...]:
     prepared = bind(model, compiled)
-    return _convert_rows(
+    return convert_rows(
         builder,
         source,
         prepared,
@@ -979,7 +671,7 @@ def _convert_level_rows(
     )
 
 
-def _convert_rows(
+def convert_rows(
     builder: PageBuilder,
     source: SourceLevel,
     prepared: PreparedRead,
@@ -1025,7 +717,7 @@ def _convert_rows(
     return tuple(refs)
 
 
-def _include_tree(levels: Sequence[deep_fetch.FetchLevel]) -> UnwindTree:
+def include_tree(levels: Sequence[deep_fetch.FetchLevel]) -> UnwindTree:
     """The planned levels as the include tree a wire unwind descends.
 
     A level's own parent reference is what the tree is built from, so the tree
@@ -1053,7 +745,7 @@ def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
     return RelationshipViewKey(level.relationship, narrowed)
 
 
-def _correlation_table(
+def correlation_table(
     plan: deep_fetch.ObjectQueryPlan, meta: Metamodel
 ) -> tuple[tuple[AttributeIdentity, ...], ...]:
     """Correlation members decoded during the identity pass for each source level."""
@@ -1062,14 +754,14 @@ def _correlation_table(
         parent_source = (
             ROOT_LEVEL if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index + 1
         )
-        table[parent_source].append(_correlation_member(meta, level.owner.identity))
+        table[parent_source].append(correlation_member(meta, level.owner.identity))
         if not level.is_back_reference:
             assert level.related is not None
-            table[index + 1].append(_correlation_member(meta, level.related.identity))
+            table[index + 1].append(correlation_member(meta, level.related.identity))
     return tuple(tuple(dict.fromkeys(members)) for members in table)
 
 
-def _slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
+def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
     """Which view slots each source level's parents can receive, indexed by
     source level: the root is 0 and plan level ``i`` is ``i + 1``.
 
@@ -1097,7 +789,7 @@ def _slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...]
     return tuple(tuple(slots) for slots in table)
 
 
-def _attach_children(
+def attach_children(
     builder: PageBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
@@ -1107,8 +799,8 @@ def _attach_children(
     """Fan one level's converted children back to their parents in memory,
     preserving fetched order within each to-many bucket."""
     assert level.related is not None
-    related = _correlation_member(meta, level.related.identity)
-    owner = _correlation_member(meta, level.owner.identity)
+    related = correlation_member(meta, level.related.identity)
+    owner = correlation_member(meta, level.owner.identity)
     buckets: dict[object, list[int]] = {}
     for child in children:
         buckets.setdefault(builder.member_value(child, related), []).append(child)
@@ -1122,7 +814,7 @@ def _attach_children(
         )
 
 
-def _attach_empty(
+def attach_empty(
     builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
@@ -1137,7 +829,7 @@ def _attach_empty(
         builder.write_view(parent, view, empty)
 
 
-def _attach_back_reference(
+def attach_back_reference(
     builder: PageBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
@@ -1155,7 +847,7 @@ def _attach_back_reference(
     """
     assert level.back_reference_family is not None
     view = _view_key(level)
-    owner = _correlation_member(meta, level.owner.identity)
+    owner = correlation_member(meta, level.owner.identity)
     for parent in parents:
         key = builder.member_value(parent, owner)
         if key is None or key is ABSENT:
@@ -1171,7 +863,7 @@ def _attach_back_reference(
         builder.write_view(parent, view, (referenced,) if level.to_many else referenced)
 
 
-def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
+def correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
     """The Identity a converted node carries for the member ``attribute`` names.
 
     A relationship join addresses a correlation Attribute at the POSITION it
@@ -1227,7 +919,7 @@ def execute_read(
     return rows
 
 
-def _parent_refs(
+def parent_refs(
     parent: deep_fetch.ParentRef,
     root_refs: tuple[int, ...],
     level_refs: Sequence[tuple[int, ...]],
@@ -1237,7 +929,7 @@ def _parent_refs(
     return level_refs[parent.index]
 
 
-def _guarded_parents(
+def guarded_parents(
     builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
 ) -> tuple[int, ...]:
     """The parent nodes a path-root guard admits into ``level``
@@ -1257,7 +949,7 @@ def _guarded_parents(
     return tuple(parent for parent in parents if builder.concrete_of(parent) in admitted)
 
 
-def _gather_keys(
+def gather_keys(
     builder: PageBuilder, parents: tuple[int, ...], member: AttributeIdentity
 ) -> list[predicate_algebra.Scalar]:
     """The values of ``member`` across ``parents`` that name something.

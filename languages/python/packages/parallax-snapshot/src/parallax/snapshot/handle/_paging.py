@@ -1,72 +1,27 @@
-"""Pure paging policy and the current delivery-page adapter.
+"""Pure streamed-Page request and verdict policy.
 
-The one deep operation a stream's loop is written against: it is told where the
-delivery stands and answers the page that continues it. Everything paging is
-made of — how many roots to ask for, which node asks for them, which of the
-returned roots survive, and where the next page resumes — is settled inside,
-because those facts only agree when one operation owns all of them. A caller
-that computed the request itself and then built a query from it could read one
-page with another page's request, and the failure that admits is exactly the
-one this design exists to prevent: a silently skipped root.
-
-The cut lands between the root statement and conversion, where
-:func:`~parallax.snapshot.handle._read.find` has its one joint: a page's
-decision reads coordinates alone, and coordinates are lifted off the rows before
-anything is converted, deep-fetched, or classified. Everything that decision is
-made of — :meth:`PagePlan.page_request` and :func:`page_decision` — is
-computation over counts and coordinates with no port and no SQL under it, which
-is what lets the lookahead discard, the tie, and the maximal strict prefix be
-exercised directly. It stays an internal seam of this module either way:
-:func:`read_delivery_page`'s own interface never exposes it, and the stream's
-surface above is what the behavior is graded through.
-
-:class:`DeliveryPage` never surfaces publicly. Cursor state is not a thing a
-caller of a Snapshot Stream holds, so neither the eager
-:class:`~parallax.snapshot.materialize.Page` nor
-:class:`~parallax.snapshot._read_result.FindResult` grows a field for it.
+A delivery asks :class:`PagePlan` how many roots its next statement may read,
+then gives :func:`page_decision` only the evaluated coordinates. The policy owns
+lookahead, limit, tie, and maximal-prefix arithmetic; SQL compilation, execution,
+Page assembly, and continuation retention belong to
+:class:`~parallax.snapshot.handle._materialization.Materializer`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from dataclasses import dataclass
 
-from parallax.core import deep_fetch
 from parallax.core.continuation import ContinuationPlan
-from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity._layout import CatalogedModel
-from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._validated import ContinuationCoordinate
-from parallax.core.sql_gen import SqlGenError
-from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle._materialization import (
-    INERT as MATERIALIZATION_INERT,
-)
-from parallax.snapshot.handle._materialization import (
-    CompiledRead,
-    CompiledTemplate,
-    MaterializationObserver,
-    compile_read,
-)
-from parallax.snapshot.handle._read import (
-    RootRead,
-    build_page,
-    entity_read_lock,
-    read_roots,
-)
-from parallax.snapshot.handle._retention import ObservationLedger, ReadSources
-from parallax.snapshot.materialize import Page, UnwindTree
 
 __all__ = [
     "At",
-    "DeliveryPage",
     "PagePlan",
     "PageRequest",
     "PageVerdict",
     "TieFound",
     "page_decision",
-    "read_delivery_page",
 ]
 
 
@@ -122,23 +77,6 @@ class PageVerdict:
 
 
 @dataclass(frozen=True, slots=True)
-class _RootTemplate:
-    plan: deep_fetch.ObjectQueryPlan
-    compiled: CompiledRead
-    positions: tuple[tuple[int, int], ...]
-
-    def render(
-        self, coordinate: ContinuationCoordinate, size: int
-    ) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
-        binds = list(self.compiled.statement.binds)
-        for bind, carrier in self.positions:
-            binds[bind] = coordinate.carriers[carrier]
-        binds[-1] = size
-        statement = replace(self.compiled.statement, binds=tuple(binds))
-        return self.plan, replace(self.compiled, statement=statement)
-
-
-@dataclass(frozen=True, slots=True)
 class PagePlan:
     """How one delivery pages: its page nodes and the two counts bounding them.
 
@@ -153,12 +91,6 @@ class PagePlan:
     plan: ContinuationPlan
     batch_size: int
     limit: int | None
-    root_after: dict[tuple[bool, ...], _RootTemplate] = field(
-        default_factory=lambda: {}, compare=False, repr=False
-    )
-    children: dict[int, CompiledTemplate] = field(
-        default_factory=lambda: {}, compare=False, repr=False
-    )
 
     def page_request(self, emitted: int) -> PageRequest:
         """What the page after ``emitted`` asks the database for.
@@ -190,181 +122,6 @@ class At:
 
     coordinate: ContinuationCoordinate | None
     emitted: int
-
-
-@dataclass(frozen=True, slots=True)
-class DeliveryPage:
-    """One sealed delivery Page, what it stands at, and whether more follow.
-
-    ``page``, ``includes``, and ``sources`` are exactly what an eager
-    :class:`~parallax.snapshot._read_result.FindResult` carries, because a page
-    IS an eager read of a bounded root query — the publication seam above is the
-    same one, and only which Pages it is handed differs.
-
-    ``coordinates`` is one per root this page KEEPS, so a root the page read and
-    discarded — the lookahead, or one at a tie — is absent from it exactly as it
-    is absent from the Page.
-
-    ``tie`` is present where the delivery can go no further because two adjacent
-    roots stood at one coordinate. The page reports it rather than raising: this
-    page's kept roots are published first, and the refusal follows them.
-    """
-
-    page: Page
-    includes: UnwindTree
-    sources: ReadSources
-    coordinates: tuple[ContinuationCoordinate, ...]
-    exhausted: bool
-    tie: TieFound | None
-
-    @property
-    def resume_from(self) -> ContinuationCoordinate | None:
-        """The coordinate the next page seeks past, or absence for an empty page.
-
-        A property rather than a call-site subscript: "seek from the last root
-        this page KEPT" is the rule the whole design rests on, and a subscript
-        is something a caller can get one off.
-        """
-        return self.coordinates[-1] if self.coordinates else None
-
-    @property
-    def delivered(self) -> int:
-        """How many roots this page publishes.
-
-        Derived rather than stored, so it cannot disagree with the coordinates
-        it counts.
-        """
-        return len(self.coordinates)
-
-
-def _compiled_root(
-    page_plan: PagePlan,
-    query: object,
-    coordinate: ContinuationCoordinate | None,
-    request: PageRequest,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    preference: Concurrency | None,
-) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
-    meta = model.meta
-    if coordinate is None:
-        planned = deep_fetch.plan(
-            cast("Any", query),
-            meta,
-            projection=deep_fetch.ReadProjectionRequest("all", True),
-        )
-        return planned, compile_read(
-            planned.root,
-            meta,
-            port.dialect,
-            result_form="instance",
-            lock=entity_read_lock(meta, cast("Any", query).root.identity, preference),
-        )
-    pattern = tuple(carrier is None for carrier in coordinate.carriers)
-    template = page_plan.root_after.get(pattern)
-    if template is None:
-        markers = tuple(None if missing else object() for missing in pattern)
-        template_query = page_plan.plan.after(ContinuationCoordinate(markers), limit=request.size)
-        planned = deep_fetch.plan(
-            template_query,
-            meta,
-            projection=deep_fetch.ReadProjectionRequest("all", True),
-        )
-        compiled = compile_read(
-            planned.root,
-            meta,
-            port.dialect,
-            result_form="instance",
-            lock=entity_read_lock(meta, template_query.root.identity, preference),
-        )
-        positions = tuple(
-            (bind_index, carrier_index)
-            for bind_index, bind in enumerate(compiled.statement.binds)
-            for carrier_index, marker in enumerate(markers)
-            if marker is not None and bind is marker
-        )
-        if {carrier for _bind, carrier in positions} != {
-            index for index, marker in enumerate(markers) if marker is not None
-        }:
-            raise SqlGenError("compiled continuation lost a non-null coordinate bind")
-        template = _RootTemplate(planned, compiled, positions)
-        page_plan.root_after[pattern] = template
-    return template.render(coordinate, request.size)
-
-
-def read_delivery_page(
-    page_plan: PagePlan,
-    at: At,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    *,
-    preference: Concurrency | None = None,
-    ledger: ObservationLedger | None = None,
-    calls: DatabaseCallScope = INERT,
-    observer: MaterializationObserver = MATERIALIZATION_INERT,
-) -> DeliveryPage:
-    """Read and seal the page of ``page_plan`` that follows ``at``.
-
-    The node is this plan's own — the caller's query under the Continuation
-    Order, capped at the size this position asks for, and seeking past the
-    coordinate the last root the page before it KEPT stood at. The roots come
-    back, their coordinates are lifted off them, and only then is the graph
-    below them built: the ``1 + L`` shape of a page is an eager read's, so ``model``,
-    ``port``, ``preference``, ``ledger``, and ``calls`` are the executor's own
-    and every level below the root derives its lock, its retained evidence, and
-    its Database Call bracket from them exactly as an eager find does.
-
-    The roots the verdict discards are read and nothing more: the graph is built
-    from the kept prefix alone, so a discarded root is never deep-fetched,
-    converted, classified, or published, and its children are never fetched
-    beside another page's.
-    """
-    request = page_plan.page_request(at.emitted)
-    query = (
-        page_plan.plan.first(limit=request.size)
-        if at.coordinate is None
-        else page_plan.plan.after(at.coordinate, limit=request.size)
-    )
-    planned, compiled = _compiled_root(
-        page_plan, query, at.coordinate, request, model, port, preference
-    )
-    root_read = read_roots(
-        query,
-        model,
-        port,
-        preference=preference,
-        calls=calls,
-        plan=planned,
-        compiled=compiled,
-        observer=observer,
-    )
-    coordinates = _coordinates(root_read)
-    terms = tuple(term.member.identity for term in query.order_by)
-    verdict = page_decision(request, terms, coordinates)
-    kept = replace(
-        root_read,
-        rows=root_read.rows[: verdict.keep],
-        coordinates=root_read.coordinates[: verdict.keep],
-    )
-    discarded_rows = root_read.take_rows()
-    del discarded_rows, root_read
-    result = build_page(
-        kept,
-        model,
-        port,
-        preference=preference,
-        ledger=ledger,
-        calls=calls,
-        templates=page_plan.children,
-    )
-    return DeliveryPage(
-        page=result.page,
-        includes=result.includes,
-        sources=result.sources,
-        coordinates=coordinates[: verdict.keep],
-        exhausted=verdict.exhausted,
-        tie=verdict.tie,
-    )
 
 
 def page_decision(
@@ -404,17 +161,3 @@ def page_decision(
     if request.lookahead and len(coordinates) == request.size:
         return PageVerdict(keep=request.size - 1, exhausted=False, tie=None)
     return PageVerdict(keep=len(coordinates), exhausted=True, tie=None)
-
-
-def _coordinates(root_read: RootRead) -> tuple[ContinuationCoordinate, ...]:
-    """Every root's evaluated coordinate, in the order the database placed them.
-
-    A paging read captures one cell per Continuation Order term for every row it
-    returns, so a root without a coordinate is a violation of the m-sql / port
-    contract rather than an ordinary stored-data state — invalid stored data
-    reaches here with its coordinate intact, which is the whole point.
-    """
-    coordinates = root_read.coordinates
-    if any(coordinate is None for coordinate in coordinates):  # pragma: no cover - see above
-        raise SqlGenError("a paging read returned a root carrying no evaluated coordinate")
-    return cast("tuple[ContinuationCoordinate, ...]", coordinates)

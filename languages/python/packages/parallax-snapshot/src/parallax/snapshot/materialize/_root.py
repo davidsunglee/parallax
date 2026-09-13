@@ -79,6 +79,7 @@ from parallax.snapshot.materialize._page import (
     StoredDataIssueInput,
     dedupe_issues,
     exact_stored_equal,
+    layout_order_key,
     page_rows,
     stored_order_key,
 )
@@ -329,6 +330,7 @@ class RootView:
         canonical, *candidates = sorted(
             occurrences,
             key=lambda projection: (
+                layout_order_key(rows.layouts[projection]),
                 stored_order_key(rows.witnesses[projection]),
                 rows.sources[projection],
                 rows.source_ordinals[projection],
@@ -358,9 +360,6 @@ class RootView:
         rows = self._rows
         left_layout = rows.layouts[left]
         right_layout = rows.layouts[right]
-        if right_layout.concrete.sort_key < left_layout.concrete.sort_key:
-            left, right = right, left
-            left_layout, right_layout = right_layout, left_layout
         left_values = cast("tuple[object, ...]", rows.witnesses[left])
         right_values = cast("tuple[object, ...]", rows.witnesses[right])
         left_by_member = dict(zip(left_layout.members, left_values, strict=True))

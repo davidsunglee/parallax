@@ -520,15 +520,15 @@ def rows_per_level(
 # The batch: the shipped per-level loop, with compilation lifted out of it.    #
 # --------------------------------------------------------------------------- #
 
-_slot_table = _read._slot_table  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_convert_rows = _read._convert_rows  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_parent_refs = _read._parent_refs  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_guarded_parents = _read._guarded_parents  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_gather_keys = _read._gather_keys  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_correlation_member = _read._correlation_member  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_children = _read._attach_children  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_empty = _read._attach_empty  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_slot_table = _read.slot_table
+_convert_rows = _read.convert_rows
+_parent_refs = _read.parent_refs
+_guarded_parents = _read.guarded_parents
+_gather_keys = _read.gather_keys
+_correlation_member = _read.correlation_member
+_attach_children = _read.attach_children
+_attach_empty = _read.attach_empty
+_attach_back_reference = _read.attach_back_reference
 
 
 def batch(

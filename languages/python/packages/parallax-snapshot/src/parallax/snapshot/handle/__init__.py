@@ -88,10 +88,10 @@ live:
   its own rules raise, and :class:`SnapshotStreamContinuationError`, which the
   stored data does. The loop that says where the delivery stands, and the
   per-root publication below it, live here.
-- :mod:`~parallax.snapshot.handle._page` — the page that loop is written
-  against: how many roots to ask for, which node asks for them, which of the
-  returned roots survive, and the coordinate the next one resumes from, settled
-  in one operation over the read executor's own two halves.
+- :mod:`~parallax.snapshot.handle._paging` — the pure policy that determines how
+  many roots a streamed Page asks for and which returned prefix survives.
+- :mod:`~parallax.snapshot.handle._materialization` — the shared Materializer
+  that executes and assembles eager, flat, and streamed Pages.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, :func:`entity_read_lock`, the composed
   per-Entity read-lock derivation every participating read resolves its own

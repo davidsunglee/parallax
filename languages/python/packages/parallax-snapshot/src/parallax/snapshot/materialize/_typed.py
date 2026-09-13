@@ -92,9 +92,9 @@ def typed_root(
     closes on an object that already exists, and everything constructible
     publishes at once or not at all.
 
-    ``ordinal_offset`` is where this Root View's roots start in the ordered result the
-    caller publishes, which is nonzero only where one Snapshot spans several
-    graphs. ``sources`` is the Source Hint the executor retained per projection,
+    ``ordinal_offset`` is where this Root View's roots start in the ordered result
+    the caller publishes, including a later root or streamed Page. ``sources`` is
+    the Source Hint the executor retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """
