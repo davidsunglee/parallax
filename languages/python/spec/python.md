@@ -2931,11 +2931,14 @@ of shared edition identity.
   from `parallax.snapshot`. Its sole stable code is
   `snapshot-projection-conflict`. It carries `object_key`, the logical key's
   lowered `coordinates`, `members` as the deterministically ordered tuple of
-  differing Member Identities, and `occurrences` as the canonical pair of
-  `(level, ordinal)` positions. It carries no raw value, witness, provider row,
-  cause, or mutable details mapping. The whole eager Snapshot is withheld when
-  any root conflicts; a stream preserves roots published before the conflicting
-  root and publishes none of that root.
+  differing Member Identities, and `occurrences` as the two physical `(level,
+  ordinal)` positions where the selected witnesses occurred. The selected
+  witness pair, Object Key Entity, and differing-member sequence are canonical;
+  the occurrence positions may change when provider rows are reordered. It
+  carries no raw value, witness, provider row, cause, or mutable details mapping.
+  The whole eager Snapshot is withheld when any root conflicts; a stream
+  preserves roots published before the conflicting root and publishes none of
+  that root.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed
