@@ -2,9 +2,9 @@
 
 A streamed read is the eager read surrounded rather than replaced. Above the
 executor sits a page loop that says where the delivery stands and gets back a
-page; below it sits publication, which walks the page's own sealed graph ONE
-root at a time. :func:`~parallax.snapshot.handle._page.read_stream_page` between
-them plans, issues its `1 + L` statements, and seals one graph exactly as an
+page; below it sits publication, which walks the Page through one Root View per
+root at a time. :meth:`~parallax.snapshot.handle._materialization.Materializer.read_page` between
+them plans, issues its `1 + L` statements, and seals one Page exactly as an
 eager read does — so a page's child levels are the same ``IN (gathered keys)``
 lookups, and only the root statement differs.
 
@@ -14,15 +14,14 @@ page operation, so a page can never be read with one request and built with
 another.
 
 What that buys is the bound this surface exists for: the working set is one
-page's sealed graph plus the current root's merge and published graph, and it
+Page plus the current Root View and published object graph, and it
 does not grow with the total number of roots. Advancing releases the previous
-root; finishing a page releases the page graph after its last root.
+root; finishing a page releases the Page after its last root.
 
-Root scope is a property of the GRAPH rather than a mode anything is told about.
-:func:`~parallax.snapshot.materialize._graph.root_scoped` narrows a page graph to
-one root and the ordinary merge, classification, and materializers run over the
-result unchanged — which is why identity is root-local here without a second
-publication path, and why the same seam publishes an eager read.
+Root scope is a property of a Root View rather than a mode anything is told
+about. Each Root View borrows one Page and the ordinary classification and
+materializers run over it unchanged, which is why identity is root-local here
+without a second publication path and why the same seam publishes an eager read.
 
 The delivery type guards a private paging generator rather than being one. A
 bare generator handed to a caller could not refuse a second pass — re-iterating
@@ -47,17 +46,16 @@ from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.temporal_read import (
-    Edge,
     Pin,
     scans_validated_axis,
     validated_query_pin,
 )
-from parallax.snapshot.handle._page import At, PagePlan, StreamPage
+from parallax.snapshot.handle._materialization import DeliveryPage, DeliveryPlan
+from parallax.snapshot.handle._paging import At, PagePlan
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import SelectedReadModel
-from parallax.snapshot.handle._read import ResultPublication, declaring_metadata, edge_pin
+from parallax.snapshot.handle._read import ResultPublication, declaring_metadata
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
-from parallax.snapshot.materialize._graph import root_edges, root_scoped
 from parallax.snapshot.materialize._invalid import EXCEPTION_MACHINERY
 
 __all__ = [
@@ -132,11 +130,11 @@ class StreamScope[R: StreamRead](Protocol):
     def page(
         self,
         read: R,
-        page_plan: PagePlan,
+        page_plan: DeliveryPlan,
         at: At,
         batch: StreamBatchActivity,
         /,
-    ) -> StreamPage: ...
+    ) -> DeliveryPage: ...
 
 
 type _State = Literal["created", "open", "draining", "exhausted", "failed", "closed"]
@@ -340,7 +338,7 @@ class SnapshotStream[T]:
         self._state: _State = _CREATED
         self._read: StreamRead | None = None
         self._publication: ResultPublication | None = None
-        self._page_plan: PagePlan | None = None
+        self._page_plan: DeliveryPlan | None = None
         self._pin: Pin = Pin()
         self._milestones: EntityMetadata | None = None
         self._activity: SnapshotStreamActivity = INERT
@@ -370,8 +368,8 @@ class SnapshotStream[T]:
         validated = preflight(self._node, model=meta, form="graph")
         entity = self._entity(meta)
         declaring = declaring_metadata(meta, entity.identity)
-        self._page_plan = PagePlan(
-            continuation.plan(validated, meta), self._batch_size, self._node.limit
+        self._page_plan = DeliveryPlan(
+            PagePlan(continuation.plan(validated, meta), self._batch_size, self._node.limit)
         )
         if scans_validated_axis(validated.temporal):
             self._milestones = declaring
@@ -445,7 +443,7 @@ class SnapshotStream[T]:
         page can revise what the caller was already told.
 
         For a read at one instant that is the query's OWN lowered as-of
-        coordinates, which every page's sealed graph carries identically. For a
+        coordinates, which every Page carries identically. For a
         milestone-set read it is the EMPTY pin, exactly as the whole result of
         the same query answers: a scan is not a pin, and each root of one stands
         at its own milestone edge rather than at any coordinate the delivery
@@ -582,56 +580,34 @@ class SnapshotStream[T]:
             page = self._scope.page(
                 read, page_plan, At(coordinate, emitted), self._activity.batch()
             )
-            for position, edge in enumerate(root_edges(page.graph, self._milestones)):
-                root = self._published(
-                    publication, page, position, edge, ordinal=emitted + position
-                )
+            for root in publication.roots_of(
+                page.page,
+                page.includes,
+                ordinal_offset=emitted,
+                sources=page.sources,
+                milestones=self._milestones,
+            ):
                 if not checked and isinstance(root, InvalidData):
                     raise InvalidDataError(
                         (cast("InvalidData[object]", root),), edition=publication.edition
                     )
                 yield root
-            emitted += page.delivered
-            if page.resume_from is not None:
-                coordinate = page.resume_from
-            if page.tie is not None:
+            delivered = page.delivered
+            resume_from = page.resume_from
+            tie = page.tie
+            exhausted = page.exhausted
+            del page
+            emitted += delivered
+            if resume_from is not None:
+                coordinate = resume_from
+            if tie is not None:
                 raise SnapshotStreamContinuationError(
-                    terms=page.tie.terms,
-                    coordinate=page.tie.coordinate,
-                    ordinal=page.tie.ordinal,
+                    terms=tie.terms,
+                    coordinate=tie.coordinate,
+                    ordinal=tie.ordinal,
                 )
-            if page.exhausted:
+            if exhausted:
                 return
-
-    def _published(
-        self,
-        publication: ResultPublication,
-        page: StreamPage,
-        position: int,
-        edge: Edge | None,
-        *,
-        ordinal: int,
-    ) -> object:
-        """The one root at ``position`` of ``page``, published on its own.
-
-        The page graph is shared INPUT rather than a publication unit: scoping it
-        to one root is what keeps a relationship from reading as loaded on this
-        root only because a neighbour in the same page reached it.
-
-        A milestone-set root is scoped at its OWN edge rather than at the page's
-        pin, which is the whole of what makes a page of milestones a milestone
-        page: the pin overrides on the scoped graph and flows through the merge to
-        the node exactly as a whole-result milestone graph's own sealed pin does.
-        A milestone root whose axis starts did not decode has no edge of its own
-        and is published at the page's pin, and the delivery continues past it.
-        """
-        roots = publication.roots_of(
-            root_scoped(page.graph, position, pin=None if edge is None else edge_pin(edge)),
-            page.includes,
-            ordinal_offset=ordinal,
-            sources=page.sources,
-        )
-        return roots[0]
 
 
 class _Delivery(Iterator[object]):

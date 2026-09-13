@@ -48,7 +48,7 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import JsonDocument, Row
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import ModelRejectedError
@@ -637,7 +637,7 @@ def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
     assert refusal.value.category == "lockWaitTimeout"
 
 
-def _two_terminate_rows() -> list[Row]:
+def _two_terminate_rows() -> list[MappingRow]:
     return [
         {
             "bal_id": 1,
@@ -844,7 +844,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     # target must carry the resolved row's OWN `address` document FORWARD into
     # the chained row when the caller does not itself reassign it. The
     # projection that makes this possible is the temporal target's own complete
-    # Predecessor Row, which its close-only sibling records just the same.
+    # Predecessor MappingRow, which its close-only sibling records just the same.
     port = ScriptedAdapter(
         Transact(
             Read(
@@ -1028,7 +1028,7 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     assert json.dumps(carried) == json.dumps(stored)
 
 
-def _position_row() -> Row:
+def _position_row() -> MappingRow:
     return {
         "id": 1,
         "acct_num": "A",
@@ -1136,7 +1136,7 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
 
 
-def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> Row:
+def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> MappingRow:
     return {
         "id": 1,
         "acct_num": "A",
@@ -1278,10 +1278,10 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
 
 def test_materializing_terminate_where_audit_only_observes_the_whole_document() -> None:
     # An AUDIT-ONLY terminate is close-only (`txtime_write.plan` — no chained
-    # row, `materialize_row`'s own `assignment_bearing` set excludes it), so it
+    # row, the predicate-write lane's `assignment_bearing` set excludes it), so it
     # carries no payload forward and writes no document. Its resolving read
     # still projects one, because a Temporal Observation retains a COMPLETE
-    # Predecessor Row (`m-unit-work`) whatever the topology does with it —
+    # Predecessor MappingRow (`m-unit-work`) whatever the topology does with it —
     # completeness is a property of the observation, not of the verb
     # (`m-value-object-047`, the corpus witness).
     port = ScriptedAdapter(
@@ -1349,7 +1349,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     # it writes `[]` there — so the assignment changes nothing and the row is
     # eliminated. Preserving the omission on the authored side alone would compare
     # two spellings of one value unequal and advance the version for no change.
-    def rows() -> list[Row]:
+    def rows() -> list[MappingRow]:
         return [{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
 
     typed_port = ScriptedAdapter(Transact(Read(rows=rows())))
@@ -1413,7 +1413,7 @@ def test_normalizing_production_encoded_assignments_yields_the_managed_compariso
     )
     shape = comparison_shape(meta, entity)
     columns = {"details": ("details", True), "entries": ("entries", True)}
-    row: Row = {"details": managed, "entries": [managed]}
+    row: MappingRow = {"details": managed, "entries": [managed]}
 
     assignments = _normalize_assignment_values({"details": encoded, "entries": [encoded]}, shape)
 
@@ -1422,7 +1422,7 @@ def test_normalizing_production_encoded_assignments_yields_the_managed_compariso
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
-    # A resolved row's scalars arrive from `observable_columns` in their declared
+    # A resolved row's scalars arrive from the shared Entity State in their declared
     # Neutral Type's managed carrier, and an assignment already carries one, so
     # normalization leaves both sides alone and the comparison weighs two host
     # values without an encode/decode round trip between them. Nothing on either
@@ -1438,13 +1438,13 @@ def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds()
     shape = comparison_shape(meta, entity)
     columns = {"amount": ("amount", False), "day": ("day", False), "payload": ("payload", False)}
     stored = {"amount": Decimal("19.95"), "day": dt.date(2026, 8, 13), "payload": b"\x0a\x1b"}
-    row: Row = dict(stored)
+    row: MappingRow = dict(stored)
 
     assert _is_no_op_assignment(shape, columns, _normalize_assignment_values(stored, shape), row)
     assert not _is_no_op_assignment(shape, columns, {"payload": b"\x0a\x1c"}, row)
     assert not _is_no_op_assignment(shape, columns, {"day": dt.date(2026, 8, 14)}, row)
 
-    out_of_scale: Row = {"amount": Decimal("19.9501")}
+    out_of_scale: MappingRow = {"amount": Decimal("19.9501")}
     assert not _is_no_op_assignment(shape, columns, {"amount": Decimal("19.95")}, out_of_scale)
 
 
@@ -1459,7 +1459,7 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
     person = document_layout_entity(model, "Person")
     shape = comparison_shape(model, person)
     columns = {"address": ("address", True), "tags": ("tags", True)}
-    row: Row = {
+    row: MappingRow = {
         "address": {"city": "Bergen", "geo": {"country": "NO"}},
         "tags": [{"label": "founder"}],
     }

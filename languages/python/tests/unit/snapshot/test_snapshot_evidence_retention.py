@@ -38,7 +38,7 @@ from collections.abc import Callable
 from typing import Final
 
 from parallax.conformance import vo_models as vo
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.snapshot.materialize._evidence import freeze_evidence
 from tests.unit.memory_instruments import (
     Seam,
@@ -46,7 +46,7 @@ from tests.unit.memory_instruments import (
     retained,
     serve_one_measurement,
 )
-from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
+from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
 _NARROW: Final = 8
 _WIDE: Final = 40
@@ -65,7 +65,7 @@ def _rejected(width: int) -> dict[str, object]:
     return {f"member-{index}": f"value-{index}" for index in range(width)}
 
 
-def _row(width: int) -> Row:
+def _row(width: int) -> MappingRow:
     return {
         "id": 1,
         "name": "Ada",
@@ -76,13 +76,13 @@ def _row(width: int) -> Row:
 def _publication(width: int) -> Seam:
     """The published record of one invalid root, held at the sample point.
 
-    The graph, the merge, and the builder are all transient in production and
+    The Page, Root View, and builder are all transient in production and
     none is held here, so what the sample sees through the record is what a
     caller who kept one keeps.
     """
 
     def run(sample: Callable[[], None]) -> None:
-        fixture = GraphFixture(vo.CUSTOMER_MODEL)
+        fixture = PageFixture(vo.CUSTOMER_MODEL)
         record = invalid_record(fixture.materialize(fixture.node("Customer", _row(width)))[0])
         del fixture
         sample()

@@ -72,6 +72,10 @@ _DROP_TOKENS = frozenset({TokenType.ALIAS})
 # every surface; ``CONVERT`` is matched too for defensiveness.
 _CAST_FUNCTIONS = frozenset({"CAST", "CONVERT"})
 
+# PostgreSQL's quantified comparison operator is tokenized as a keyword rather
+# than a generic function name, but its array expression still binds tightly.
+_TIGHT_PAREN_KEYWORDS = frozenset({"ANY"})
+
 # A private spacing sentinel used by the renderer to mark a VAR token that is a
 # function name (``lower(…)``). It is never a real sqlglot token type; it only
 # drives the "no space before the following ``(``" spacing rule.
@@ -236,7 +240,9 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         # not a table/column identifier. sqlglot renders function names in
         # uppercase (``LOWER``); m-sql rule 2 lowercases unquoted identifiers, so we
         # lowercase the function name and render it tight against its paren.
-        is_function_name = token.token_type is TokenType.VAR and following_is_paren
+        is_function_name = following_is_paren and (
+            token.token_type is TokenType.VAR or text.upper() in _TIGHT_PAREN_KEYWORDS
+        )
         # A parametrized type name (``decimal(18, 2)``) inside a NULL-placeholder
         # cast binds its length list tight to the type, exactly like a function
         # name; it is not a value token, so it is already lowercased below.

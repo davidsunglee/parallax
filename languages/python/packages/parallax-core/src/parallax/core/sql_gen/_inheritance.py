@@ -77,6 +77,7 @@ from parallax.core.document_codec import (
     DecodedMember,
     DocumentFinding,
     DocumentShape,
+    Missing,
     Occurrence,
     Present,
     decode_located_member_classified,
@@ -182,7 +183,7 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 #                                                                              #
 # The stages keep their module's spelling and `_compile` aliases each down, the #
 # package convention `_context` established. `_compile` sequences them because  #
-# the carrier they fill is its own (`MaterializedReadRow`) and this module      #
+# raw positional carriers remain owned by the compiled read that fills them #
 # sits below it: what a stage cannot write into the row's values it returns,    #
 # and nothing here names the carrier.                                          #
 # --------------------------------------------------------------------------- #
@@ -232,12 +233,15 @@ class ByTag:
     def resolvable(self) -> tuple[EntityIdentity, ...]:
         return (self.root, *(identity for _, identity, _ in self.tag_pairs))
 
-    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
-        raw = values.pop(self.column)
+    def resolve_value(self, raw: object) -> ResolvedVariant:
+        """Resolve one provider carrier without mutating a payload row."""
         resolved = self.by_tag.get(cast("str", raw))
         if resolved is None:
             return self.root, None, UnknownFamilyTag(raw)
         return resolved
+
+    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
+        return self.resolve_value(values.pop(self.column))
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,6 +266,9 @@ class ByLiteral:
     renames: Mapping[str, tuple[tuple[str, str], ...]] = field(
         init=False, compare=False, repr=False
     )
+    result_keys: Mapping[EntityIdentity, Mapping[str, str]] = field(
+        init=False, compare=False, repr=False
+    )
     drop: frozenset[str] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -271,6 +278,17 @@ class ByLiteral:
             {spelling: (identity, spelling, None) for spelling, identity in self.variants},
         )
         object.__setattr__(self, "renames", dict(self.projected_fields))
+        identity_by_spelling = dict(self.variants)
+        object.__setattr__(
+            self,
+            "result_keys",
+            {
+                identity_by_spelling[spelling]: {
+                    rendered_key: alias for alias, rendered_key in variant_fields
+                }
+                for spelling, variant_fields in self.projected_fields
+            },
+        )
         object.__setattr__(
             self,
             "drop",
@@ -285,6 +303,14 @@ class ByLiteral:
     @property
     def resolvable(self) -> tuple[EntityIdentity, ...]:
         return tuple(identity for _, identity in self.variants)
+
+    def resolve_value(self, raw: object) -> ResolvedVariant:
+        """Resolve one provider carrier without mutating a payload row."""
+        return self.by_spelling[cast("str", raw)]
+
+    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
+        """Return the UNION result alias that carries one branch-local key."""
+        return self.result_keys.get(entity, {}).get(rendered_key, rendered_key)
 
     def resolve(self, values: dict[str, object]) -> ResolvedVariant:
         spelling = cast("str", values.pop(self.column))
@@ -354,6 +380,62 @@ class SharedDocument:
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_entity", dict(self.per_entity))
 
+    def raw_member_from(self, document_read: object, resolved: EntityIdentity, key: str) -> object:
+        """Read one raw member from an already selected document carrier."""
+        entry = self.by_entity.get(resolved)
+        if entry is None:
+            raise KeyError(key)
+        path = next((path for member, path in entry.members if member == key), None)
+        if path is None:
+            raise KeyError(key)
+        if isinstance(document_read, SqlNull):
+            return document_read
+        if not isinstance(document_read, PresentDocument):
+            raise SqlGenError(
+                f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+            )
+        return locate_entity_member(document_read.document, path[0])
+
+    def classify_located_member_from(
+        self, located: object, resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        """Classify one member from the exact carrier retained in its witness."""
+        entry = self.by_entity.get(resolved)
+        if entry is None or entry.shape is None:
+            raise KeyError(key)
+        path = next((path for member, path in entry.members if member == key), None)
+        if path is None:
+            raise KeyError(key)
+        decoded = _classified_located_entity_member(entry.shape, located, path)
+        value = (
+            decoded.presence.value
+            if isinstance(decoded.presence, Present)
+            else UNAVAILABLE
+            if decoded.presence is UNAVAILABLE
+            else None
+        )
+        return value, decoded.findings
+
+    def classify_member_from(
+        self, document_read: object, resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        """Classify one selected document member without a row dictionary."""
+        entry = self.by_entity.get(resolved)
+        if entry is None or entry.shape is None:
+            raise KeyError(key)
+        path = next((path for member, path in entry.members if member == key), None)
+        if path is None:
+            raise KeyError(key)
+        decoded = _classified_entity_member(entry.shape, document_read, path)
+        value = (
+            decoded.presence.value
+            if isinstance(decoded.presence, Present)
+            else UNAVAILABLE
+            if decoded.presence is UNAVAILABLE
+            else None
+        )
+        return value, decoded.findings
+
     def fan_out(
         self, values: dict[str, object], resolved: EntityIdentity
     ) -> tuple[DocumentFinding, ...]:
@@ -404,6 +486,33 @@ class DirectDocuments:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_entity", dict(self.per_entity))
+
+    def classify_member_from(
+        self, document_read: object, resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        """Classify one direct occurrence from its selected carrier."""
+        occurrence, shape = next(
+            (item for item in self.by_entity.get(resolved, ()) if item[0].storage.name == key),
+            (None, None),
+        )
+        if occurrence is None or shape is None:
+            raise KeyError(key)
+        if not isinstance(document_read, (SqlNull, PresentDocument)):
+            raise SqlGenError(
+                f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+            )
+        decoded = _classified_occurrence(
+            shape,
+            document_read,
+            multiplicity=occurrence.multiplicity,
+            nullable=occurrence.nullable,
+        )
+        findings = tuple(
+            replace(finding, path=(occurrence.identity.path[-1], *finding.path))
+            for finding in decoded.findings
+        )
+        value = decoded.presence.value if isinstance(decoded.presence, Present) else None
+        return value, findings
 
     def classify(
         self, values: dict[str, object], resolved: EntityIdentity
@@ -500,6 +609,37 @@ class RowStages:
         """
         return () if self.resolve is None else self.resolve.resolvable
 
+    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
+        """Return the provider key carrying one resolved Entity.s stored value."""
+        if isinstance(self.resolve, ByLiteral):
+            return self.resolve.result_key(entity, rendered_key)
+        return rendered_key
+
+    def publication_keys(
+        self,
+        result_keys: tuple[str, ...],
+        coordinate_reads: tuple[str, ...],
+        resolved: EntityIdentity,
+        variant: str | None,
+    ) -> tuple[str, ...]:
+        """The logical flat-row keys structural stages leave after decoding."""
+        values: dict[str, object] = {key: None for key in result_keys}
+        if isinstance(self.resolve, ByTag):
+            values.pop(self.resolve.column)
+        elif isinstance(self.resolve, ByLiteral):
+            if variant is None:  # pragma: no cover - a literal resolution always names its branch
+                raise SqlGenError("a union row must name its resolved family variant")
+            values[self.resolve.column] = variant
+            self.resolve.resolve(values)
+        if self.shared_document is not None:
+            values.pop(self.result_key(resolved, self.shared_document.column), None)
+            entry = self.shared_document.by_entity.get(resolved)
+            if entry is not None:
+                values.update(dict.fromkeys(entry.padding))
+        for alias in coordinate_reads:
+            values.pop(alias, None)
+        return tuple(values)
+
 
 def _classified_entity_member(
     shape: DocumentShape, document_read: object, path: tuple[str, ...]
@@ -509,25 +649,33 @@ def _classified_entity_member(
         raise SqlGenError(
             f"an Entity document projection must address one direct member, got {path}"
         )
+    if isinstance(document_read, SqlNull):
+        located: object = document_read
+    elif isinstance(document_read, PresentDocument):
+        located = locate_entity_member(document_read.document, path[0])
+    else:
+        raise SqlGenError(
+            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+        )
+    return _classified_located_entity_member(shape, located, path)
+
+
+def _classified_located_entity_member(
+    shape: DocumentShape, located: object, path: tuple[str, ...]
+) -> DecodedMember:
+    """Classify one direct Entity member from its located witness carrier."""
+    if len(path) != 1:  # pragma: no cover - read projection requests direct members only
+        raise SqlGenError(
+            f"an Entity document projection must address one direct member, got {path}"
+        )
     member = path[0]
     declared = shape.member(member)
     if isinstance(declared, Occurrence):
-        carrier = (
-            document_read
-            if isinstance(document_read, SqlNull)
-            else locate_entity_member(document_read.document, member)
-            if isinstance(document_read, PresentDocument)
-            else None
-        )
-        if carrier is None:
-            raise SqlGenError(
-                f"the database port returned {type(document_read).__name__}, not a DocumentRead"
-            )
-        if not isinstance(carrier, PresentDocument):
-            carrier = SQL_NULL
+        if not isinstance(located, (SqlNull, PresentDocument)):
+            located = SQL_NULL
         decoded = _classified_occurrence(
             declared.shape,
-            carrier,
+            located,
             multiplicity=declared.multiplicity,
             nullable=declared.nullable,
         )
@@ -535,13 +683,10 @@ def _classified_entity_member(
             decoded.presence,
             tuple(replace(finding, path=(member, *finding.path)) for finding in decoded.findings),
         )
-    if isinstance(document_read, SqlNull):
-        return decode_located_member_classified(shape, document_read, member)
-    if not isinstance(document_read, PresentDocument):
+    if not isinstance(located, (SqlNull, Missing, PresentDocument)):
         raise SqlGenError(
-            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+            f"the database port returned {type(located).__name__}, not a located Document member"
         )
-    located = locate_entity_member(document_read.document, member)
     return decode_located_member_classified(shape, located, member)
 
 

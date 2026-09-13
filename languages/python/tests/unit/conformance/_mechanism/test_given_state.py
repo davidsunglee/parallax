@@ -26,7 +26,13 @@ from parallax.conformance._mechanism.model_facts import (
     load_case_metamodel,
 )
 from parallax.conformance.temporal_state import TemporalShadow
-from parallax.core.db_port import DatabaseConnection, JsonDocument, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    JsonDocument,
+    PipelineStatement,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from tests._support.db_port import body_outcome
 from tests.unit.conformance._recording_ports import FakeWritePort
@@ -55,12 +61,17 @@ class _CorruptionPort:
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         self.reads.append((sql, list(binds)))
-        column = sql.removeprefix("select ").partition(" from ")[0]
-        return [{column: copy.deepcopy(self._stored)}]
+        return [(copy.deepcopy(self._stored),)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes.append((sql, list(binds)))
         return 1
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None

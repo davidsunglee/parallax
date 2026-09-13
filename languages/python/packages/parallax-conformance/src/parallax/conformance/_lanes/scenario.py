@@ -99,7 +99,7 @@ from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
-    Row,
+    MappingRow,
 )
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.metamodel import (
@@ -3103,7 +3103,7 @@ def run_write_sequence_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], dict[str, list[Row]], int]:
+) -> tuple[list[Emission], dict[str, list[MappingRow]], int]:
     """Run a writeSequence: each entry executes as its OWN unit of work through
     ``db.transact`` (one transaction per entry, never the whole sequence in
     one), then report the ordered per-entry
@@ -3149,7 +3149,9 @@ def run_write_sequence_case(
     return emissions, table_state, round_trips
 
 
-def read_table_state(port: DatabaseConnection, model: AcceptedMetamodel) -> dict[str, list[Row]]:
+def read_table_state(
+    port: DatabaseConnection, model: AcceptedMetamodel
+) -> dict[str, list[MappingRow]]:
     """The committed contents of every model table, in canonical wire form.
 
     Every compiled Table Layout is read back exactly once, projecting its
@@ -3160,13 +3162,16 @@ def read_table_state(port: DatabaseConnection, model: AcceptedMetamodel) -> dict
     `null`).
     """
     dialect = port.dialect
-    state: dict[str, list[Row]] = {}
+    state: dict[str, list[MappingRow]] = {}
     for layout in storage_layout.view(model).tables:
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
         sql = f"select {columns} from {dialect.quote(layout.table.name)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
         projection = ActualWireProjection(model)
-        state[layout.table.name] = [projection.table_row(layout, row) for row in rows]
+        keys = tuple(slot.column.name for slot in layout.columns)
+        state[layout.table.name] = [
+            projection.table_row(layout, dict(zip(keys, row, strict=True))) for row in rows
+        ]
     return state
 
 
@@ -4090,7 +4095,7 @@ def run_conflict_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], int, dict[str, list[Row]] | None, int]:
+) -> tuple[list[Emission], int, dict[str, list[MappingRow]] | None, int]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
     sequence — each attempt its OWN `db.transact` unit,

@@ -45,8 +45,8 @@ then:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last limit ?
       binds: [dog, 1]
     - sql:
-        postgres: select t0.id, t0.name from person t0 where t0.id in (?)
-      binds: [10]
+        postgres: select t0.id, t0.name from person t0 where t0.id = any(?)
+      binds: [[10]]
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where kind = 'dog' order by case when bark_volume is null then 1 else 0 end, bark_volume desc limit 1
   graph:
     Animal:

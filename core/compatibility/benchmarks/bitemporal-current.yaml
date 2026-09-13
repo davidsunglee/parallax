@@ -1,0 +1,24 @@
+# Current bitemporal Snapshot delivery under Relational Document Layout.
+tags: [m-perf-bench, m-snapshot-read, m-temporal-read, document-layout]
+model: models/document-layout.yaml
+dataset:
+  generate:
+    rows: 200
+    recipe: bitemporal-current
+objectQuery:
+  target: parallax.compatibility.Charter
+  predicate: { all: {} }
+  temporal:
+    valid-time: { asOf: "2026-06-01T00:00:00Z" }
+    transaction-time: { asOf: latest }
+delivery:
+  pageSizes: [1, 32, 128]
+workloads:
+  - name: current-bitemporal-document
+    iterations: 50
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from charter t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from charter t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        binds: ["2026-06-01T00:00:00+00:00", "2026-06-01T00:00:00+00:00", infinity]

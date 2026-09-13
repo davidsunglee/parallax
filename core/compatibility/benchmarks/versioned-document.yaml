@@ -1,0 +1,20 @@
+# Current read of a versioned Entity under Relational Document Layout.
+tags: [m-perf-bench, m-snapshot-read, m-opt-lock, document-layout]
+model: models/document-layout.yaml
+dataset:
+  generate:
+    rows: 200
+    recipe: versioned-documents
+objectQuery:
+  target: parallax.compatibility.Ledger
+  predicate: { all: {} }
+delivery:
+  pageSizes: [1, 32, 128]
+workloads:
+  - name: current-versioned-document
+    iterations: 50
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: select t0.id, t0.version, t0.payload from ledger t0
+          mariadb: select t0.id, t0.version, t0.payload from ledger t0

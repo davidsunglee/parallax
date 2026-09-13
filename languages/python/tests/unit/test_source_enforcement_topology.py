@@ -75,9 +75,9 @@ from tests.unit._source_inventory_support import (
 _PRIVATE_SQL_REACH_FENCE = "```carrier-neutral-private-reaches\n"
 _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
-        "parallax.snapshot.handle._read",
+        "parallax.snapshot.handle._materialization",
         "parallax.core.sql_gen._compile",
-    ): frozenset({"compile_read", "CompiledRead", "MaterializedReadRow"}),
+    ): frozenset({"compile_read", "CompiledRead", "compile_template", "CompiledTemplate"}),
     (
         "parallax.snapshot.handle._predicate_writes",
         "parallax.core.sql_gen._compile",
@@ -166,7 +166,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.snapshot.handle._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._page", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.handle._materialization", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
@@ -175,10 +175,12 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._graph", "_construction_input"): frozenset({"ABSENT"}),
-    ("parallax.snapshot.materialize._graph", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot.materialize._merge", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._identity", "_construction_input"): frozenset({"ABSENT"}),
+    ("parallax.snapshot.materialize._identity", "_layout"): frozenset({"EntityLayout"}),
+    ("parallax.snapshot.materialize._page", "_construction_input"): frozenset({"ABSENT"}),
+    ("parallax.snapshot.materialize._page", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._prepared", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.materialize._root", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._views", "_layout"): frozenset({"EntityLayout"}),
 }
 
@@ -300,6 +302,10 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._write"): frozenset(
         {"compile_write_step"}
     ),
+    (
+        "parallax.conformance.another_source",
+        "parallax.snapshot.handle._materialization",
+    ): frozenset({"Materializer"}),
     ("parallax.conformance.another_source", "parallax.snapshot.handle._preflight"): frozenset(
         {"preflight"}
     ),
@@ -314,6 +320,14 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"read_projection"}
     ),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
+        {"ObjectQuery", "object_query_node"}
+    ),
+    # A measurement consumer may retain class-backed publication types only after
+    # this catalog proves both their complete accepted model and their canonical
+    # Object Query equal the fixture-owned descriptor forms. ObjectQuery's
+    # canonicalization seam is the only path that can perform the latter without
+    # duplicating fluent clause state or serialization rules.
+    ("parallax.conformance.workloads", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}
     ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),

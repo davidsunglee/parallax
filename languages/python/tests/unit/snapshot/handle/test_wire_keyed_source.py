@@ -22,7 +22,7 @@ import pytest
 
 from parallax.core import DomainModel
 from parallax.core.base import SQL_NULL
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
@@ -52,9 +52,14 @@ _ACCOUNT = "parallax.compatibility.Account"
 _CONTACT = "parallax.compatibility.Contact"
 _POSITION = "parallax.compatibility.WherePosition"
 
-_ACCOUNT_ROW: Final[Row] = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
-_BLANK_CONTACT_ROW: Final[Row] = {"id": 2, "name": "Ada", "address": SQL_NULL}
-_POSITION_ROW: Final[Row] = {
+_ACCOUNT_ROW: Final[MappingRow] = {
+    "id": 1,
+    "owner": "Ada",
+    "balance": Decimal("100.00"),
+    "version": 4,
+}
+_BLANK_CONTACT_ROW: Final[MappingRow] = {"id": 2, "name": "Ada", "address": SQL_NULL}
+_POSITION_ROW: Final[MappingRow] = {
     "id": 1,
     "acct_num": "A",
     "value": Decimal("100.00"),
@@ -75,7 +80,7 @@ def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> 
     return query
 
 
-def _published(model: DomainModel, row: Row, query: dict[str, object]) -> WireEntity:
+def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) -> WireEntity:
     """One frozen Entity mapping as a standalone Wire read of this store
     publishes it, Source Hint and all."""
     port = ScriptedAdapter(Read(rows=[dict(row)]))

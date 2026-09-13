@@ -317,14 +317,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.bitemp_write",
         }
     ),
-    "parallax.snapshot.handle._materializer": frozenset(
+    "parallax.snapshot.handle._materialization": frozenset(
         {
+            "parallax.core.continuation",
             "parallax.snapshot.materialize",
+            "parallax.snapshot._read_result",
             "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.metamodel",
             "parallax.core.inheritance",
             "parallax.core.temporal_read",
+            "parallax.core.db_port",
+            "parallax.core.sql_gen",
+            "parallax.core.read_lock",
+            "parallax.core.execution_lifecycle",
         }
     ),
     # The one Python-only support edge the BEHAVIOURAL `m-snapshot-read` scope
@@ -338,13 +344,13 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # `m-snapshot-read` edge EXCEPT `m-execution-lifecycle`, plus the layout a
     # projection is laid out against and the sentinel scope its absent positions
     # are spelled with, neither of which has a language-neutral module tag either.
-    # Withholding the provenance edge here is
-    # what keeps `m-sql`, `m-db-error`, `m-auto-retry` and `m-dialect` outside this
-    # scope's closure — and therefore outside the closure of
-    # `parallax.snapshot.handle._materializer`, whose whole reason to exist is to
-    # be forbidden them.
+    # Withholding the provenance edge here keeps `m-sql`, `m-db-error`,
+    # `m-auto-retry`, and `m-dialect` outside this representation scope. The
+    # separately declared `parallax.snapshot.handle._materialization` seam grants
+    # the execution dependencies it owns without widening Page representation.
     "parallax.snapshot.materialize": frozenset(
         {
+            "parallax.core.entity",
             "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
             "parallax.core.deep_fetch",
@@ -354,6 +360,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.relationship",
             "parallax.core.temporal_read",
             "parallax.core.wire",
+            "parallax.snapshot._inspection",
         }
     ),
     # The read gate is scoped apart from its own package so the generated
@@ -559,7 +566,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity._layout": "parallax.core.entity",
     "parallax.core.entity._pydantic_storage": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
-    "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._materialization": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
     "parallax.snapshot.handle._read_scope": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_writes": "parallax.snapshot.handle",

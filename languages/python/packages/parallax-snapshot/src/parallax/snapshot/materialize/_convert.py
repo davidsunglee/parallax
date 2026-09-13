@@ -3,17 +3,15 @@
 One SQL-materialized row's transformed values plus its level context and
 classified provenance yield one compact projection row. Nothing below this
 seam sees a physical column, a storage key, or a Document Path again. Any bulk
-path is a thin loop over :func:`convert_row`, and the graph-local identity scope
-it registers into is an explicit argument rather than a whole-result index — a
-milestone-set read gives each milestone its own scope, and a future incremental
-read can scope identity however it needs without a second conversion.
+path is a thin loop over :func:`convert_row`, and the Page-local identity scope
+it registers into is an explicit argument rather than a whole-result index.
 
-SQL row transforms classify and decode projected Entity-document members first,
-then pass their findings, classified-member set, and transformed values here.
-Conversion owns Value Object occurrence reduction after that boundary:
-stored-document presence, container shape, and leaf decoding resolve into
-positional member rows laid out by the exact, path-specific Value Object layout,
-recursively at every depth. An undeclared stored key never contributes, and every
+A compiled read first extracts provider-neutral member carriers into an exact
+Payload Witness and establishes identity from that positional row. Only after a
+Root View has compared every reached witness does conversion classify and decode
+Entity-document members and Value Object occurrences into positional member rows
+laid out by the exact, path-specific Value Object layout, recursively at every
+depth. An undeclared stored key never contributes, and every
 declared one occupies its own position — holding the value exactly where the read
 contract says the value carries it, and ``ABSENT`` where the stored document held
 nothing (`m-snapshot-read` *What a materialized value carries*). This is the seam
@@ -21,15 +19,13 @@ that realizes that contract, so a member present here is the same member a gette
 and a published node agree the value has. No raw document mapping continues past
 here.
 
-:func:`observable_columns` is the deliberate exception, and it is not below the
-seam: an observation is a physical record by contract (`m-unit-work`'s Predecessor
-Row is keyed by column), so the write side is served by its own explicitly
-physical function rather than by leaking a column-keyed mapping out of conversion.
+Write observation reads this same positional Entity State through a physical-key
+mapping view, so conversion builds no second payload for the write side.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Protocol, cast
 
@@ -40,9 +36,8 @@ from parallax.core.base import (
     SqlNull,
     UnknownFamilyTag,
     admits_stored_scalar,
-    unwrap_document_read,
 )
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DocumentFinding,
@@ -55,6 +50,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Multiplicity,
@@ -66,9 +62,10 @@ from parallax.core.metamodel import (
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 from parallax.snapshot.materialize._evidence import freeze_evidence
-from parallax.snapshot.materialize._graph import (
+from parallax.snapshot.materialize._identity import claim_identity
+from parallax.snapshot.materialize._page import (
     ABSENT,
-    GraphBuilder,
+    PageBuilder,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
@@ -83,8 +80,8 @@ __all__ = [
     "AttributeReadContract",
     "LevelContext",
     "SnapshotDecodingError",
+    "convert_deferred",
     "convert_row",
-    "observable_columns",
 ]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
@@ -131,15 +128,8 @@ class LevelContext:
     whose Attributes each carry their own storage spelling. This keeps an
     encoded result such as ``payload_hex`` attached to physical ``payload``.
 
-    Three facts fixed by the layout and the projection resolve here rather than
-    per row. ``projected_by_position`` marks which of ``layout.occurrences``
-    this read carried. ``observed_exclusions`` names the keys an observation
-    answers with a decoded spelling of its own instead of the driver's.
-    ``observed_documents`` pairs each projected occurrence with whether a column
-    holding nothing reduces to the zero value a Many spells or to the ``None`` a
-    One collapses to — the answer the codec gives such a column, so an
-    observation resolves the occurrences of the position's OTHER concretes,
-    which a row of this one stores nothing at, without decoding.
+    ``projected_by_position`` is fixed here rather than per row and marks which
+    of ``layout.occurrences`` this read carried.
 
     ``layout`` stays out of equality and hashing: ``concrete_entity`` already
     distinguishes every context it distinguishes — two layouts for one exact
@@ -153,10 +143,6 @@ class LevelContext:
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[AttributeReadContract, ...] = ()
     projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
-    observed_exclusions: frozenset[str] = field(init=False, compare=False, repr=False)
-    observed_documents: tuple[tuple[str, ValueObjectMetadata, bool], ...] = field(
-        init=False, compare=False, repr=False
-    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "concrete_entity", self.layout.concrete)
@@ -166,30 +152,89 @@ class LevelContext:
             "projected_by_position",
             tuple(occurrence.storage.name in projected for occurrence in self.layout.occurrences),
         )
-        object.__setattr__(
-            self,
-            "observed_exclusions",
-            projected | frozenset(contract.result_key for contract in self.attribute_reads),
+
+
+@dataclass(frozen=True, slots=True)
+class _RowDecoder:
+    raw_values: tuple[object, ...]
+    level: LevelContext
+    identity_values: tuple[object, ...]
+    findings: tuple[DocumentFinding, ...]
+    unknown_family_tag: UnknownFamilyTag | None
+    classified_members: frozenset[str]
+
+    def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        return _decode_row(
+            self.raw_values,
+            self.level,
+            identity_values=self.identity_values,
+            findings=self.findings,
+            unknown_family_tag=self.unknown_family_tag,
+            classified_members=self.classified_members,
         )
-        object.__setattr__(
-            self,
-            "observed_documents",
-            tuple(
-                (member.storage.name, member, member.multiplicity is Multiplicity.MANY)
-                for member in self.documents
-            ),
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredRowDecoder:
+    witness: tuple[object, ...]
+    level: LevelContext
+    identity_values: tuple[object, ...]
+    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]]
+    unknown_family_tag: UnknownFamilyTag | None
+
+    def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        values, findings, classified = self.load()
+        return _decode_row(
+            values,
+            self.level,
+            identity_values=self.identity_values,
+            findings=findings,
+            unknown_family_tag=self.unknown_family_tag,
+            classified_members=classified,
         )
+
+
+def convert_deferred(
+    witness: tuple[object, ...],
+    level: LevelContext,
+    builder: PageBuilder,
+    *,
+    source: SourceLevel,
+    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]],
+    unknown_family_tag: UnknownFamilyTag | None = None,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
+) -> int:
+    """Register identity and an exact witness while deferring payload stages."""
+    claim = claim_identity(
+        {},
+        level,
+        unknown_family_tag=unknown_family_tag,
+        witness_values=witness,
+        raw_member_values=witness,
+        correlation_members=correlation_members,
+    )
+    return builder.add_claim(
+        source,
+        level.layout,
+        claim.key,
+        claim.witness.values,
+        claim.routing_values,
+        claim.findings,
+        _DeferredRowDecoder(witness, level, claim.identity_values, load, unknown_family_tag),
+    )
 
 
 def convert_row(
-    row: Row,
+    row: MappingRow,
     level: LevelContext,
-    builder: GraphBuilder,
+    builder: PageBuilder,
     *,
     source: SourceLevel,
     findings: tuple[DocumentFinding, ...] = (),
     unknown_family_tag: UnknownFamilyTag | None = None,
     classified_members: frozenset[str] = frozenset(),
+    witness_values: tuple[object, ...] | None = None,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> int:
     """Convert one SQL-materialized row into ``builder``'s next projection.
 
@@ -218,17 +263,49 @@ def convert_row(
     transform could make no value available at reads ``ABSENT``, and a stored
     null reads by the Attribute's own nullability — the three states a
     classified member arrives in, kept apart without a second admission. Each
-    judgment's own rejected value converges here, where this row's conversion
-    freezes it into an issue record of its own.
-    A record no earlier projection of the same logical node made is the copy
-    every seam above shares; one repeating an earlier projection's judgment is
-    replaced by that projection's record when the row reaches the builder, and
-    the copy frozen here is gone with this conversion.
+    Payload judgment is deferred until a Root View reaches the logical node and
+    proves every occurrence carried an equal witness. That one decode freezes the
+    rejected values into the Page-owned Entity State shared by all Root Views.
 
     Scalars are keyed by the compiled projection contract. A disjoint sibling's
     null-padded result — and the synthetic family tag — therefore contributes
     nothing rather than landing on a member that never declared it.
     """
+    claim = claim_identity(
+        row,
+        level,
+        unknown_family_tag=unknown_family_tag,
+        classified_members=classified_members,
+        witness_values=witness_values,
+        correlation_members=correlation_members,
+    )
+    return builder.add_claim(
+        source,
+        level.layout,
+        claim.key,
+        claim.witness.values,
+        claim.routing_values,
+        claim.findings,
+        _RowDecoder(
+            claim.payload_values,
+            level,
+            claim.identity_values,
+            findings,
+            unknown_family_tag,
+            classified_members,
+        ),
+    )
+
+
+def _decode_row(
+    raw_values: tuple[object, ...],
+    level: LevelContext,
+    *,
+    identity_values: tuple[object, ...],
+    findings: tuple[DocumentFinding, ...],
+    unknown_family_tag: UnknownFamilyTag | None,
+    classified_members: frozenset[str],
+) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
     layout = level.layout
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
@@ -243,13 +320,19 @@ def convert_row(
         )
     members: list[object] = []
     reads = level.attribute_reads
+    identity_positions = tuple(dict.fromkeys((*layout.primary_key, *layout.temporal_starts)))
+    identity_by_position = dict(zip(identity_positions, identity_values, strict=True))
+    identity_position_set = frozenset(identity_positions)
     for position, attribute in enumerate(layout.attributes):
+        if position in identity_position_set:
+            members.append(identity_by_position[position])
+            continue
         contract = reads[position] if reads else None
         result_key = attribute.storage.name if contract is None else contract.result_key
-        if result_key not in row:
+        raw = raw_values[position]
+        if raw is ABSENT:
             members.append(ABSENT)
             continue
-        raw = row[result_key]
         if result_key in classified_members:
             members.append(
                 ABSENT
@@ -280,11 +363,17 @@ def convert_row(
         if not admission.admitted:
             issues.append(_attribute_issue(attribute, admission.rejected, level.concrete_entity))
         members.append(value if admission.admitted else ABSENT)
-    for occurrence, projected in zip(layout.occurrences, level.projected_by_position, strict=True):
+    for occurrence_position, (occurrence, projected) in enumerate(
+        zip(layout.occurrences, level.projected_by_position, strict=True),
+        start=layout.attribute_count,
+    ):
         if not projected:
             members.append(ABSENT)
             continue
-        raw = row.get(occurrence.storage.name)
+        raw = raw_values[occurrence_position]
+        if raw is ABSENT:
+            members.append(ABSENT)
+            continue
         value, occurrence_findings = _occurrence(
             raw,
             occurrence,
@@ -295,7 +384,7 @@ def convert_row(
             for finding in occurrence_findings
         )
         members.append(value)
-    return builder.add(source, layout, tuple(members), tuple(issues))
+    return tuple(members), tuple(issues)
 
 
 def _attribute_issue(
@@ -323,55 +412,6 @@ def _attribute_issue(
     return StoredDataIssueInput(
         code, entity, attribute.identity, stored_value=freeze_evidence(value)
     )
-
-
-def observable_columns(
-    row: Row,
-    level: LevelContext,
-    *,
-    classified_members: frozenset[str] = frozenset(),
-) -> dict[str, object]:
-    """One row's observable state, keyed by PHYSICAL column, documents decoded.
-
-    What a graph-form read retains evidence from: the complete persisted row a
-    Predecessor Row requires (`m-unit-work`), with each projected
-    document decoded to its declared shape exactly as conversion decodes it, so a
-    successor's carried-versus-changed comparison reads one spelling of a member
-    rather than two.
-
-    Deliberately outside the projection-row algebra. An observation is physical by
-    contract, and keeping it a separate function is what stops a column-keyed
-    mapping riding along inside a converted node.
-
-    A column holding nothing is answered by the reduction its own occurrence
-    fixes rather than by decoding one: a stored document is what the codec reads,
-    and no stored document is the one state a declaration alone decides. That is
-    what keeps a polymorphic position's other concretes — whose occurrences this
-    row stores nothing at, and whose columns arrive null on every row of it —
-    off the codec entirely.
-    """
-    columns = {key: value for key, value in row.items() if key not in level.observed_exclusions}
-    for contract in level.attribute_reads:
-        if contract.result_key not in row:
-            continue
-        raw = row[contract.result_key]
-        attribute = contract.attribute
-        columns[attribute.storage.name] = (
-            decode_canonical_wire(attribute.type, cast("WireValue", raw))
-            if contract.encoded
-            else raw
-        )
-    for key, occurrence, many in level.observed_documents:
-        raw = row.get(key)
-        if isinstance(raw, (SqlNull, PresentDocument)):
-            raw = unwrap_document_read(raw)
-        if key in classified_members:
-            columns[key] = raw
-        elif raw is None:
-            columns[key] = [] if many else None
-        else:
-            columns[key] = _decode_document(raw, occurrence)[0]
-    return columns
 
 
 # --------------------------------------------------------------------------- #

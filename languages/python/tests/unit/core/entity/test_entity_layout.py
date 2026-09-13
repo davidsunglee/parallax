@@ -50,8 +50,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import RelationshipViewKey, merge_graph_input
-from parallax.snapshot.materialize._graph import GraphBuilder
+from parallax.snapshot.materialize import PageBuilder, RelationshipViewKey, RootView
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._corpus_model_support import corpus, target
 from tests.unit._corpus_model_support import model as corpus_model
@@ -440,11 +439,11 @@ def test_every_corpus_entitys_to_many_set_is_the_declared_cardinality_of_its_own
 def _merged(layout: EntityLayout, row: tuple[object, ...], views: tuple[RelationshipViewKey, ...]):
     """One projection of ``layout``'s Entity carrying ``row`` and ``views``,
     merged — the state every consumer of these two rules reads them through."""
-    builder = GraphBuilder(ViewSchema.of(*views))
+    builder = PageBuilder(ViewSchema.of(*views))
     projection = builder.add(ROOT_LEVEL, layout, row)
     for view in views:
         builder.write_view(projection, view, None)
-    return merge_graph_input(builder.seal((projection,), Pin()))
+    return RootView(builder.finish((projection,), Pin()))
 
 
 def _merged_view_order(
@@ -464,11 +463,11 @@ def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule(
         where = (stem, identity.canonical)
         row = tuple(range(100, 100 + len(layout.members)))
         other = tuple(value + 1 for value in row)
-        builder = GraphBuilder(ViewSchema.of())
+        builder = PageBuilder(ViewSchema.of())
         first = builder.add(ROOT_LEVEL, layout, row)
         again = builder.add(ROOT_LEVEL, layout, row)
         apart = builder.add(ROOT_LEVEL, layout, other)
-        merge = merge_graph_input(builder.seal((first, again, apart), Pin()))
+        merge = RootView(builder.finish((first, again, apart), Pin()))
         assert merge.roots == (0, 0, 1), where
         assert builder_key_of(layout, row) != builder_key_of(layout, other), where
 
@@ -496,10 +495,10 @@ def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() 
     varied = tuple(
         value + 1 if position == first_column else value for position, value in enumerate(row)
     )
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     first = builder.add(ROOT_LEVEL, layout, row)
     apart = builder.add(ROOT_LEVEL, layout, varied)
-    merge = merge_graph_input(builder.seal((first, apart), Pin()))
+    merge = RootView(builder.finish((first, apart), Pin()))
     assert merge.roots == (0, 1)
 
 

@@ -37,13 +37,13 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import StoredDataIssueInput
-from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize import PageBuilder, RootView, StoredDataIssueInput
+from parallax.snapshot.materialize._page import page_rows
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit.snapshot._snapshot_graph_support import documents_of, rendered_members
+from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()
@@ -62,12 +62,14 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     """One stored row through the production read sequence, database aside."""
     compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
     prepared = bind(CatalogedModel(model), compiled)
-    builder = GraphBuilder(ViewSchema.of())
-    index = prepared.convert(prepared.materialize(stored), builder, source=ROOT_LEVEL)
-    rows = graph_rows(builder.seal((index,), Pin()))
-    return _Converted(
-        rendered_members(rows.layouts[index], rows.member_rows[index]), rows.issues[index]
+    builder = PageBuilder(ViewSchema.of())
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
     )
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    root = RootView(page)
+    return _Converted(rendered_members(rows.layouts[index], root.member_values(0)), root.issues(0))
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:

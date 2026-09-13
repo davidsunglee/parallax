@@ -58,9 +58,9 @@ then:
         postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0
         mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0
     - sql:
-        postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
+        postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.customer_id = any(?) order by t0.id asc
         mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
-      binds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      binds: { postgres: [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], mariadb: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }
   referenceSql: select id, name, address from customer
   graph:
     Customer:

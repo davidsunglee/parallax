@@ -1,29 +1,29 @@
-"""What a prepared read keeps, and what it refuses to keep per row, per graph,
+"""What a prepared read keeps, and what it refuses to keep per row, per Page,
 and per execution.
 
 `spec/python.md`'s *Exact-model member layouts* fixes which members a resolved
 concrete Entity carries by the accepted Metamodel alone, requires them derived per
-exact Entity and shared — "never rebuilt per row, per graph, or per execution" —
+exact Entity and shared — "never rebuilt per row, per Page, or per execution" —
 and states that retained layout count and size are independent of the number of
-graphs materialized. Beside it, *execution-owned view slots* draws the other line:
+Pages materialized. Beside it, *execution-owned view slots* draws the other line:
 a query shape belongs to one execution and MUST NOT be cached for the lifetime of
 a model. This is the SIZE half of those two requirements measured over the
 production materialization path, from ``prepare_model`` through ``compile_read``
-and ``bind`` to ``PreparedRead.materialize`` and conversion: what is retained
-must not grow with rows, with graphs, or with executions.
+and ``bind`` to ``PreparedRead.convert_driver`` and conversion: what is retained
+must not grow with rows, with Pages, or with executions.
 
 **Two axes, one claim each.** The first varies rows through one prepared
 selection, one set of compiled reads, and the levels bound from them: nothing
 prepared may grow with the rows materialized through it. The second varies whole
-executions — a fetch plan, its compiled reads, and a graph, each unreachable
+executions — a fetch plan, its compiled reads, and a Page, each unreachable
 before the next begins — with only the prepared selection held: nothing
-model-fixed may grow with graphs or with executions, which is what forbids a
+model-fixed may grow with Pages or with executions, which is what forbids a
 query shape retained PER EXECUTION.
 
 Both axes grade a SIZE, so what they reach is bounded by what varies across the
 thing they vary. A holder whose entry count is fixed by the model — one banked
 query shape every execution after the first then shares — grows with neither
-graphs nor executions nor rows, and is therefore not something a size separates
+Pages nor executions nor rows, and is therefore not something a size separates
 from state the model legitimately owns. That such a shape is not banked at all is
 a structural property of the code that owns it, asserted where that code is, and
 outside what any measurement of size can say.
@@ -49,46 +49,29 @@ say.
 
 **A region rather than two arms, because a first-reach cache saturates.** A
 process-global cache keyed by what a row holds stops growing once the rows come
-back, so two arms compared in one process both read it already full and their
-totals agree however much either put into it — the arm that ran first is measured
-after the arm that ran second has filled it. What closes that is entering the
-region ONCE: the sequence is warmed over as many roots' rows as the region then
-converts, until every cost paid once is paid, and only then handed rows composed
-from seeds no conversion in this process has decoded. An entry taken for them
-lands between the two marks, where nothing can have taken it earlier. The region
-releases every graph it builds, so what separates the marks is what something
-OUTSIDE the region kept.
+back, so two arms compared in one process both read it already full. The region
+instead warms over one generated range and then converts a disjoint fixture
+range whose keys and authored names and labels have not reached conversion in
+this process. An entry taken for those rows lands between the two marks. The
+region releases every Page it builds, so what separates the marks is what
+something OUTSIDE the region kept.
 
-The seeds are what bound that. Every key a region's rows carry, every string and
-every wide-domain value derived from one, and every composed row and document are
-values this process has not decoded, so a container taking an entry per row, per
-key, or per composed value takes it between the marks. What a new seed does NOT
-produce is a new value of a Neutral Type whose whole domain warming already
-decoded, and ``Boolean`` is the only one of those: its two values are
-``seed % 2``, and every range carries both. The other modular domains are sampled
-rather than exhausted — a range's seeds are scattered rather than contiguous, so
-the region's rows still carry ``Float32`` and ``Time`` values warming did not
-reach.
-A memo bounded by one of them would take its remaining entries between the marks
-and fail this reading, even though a holder that saturates at a value domain
-grows with neither rows nor graphs nor executions and is not what this item
-claims. The answer if one is ever introduced is to warm over enough roots to
-cover its domain, not to loosen the reading.
+The disjoint generated ranges bound that claim. Every key and authored string in
+the later range is new, as are its composed rows and documents, so a container
+taking an entry per row, per key, or per composed value grows between the marks.
+The fixture intentionally omits its other declared scalar and nested members;
+the instrument therefore claims no coverage of caches keyed by values the
+workload does not author. A holder bounded by any fixed value domain grows with
+neither rows, Pages, nor executions once full and is outside this size claim.
 
-An ALLOCATOR reading cannot be the gate here, and the reason is a measurement
-rather than a preference. This workload declares every Neutral Type, so its
-conforming path runs the canonical Wire codec's ``Timestamp`` leg, and the
-interpreter's own ``datetime`` formatting leaves a slowly saturating residue
-behind it: two runs of one identical seam read four hundred bytes apart on a
-forty-kilobyte window, in either direction, after eight hundred warm-up batches.
-An exact equality over that window would be a coin toss, and a tolerance is not
-what this class asserts. The ``tracemalloc`` totals therefore live where a
-machine-relative number belongs — the non-gating
+An ALLOCATOR total remains a report rather than this gate: its byte level is
+machine- and interpreter-relative, while this class requires exact equality and
+admits no tolerance. The ``tracemalloc`` totals therefore live in the non-gating
 ``just python-report-snapshot-materialization``. What is gated here instead is
-what the heap's own objects report through :func:`sys.getsizeof`, which no
-allocator residue is inside and which two points of one process answer exactly.
-The neighbouring 64-graph item still asserts allocator bytes because its workload
-declares four Neutral Types and reaches none of that codec leg.
+what the heap's own objects report through :func:`sys.getsizeof`, which two
+points of one process answer exactly. The neighbouring 64-Page item asserts
+allocator bytes because it grades a bounded maximum rather than equality between
+two process-wide states.
 
 Both layouts run in one child per axis: the equality is exact per layout, and a
 second child would pay for one more interpreter to prove the same thing twice.
@@ -135,13 +118,9 @@ _EXECUTIONS: Final = 64
 """Whole executions the larger execution arm runs and discards, against one."""
 
 _UNSEEN: Final = OWNERS
-"""The first root a marked region's rows carry.
-
-Past every root the closure readings converted — they take :data:`OWNERS` roots
-from the first — so every key a region's row carries, and every value derived
-from one over a domain warming did not cover, is one this process has not
-decoded, whatever order the readings run in. ``Boolean`` is the one type warming
-does cover: its two values are ``seed % 2``, and every range carries both."""
+"""The first root after every range the closure readings convert, so its
+fixture-generated keys, names, and labels are new to conversion whatever order
+the readings run in."""
 
 _EDITION: Final = "snapshot-materialization-scaling"
 
@@ -175,17 +154,18 @@ def _boundary(layout: Layout, selection: ModelSelection) -> tuple[object, ...]:
     return (_catalog(selection).meta, workload(layout))
 
 
-def _rows(model: CatalogedModel, owners: int, first: int = 0) -> tuple[tuple[Row, ...], ...]:
+def _rows(
+    layout: Layout, model: CatalogedModel, owners: int, first: int = 0
+) -> tuple[tuple[Row, ...], ...]:
     """``owners`` roots' stored rows beginning at root ``first``, built here so no
     measured window or marked region allocates them.
 
-    ``first`` is what makes a region's rows unseen: :data:`_UNSEEN` starts past
-    every root any other reading in this item converts, so every key in them, and
-    every value a seed derived from one over a domain warming did not cover,
-    reaches a conversion first inside the region."""
+    ``first`` makes a region's rows unseen: :data:`_UNSEEN` starts past every root
+    any other reading converts, so its keys and authored strings reach conversion
+    first inside the region."""
     meta = model.meta
-    plan = fetch_plan(query(meta), meta)
-    return rows_per_level(model, plan, compiled_levels(plan, meta), owners, first)
+    plan = fetch_plan(query(layout, meta), meta)
+    return rows_per_level(layout, model, plan, compiled_levels(layout, plan, meta), owners, first)
 
 
 def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
@@ -201,11 +181,11 @@ def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
     return (tuple(rows[0]), *((),) * (len(rows) - 1))
 
 
-def _execute(model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
+def _execute(layout: Layout, model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
     """One whole execution: its own plan, its own compiled reads, its own
-    prepared reads, its own graph, none of which outlives this call."""
-    plan = fetch_plan(query(model.meta), model.meta)
-    reads = compiled_levels(plan, model.meta)
+    prepared reads, its own Page, none of which outlives this call."""
+    plan = fetch_plan(query(layout, model.meta), model.meta)
+    reads = compiled_levels(layout, plan, model.meta)
     batch(model, plan, prepared_levels(model, reads), rows)
 
 
@@ -214,23 +194,19 @@ def _unseen_rows(layout: Layout) -> Span:
     :data:`OWNERS` roots' rows until every cost paid once is paid, and then handed
     the rows of :data:`OWNERS` FURTHER roots inside the marked region.
 
-    Warmed at the region's own size and over the region's own levels, so the one
-    thing the region varies is that its rows are new: every one of its roots, and
-    every row beneath them, is composed from a seed no conversion in this process
-    has ever decoded, so a container keyed by a row, by a key, or by a composed
-    value takes its entries between the two marks rather than before them.
-    ``Boolean`` recurs regardless — its two values are ``seed % 2`` — so a memo
-    bounded by it is full before the opening mark, where one bounded by a wider
-    value domain would still take entries inside the region. The region's graph is
-    released where it is built, which is what leaves the two marks comparable at
-    all."""
+    Warmed at the region's own size and over its own levels, so the one thing the
+    region varies is that its fixture-generated keys, names, and labels are new.
+    A container keyed by a row, key, or composed value takes its entries between
+    the two marks rather than before them. The fixture-authored omissions stay
+    omissions in both ranges. The region's Page is released where it is built,
+    which is what leaves the two marks comparable at all."""
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
-    plan = fetch_plan(query(meta), meta)
-    prepared = prepared_levels(model, compiled_levels(plan, meta))
-    warm = _rows(model, OWNERS)
-    unseen = _rows(model, OWNERS, _UNSEEN)
+    plan = fetch_plan(query(layout, meta), meta)
+    prepared = prepared_levels(model, compiled_levels(layout, plan, meta))
+    warm = _rows(layout, model, OWNERS)
+    unseen = _rows(layout, model, OWNERS, _UNSEEN)
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         for _ in range(WARMUP):
@@ -245,25 +221,25 @@ def _unseen_rows(layout: Layout) -> Span:
 def _unseen_executions(layout: Layout) -> Span:
     """A prepared selection warmed over :data:`OWNERS` roots' executions, and then
     :data:`_EXECUTIONS` whole executions inside the marked region — each with its
-    own fetch plan, its own compiled and bound reads, and its own sealed graph,
+    own fetch plan, its own compiled and bound reads, and its own sealed Page,
     none of which outlives it.
 
-    The warm executions run the region's own rows count, so the one thing the
-    region varies is that its roots are ones this process has never decoded: the
-    first execution in it is where a container keyed by what a row holds takes its
-    entries, and the sixty-four together are what an entry banked per execution
-    accrues across."""
+    The warm executions run the region's own row count, while the marked region's
+    fixture-generated keys, names, and labels are new to conversion. Its first
+    execution is where a container keyed by what a row holds takes its entries,
+    and the sixty-four together are what an entry banked per execution accrues
+    across."""
     selection = _prepared(layout)
     model = _catalog(selection)
-    warm = _root_only(_rows(model, OWNERS))
-    unseen = _root_only(_rows(model, OWNERS, _UNSEEN))
+    warm = _root_only(_rows(layout, model, OWNERS))
+    unseen = _root_only(_rows(layout, model, OWNERS, _UNSEEN))
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         for _ in range(WARMUP):
-            _execute(model, warm)
+            _execute(layout, model, warm)
         opened()
         for _ in range(_EXECUTIONS):
-            _execute(model, unseen)
+            _execute(layout, model, unseen)
         closed()
         assert selection is not None
 
@@ -286,10 +262,10 @@ def _held_after_rows(layout: Layout, owners: int) -> tuple[Closure, Closure]:
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
-    plan = fetch_plan(query(meta), meta)
-    reads = compiled_levels(plan, meta)
+    plan = fetch_plan(query(layout, meta), meta)
+    reads = compiled_levels(layout, plan, meta)
     prepared = prepared_levels(model, reads)
-    batch(model, plan, prepared, _rows(model, owners))
+    batch(model, plan, prepared, _rows(layout, model, owners))
     _settled()
     return closure((reads, prepared), (meta, selection, model, plan)), closure(
         selection, _boundary(layout, selection)
@@ -299,12 +275,12 @@ def _held_after_rows(layout: Layout, owners: int) -> tuple[Closure, Closure]:
 def _held_after_executions(layout: Layout, executions: int) -> Closure:
     """What the prepared selection holds once ``executions`` whole executions —
     each with its own fetch plan, its own compiled and bound reads, and its own
-    sealed graph — have resolved through it and been discarded."""
+    sealed Page — have resolved through it and been discarded."""
     selection = _prepared(layout)
     model = _catalog(selection)
-    rows = _root_only(_rows(model, _ONE_ROOT))
+    rows = _root_only(_rows(layout, model, _ONE_ROOT))
     for _ in range(executions):
-        _execute(model, rows)
+        _execute(layout, model, rows)
     _settled()
     return closure(selection, _boundary(layout, selection))
 
@@ -315,17 +291,11 @@ def _region_added_nothing(span: Span, where: str) -> None:
     not, counted as objects, as the references among them, and as what they and
     everything untracked they reach weigh.
 
-    A reading across ONE region rather than between two arms, because a cache
-    filled on first reach and keyed by the data reaching it saturates: two arms
-    run in one process both find it already full, and their totals agree however
-    much either put into it. The region is entered once, over rows composed from
-    seeds this process has never decoded, so an entry taken per row, per key, or
-    per composed value lands between the marks. An entry a holder had already
-    taken for something a warm row carried does not, which is the same statement
-    as the one the claim makes: what is graded is growth along rows, graphs, and
-    executions, and a holder bounded by the model grows along none of them. A
-    holder bounded by a value domain is invisible here only where warming covered
-    that domain, which in this fixture is ``Boolean`` alone.
+    A reading across ONE region rather than between two arms catches a first-reach
+    cache that would be full in both arms. The region uses fixture-generated keys,
+    names, and labels this process has not converted, so entries taken per row,
+    key, or composed value land between the marks. A holder bounded by the model
+    or by any fixed value domain grows along none of the graded axes once full.
 
     All three numbers gate rather than the weight alone: a container banking
     untracked keys adds no object at all and moves the reference count by one for
@@ -367,9 +337,9 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_four() -> None:
     # The other half: what preparation keeps is independent of the number of
-    # graphs materialized and of the executions that materialized them. Sixty-four
+    # Pages materialized and of the executions that materialized them. Sixty-four
     # whole executions — each planning, compiling, binding, converting, and
-    # sealing a graph of its own — must leave the selection they were all
+    # sealing a Page of its own — must leave the selection they were all
     # resolved through holding what one execution left it holding, and must leave
     # nothing anywhere in the process holding more than before the first of them
     # opened. A query shape

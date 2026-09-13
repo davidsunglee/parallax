@@ -17,7 +17,7 @@ accumulator: with nothing per-scope left on it, exactly ONE exists per statement
 all` branch), nested scopes just keep pointing at it, and the frozen-dataclass
 costume plus its one-element `alias_seq` cell — a workaround for incrementing an
 int on a frozen field — both retire. Precedent for the `slots`-only mutable
-builder: `parallax.snapshot.materialize.GraphBuilder`.
+builder: `parallax.snapshot.materialize.PageBuilder`.
 
 :class:`ColumnScope` and :class:`PlanScope` are the NARROWED views of a
 resolution scope handed to the plan-only modules (`_inheritance`, `_navigation`),
@@ -156,6 +156,42 @@ class LoweredStatement:
             if value is unprojected:
                 projected[index] = _wire_bind(self.binds[index])
         return cast("tuple[WireValue, ...]", tuple(projected))
+
+    def replace_bind(
+        self,
+        index: int,
+        values: Sequence[object],
+        wire_values: Sequence[WireValue],
+    ) -> LoweredStatement:
+        """Replace one framework placeholder while preserving bind provenance."""
+        replacements = tuple(values)
+        rendered = tuple(wire_values)
+        if len(replacements) != len(rendered):
+            raise ValueError("replacement binds and Wire binds must have equal arity")
+        shift = len(replacements) - 1
+
+        def shifted_span(span: _BindSpan) -> _BindSpan:
+            if span.start <= index:
+                return span
+            return span.shifted(shift)
+
+        overrides = tuple(
+            override
+            if override.index < index
+            else _WireBindOverride(override.index + shift, override.value)
+            for override in self._wire_bind_overrides
+            if override.index != index
+        )
+        overrides += tuple(
+            _WireBindOverride(index + offset, value) for offset, value in enumerate(rendered)
+        )
+        return LoweredStatement(
+            self.sql,
+            (*self.binds[:index], *replacements, *self.binds[index + 1 :]),
+            tuple(shifted_span(span) for span in self._typed_bind_spans),
+            overrides,
+            self._compiler_proven,
+        )
 
 
 def _wire_bind(value: object) -> WireValue:

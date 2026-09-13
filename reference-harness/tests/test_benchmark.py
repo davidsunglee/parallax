@@ -24,6 +24,7 @@ from reference_harness.benchmark import (
     _statements,
     _substitute_iteration,
 )
+from reference_harness.sql_lint import lint_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS_ROOT = _REPO_ROOT / "core" / "compatibility" / "benchmarks"
@@ -50,6 +51,23 @@ def test_orders_tree_fans_out() -> None:
     # The first five items belong to order 1 (so the deep-fetch IN-list lines up).
     first_order_items = [i for i in rows["parallax.compatibility.OrderItem"] if i["orderId"] == 1]
     assert [i["id"] for i in first_order_items] == [1, 2, 3, 4, 5]
+
+    assert rows["parallax.compatibility.Order"][0] == {
+        "id": 1,
+        "name": "order-000001",
+        "sku": "A-100",
+        "qty": 5,
+        "price": "10.50",
+        "active": True,
+        "orderedOn": "2024-01-05",
+    }
+    assert first_order_items[0] == {
+        "id": 1,
+        "orderId": 1,
+        "sku": "SKU",
+        "quantity": 1,
+        "shippedOn": "2024-02-01",
+    }
 
 
 def test_document_milestones_opens_one_current_row_per_id() -> None:
@@ -163,21 +181,39 @@ def test_benchmark_fixtures_exist() -> None:
     } <= names
 
 
-def test_every_workload_declares_iterations_and_golden() -> None:
+def test_every_workload_declares_iterations_and_strict_canonical_goldens() -> None:
+    assert lint_tree(_REPO_ROOT / "core" / "compatibility") == []
     for fixture_path in _fixtures():
         fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+        assert isinstance(fixture, dict), fixture_path.name
         assert "model" in fixture, fixture_path.name
-        for workload in fixture["workloads"]:
-            assert workload.get("iterations", 0) >= 1, (fixture_path.name, workload["name"])
+        workloads = fixture.get("workloads")
+        assert isinstance(workloads, list), fixture_path.name
+        for workload in workloads:
+            assert isinstance(workload, dict), fixture_path.name
+            label = (fixture_path.name, workload.get("name"))
+            assert workload.get("iterations", 0) >= 1, label
             if workload.get("kind") == "cache-hit":
                 # A cache-hit workload issues no SQL (0 round trips), so it lists
                 # no golden SQL — the methodology witness for `expectRoundTrips: 0`.
-                assert workload.get("expectRoundTrips") == 0, (
-                    fixture_path.name,
-                    workload["name"],
-                )
+                assert workload.get("expectRoundTrips") == 0, label
                 continue
-            assert _statements(workload, "postgres"), (fixture_path.name, workload["name"])
+            statements = workload.get("statements")
+            assert isinstance(statements, list) and statements, label
+            for statement in statements:
+                assert isinstance(statement, dict), label
+                assert set(statement) <= {"sql", "binds"}, label
+                sql = statement.get("sql")
+                assert isinstance(sql, dict) and sql, label
+                assert set(sql) == {"postgres", "mariadb"}, label
+                assert all(isinstance(text, str) and text for text in sql.values()), label
+                binds = statement.get("binds", [])
+                assert isinstance(binds, (list, dict)), label
+                if isinstance(binds, dict):
+                    assert set(binds) == set(sql), label
+                    assert all(isinstance(values, list) for values in binds.values()), label
+                else:
+                    assert isinstance(binds, list), label
 
 
 def test_deep_fetch_round_trips_match_statement_count() -> None:

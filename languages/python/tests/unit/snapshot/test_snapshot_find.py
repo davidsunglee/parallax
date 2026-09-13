@@ -21,11 +21,31 @@ import pytest
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr, deep_fetch
+from parallax.core import (
+    LATEST,
+    ONE_TO_MANY,
+    TX_TIME,
+    Attr,
+    DomainModel,
+    Entity,
+    Rel,
+    ValueObject,
+    attr,
+    deep_fetch,
+    rel,
+)
 from parallax.core.base import INFINITY
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    MappingRow,
+    PipelineStatement,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -52,12 +72,17 @@ from parallax.snapshot import (
 from parallax.snapshot.handle import _read, _read_scope
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
+    ClassifiedRoot,
     InvalidRootInput,
+    Page,
+    PageRows,
     RelationshipViewKey,
-    SnapshotDecodingError,
-    SnapshotGraph,
+    RootView,
+    _convert,
+    classify_roots,
+    page_edges,
 )
-from parallax.snapshot.materialize._graph import ABSENT, GraphRows, graph_rows
+from parallax.snapshot.materialize._page import ABSENT, page_rows
 from parallax.snapshot.materialize._views import ChildSlot
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -116,34 +141,47 @@ class ProfileOwner(Entity, table="profile_owner", namespace="parallax.compatibil
 _PROFILE_OWNER_MODEL = DomainModel(ProfileOwner)
 
 
-def _rows(graph: SnapshotGraph) -> GraphRows:
-    """The sealed arrays behind ``graph``.
+class EncodedParent(Entity, table="encoded_parent", namespace="parallax.compatibility"):
+    id: Attr[bytes] = attr(primary_key=True)
+    children: Rel[tuple[EncodedChild, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "parent_id"))
 
-    This suite grades what the EXECUTOR built — fan-back, guards, and milestone
-    partitioning — so it reads the graph's own rows rather than a merge's view
-    of them, which would fold exactly the duplicates a fan-back has to keep
-    apart.
+
+class EncodedChild(Entity, table="encoded_child", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    parent_id: Attr[bytes]
+    parent: Rel[EncodedParent | None] = rel(reverse_of="children")
+
+
+_ENCODED_RELATIONSHIP_MODEL = DomainModel(EncodedParent, EncodedChild)
+
+
+def _rows(page: Page) -> PageRows:
+    """The sealed Page arrays behind an executor result.
+
+    This suite grades fan-back, guards, and the flat history order directly from
+    Page storage; a Root View would intentionally fold the duplicate occurrences
+    those executor assertions need to distinguish.
     """
-    return graph_rows(graph)
+    return page_rows(page)
 
 
 def _root(result: handle.FindResult) -> int:
-    return _valid_root(_rows(result.graph))
+    return _valid_root(_rows(result.page))
 
 
-def _valid_root(rows: GraphRows, index: int = 0) -> int:
+def _valid_root(rows: PageRows, index: int = 0) -> int:
     root = rows.roots[index]
     assert not isinstance(root, InvalidRootInput)
     return root
 
 
-def _value(rows: GraphRows, projection: int, entity: str, member: str) -> object:
+def _value(rows: PageRows, projection: int, entity: str, member: str) -> object:
     """One converted projection's value for a member, named structurally."""
     identity = AttributeIdentity(EntityIdentity("parallax.compatibility", entity), member)
     return rows.member_rows[projection][rows.layouts[projection].index_of[identity]]
 
 
-def _view(rows: GraphRows, projection: int, attach_key: str) -> object:
+def _view(rows: PageRows, projection: int, attach_key: str) -> object:
     """The value a projection's view carries, found by the attach key a plan
     derived — and ``ABSENT`` where the projection holds no such slot at all.
 
@@ -189,7 +227,7 @@ class QueuePort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
 
@@ -200,7 +238,7 @@ class QueuePort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self._responses.pop(0), document_reads)
+        return fold_mapping_rows(self._responses.pop(0), document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -209,6 +247,75 @@ class QueuePort(ConnectsAsItself):
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
+
+
+def test_find_collects_the_whole_pages_claims_before_decoding_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoded = 0
+    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        nonlocal decoded
+        decoded += 1
+        return decode(*args, **kwargs)
+
+    monkeypatch.setattr(_convert, "_decode_row", counting)
+    result = _find(
+        deserialize_query({"target": "Order", "predicate": {"all": {}}}),
+        ORDERS,
+        QueuePort([[{**_ORDER_ROW, "id": 1}, {**_ORDER_ROW, "id": 2}]]),
+    )
+
+    assert len(page_rows(result.page).keys) == 2
+    assert decoded == 0
+    RootView(result.page, 0)
+    assert decoded == 1
+    RootView(result.page, 1)
+    assert decoded == 2
+
+
+def test_a_later_root_document_is_not_classified_before_its_root_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoded = 0
+    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        nonlocal decoded
+        decoded += 1
+        return decode(*args, **kwargs)
+
+    monkeypatch.setattr(_convert, "_decode_row", counting)
+    result = _find(
+        deserialize_query({"target": "ProfileOwner", "predicate": {"all": {}}}),
+        model_of(_PROFILE_OWNER_MODEL),
+        QueuePort(
+            [
+                [
+                    {"id": 1, "profile": {"label": "ready"}},
+                    {"id": 2, "profile": {"label": 7}},
+                ]
+            ]
+        ),
+    )
+
+    assert decoded == 0
+    RootView(result.page, 0)
+    assert decoded == 1
+    RootView(result.page, 1)
+    assert decoded == 2
+
+
+class PipelineQueuePort(QueuePort):
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
+        super().__init__(responses)
+        self.pipelines: list[tuple[PipelineStatement, ...]] = []
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        batch = tuple(statements)
+        self.pipelines.append(batch)
+        return super().execute_pipeline(batch)
 
 
 def test_find_issues_one_statement_per_non_empty_level() -> None:
@@ -237,9 +344,72 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     )
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 2
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     items = _refs(_view(rows, _root(result), "items"))
     assert [_value(rows, ref, "OrderItem", "id") for ref in items] == [11]
+
+
+def test_encoded_relationship_keys_use_decoded_identity_for_gather_and_fanback() -> None:
+    port = QueuePort(
+        [
+            [{"id_hex": "0a1b"}],
+            [{"id": 7, "parent_id_hex": "0a1b"}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "EncodedParent",
+            "predicate": {"all": {}},
+            "includes": [
+                {
+                    "segments": [
+                        {"rel": "EncodedParent.children"},
+                        {"rel": "EncodedChild.parent"},
+                    ]
+                }
+            ],
+        }
+    )
+
+    result = _find(query, model_of(_ENCODED_RELATIONSHIP_MODEL), port)
+    rows = _rows(result.page)
+    root = _root(result)
+    (child,) = _refs(_view(rows, root, "children"))
+
+    assert port.executed[1][1][-1] == [b"\n\x1b"]
+    assert _value(rows, root, "EncodedParent", "id") == b"\n\x1b"
+    assert _view(rows, child, "parent") == root
+
+
+def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
+    port = PipelineQueuePort(
+        [
+            [{**_ORDER_ROW, "id": 1}],
+            [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
+            [{"id": 21, "order_id": 1, "label": "urgent", "priority": 2}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [
+                {"segments": [{"rel": "Order.items"}]},
+                {"segments": [{"rel": "Order.tags"}]},
+            ],
+        }
+    )
+
+    result = _find(query, ORDERS, port)
+
+    (pipeline,) = port.pipelines
+    assert len(pipeline) == 2
+    assert [statement.binds for statement in pipeline] == [([1],), ([1],)]
+    assert all(" = any(%s)" in statement.sql for statement in pipeline)
+    rows = _rows(result.page)
+    root = _root(result)
+    assert len(_refs(_view(rows, root, "items"))) == 1
+    assert len(_refs(_view(rows, root, "tags"))) == 1
 
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
@@ -253,7 +423,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     )
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 1
-    assert _rows(result.graph).roots == ()
+    assert _rows(result.page).roots == ()
     assert len(port.executed) == 1
 
 
@@ -292,7 +462,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
     )
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 2
-    assert _view(_rows(result.graph), _root(result), "items") == ()
+    assert _view(_rows(result.page), _root(result), "items") == ()
 
 
 def test_find_back_reference_level_issues_no_additional_statement() -> None:
@@ -321,7 +491,7 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     )
     result = _find(query, ORDERS, port)
     assert len(port.executed) == 2  # the back-reference costs nothing
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     (item,) = _refs(_view(rows, _root(result), "items"))
     assert _view(rows, item, "order") == rows.roots[0]
 
@@ -344,7 +514,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
     # level's own ORDER BY. Each pairing renders differently on Postgres because
     # the dialect compensates only where its native placement is wrong: an
     # unauthored placement and `desc`/`first` already hold, so both render plain.
-    root: list[Row] = [
+    root: list[MappingRow] = [
         {
             "id": 1,
             "name": "Ada",
@@ -394,7 +564,7 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
         }
     )
     result = _find(query, ANIMAL, port)
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     (animal,) = _refs(_view(rows, _root(result), "animals"))
     assert rows.layouts[animal].concrete == EntityIdentity("parallax.compatibility", "Dog")
     # The synthetic tag is nobody's member, so no row position stands for it.
@@ -425,29 +595,29 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
         {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
     )
     result = _find(query, DOCUMENT, port)
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     assert rows.layouts[_root(result)].concrete == EntityIdentity(
         "parallax.compatibility", "Invoice"
     )
 
 
-def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:
+def test_find_history_returns_chronologically_ordered_edge_pinned_roots() -> None:
     port = QueuePort(
         [
             [
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
-                    "out_z": INFINITY,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
                 },
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
                 },
             ]
         ]
@@ -461,24 +631,26 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
     )
     result = _find_history(query, INVOICE, port)
     assert len(port.executed) == 1
-    assert [g.pin.tx_time for g in result.graphs] == [
+    assert [
+        edge.tx_time if edge is not None else None
+        for edge in page_edges(result.page, result.milestones)
+    ] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
+    rows = _rows(result.page)
     assert [
-        _value(rows, _valid_root(rows), "InvoiceLine", "amount")
-        for rows in map(_rows, result.graphs)
+        _value(rows, _valid_root(rows, index), "InvoiceLine", "amount") for index in range(2)
     ] == [
         Decimal("50.00"),
         Decimal("75.00"),
     ]
 
 
-def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph() -> None:
-    # Two DIFFERENT physical InvoiceLine rows (ids 1000 and 2000) sharing the
-    # exact same Transaction-Time edge (in_z) belong to the SAME milestone graph —
-    # the "edge already seen" branch of the grouping loop (as opposed to the
-    # "first row at this edge" branch the single-row-per-edge test above pins).
+def test_find_history_keeps_distinct_roots_that_share_one_edge() -> None:
+    # Two different physical rows may carry the same Transaction-Time edge;
+    # the flat result preserves both database-arrival positions without creating
+    # an edge-keyed materialization partition.
     port = QueuePort(
         [
             [
@@ -507,15 +679,14 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
         }
     )
     result = _find_history(query, INVOICE, port)
-    assert len(result.graphs) == 1
-    rows = _rows(result.graphs[0])
+    rows = _rows(result.page)
     assert [_value(rows, _valid_root(rows, index), "InvoiceLine", "id") for index in range(2)] == [
         1000,
         2000,
     ]
 
 
-def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> None:
+def test_find_history_keeps_an_undecodable_milestone_as_an_edgeless_root() -> None:
     port = QueuePort(
         [
             [
@@ -536,17 +707,15 @@ def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> N
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _find_history(query, INVOICE, port)
-    assert refusal.value.member == AttributeIdentity(
-        EntityIdentity("parallax.compatibility", "InvoiceLine"), "txStart"
-    )
+    result = _find_history(query, INVOICE, port)
+    assert tuple(page_edges(result.page, result.milestones)) == (None,)
+    (verdict,) = classify_roots(RootView(result.page), INVOICE).roots
+    assert isinstance(verdict, ClassifiedRoot)
 
 
-def test_find_history_refuses_a_root_whose_own_key_never_decoded() -> None:
-    # The arm of the shared publication gate with no converted node behind the
-    # result position at all: a milestone read has no in-band channel to publish a
-    # verdict through, so it refuses the whole batch before partitioning it.
+def test_find_history_keeps_a_root_whose_own_key_never_decoded() -> None:
+    # A keyless milestone remains a Page root until that result position is
+    # requested, where its lazy root view publishes one invalid-root verdict.
     port = QueuePort(
         [
             [
@@ -567,9 +736,10 @@ def test_find_history_refuses_a_root_whose_own_key_never_decoded() -> None:
             "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _find_history(query, INVOICE, port)
-    assert refusal.value.code == "snapshot-decoding-failed"
+    result = _find_history(query, INVOICE, port)
+    assert _rows(result.page).roots == (0,)
+    (invalid,) = RootView(result.page, 0).invalid_roots
+    assert invalid.issues[0].code == "stored-data-primary-key-null"
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -609,18 +779,23 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         }
     )
     result = _find_history(query, RATE, port)
-    assert [g.pin.tx_time for g in result.graphs] == [
+    assert [
+        edge.tx_time if edge is not None else None
+        for edge in page_edges(result.page, result.milestones)
+    ] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
-    assert [
-        _value(rows, _valid_root(rows), "Rate", "amount") for rows in map(_rows, result.graphs)
-    ] == [
+    rows = _rows(result.page)
+    assert [_value(rows, _valid_root(rows, index), "Rate", "amount") for index in range(2)] == [
         Decimal("2.25"),
         Decimal("2.50"),
     ]
     # The Valid-Time dimension rides along too (bitemporal): both milestones share it.
-    assert all(g.pin.valid_time == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
+    assert all(
+        edge is not None and edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=_UTC)
+        for edge in page_edges(result.page, result.milestones)
+    )
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
@@ -840,12 +1015,31 @@ def test_the_values_lane_publishes_a_clean_row_beside_a_classified_one() -> None
     assert {issue.code for issue in classified.issues} == {"stored-data-attribute-null"}
 
 
-def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> None:
+def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The read and the conversion both succeed; what fails is deriving the node's
     # own milestone edge, because the row carries no Transaction-Time start at
     # all. State attachment and root publication are atomic, so the whole result
     # is refused rather than partly published.
-    port = QueuePort([[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]])
+    def refuse_materialization(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise TemporalReadError("missing Tx start for Balance[id=1]")
+
+    monkeypatch.setattr(_read, "typed_root", refuse_materialization)
+    port = QueuePort(
+        [
+            [
+                {
+                    "bal_id": 1,
+                    "acct_num": "A-1",
+                    "val": Decimal("5.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
     db = handle.Database.connect(port, read_models.BALANCE_MODEL)
     with raises_contextualized(SnapshotMaterializationError) as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
@@ -1056,7 +1250,7 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
     )
     result = _find(query, ANIMAL, port)
     assert len(port.executed) == 1
-    assert _view(_rows(result.graph), _root(result), "owner") is None
+    assert _view(_rows(result.page), _root(result), "owner") is None
 
 
 def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
@@ -1080,7 +1274,7 @@ def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
         }
     )
     result = _find(query, ORDERS, port)
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     assert len(port.executed) == 2
     assert [_view(rows, root, "items") for root in (0, 1)] == [(2,), ()]
 
@@ -1112,7 +1306,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
         }
     )
     result = _find(query, ORDERS, port)
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     item = next(
         projection
         for projection, layout in enumerate(rows.layouts)
@@ -1122,7 +1316,7 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The view-slot seam: a plan in, a slot table out, and the schema every graph  #
+# The view-slot seam: a plan in, a slot table out, and one Page schema.        #
 # of one execution is laid out by.                                            #
 # --------------------------------------------------------------------------- #
 def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[ChildSlot, ...], ...]:
@@ -1136,7 +1330,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
     validated = preflight(query, model=model, form="graph")
-    return _read._slot_table(  # pyright: ignore[reportPrivateUsage] - the seam under test
+    return _read.slot_table(
         deep_fetch.plan(validated, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     )
 
@@ -1236,7 +1430,7 @@ def test_a_guarded_out_parent_holds_no_slot_for_the_level_it_was_excluded_from()
         }
     )
     result = _find(query, ANIMAL, port)
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     dog, cat = (
         next(
             projection
@@ -1254,7 +1448,7 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     # A broad path and a guarded sibling are distinct hops that attach under one
     # name, so each runs its own statement and each writes the same slot. The
     # slot retains the LAST of them — two projections of one row, and the plan's
-    # own order decides which the graph holds.
+    # own order decides which node the result publishes.
     port = QueuePort(
         [
             [{**_ANIMAL_ROW, "id": 1, "name": "Rex", "bark_volume": 7, "kind": "dog"}],
@@ -1274,7 +1468,7 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     )
     result = _find(query, ANIMAL, port)
     assert len(port.executed) == 3
-    rows = _rows(result.graph)
+    rows = _rows(result.page)
     people = [
         projection
         for projection, layout in enumerate(rows.layouts)
@@ -1284,10 +1478,9 @@ def test_two_levels_filling_one_view_leave_the_last_fetch_plan_result_in_its_slo
     assert _view(rows, _valid_root(rows), "owner") == people[-1]
 
 
-def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> None:
-    # A schema is a fact about the PLAN, so partitioning one batch's rows into
-    # milestones derives none: the staging graph's own schema is what every
-    # milestone builder lays its imported rows out against.
+def test_every_history_root_of_one_read_uses_the_same_page_schema() -> None:
+    # A schema is a fact about the plan. Distinct Root Views over the flat
+    # history Page therefore expose the same execution-owned layout object.
     port = QueuePort(
         [
             [
@@ -1316,9 +1509,10 @@ def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> No
         }
     )
     result = _find_history(query, INVOICE, port)
-    schemas = {id(_rows(graph).schema) for graph in result.graphs}
-    assert len(result.graphs) == 2
-    assert len(schemas) == 1
+    assert len(_rows(result.page).roots) == 2
+    first = RootView(result.page, 0)
+    second = RootView(result.page, 1)
+    assert first.view_layout(0) is second.view_layout(0)
 
 
 # --------------------------------------------------------------------------- #

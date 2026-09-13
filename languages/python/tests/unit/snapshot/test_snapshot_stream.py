@@ -42,7 +42,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
-from parallax.core.db_port import DatabaseAdapter, Row
+from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.temporal_read import Edge, Pin
@@ -60,7 +60,7 @@ from parallax.snapshot import (
     prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, Transaction, _materialization
 from parallax.snapshot.materialize import source_hint_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -76,7 +76,7 @@ from tests.unit._transact_support import ACCOUNT, db_for
 _UTC = dt.UTC
 
 
-def _order_row(order_id: int) -> Row:
+def _order_row(order_id: int) -> MappingRow:
     return {
         "id": order_id,
         "name": f"order-{order_id}",
@@ -88,11 +88,11 @@ def _order_row(order_id: int) -> Row:
     }
 
 
-def _keyless_order_row() -> Row:
+def _keyless_order_row() -> MappingRow:
     return {**_order_row(0), "id": None}
 
 
-def _item_row(item_id: int, order_id: int) -> Row:
+def _item_row(item_id: int, order_id: int) -> MappingRow:
     return {
         "id": item_id,
         "order_id": order_id,
@@ -102,7 +102,7 @@ def _item_row(item_id: int, order_id: int) -> Row:
     }
 
 
-def _status_row(status_id: int, order_id: int) -> Row:
+def _status_row(status_id: int, order_id: int) -> MappingRow:
     return {"id": status_id, "order_id": order_id, "order_item_id": None, "code": "NEW"}
 
 
@@ -391,6 +391,42 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     assert len(_reads(port)) == 4
 
 
+def test_a_delivery_compiles_each_structural_statement_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_compiles = 0
+    child_compiles = 0
+    compile_root = cast("Callable[..., Any]", vars(_materialization)["compile_read"])
+    compile_child = cast("Callable[..., Any]", vars(_materialization)["compile_template"])
+
+    def counting_root(*args: Any, **kwargs: Any) -> Any:
+        nonlocal root_compiles
+        root_compiles += 1
+        return compile_root(*args, **kwargs)
+
+    def counting_child(*args: Any, **kwargs: Any) -> Any:
+        nonlocal child_compiles
+        child_compiles += 1
+        return compile_child(*args, **kwargs)
+
+    monkeypatch.setattr(_materialization, "compile_read", counting_root)
+    monkeypatch.setattr(_materialization, "compile_template", counting_child)
+    port = ScriptedAdapter(
+        Read(rows=[_order_row(1), _order_row(2), _order_row(3)]),
+        Read(rows=[_item_row(10, 1), _item_row(11, 2)]),
+        Read(rows=[_order_row(3), _order_row(4), _order_row(5)]),
+        Read(rows=[_item_row(12, 3), _item_row(13, 4)]),
+        Read(rows=[_order_row(5)]),
+        Read(rows=[_item_row(14, 5)]),
+    )
+
+    with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
+        assert _ids(iter(stream)) == [1, 2, 3, 4, 5]
+
+    assert root_compiles == 2
+    assert child_compiles == 1
+
+
 def test_a_result_that_is_an_exact_multiple_of_the_page_costs_no_terminal_statement() -> None:
     # A page reads one root past its batch, so a result that fills its last page
     # exactly comes back SHORT of what that page asked for — exhaustion is proved
@@ -490,7 +526,7 @@ def test_a_within_root_diamond_is_one_node_under_find_and_under_stream() -> None
 
 def test_a_within_root_diamond_publishes_the_same_wire_value_under_both() -> None:
     # The Wire lane bounds its walk by the requested Include Paths rather than
-    # by the identity graph, so two positions of one tree are two positions
+    # by root-local identity, so two positions of one tree are two positions
     # however alike their subtrees look — under `find` exactly as under
     # `stream`. What root scoping may not change is the VALUE either publishes.
     query = _all_orders().include(Order.items, Order.items_by_ship_date)
@@ -509,8 +545,8 @@ def _back_reference_pages() -> ScriptedAdapter:
 
 
 def test_a_back_reference_closes_the_cycle_under_find_and_under_stream() -> None:
-    # A back-reference level issues no SQL and resolves through the merge's own
-    # graph-local identity map, which a root-scoped merge still has.
+    # A back-reference level issues no SQL and resolves through the Root View's
+    # own root-local identity map.
     query = _all_orders().include(Order.items.order)
     eager = _orders(_back_reference_pages()).find(query).results()[0]
     assert eager.items[0].order is eager
@@ -548,7 +584,7 @@ def test_a_to_one_two_roots_reach_is_one_node_under_find_and_one_per_root_stream
     # PROMISED for either, so the streamed answer is the contract and the eager
     # one is what it happens to do.
     eager = _orders(_shared_to_one_pages()).find(_shared_query()).results()
-    assert eager[0].order is eager[1].order
+    assert eager[0].order is not eager[1].order
 
     with _orders(_shared_to_one_pages()).stream(_shared_query(), batch_size=2) as stream:
         streamed = list(stream)
@@ -564,7 +600,7 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
         _entity(root)
         for root in _orders(_shared_to_one_pages()).wire.find(_shared_query()).results()
     ]
-    assert eager[0]["order"] is eager[1]["order"]
+    assert eager[0]["order"] is not eager[1]["order"]
 
     with _orders(_shared_to_one_pages()).wire.stream(_shared_query(), batch_size=2) as stream:
         streamed = [_entity(root) for root in stream]
@@ -577,7 +613,7 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
 # --------------------------------------------------------------------------- #
 # Invalid stored data inside the Continuation Order itself.                    #
 # --------------------------------------------------------------------------- #
-def _undecodable_qty_row() -> Row:
+def _undecodable_qty_row() -> MappingRow:
     return {**_order_row(0), "qty": "many"}
 
 
@@ -585,7 +621,7 @@ def _by_qty() -> ObjectQuery[Order, Order]:
     return _all_orders().order_by(Order.qty.asc())
 
 
-def _corrupt_pages(row: Callable[[], Row], position: int, *, size: int) -> ScriptedAdapter:
+def _corrupt_pages(row: Callable[[], MappingRow], position: int, *, size: int) -> ScriptedAdapter:
     rows = [_order_row(1), _order_row(2), _order_row(3)]
     rows[position] = row()
     return ScriptedAdapter(*paged_reads(rows, size=size))
@@ -686,7 +722,7 @@ def test_a_stream_that_failed_answers_nothing_further() -> None:
 # Milestone streaming: the Continuation Order's third component, and the pin   #
 # every published root stands at.                                              #
 # --------------------------------------------------------------------------- #
-def _position_row(*, value: str, valid_start: dt.datetime, tx_start: dt.datetime) -> Row:
+def _position_row(*, value: str, valid_start: dt.datetime, tx_start: dt.datetime) -> MappingRow:
     return {
         "pos_id": 1,
         "acct_num": "A",
@@ -707,7 +743,7 @@ _JUNE = dt.datetime(2024, 6, 1, tzinfo=_UTC)
 # original belief, the rectangle-split head, and the corrected value. The first
 # two TIE on the Valid-Time start and part on the Transaction-Time one, which is
 # the tie depth the edge's own lexicographic seek exists for.
-_MILESTONES: Final[tuple[Row, ...]] = (
+_MILESTONES: Final[tuple[MappingRow, ...]] = (
     _position_row(value="90.00", valid_start=_JANUARY, tx_start=_JANUARY),
     _position_row(value="100.00", valid_start=_JANUARY, tx_start=_APRIL),
     _position_row(value="200.00", valid_start=_JUNE, tx_start=_APRIL),
@@ -730,7 +766,7 @@ def _milestone_pages(*, size: int) -> ScriptedAdapter:
 def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
     size: int,
 ) -> None:
-    # A page graph is shared input and a milestone page is that page plus a pin
+    # A Page is shared input and a milestone page is that page plus a pin
     # per root: each published root stands at its OWN milestone's from-instant on
     # both axes, never at the page's own pin and never at another milestone's —
     # at every page size, because the pin is a property of the root rather than
@@ -795,7 +831,7 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
 
 
 def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> None:
-    # `find_history` groups milestones into one graph each and ranks the graphs
+    # `find_history` returns one flat milestone-root sequence and ranks the roots
     # Valid-Time-first; with no authored `orderBy` the Continuation Order is the
     # key then that same edge, so a single object's streamed history IS the eager
     # edge rank — same roots, same order, same pin on each, and the same absence
@@ -1076,8 +1112,8 @@ def test_the_lookahead_root_is_never_paired_with_the_page_that_read_it() -> None
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
     reads = _reads(port)
-    assert reads[1].binds == (1, 2)
-    assert reads[3].binds == (3,)
+    assert reads[1].binds == ([1, 2],)
+    assert reads[3].binds == ([3],)
 
 
 # --------------------------------------------------------------------------- #

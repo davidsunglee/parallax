@@ -2,9 +2,9 @@
 
 Drives the real seam end to end — the production executor against a canned
 `m-db-port`, then the wire materializer — so what these assert is what a Wire
-read answers. The typed materializer runs over the same merge in the graph
-suites, which is what makes "peers over one merge" checkable rather than
-asserted.
+read answers. The typed materializer crosses the same Page and Root View seams
+in its own suites, which is what makes the two publication lanes checkable peers
+rather than merely asserted as such.
 
 Three claims bound what is asserted here: keys are declared member names and
 leaves are canonical Wire Values (`m-wire`); a back-reference unwinds finitely
@@ -29,7 +29,13 @@ from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    MappingRow,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -53,12 +59,13 @@ from parallax.snapshot import InvalidData, WireEntity, connect, handle
 from parallax.snapshot.handle._read_scope import wire_query_node
 from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
-    merge_graph_input,
+    PageBuilder,
+    RootView,
     source_hint_of,
     wire_roots,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -68,7 +75,7 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit.snapshot._snapshot_graph_support import documents_of, identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import documents_of, identity_of, layout_of
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
@@ -86,7 +93,7 @@ class QueuePort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
 
@@ -97,7 +104,7 @@ class QueuePort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self._responses.pop(0), document_reads)
+        return fold_mapping_rows(self._responses.pop(0), document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -108,7 +115,7 @@ class QueuePort(ConnectsAsItself):
         return body_outcome(cast("DatabaseConnection", self), body)
 
 
-def _order_row(order_id: int = 1) -> Row:
+def _order_row(order_id: int = 1) -> MappingRow:
     return {
         "id": order_id,
         "name": "Ada",
@@ -270,14 +277,14 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
 
@@ -288,14 +295,14 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # member the value does not have — the marker itself is unreachable, at every
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
     node = _entity(published)
     assert "name" not in node
     assert "city" not in _mapping(node["address"])
@@ -580,14 +587,14 @@ _CUSTOMER_MODELS: Mapping[str, DomainModel] = {
     "descriptor-backed": CUSTOMER,
 }
 
-_VALID_CUSTOMER: Row = {
+_VALID_CUSTOMER: MappingRow = {
     "id": 1,
     "name": "Ada",
     "address": {"street": "Storgata 1", "city": "Oslo", "phones": []},
 }
 
 
-def _customer_wire(model: DomainModel, row: Row) -> object:
+def _customer_wire(model: DomainModel, row: MappingRow) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
     query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
@@ -766,16 +773,16 @@ def _history_port() -> QueuePort:
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
-                    "out_z": INFINITY,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
                 },
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
                 },
             ]
         ]
@@ -850,25 +857,25 @@ _VARIANT_MODEL = form_metamodel(
 
 def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
     compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL))
-    materialized = compiled.materialize_row(
-        {
-            "id": 1,
-            "kind": "archive-shared",
-            "familyVariant": PresentDocument({"label": "mail"}),
-            "archive_profile": PresentDocument({"label": "archive"}),
-        }
-    )
-    builder = GraphBuilder(ViewSchema.of())
+    stored = {
+        "id": 1,
+        "kind": "archive-shared",
+        "familyVariant": PresentDocument({"label": "mail"}),
+        "archive_profile": PresentDocument({"label": "archive"}),
+    }
+    resolved, _variant, _unknown, _document = compiled.row_identity(stored)
+    values, _findings, _classified = compiled.decode_payload(stored)
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
-        materialized.values,
+        values,
         LevelContext(
-            layout_of(_VARIANT_MODEL, materialized.resolved_entity),
+            layout_of(_VARIANT_MODEL, resolved),
             compiled.documents,
         ),
         builder,
         source=ROOT_LEVEL,
     )
-    (root,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), _VARIANT_MODEL)
+    (root,) = wire_roots(RootView(builder.finish((ref,), Pin())), _VARIANT_MODEL)
     assert root == {
         "id": 1,
         "familyVariant": "SharedVariant",

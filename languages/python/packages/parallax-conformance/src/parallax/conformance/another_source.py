@@ -9,12 +9,12 @@ a value some OTHER source produced — which is the provenance a case states as
 
 This module is the second source, supplied by the adapter rather than shipped:
 :class:`AnotherSource` runs its own query through the shared find executor and
-then materializes what that read returned ITSELF — its own merge over the
-the sealed graph a read answered, its own Entity Graph Construction drive, and
-per-node state, which the Snapshot never attached and therefore never claims.
+then materializes each Page root ITSELF through the shared Root View seam,
+its own Entity Graph Construction drive, and per-node state, which the Snapshot
+never attached and therefore never claims.
 It is constructed over a prepared Model Selection and reads that selection's
-read projection, so the cataloged model it resolves against and the graph
-construction it drives are the products preparation derived whole, exactly as
+read projection, so the cataloged model it resolves against and the Entity Graph
+Construction it drives are the products preparation derived whole, exactly as
 the source under test holds them.
 :meth:`AnotherSource.produced` is the definition's other half: a source
 recognizes its own. So a value arranged here is a value a managed read of a
@@ -27,7 +27,7 @@ source (`m-unit-work`); what separates two sources is which one materialized the
 value and whose state it carries, so a second connection would witness nothing a
 shared one does not.
 
-Materialization covers flat graphs — attributes and Value Objects, no
+Materialization covers root-only Pages — attributes and Value Objects, no
 relationship views — which is the whole of what the write-value corpus reads. A
 deep fetch is refused at the query, before any I/O, rather than read and then
 materialized without the levels it asked for.
@@ -35,6 +35,7 @@ materialized without the levels it asked for.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -48,11 +49,12 @@ from parallax.core.entity import (
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import ModelSelection
 from parallax.snapshot.handle import find as execute_read
+from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.materialize import (
-    SnapshotGraph,
-    merge_graph_input,
+    Page,
+    RootView,
     require_publishable,
 )
 
@@ -104,17 +106,17 @@ class AnotherSource:
 
         An eager fetch is refused here, before any I/O: this source populates no
         relationship view, so reading a query's levels and then dropping them
-        would answer a graph the caller did not ask for.
+        would answer a result missing the relationships the caller asked for.
         """
         node = object_query_node(query)
         if node.includes:
             raise ValueError(
-                "this source materializes flat graphs only, and the query includes "
+                "this source materializes root-only Pages, and the query includes "
                 "a relationship level"
             )
         validated = preflight(node, model=self._model.meta, form="graph")
         result = execute_read(validated, self._model, self._port)
-        return cast("tuple[S, ...]", self._materialize(result.graph))
+        return cast("tuple[S, ...]", self._materialize(result.page))
 
     def produced(self, value: object) -> bool:
         """Whether THIS source materialized ``value``.
@@ -126,33 +128,24 @@ class AnotherSource:
         state = lifecycle_state_of(value)
         return isinstance(state, _AnotherSourceState) and state.source is self
 
-    def _materialize(self, graph: SnapshotGraph) -> tuple[object, ...]:
-        """``graph``'s roots as instances carrying this source's own state.
+    def _materialize(self, page: Page) -> tuple[object, ...]:
+        """Publish Page roots through the shared seam using this source state."""
 
-        Every relationship position carries the unloaded sentinel: a level-free
-        read carries no merged view to install, which :meth:`find` guarantees by
-        refusing a deep fetch. The row is still the model's full width, because a
-        positional row cannot omit a direction a read did not load.
+        def publish(root: RootView, _position: int) -> Iterator[object]:
+            require_publishable(root)
 
-        What makes a second source second is that it merges and constructs for
-        itself rather than driving the Snapshot materializer's own. The member
-        row is neither: the merge laid it out against the same model-owned member
-        layout the writer reads it against, so this source hands a row over the
-        one way the common runtime hands one over.
-        """
-        merge = merge_graph_input(graph)
-        require_publishable(merge)
+            def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+                handles = [writer.allocate(identity) for identity in root.order]
+                for index, handle in enumerate(handles):
+                    writer.populate(
+                        handle,
+                        root.member_values(index),
+                        (UNLOADED,) * len(root.layout(index).relationships),
+                    )
+                return tuple(handles[index] for index in root.roots if index is not None)
 
-        def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-            handles = [writer.allocate(identity) for identity in merge.order]
-            for index, handle in enumerate(handles):
-                writer.populate(
-                    handle,
-                    merge.member_values(index),
-                    (UNLOADED,) * len(merge.layout(index).relationships),
-                )
-            return tuple(handles[index] for index in merge.roots if index is not None)
+            yield from self._construction.construct(
+                build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
+            )
 
-        return self._construction.construct(
-            build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
-        )
+        return tuple(Materializer().roots(page, publish))

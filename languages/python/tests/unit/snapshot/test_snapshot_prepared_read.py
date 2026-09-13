@@ -51,10 +51,12 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.document_codec import MISSING, UNAVAILABLE
+from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
+from parallax.core.unit_work import EntityStateRow
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,
@@ -65,8 +67,15 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize import StoredDataIssueInput, _convert
-from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize import (
+    PageBuilder,
+    RootView,
+    StoredDataIssueInput,
+    _convert,
+    _identity,
+)
+from parallax.snapshot.materialize._identity import claim_identity
+from parallax.snapshot.materialize._page import ABSENT, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
@@ -84,7 +93,7 @@ from tests.unit._snapshot_materialization_support import (
     query,
     rows_per_level,
 )
-from tests.unit.snapshot._snapshot_graph_support import rendered_members
+from tests.unit.snapshot._snapshot_page_support import rendered_members
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")
@@ -186,9 +195,22 @@ def _craft_family() -> Metamodel:
     return formed(DescriptorMetamodel(entities=(root, tug, barge)))
 
 
+def _encoded_identity_model() -> Metamodel:
+    encoded = Entity(
+        name="EncodedIdentity",
+        table="encoded_identity",
+        attributes=(
+            Attribute(name="id", type="bytes", column="id", primary_key=True),
+            Attribute(name="token", type="bytes", column="token", nullable=True),
+        ),
+    )
+    return formed(DescriptorMetamodel(entities=(encoded,)))
+
+
 REGISTER = _register_model()
 BEAST = _partial_family()
 CRAFT = _craft_family()
+ENCODED_IDENTITY = _encoded_identity_model()
 
 
 # --------------------------------------------------------------------------- #
@@ -210,9 +232,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     )
 
 
-def _prepared(
-    model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()
-) -> PreparedRead[MaterializedReadRow]:
+def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> PreparedRead:
     """The read of ``name``, compiled and bound as a find binds it."""
     return bind(CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
 
@@ -232,26 +252,33 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(
-    prepared: PreparedRead[MaterializedReadRow], stored: Mapping[str, object]
-) -> _Converted:
-    """One stored row through the whole prepared seam: materialize, convert, seal."""
-    row = prepared.materialize(stored)
-    builder = GraphBuilder(ViewSchema.of())
-    index = prepared.convert(row, builder, source=ROOT_LEVEL)
-    rows = graph_rows(builder.seal((index,), Pin()))
-    layout = rows.layouts[index]
-    return _Converted(
-        layout.concrete, rendered_members(layout, rows.member_rows[index]), rows.issues[index]
+def _converted(prepared: PreparedRead, stored: Mapping[str, object]) -> _Converted:
+    """One stored row through the whole prepared seam: convert and seal."""
+    builder = PageBuilder(ViewSchema.of())
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
     )
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    layout = rows.layouts[index]
+    root = RootView(page)
+    values = rows.member_rows[index] if root.roots == (None,) else root.member_values(0)
+    issues = root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0)
+    return _Converted(layout.concrete, rendered_members(layout, values), issues)
 
 
-def _observed(
-    prepared: PreparedRead[MaterializedReadRow], stored: Mapping[str, object]
-) -> dict[str, object]:
-    """One stored row's observable columns, taken under the level that row's own
-    concrete resolved to."""
-    return prepared.observable_columns(prepared.materialize(stored))
+def _observed(prepared: PreparedRead, stored: Mapping[str, object]) -> dict[str, object]:
+    """One stored row's shared Entity State viewed under physical storage keys."""
+    builder = PageBuilder(ViewSchema.of())
+    index, _resolved, _document, _variant = prepared.convert_driver(
+        stored, builder, source=ROOT_LEVEL
+    )
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    root = RootView(page)
+    return dict(
+        EntityStateRow.over_members(rows.layouts[index], root.member_values(0), absent=ABSENT)
+    )
 
 
 def _stored_document(members: Mapping[str, object]) -> PresentDocument:
@@ -367,7 +394,7 @@ def test_an_unknown_tag_and_a_null_key_both_reach_the_projection() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A classified member is translated, never judged a second time.               #
+# A retained raw member is classified once, only after witness comparison.               #
 # --------------------------------------------------------------------------- #
 _ADA: Final[Mapping[str, object]] = {
     "label": "ada",
@@ -381,6 +408,20 @@ def _register(document: Mapping[str, object]) -> _Converted:
     return _converted(
         _prepared(REGISTER, "Register"), {"id": 1, "payload": _stored_document(document)}
     )
+
+
+def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> None:
+    # A shared Structured Column's SQL-null carrier and a present document that
+    # omits the same member collapse to the same read value, but they are distinct
+    # stored structure and must remain distinct before witness comparison.
+    compiled = _compiled(REGISTER, "Register")
+    identity = target(REGISTER, "Register").identity
+
+    sql_null = compiled.raw_member_of({"id": 1, "payload": SQL_NULL}, identity, "label")
+    missing = compiled.raw_member_of({"id": 1, "payload": PresentDocument({})}, identity, "label")
+
+    assert sql_null is SQL_NULL
+    assert missing is MISSING
 
 
 def test_a_classified_member_is_carried_as_the_transform_classified_it() -> None:
@@ -421,25 +462,92 @@ def test_a_classified_member_the_transform_made_unavailable_is_absent() -> None:
     assert [issue.code for issue in node.issues] == ["stored-data-leaf-undecodable"]
 
 
-def test_only_the_cells_the_transform_left_unclassified_reach_the_admission_rule() -> None:
+def test_identity_cells_are_admitted_once_before_payload_judgment() -> None:
     # The count is the claim, and no result can carry it: a re-admission agreeing
     # with the classification is invisible in the converted row. So the rule is
     # replaced for this conversion and its arguments recorded — a document-layout
     # row must reach it for its direct key Column and for nothing else, however
     # many members the document carried.
-    admitted: list[object] = []
+    identity_admitted: list[object] = []
+    payload_admitted: list[object] = []
 
     def _record(
         value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
     ) -> Admission:
-        admitted.append(value)
+        identity_admitted.append(value)
+        return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
+
+    def _payload_record(
+        value: object, declared: NeutralType, *, nullable: bool, temporal_end: bool
+    ) -> Admission:
+        payload_admitted.append(value)
         return admits_stored_scalar(value, declared, nullable=nullable, temporal_end=temporal_end)
 
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(_convert, "admits_stored_scalar", _record)
+        patched.setattr(_identity, "admits_stored_scalar", _record)
+        patched.setattr(_convert, "admits_stored_scalar", _payload_record)
         node = _register(_ADA)
-    assert admitted == [1]
+    assert identity_admitted == [1]
+    assert payload_admitted == []
     assert set(node.members) == {"id", "label", "note", "stamp", "marks"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "key", "issue"),
+    [
+        pytest.param("0a1b", b"\x0a\x1b", None, id="canonical-wire"),
+        pytest.param(None, None, "stored-data-primary-key-null", id="sql-null"),
+        pytest.param(
+            "not-hex",
+            None,
+            "stored-data-primary-key-undecodable",
+            id="noncanonical-wire",
+        ),
+    ],
+)
+def test_encoded_identity_is_decoded_before_logical_key_formation(
+    raw: object, key: object, issue: str | None
+) -> None:
+    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
+    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
+    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
+    contracts = compiled.attribute_reads(identity)
+    level = _convert.LevelContext(layout, attribute_reads=contracts)
+    claim = claim_identity({contracts[0].result_key: raw}, level)
+
+    assert (None if claim.key is None else claim.key.primary_key) == key
+    assert [finding.code for finding in claim.findings] == ([] if issue is None else [issue])
+
+
+def test_a_classified_unavailable_identity_never_forms_a_logical_key() -> None:
+    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
+    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
+    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
+    contracts = compiled.attribute_reads(identity)
+    key = contracts[0].result_key
+
+    claim = claim_identity(
+        {key: UNAVAILABLE},
+        _convert.LevelContext(layout, attribute_reads=contracts),
+        classified_members=frozenset({key}),
+    )
+
+    assert claim.key is None
+    assert [finding.code for finding in claim.findings] == ["stored-data-primary-key-undecodable"]
+
+
+def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:
+    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
+    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
+    contracts = compiled.attribute_reads(identity)
+    stored = {
+        contract.result_key: "0a1b" if contract.attribute.identity.name == "id" else None
+        for contract in contracts
+    }
+    node = _converted(bind(CatalogedModel(ENCODED_IDENTITY), compiled), stored)
+
+    assert node.members == {"id": b"\x0a\x1b", "token": None}
+    assert node.issues == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -453,39 +561,39 @@ def test_only_the_cells_the_transform_left_unclassified_reach_the_admission_rule
         pytest.param({"decks": SQL_NULL}, id="the-column-is-a-sql-null-document"),
     ],
 )
-def test_a_sibling_occurrence_is_observed_as_its_own_zero_value(
+def test_a_sibling_occurrence_does_not_enter_the_concrete_entity_state(
     stored: dict[str, object],
 ) -> None:
-    # A polymorphic position names every concrete's occurrences, so a row of one
-    # concrete is observed against columns only its siblings ever store at. Those
-    # columns are null on every such row, and what a document column holding
-    # nothing reduces to is fixed by the occurrence's own declaration: the empty
-    # list a Many spells, and `None` for a One.
+    # A polymorphic statement may carry every concrete's occurrence column, but
+    # the Page-owned Entity State is laid out by the row's resolved concrete.
+    # Sibling-only storage therefore contributes no member, whether the driver
+    # omitted it, null-padded it, or returned a SQL-null document marker.
     prepared = _prepared(CRAFT, "Craft")
     tug = _observed(
         prepared,
         {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"}), **stored},
     )
     assert tug["berth"] == {"quay": "7"}
-    assert tug["decks"] == []
+    assert "decks" not in tug
     barge = _observed(prepared, {"id": 2, "kind": "barge", "decks": _stored_decks()})
-    assert barge["decks"] == [{"label": _ONE_DECK}]
-    assert barge["berth"] is None
+    decks = cast("tuple[Mapping[str, object], ...]", barge["decks"])
+    assert tuple(map(dict, decks)) == ({"label": _ONE_DECK},)
+    assert "berth" not in barge
 
 
-def test_a_sibling_column_that_holds_a_document_is_decoded() -> None:
-    # The zero value covers the null column and nothing else: a sibling column
-    # that unexpectedly holds a stored document is decoded against the occurrence
-    # that declared it, exactly as the row's own would be.
+def test_a_sibling_document_does_not_enter_the_concrete_entity_state() -> None:
+    # Even an unexpectedly populated sibling column is outside the resolved
+    # concrete's Entity State; the polymorphic statement shape cannot add a
+    # member that concrete does not own.
     observed = _observed(
         _prepared(CRAFT, "Craft"),
         {"id": 1, "kind": "tug", "decks": _stored_decks()},
     )
-    assert observed["decks"] == [{"label": _ONE_DECK}]
+    assert "decks" not in observed
 
 
 def test_an_encoded_projection_is_observed_under_its_physical_column() -> None:
-    # A Predecessor Row is keyed by the column the value is STORED in, so the
+    # A Predecessor MappingRow is keyed by the column the value is STORED in, so the
     # alias an encoded cell arrives under is excluded from the passthrough and
     # the decoded value is answered under the Column's own name instead.
     observed = _observed(
@@ -513,7 +621,8 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
     )
     assert observed["label"] == "ada"
     assert observed["stamp"] == dt.date(2026, 1, 15)
-    assert observed["marks"] == [{"tag": "founder", "origin": {"port": "Oslo"}}]
+    marks = cast("tuple[Mapping[str, object], ...]", observed["marks"])
+    assert tuple(map(dict, marks)) == ({"tag": "founder", "origin": {"port": "Oslo"}},)
 
 
 # --------------------------------------------------------------------------- #
@@ -545,7 +654,9 @@ def _conversion_calls(layout: Layout, owners: int) -> dict[str, int]:
     with pytest.MonkeyPatch.context() as patched:
         for name in _COUNTED:
             patched.setattr(_convert, name, _counting(name, getattr(_convert, name), calls))
-        batch(model, plan, prepared_levels(model, reads), rows)
+        page = batch(model, plan, prepared_levels(model, reads), rows)
+        for position in range(page.root_count):
+            RootView(page, position)
     return calls
 
 
@@ -567,38 +678,45 @@ def _workload(
 ]:
     meta = metamodel(layout)
     model = CatalogedModel(meta)
-    plan = fetch_plan(query(meta), meta)
-    reads = compiled_levels(plan, meta)
-    return model, plan, reads, rows_per_level(model, plan, reads, owners)
+    plan = fetch_plan(query(layout, meta), meta)
+    reads = compiled_levels(layout, plan, meta)
+    return model, plan, reads, rows_per_level(layout, model, plan, reads, owners)
 
 
-def _unclassified_cells(layout: Layout, owners: int) -> int:
-    """Projected Attribute cells the batch's rows carried that their own compiled
-    read did not classify.
-
-    One admission is owed per such cell and none at all for the rest, so this is
-    what a conforming batch's admission count must equal — derived from the reads
-    and the rows rather than stated as a number, since it is a property of the
-    fixture rather than of this claim.
-    """
+def _payload_cells_judged(layout: Layout, owners: int) -> int:
+    """Non-identity Attribute cells the batch carries without prior classification."""
     model, _plan, reads, rows = _workload(layout, owners)
     total = 0
+    seen: set[object] = set()
     for compiled, level_rows in zip(reads, rows, strict=True):
         if compiled is None:
             continue
         for driver in level_rows:
-            row = compiled.materialize_row(driver)
-            contracts = compiled.attribute_reads(row.resolved_entity)
+            resolved, _variant, _unknown, _document = compiled.row_identity(driver)
+            values, _findings, classified = compiled.decode_payload(driver)
+            entity_layout = model.layouts.entity(resolved)
+            identity_positions = frozenset(
+                (*entity_layout.primary_key, *entity_layout.temporal_starts)
+            )
+            contracts = compiled.attribute_reads(resolved)
             keys: Sequence[str] = (
                 [contract.result_key for contract in contracts]
                 if contracts
-                else [
-                    attribute.storage.name
-                    for attribute in model.layouts.entity(row.resolved_entity).attributes
-                ]
+                else [attribute.storage.name for attribute in entity_layout.attributes]
             )
+            occurrence: object = (
+                resolved,
+                tuple(values.get(keys[position]) for position in identity_positions),
+            )
+            if not identity_positions:
+                occurrence = id(driver)
+            if occurrence in seen:
+                continue
+            seen.add(occurrence)
             total += sum(
-                1 for key in keys if key in row.values and key not in row.classified_members
+                1
+                for position, key in enumerate(keys)
+                if position not in identity_positions and key in values and key not in classified
             )
     return total
 
@@ -609,14 +727,12 @@ def test_the_conforming_path_decodes_no_declaration_and_admits_nothing_twice(
 ) -> None:
     # Work fixed by a layout, a member declaration, or a Neutral Type does not
     # scale with rows, measured over the report's own workload. Every
-    # document a conforming row carries reaches conversion already classified, so
-    # conversion asks the codec for none of them at either batch size — and the
-    # admissions that remain are exactly the stored cells no transform classified,
+    # document a conforming row carries is classified only if its deferred state
+    # is reached. The admissions that remain are exactly the direct stored cells,
     # so doubling the rows doubles them and nothing else moves.
     one = _conversion_calls(layout, OWNERS)
     twice = _conversion_calls(layout, OWNERS * 2)
     assert [one[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
     assert [twice[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
-    assert one["admits_stored_scalar"] == _unclassified_cells(layout, OWNERS)
-    assert twice["admits_stored_scalar"] == _unclassified_cells(layout, OWNERS * 2)
-    assert twice["admits_stored_scalar"] == 2 * one["admits_stored_scalar"]
+    assert one["admits_stored_scalar"] == _payload_cells_judged(layout, OWNERS)
+    assert twice["admits_stored_scalar"] == _payload_cells_judged(layout, OWNERS * 2)

@@ -731,6 +731,16 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "portable compatibility-only model whose overlap and qualified-identity behavior "
             "is exercised directly by the compile sweep and generic descriptor adapter"
         ),
+        "materialization-stress-columns": (
+            "measurement-only Columns twin: the runtime realization is exercised by the "
+            "materialization cost suite, while the descriptor twin gate proves its logical "
+            "equivalence to the Document arm"
+        ),
+        "materialization-stress-document": (
+            "measurement-only Document twin: the runtime realization is exercised by the "
+            "materialization cost suite, while the descriptor twin gate proves its logical "
+            "equivalence to the Columns arm"
+        ),
         "pk-audit": (
             "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "
             "the transaction-time-only axis `balance` proves"

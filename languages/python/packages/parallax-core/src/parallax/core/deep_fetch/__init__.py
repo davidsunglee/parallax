@@ -47,6 +47,7 @@ from parallax.core.predicate._validated import (
 from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
+from parallax.core.predicate._validated import deferred_membership as _deferred_membership
 from parallax.core.predicate._validated import (
     managed_membership as _managed_membership,
 )
@@ -235,6 +236,32 @@ class FetchLevel:
         target = self.child
         if target is None:  # pragma: no cover - queryable levels carry exact Metadata
             raise DeepFetchError(f"{self.attach_key!r} carries no resolved child metadata")
+        return ValidatedEntityQuery(
+            target=target.identity,
+            entity=target,
+            validated_predicate=predicate,
+            narrow_to=self.narrow_to,
+            order_by=self.order_terms,
+            projection=_projection_for(target, None, ReadProjectionRequest("all", True)),
+        )
+
+    def query_template(self) -> ValidatedEntityQuery:
+        """Build this level's child query with its gathered key set deferred."""
+        reference = None if self.related is None else self.related.reference
+        if self.is_back_reference or self.child_target is None or reference is None:
+            raise DeepFetchError(
+                f"{self.attach_key!r} is a back-reference level and issues no child query"
+            )
+        member = self.related_member
+        target = self.child
+        if member is None or target is None:
+            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child member")
+        membership = _deferred_membership(attr=reference, member=member)
+        predicate = (
+            membership
+            if not self.as_of_terms
+            else _validated_conjunction(membership, *self.as_of_terms)
+        )
         return ValidatedEntityQuery(
             target=target.identity,
             entity=target,

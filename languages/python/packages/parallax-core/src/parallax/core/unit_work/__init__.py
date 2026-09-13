@@ -89,6 +89,7 @@ from parallax.core.unit_work.materialized import (
     buffered_write,
 )
 from parallax.core.unit_work.observe import (
+    EntityStateRow,
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
@@ -280,6 +281,7 @@ __all__ = [
     "ColumnSlice",
     "Concurrency",
     "ConcurrencyStrategy",
+    "EntityStateRow",
     "EscapedTransactionError",
     "ExactCount",
     "Finite",

@@ -1,13 +1,13 @@
-"""The shared sealed-graph fixture the graph suites drive.
+"""The shared sealed-Page fixture the materialization suites drive.
 
-A read driver composes a graph by converting rows into a graph builder and
+A read driver composes a Page by converting rows into a Page builder and
 writing each level's views as that level lands. These suites need the same
 composition without a database, so this builds one the same way — through
-``convert_row`` and ``GraphBuilder`` — rather than hand-assembling rows that no
+``convert_row`` and ``PageBuilder`` — rather than hand-assembling rows that no
 driver would produce.
 
 ``materialize`` then runs the production materializer over it, which is what makes
-these suites cover the real seam: merge, allocate, populate, and the per-node state
+these suites cover the real seam: Root View, allocate, populate, and per-node state
 factory, with no stand-in anywhere.
 
 Exported names carry no leading underscore: importing an underscored name across
@@ -34,19 +34,21 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
     InvalidData,
+    Page,
+    PageBuilder,
     RelationshipViewKey,
-    SnapshotGraph,
+    RootView,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._page import ABSENT
+from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
-    "GraphFixture",
+    "PageFixture",
     "documents_of",
     "identity_of",
     "invalid_record",
@@ -141,25 +143,25 @@ def _occurrence_row(row: tuple[object, ...], declared: _VoContainer) -> dict[str
     return rendered
 
 
-class GraphFixture:
-    """One graph under construction, plus the materialization over it.
+class PageFixture:
+    """One Page under construction, plus the materialization over it.
 
-    ``views`` are the relationship views this graph attaches, declared up front
+    ``views`` are the relationship views this Page attaches, declared up front
     because a projection's view row is sized when the row is added and a fan-back
     only names a slot the plan already fixed. A broad view is its relationship's
     own spelling; a narrowed one is that spelling paired with the derived view
     key. They all sit on one unguarded source level, which is the shape
-    :meth:`ViewSchema.of` exists for: it lets a suite state a graph with no plan,
+    :meth:`ViewSchema.of` exists for: it lets a suite state a Page with no plan,
     no executor, and no database, at the cost of every projection carrying every
     declared slot rather than only its own level's.
 
-    ``model`` overrides the accepted model conversion and merging read without
+    ``model`` overrides the accepted model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
     while the composed class maps it as a scalar. Only a test can reach that
     state: the composition root always takes both facts off one Domain Model.
 
-    Named apart from the production ``GraphBuilder`` it drives, so a suite that
+    Named apart from the production ``PageBuilder`` it drives, so a suite that
     holds both reads which one it is talking to.
     """
 
@@ -171,12 +173,12 @@ class GraphFixture:
         *views: str | tuple[str, str],
         model: Metamodel | None = None,
     ) -> None:
-        assert class_index(domain) is not None, "the graph suites compose class-backed models"
+        assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
         self._layouts = LayoutCatalog(self._model)
-        self._builder = GraphBuilder(ViewSchema.of(*map(self._declared, views)))
-        self._sealed: tuple[tuple[tuple[int, ...], Pin], SnapshotGraph] | None = None
+        self._builder = PageBuilder(ViewSchema.of(*map(self._declared, views)))
+        self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
     def _declared(self, view: str | tuple[str, str]) -> RelationshipViewKey:
         """One declared view: a broad one is a spelling, a narrowed one a pair."""
@@ -186,7 +188,7 @@ class GraphFixture:
         return self.view_key(relationship, narrowed=narrowed)
 
     @property
-    def builder(self) -> GraphBuilder:
+    def builder(self) -> PageBuilder:
         """The production builder this fixture accumulates into."""
         return self._builder
 
@@ -219,28 +221,34 @@ class GraphFixture:
         """Write one relationship view onto an already-converted projection."""
         self._builder.write_view(parent, self.view_key(relationship, narrowed=narrowed), value)
 
-    def graph(self, *roots: int, pin: Pin = _NO_PIN) -> SnapshotGraph:
-        """The whole sealed graph, roots in the order given.
+    def page(self, *roots: int, pin: Pin = _NO_PIN) -> Page:
+        """The sealed Page with roots in the requested order.
 
-        Sealing invalidates the builder, so a fixture seals ONCE and answers the
-        graph it sealed thereafter — which is what lets a test read a merge and
-        then materialize the same graph. A suite wanting a second graph builds a
-        second fixture, the same discipline a read executor keeps.
+        Sealing invalidates the builder, so a fixture seals once and returns that
+        Page thereafter. A suite that needs a second Page builds a second fixture,
+        matching the read-executor lifetime.
         """
         asked = (roots, pin)
         if self._sealed is None:
-            self._sealed = (asked, self._builder.seal(roots, pin))
-        assert self._sealed[0] == asked, "one fixture seals one graph; build a second fixture"
+            self._sealed = (asked, self._builder.finish(roots, pin))
+        assert self._sealed[0] == asked, "one fixture seals one Page; build a second fixture"
         return self._sealed[1]
 
     def materialize(
         self, *roots: int, pin: Pin = _NO_PIN
     ) -> tuple[object | InvalidData[object], ...]:
-        """Merge, classify, and publish this graph's roots.
+        """Judge, classify, and publish the Page roots.
 
         A conforming root is its frozen Entity instance; one some stored state
         contradicted is its :class:`InvalidData` record instead.
         """
-        return materialize_graph(
-            self.graph(*roots, pin=pin), self._model, graph_construction_for(self._domain)
+        page = self.page(*roots, pin=pin)
+        construction = graph_construction_for(self._domain)
+        return tuple(
+            typed_root(
+                RootView(page, position),
+                self._model,
+                construction,
+            )[0]
+            for position in range(page.root_count)
         )

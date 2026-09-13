@@ -28,7 +28,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES
 from tests._support import snapshot_models as sm
-from tests.unit.snapshot._snapshot_graph_support import GraphFixture
+from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
@@ -70,7 +70,7 @@ def _status_row(status_id: int) -> dict[str, object]:
 
 def _order_graph(*, items: tuple[dict[str, object], ...] | None = None) -> Any:
     """One `SnapOrder` root, optionally with a loaded `items` view."""
-    fixture = GraphFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
+    fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.items")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     if items is not None:
         refs = tuple(fixture.node("SnapOrderItem", row) for row in items)
@@ -148,7 +148,7 @@ def test_a_bare_relationship_name_is_not_an_accepted_argument() -> None:
 def test_a_relationship_an_ancestor_declares_applies_to_its_concrete_subtype() -> None:
     # `owner` is declared on the family root `Animal`; the node is a `Dog`, and
     # a subtype never redeclares an inherited relationship.
-    fixture = GraphFixture(animal_owner.ANIMAL_MODEL)
+    fixture = PageFixture(animal_owner.ANIMAL_MODEL)
     (root,) = fixture.materialize(fixture.node("Dog", _DOG_ROW))
     assert type(root) is read_models.Dog
     assert is_view_loaded(root, read_models.Animal.owner) is False
@@ -174,7 +174,7 @@ def test_view_answers_the_loaded_value_and_raises_for_an_unloaded_one() -> None:
 
 
 def test_a_to_many_path_fans_out_into_one_flat_tuple_in_traversal_order() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _ORDERS,
         "parallax.compatibility.SnapOrder.items",
         "parallax.compatibility.SnapOrderItem.statuses",
@@ -206,7 +206,7 @@ def test_an_empty_to_many_branch_contributes_no_terminal_and_stays_a_tuple() -> 
 
 
 def test_an_all_to_one_path_answers_its_terminal_or_none() -> None:
-    fixture = GraphFixture(
+    fixture = PageFixture(
         _ORDERS,
         "parallax.compatibility.SnapOrder.items",
         "parallax.compatibility.SnapOrderItem.order",
@@ -235,7 +235,7 @@ def test_an_unloaded_view_on_a_deeper_segment_is_the_one_reported() -> None:
 
 
 def _narrowed_owner(view_key: str, columns: dict[str, object] | None = None) -> Any:
-    fixture = GraphFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", view_key))
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", view_key))
     owner = fixture.node("AnimalOwner", columns if columns is not None else _OWNER_ROW)
     dog = fixture.node("Dog", _DOG_ROW)
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed=view_key)
@@ -273,9 +273,7 @@ def test_an_unrequested_narrowed_view_answers_false_rather_than_raising() -> Non
 def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None:
     # A to-one hop narrows exactly as a to-many one does, and its view value is
     # then a single node — or loaded-null — rather than a tuple.
-    fixture = GraphFixture(
-        _ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]")
-    )
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.favorite", "favorite[Dog]"))
     alice = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     fixture.attach(
@@ -294,7 +292,7 @@ def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None
 
 
 def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() -> None:
-    fixture = GraphFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
+    fixture = PageFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
     owner = fixture.node("AnimalOwner", _OWNER_ROW)
     fixture.attach(
         owner, "parallax.compatibility.AnimalOwner.animals", (fixture.node("Dog", _DOG_ROW),)
@@ -325,7 +323,7 @@ _MILESTONE_PIN = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 def _balance_graph() -> Any:
     """One temporal `Balance` root materialized under a finite Transaction-Time
     pin, whose own milestone started earlier than the pin selects it at."""
-    fixture = GraphFixture(_BALANCE)
+    fixture = PageFixture(_BALANCE)
     balance = fixture.node(
         "Balance",
         {

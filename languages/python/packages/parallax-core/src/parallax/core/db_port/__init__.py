@@ -5,6 +5,7 @@ The abstract database seam, in two halves that are used by different callers.
 **Execution.** :class:`DatabaseConnection` is what the layers above the seam
 call to run compiled SQL and demarcate transactions. It names ``dialect`` (the
 SQL spelling its statements are written in), ``execute`` (row-oriented),
+``execute_pipeline`` (independent reads in one transport round trip),
 ``execute_write`` (affected-row count), and ``transaction`` (callback reporting a
 :data:`TransactionOutcome`, at an optionally requested isolation) — and nothing
 more. The portable isolation vocabulary that option is named in lives here too,
@@ -41,7 +42,7 @@ by a transaction outcome — is an instance shared with no other invocation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -102,6 +103,8 @@ __all__ = [
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
+    "MappingRow",
+    "PipelineStatement",
     "PoolAvailable",
     "PoolDetached",
     "PoolMeasurements",
@@ -124,8 +127,19 @@ __all__ = [
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.
 Bind = object
-# A managed result row: attribute/column name -> managed value.
-Row = dict[str, object]
+# A managed result row in statement select-list order.
+Row = tuple[object, ...]
+MappingRow = Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineStatement:
+    """One independent row-returning statement in a pipeline batch."""
+
+    sql: str
+    binds: tuple[Bind, ...] = ()
+    document_reads: tuple[DocumentReadOrdinals, ...] = ()
+
 
 # The closed portable isolation vocabulary (m-db-port). Each level names the
 # anomalies it forbids rather than any database's own spelling: `read_committed`
@@ -291,6 +305,10 @@ class DatabaseConnection(Protocol):
         Each document-read pair is folded into one :class:`DocumentRead` under
         the document cell's result key before the row crosses this boundary.
         """
+        ...
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        """Run independent row reads in one transport round trip, preserving order."""
         ...
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

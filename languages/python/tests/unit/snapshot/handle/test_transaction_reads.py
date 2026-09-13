@@ -24,7 +24,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import DatabaseConnection, JsonDocument, Row
+from parallax.core.db_port import DatabaseConnection, JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -138,6 +138,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
+    assert len(call.result.sources) == 1
     (hint,) = call.result.sources.values()
     assert hint.participation is None
     assert hint.observation is not None
@@ -186,7 +187,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
     # those rows retains its own evidence — not only the root's — so an included
     # child a caller keeps is as writable as the root it came from.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    policy_row: Row = {
+    policy_row: MappingRow = {
         "id": 1,
         "name": "P-1",
         "from_z": from_z,
@@ -194,7 +195,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
         "in_z": from_z,
         "out_z": INFINITY_INSTANT,
     }
-    coverage_row: Row = {
+    coverage_row: MappingRow = {
         "id": 10,
         "policy_id": 1,
         "amount": Decimal("250.00"),
@@ -323,7 +324,7 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     )
     assert level_sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-        "where t0.consignment_id in (?) for share of t0"
+        "where t0.consignment_id = any(?) for share of t0"
     )
 
 
@@ -510,7 +511,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, "infinity")
 
 
-def _branch_row(*, address: dict[str, object] | None) -> Row:
+def _branch_row(*, address: dict[str, object] | None) -> MappingRow:
     return {
         "br_id": 1,
         "name": "Central Branch",
@@ -597,7 +598,7 @@ def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None
     assert fetched.tx_end is not None
 
 
-def _balance_history_rows() -> list[Row]:
+def _balance_history_rows() -> list[MappingRow]:
     # Two milestones on the SAME Transaction-Time dimension, closed then current.
     return [
         {
@@ -752,7 +753,7 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
 
 
-def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> Row:
+def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> MappingRow:
     return {
         "br_id": 1,
         "name": "Old Name",
@@ -892,7 +893,7 @@ def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
 # milestone license at the verb and the versioned advance/gate at the planner  #
 # — are exercised across the first two.                                        #
 # --------------------------------------------------------------------------- #
-def _policy_row(from_z: dt.datetime) -> Row:
+def _policy_row(from_z: dt.datetime) -> MappingRow:
     return {
         "id": 1,
         "name": "P-1",
@@ -903,7 +904,7 @@ def _policy_row(from_z: dt.datetime) -> Row:
     }
 
 
-def _coverage_row(from_z: dt.datetime) -> Row:
+def _coverage_row(from_z: dt.datetime) -> MappingRow:
     return {
         "id": 10,
         "policy_id": 1,

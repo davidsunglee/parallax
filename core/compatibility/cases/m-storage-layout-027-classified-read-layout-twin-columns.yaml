@@ -58,9 +58,9 @@ then:
         postgres: select t0.id, not t0.profile is null, t0.profile from classification_twin t0 order by t0.id asc
         mariadb: select t0.id, not t0.profile is null, t0.profile from classification_twin t0 order by t0.id asc
     - sql:
-        postgres: select t0.id, t0.item_id, not t0.profile is null, t0.profile from classification_twin_child t0 where t0.item_id in (?, ?, ?, ?) order by t0.id asc
+        postgres: select t0.id, t0.item_id, not t0.profile is null, t0.profile from classification_twin_child t0 where t0.item_id = any(?) order by t0.id asc
         mariadb: select t0.id, t0.item_id, not t0.profile is null, t0.profile from classification_twin_child t0 where t0.item_id in (?, ?, ?, ?) order by t0.id asc
-      binds: [1, 2, 3, 4]
+      binds: { postgres: [[1, 2, 3, 4]], mariadb: [1, 2, 3, 4] }
   graph:
     ClassificationTwinItem:
       - id: 1

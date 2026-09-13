@@ -1,7 +1,7 @@
 """What a streamed delivery holds, and what the page size buys, in bytes and time.
 
 `m-snapshot-read` bounds the Parallax-owned working set of a streamed read at
-`O(P_B + G_max)` — one page's sealed graph, plus the merge and publication of the
+`O(P_B + G_max)` — one sealed Page, plus Root View judgment and publication of the
 one root the caller is holding — and names three exclusions. This measures both
 halves of that on one machine: the working set while a delivery is running, and
 the growth the exclusions decline to prevent, read beside it so the bound has a
@@ -30,7 +30,7 @@ port would grow on its own and would be most of every number below.
 claim about the caller's program rather than about Parallax. The retaining arm
 prices one root — what a caller pays to keep what it was handed — and is what
 turns "the delivery holds a constant" into a statement with a unit: the constant
-is worth so many roots of this graph.
+is worth so many roots of this shape.
 
 Run it through `just python-report-stream-overhead`.
 """
@@ -41,18 +41,20 @@ import datetime as dt
 import platform
 import sys
 import tracemalloc
-from collections.abc import Callable, Sequence
-from decimal import Decimal
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from time import perf_counter
 from types import TracebackType
 from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ORDERS_MODEL, Order
+from parallax.conformance.workloads import catalog
 from parallax.core.db_port import (
     CleanupResult,
     DatabaseConnection,
     DocumentReadOrdinals,
+    MappingRow,
+    PipelineStatement,
     Returned,
     Row,
     TransactionOutcome,
@@ -98,16 +100,18 @@ from tests.unit.memory_instruments import (  # noqa: E402
     warmed,
 )
 
-PAGE_SIZES: Final = (1, 2, 8, 32)
-"""The dial, across a factor of thirty-two, so what it buys and what it costs are
-read on the same table."""
+_WORKLOAD: Final = catalog()["conventional-fanout"]
 
-FANOUT: Final = 4
-"""Included children per root, so every page graph carries relationship fan-out
-and the root the caller holds is a graph rather than a row."""
+PAGE_SIZES: Final = _WORKLOAD.page_sizes
+"""Every delivery size the benchmark fixture declares."""
 
-ROOTS: Final = 200
-"""The result the readings are taken over."""
+FANOUT: Final = _WORKLOAD.fanout
+"""Included children per root, so every Page carries relationship fan-out
+and the root the caller holds is a value tree rather than a row."""
+
+ROOTS: Final = max(_WORKLOAD.roots, 3 * max(PAGE_SIZES))
+"""Enough fixture-generated roots to sample inside the third declared-size
+page."""
 
 TENFOLD: Final = 10
 """The factor the independence reading multiplies the result by, holding the
@@ -122,7 +126,7 @@ def sample_after(batch_size: int) -> int:
     fixed position that is the first page at the large sizes and the fortieth at
     the small ones.
     """
-    return 2 * batch_size + 5
+    return 2 * batch_size + min(5, batch_size - 1)
 
 
 _TIMED: Final = 10
@@ -131,28 +135,29 @@ direction only — nothing here is enforced against elapsed time."""
 
 RETAINED_AT: Final = (20, 200)
 """Result sizes the retaining control is priced from: the caller-retention
-exclusion, whose slope is what one root of this graph costs."""
+exclusion, whose slope is what one root of this shape costs."""
 
 
-def _order_row(order_id: int) -> Row:
+def _order_row(row: Mapping[str, object]) -> MappingRow:
     return {
-        "id": order_id,
-        "name": f"order-{order_id}",
-        "sku": "A-100",
-        "qty": 5,
-        "price": Decimal("10.50"),
-        "active": True,
-        "ordered_on": dt.date(2024, 1, 5),
+        "id": row["id"],
+        "name": row["name"],
+        "sku": row["sku"],
+        "qty": row["qty"],
+        "price": row["price"],
+        "active": row["active"],
+        "ordered_on": dt.date.fromisoformat(cast("str", row["orderedOn"])),
+        "parallax_seek_0": row["id"],
     }
 
 
-def _item_row(item_id: int, order_id: int) -> Row:
+def _item_row(row: Mapping[str, object]) -> MappingRow:
     return {
-        "id": item_id,
-        "order_id": order_id,
-        "sku": "SKU",
-        "quantity": 1,
-        "shipped_on": dt.date(2024, 2, 1),
+        "id": row["id"],
+        "order_id": row["orderId"],
+        "sku": row["sku"],
+        "quantity": row["quantity"],
+        "shipped_on": dt.date.fromisoformat(cast("str", row["shippedOn"])),
     }
 
 
@@ -225,17 +230,21 @@ class _SoleScope:
         self._left = True
 
 
-class GeneratingPort:
+class CatalogPort:
     """A port that answers each page from a counter and retains nothing beyond
     the page it last answered."""
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_delivered", "_fanout", "_page", "_total")
+    __slots__ = ("_delivered", "_fanout", "_items", "_orders", "_page")
 
     def __init__(self, total: int, fanout: int = FANOUT) -> None:
-        self._total = total
+        rows = _WORKLOAD.rows(total)
+        if fanout != rows.fanout:
+            raise ValueError(f"the catalog fixes fanout at {rows.fanout}, got {fanout}")
         self._fanout = fanout
+        self._orders = rows.entity("parallax.compatibility.Order")
+        self._items = rows.entity("parallax.compatibility.OrderItem")
         self._delivered = 0
         self._page: tuple[int, ...] = ()
 
@@ -247,19 +256,27 @@ class GeneratingPort:
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
+            parents = cast("list[int]", binds[0])
             return [
-                _item_row(parent * 100 + offset, parent)
-                for parent in self._page
-                for offset in range(self._fanout)
+                tuple(_item_row(row).values())
+                for parent in parents
+                for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
             ]
         size = cast("int", binds[-1])
-        taken = min(size, self._total - self._delivered)
-        self._page = tuple(range(self._delivered + 1, self._delivered + taken + 1))
-        self._delivered += taken
-        return [_order_row(order_id) for order_id in self._page]
+        taken = min(size, len(self._orders) - self._delivered)
+        selected = self._orders[self._delivered : self._delivered + taken]
+        self._page = tuple(cast("int", row["id"]) for row in selected)
+        self._delivered += taken - 1 if taken == size else taken
+        return [tuple(_order_row(row).values()) for row in selected]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise NotImplementedError
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
@@ -267,8 +284,12 @@ class GeneratingPort:
         raise NotImplementedError
 
 
+_QUERY: Final = Order.where(Order.all).include(Order.items)
+_WORKLOAD.validate_class_backed(ORDERS_MODEL, _QUERY)
+
+
 def query() -> ObjectQuery[Order, Order]:
-    return Order.where(Order.active == True).include(Order.items)  # noqa: E712 - the query algebra's own equality
+    return _QUERY
 
 
 class Lane(NamedTuple):
@@ -291,11 +312,11 @@ LANES: Final = (Lane("typed", _typed), Lane("wire", _wire))
 
 def paused(lane: Lane, total: int, *, batch_size: int) -> Seam:
     """A delivery of ``total`` roots sampled inside its third page, with that
-    page's graph sealed, that root published, and the caller still holding it."""
+    Page sealed, that root published, and the caller still holding it."""
     at = sample_after(batch_size)
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(CatalogPort(total)), ORDERS_MODEL)
         with lane.opener(database, batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
@@ -310,7 +331,7 @@ def draining(lane: Lane, total: int, *, batch_size: int, retaining: bool) -> Sea
     root it was handed or none of them."""
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(CatalogPort(total)), ORDERS_MODEL)
         held: list[object] = []
         with lane.opener(database, batch_size) as stream:
             for root in stream:
@@ -359,7 +380,7 @@ def read(lane: Lane, batch_size: int) -> Reading:
 
 
 def per_root_price(lane: Lane) -> float:
-    """Bytes one retained root of this graph costs, from the caller-retention
+    """Bytes one retained root of this shape costs, from the caller-retention
     exclusion's own slope."""
     smaller, larger = RETAINED_AT
     low = retained(draining(lane, smaller, batch_size=8, retaining=True))
@@ -398,7 +419,7 @@ def _lane_lines(lane: Lane, readings: dict[int, Reading], price: float) -> list[
         )
     lines.append("")
     lines.append(
-        f"  one retained root of this graph = {price:,.0f} B, so the `roots` column is "
+        f"  one retained root of this shape = {price:,.0f} B, so the `roots` column is "
         f"what ten times the result moved the working set by, in roots"
     )
     return lines

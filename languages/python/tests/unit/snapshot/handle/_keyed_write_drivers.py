@@ -41,7 +41,7 @@ from typing import Final, Literal, cast
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import LATEST, DomainModel
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot.handle import Database, ExecutionFailure, Transaction, WireEntity
@@ -248,12 +248,12 @@ class Target:
     gate: Gate
     model: DomainModel
     entity: str
-    row: Row
+    row: MappingRow
     typed_query: ObjectQuery[EntityBase, EntityBase]
     wire_query: Mapping[str, object]
     fresh: Callable[[], EntityBase]
     payload: Mapping[str, object]
-    inserted_row: Row
+    inserted_row: MappingRow
     inserted_typed_query: ObjectQuery[EntityBase, EntityBase]
     inserted_wire_query: Mapping[str, object]
     change_typed: Mapping[str, object]
@@ -322,7 +322,7 @@ _LATEST_BOTH: Final[Mapping[str, object]] = {
 }
 
 
-def _position_row(key: int, acct_num: str, value: Decimal, from_z: dt.datetime) -> Row:
+def _position_row(key: int, acct_num: str, value: Decimal, from_z: dt.datetime) -> MappingRow:
     return {
         "id": key,
         "acct_num": acct_num,

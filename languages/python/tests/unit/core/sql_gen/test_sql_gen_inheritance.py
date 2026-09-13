@@ -441,10 +441,10 @@ def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() ->
         "detail": Decimal("12.50"),
         "familyVariant": "CashPayment",
     }
-    unknown = compiled.materialize_row(
+    _resolved, _variant, unknown, _document = compiled.row_identity(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
-    assert unknown.unknown_family_tag is not None
+    assert unknown is not None
 
 
 def test_tph_document_row_projection_pads_members_outside_the_tagged_variant() -> None:
@@ -546,6 +546,16 @@ def test_tph_abstract_superset_projection_follows_shared_table_layout_tiers() ->
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
         "t0.bark_volume, t0.tusk_length from animal t0"
     )
+    assert compiled.result_keys == (
+        "id",
+        "kind",
+        "name",
+        "owner_id",
+        "license_id",
+        "indoor",
+        "bark_volume",
+        "tusk_length",
+    )
 
 
 def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
@@ -606,12 +616,22 @@ def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
     assert compiled.statement.sql == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0"
     )
+    assert compiled.result_keys == ("id", "title", "folder_id", "currency", "amount_due")
     assert "union" not in compiled.statement.sql
     assert "family_variant" not in compiled.statement.sql
 
 
 def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
+    assert compiled.result_keys == (
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+        "paid_amount",
+        "family_variant",
+    )
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
     # Alphabetical branch order (Invoice, Receipt); every branch restarts at `t0`.
@@ -904,7 +924,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
             "meta": PresentDocument({"note": "tagged"}),
         }
     ) == {"id": 1, "x": 7, "meta": {"note": "tagged"}, "familyVariant": "Leaf"}
-    unknown = compiled.materialize_row(
+    resolved, _variant, unknown, _document = compiled.row_identity(
         {
             "id": 2,
             "kind": "unknown",
@@ -912,8 +932,8 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
             "meta": PresentDocument({"note": "unclassified"}),
         }
     )
-    assert unknown.unknown_family_tag is not None
-    assert unknown.resolved_entity.name == "Root"
+    assert unknown is not None
+    assert resolved.name == "Root"
 
 
 def test_tpcs_literal_transform_classifies_a_direct_value_object_column() -> None:
@@ -1017,8 +1037,8 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     # is the whole tag map plus the family root, so a consumer preparing one
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
-    boar = compiled.materialize_row({"id": 2, "kind": "boar"})
-    assert boar.resolved_entity in compiled.resolvable
+    boar, _variant, _unknown, _document = compiled.row_identity({"id": 2, "kind": "boar"})
+    assert boar in compiled.resolvable
     assert set(compiled.resolvable) == {
         target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
     }
@@ -1050,14 +1070,16 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
     wolf_row = compiled.transform_row({"id": 1, "kind": "wolf", "howl": "aooo"})
     assert wolf_row["familyVariant"] == "Wolf"
-    unknown = compiled.materialize_row({"id": 2, "kind": "bear", "howl": None})
-    assert unknown.unknown_family_tag is not None
+    resolved, _variant, unknown, _document = compiled.row_identity(
+        {"id": 2, "kind": "bear", "howl": None}
+    )
+    assert unknown is not None
     # That row resolves to the family ROOT, which no position holds — the root is
     # abstract and only concretes are projected — so `resolvable` is what tells a
     # consumer the Entity exists at all before a bear row proves it.
-    assert unknown.resolved_entity == target(partial, "Beast").identity
-    assert unknown.resolved_entity not in compiled.resolved_position
-    assert unknown.resolved_entity in compiled.resolvable
+    assert resolved == target(partial, "Beast").identity
+    assert resolved not in compiled.resolved_position
+    assert resolved in compiled.resolvable
 
 
 def _own_column_occurrences() -> Any:
@@ -1137,13 +1159,13 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
         target(meta, "Tug").identity,
     )
     deck = PresentDocument({"area": "9"})
-    materialized = compiled.materialize_row(
-        {"id": 1, "berth": PresentDocument({"code": "A1"}), "deck": deck}
-    )
-    assert materialized.resolved_entity == target(meta, "Tug").identity
-    assert materialized.classified_members == frozenset({"berth"})
-    assert materialized.values["berth"] == {"code": "A1"}
-    assert materialized.values["deck"] is deck
+    row = {"id": 1, "berth": PresentDocument({"code": "A1"}), "deck": deck}
+    resolved, _variant, _unknown, _document = compiled.row_identity(row)
+    values, _findings, classified = compiled.decode_payload(row)
+    assert resolved == target(meta, "Tug").identity
+    assert classified == frozenset({"berth"})
+    assert values["berth"] == {"code": "A1"}
+    assert values["deck"] is deck
 
 
 def test_an_occurrence_column_absent_from_a_row_is_not_classified() -> None:
@@ -1152,9 +1174,9 @@ def test_an_occurrence_column_absent_from_a_row_is_not_classified() -> None:
     # only what this row actually held, so conversion still judges the rest.
     meta = _own_column_occurrences()
     compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Tug"), result_form="instance")
-    materialized = compiled.materialize_row({"id": 2})
-    assert materialized.classified_members == frozenset()
-    assert materialized.values == {"id": 2}
+    values, _findings, classified = compiled.decode_payload({"id": 2})
+    assert classified == frozenset()
+    assert values == {"id": 2}
 
 
 def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
@@ -1177,15 +1199,15 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
     )
     assert compiled.structured_column == "payload"
     for variant, member in (("Book", "pages"), ("Film", "minutes")):
-        materialized = compiled.materialize_row(
+        values, _findings, _classified = compiled.decode_payload(
             {
                 "id": 1,
                 "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
                 "family_variant": variant,
             }
         )
-        assert "payload" not in materialized.values
-        assert materialized.values[member] == 320
+        assert "payload" not in values
+        assert values[member] == 320
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
@@ -1231,17 +1253,17 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
         "union all select t0.id, cast(null as text) parallax_attr_0, t0.shared_label "
         "parallax_attr_1, 'catalog.SharedVariant' family_variant from catalog_shared t0"
     )
-    materialized = compiled.materialize_row(
-        {
-            "id": 1,
-            "parallax_attr_0": "archived",
-            "parallax_attr_1": None,
-            "family_variant": "archive.SharedVariant",
-        }
-    )
-    assert materialized.resolved_entity == EntityIdentity("archive", "SharedVariant")
-    assert materialized.family_variant == "archive.SharedVariant"
-    assert materialized.values == {"id": 1, "shared_label": "archived"}
+    row = {
+        "id": 1,
+        "parallax_attr_0": "archived",
+        "parallax_attr_1": None,
+        "family_variant": "archive.SharedVariant",
+    }
+    resolved, variant, _unknown, _document = compiled.row_identity(row)
+    values, _findings, _classified = compiled.decode_payload(row)
+    assert resolved == EntityIdentity("archive", "SharedVariant")
+    assert variant == "archive.SharedVariant"
+    assert values == {"id": 1, "shared_label": "archived"}
 
 
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
@@ -1451,6 +1473,37 @@ def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:
     )
     assert compiled.statement.sql.endswith(") u order by u.parallax_attr_1 asc")
     assert "t0.family_variant parallax_attr_1" in compiled.statement.sql
+
+
+def test_tpcs_tuple_rows_read_branch_values_through_collision_safe_aliases() -> None:
+    compiled = compile_read(
+        oa.All(),
+        MATERIALIZATION_KEYS,
+        POSTGRES,
+        target(MATERIALIZATION_KEYS, "Record"),
+        result_form="instance",
+    )
+    rows = (
+        (3, "archive-marker", "archived", None, "archive.SharedVariant"),
+        (4, "catalog-marker", None, "catalogued", "catalog.SharedVariant"),
+    )
+
+    observed: list[dict[str, object]] = []
+    for row in rows:
+        resolved, _variant, _unknown, _document = compiled.row_identity(row)
+        observed.append(
+            {
+                contract.attribute.identity.name: compiled.raw_member_of(
+                    row, resolved, contract.result_key
+                )
+                for contract in compiled.attribute_reads(resolved)
+            }
+        )
+
+    assert observed == [
+        {"id": 3, "variantMarker": "archive-marker", "archiveLabel": "archived"},
+        {"id": 4, "variantMarker": "catalog-marker", "catalogLabel": "catalogued"},
+    ]
 
 
 def test_tpcs_union_orders_a_document_resident_key_through_the_union_alias() -> None:

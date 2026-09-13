@@ -23,7 +23,7 @@ from parallax.conformance import case_format
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import Dialect
 from parallax.snapshot import handle
 from tests.unit._second_dialect import BACKTICKED
@@ -147,7 +147,7 @@ class _ScriptedExecutions:
         return execution
 
 
-def _wire_row(row: Row) -> dict[str, object]:
+def _wire_row(row: MappingRow) -> dict[str, object]:
     """One authored row as the Wire spelling a find step's own rows carry."""
     return {key: wire_value(value) for key, value in row.items()}
 
@@ -161,7 +161,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     # buffered insert (account 9) is discarded with it. The trailing
     # ungrouped verify find (step 4) observes no rows for it.
     case = _load_case("m-opt-lock-012")
-    row_v1: Row = {
+    row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
         "balance": decimal.Decimal("250.00"),
@@ -209,7 +209,7 @@ def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
     # main port would make the concurrent group report DML the peer never ran,
     # which its own plan-versus-delivery reconciliation refuses outright.
     case = _load_case("m-opt-lock-012")
-    row_v1: Row = {
+    row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
         "balance": decimal.Decimal("250.00"),
@@ -243,7 +243,7 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
             "given": {"fixtures": True, "apply": [{"sql": "update account set balance = ?"}]},
         },
     )
-    row_v1: Row = {
+    row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
         "balance": decimal.Decimal("250.00"),
@@ -317,7 +317,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
             "then": {"roundTrips": 4},
         },
     )
-    row_v1: Row = {
+    row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
         "balance": decimal.Decimal("250.00"),
@@ -386,13 +386,13 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
             "then": {"roundTrips": 4},
         },
     )
-    row_v1: Row = {
+    row_v1: MappingRow = {
         "id": 2,
         "owner": "Linus",
         "balance": decimal.Decimal("250.00"),
         "version": 1,
     }
-    row3: Row = {
+    row3: MappingRow = {
         "id": 3,
         "owner": "Ada",
         "balance": decimal.Decimal("10.00"),
@@ -455,7 +455,7 @@ def test_run_interleaved_scenario_case_refuses_an_execution_granting_no_terminat
     # release both sessions it had already opened. Nothing ran: neither scripted
     # port ever saw a statement.
     case = _load_case("m-opt-lock-012")
-    healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    healthy_row: MappingRow = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
     ours_port = ScriptedPort(read_rows=[[healthy_row]])
     peer_port = ScriptedPort(read_rows=[[healthy_row]])
     executions = _ScriptedExecutions(ours_port, peer_port, trusted=trusted)

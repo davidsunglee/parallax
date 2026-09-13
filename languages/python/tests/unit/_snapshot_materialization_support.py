@@ -4,7 +4,7 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the SHIPPED read loop from ``PreparedRead.materialize`` to ``GraphBuilder.seal``,
+the SHIPPED raw-row read loop from ``PreparedRead.convert_driver`` to ``PageBuilder.finish``,
 with no database anywhere.
 
 The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
@@ -19,17 +19,16 @@ production pays for it per batch.
 A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py``
 is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
 is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
-``prepare_model`` to prepare, and ``test_snapshot_graph_retention.py``'s workload
-is the frozen cost item. The members are declared once, in a factory over the
-layout, which is why the two layouts are two namespaces rather than two
-transcriptions.
+``prepare_model`` to prepare, and the earlier retention workload predates the
+Page contract. Members are declared once in a factory over the layout, while both
+layouts retain the descriptor's one canonical namespace.
 
-Rows are synthesized from the compiled read itself — one value per Attribute
-contract, one document per projected occurrence, each leaf in the codec's own
-canonical spelling and each member placed where ``m-storage-layout`` says it
-lives — so the fixture cannot drift from what the statement projects.
-:func:`verify` is what states that: a conforming batch, every member position
-filled, and every declarable Neutral Type reached.
+Rows are projected from the catalog fixture itself through the compiled read:
+authored values, nulls, omissions, and occurrence cardinalities are preserved,
+then each authored member is placed where ``m-storage-layout`` says it lives.
+:func:`verify` states that the resulting sparse rows form the expected Page
+without stored-data findings and that the model still declares every supported
+Neutral Type.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -50,6 +49,8 @@ from decimal import Decimal as PyDecimal
 from functools import cache
 from typing import Final, Literal, cast
 
+from parallax.conformance.provision import fixture_document, fixture_literal
+from parallax.conformance.workloads import catalog
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -69,22 +70,7 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
-from parallax.core.base import (
-    Boolean,
-    Bytes,
-    Date,
-    Decimal,
-    DocumentValue,
-    Float64,
-    Int64,
-    Json,
-    NeutralType,
-    PresentDocument,
-    String,
-    Time,
-    Timestamp,
-    Uuid,
-)
+from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
@@ -92,6 +78,7 @@ from parallax.core.document_codec import (
     Leaf,
     Occurrence,
     encode_leaf,
+    entity_shape,
     occurrence_shape,
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -102,17 +89,16 @@ from parallax.core.metamodel import (
     Multiplicity,
     entity_by_name,
 )
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
-from parallax.core.storage_layout import DirectColumn, TableLayout
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.storage_layout import DirectColumn, DocumentPath, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle import _read
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._retention import ObservedRows
-from parallax.snapshot.materialize import SnapshotGraph
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize import Page, PageBuilder
+from parallax.snapshot.materialize._page import ABSENT, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
@@ -139,14 +125,20 @@ type Layout = Literal["columns", "document"]
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 """Every storage layout the workload is measured under, in report order."""
 
-OWNERS: Final = 8
-FANOUT: Final = 4
-DUPLICATES: Final = 2
+_WORKLOAD_IDS: Final[Mapping[Layout, str]] = {
+    "columns": "stress-columns",
+    "document": "stress-document",
+}
+_WORKLOADS: Final = {
+    layout: catalog()[workload_id] for layout, workload_id in _WORKLOAD_IDS.items()
+}
+
+FANOUT: Final = _WORKLOADS["columns"].fanout
+OWNERS: Final = FANOUT * 2
+DUPLICATES: Final = len(_WORKLOADS["columns"].rows(1).entity("snapshot.materialization.Alpha"))
 """Root objects per batch, children per root, and how many of those children a
 narrowed view converts a second time."""
 
-NESTED: Final = 2
-"""Elements a Many occurrence carries, at every depth."""
 
 PROJECTIONS_PER_BATCH: Final = OWNERS * (1 + FANOUT + DUPLICATES + 1)
 """Converted rows per batch: each root, its children, the narrowed duplicates,
@@ -157,8 +149,6 @@ ROWS_PER_BATCH: Final = PROJECTIONS_PER_BATCH
 conforming batch converts, which :func:`verify` is what states."""
 
 _PIN: Final = Pin()
-_EPOCH: Final = dt.date(2026, 1, 1)
-_INSTANT: Final = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 _ROOT: Final = ""
 _NODES: Final = "nodes"
@@ -166,26 +156,16 @@ _NARROWED: Final = "special[Alpha]"
 _FAVORITE: Final = "favorite"
 
 
-# --------------------------------------------------------------------------- #
-# The model, declared once over the layout.                                    #
-# --------------------------------------------------------------------------- #
-
-
 def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
-    namespace = f"snapshot.materialization.{layout}"
+    namespace = "snapshot.materialization"
     placement = Document(column="payload") if layout == "document" else None
 
     class Detail(ValueObject):
-        """The deepest nested Value Object."""
-
         note: Attr[str | None]
         depth: Attr[int | None] = attr(type=Int32)
         marked: Attr[bool | None]
 
     class Tag(ValueObject):
-        """One leaf of every declarable Neutral Type, a nested One, and a nested
-        Many — so a document reaches every codec row at two depths."""
-
         label: Attr[str | None]
         flag: Attr[bool | None]
         small: Attr[int | None] = attr(type=Int32)
@@ -208,9 +188,6 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
         layout=placement,
     ):
-        """The family root: one Attribute of every declarable Neutral Type, a
-        top-level One occurrence, a top-level Many, and the back reference."""
-
         id: Attr[int] = attr(primary_key=True)
         owner_id: Attr[int | None]
         label: Attr[str | None] = attr(max_length=32)
@@ -230,17 +207,12 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         owner: Rel["Owner | None"] = rel(reverse_of="nodes")
 
     class Special(Node, namespace=namespace, inheritance=AbstractSubtype):
-        """The abstract middle a narrowed view resolves through."""
-
         rank: Attr[int | None] = attr(type=Int32)
 
     class Alpha(Special, namespace=namespace, inheritance=ConcreteSubtype(tag_value="alpha")):
-        """The concrete reached both broadly and through the narrowed view, which
-        is what gives the batch its duplicate projections."""
+        pass
 
     class Beta(Node, namespace=namespace, inheritance=ConcreteSubtype(tag_value="beta")):
-        """The family's other concrete, reached broadly alone."""
-
         weight: Attr[float | None]
 
     class Owner(
@@ -249,9 +221,6 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         namespace=namespace,
         layout=placement,
     ):
-        """The root of every batch, carrying the three view slots: a broad
-        to-many, a narrowed to-many, and a to-one into the same family."""
-
         id: Attr[int] = attr(primary_key=True)
         name: Attr[str | None] = attr(max_length=32)
         favorite_id: Attr[int | None]
@@ -268,7 +237,10 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
 @cache
 def workload(layout: Layout) -> DomainModel:
     """The representative Domain Model under ``layout``."""
-    return DomainModel(*_entity_classes(layout))
+    fixture = _WORKLOADS[layout]
+    realized = DomainModel(*_entity_classes(layout))
+    fixture.validate_class_backed(realized)
+    return realized
 
 
 @cache
@@ -277,22 +249,11 @@ def metamodel(layout: Layout) -> Metamodel:
     return model_of(workload(layout))
 
 
-def query(model: Metamodel) -> ValidatedObjectQuery:
+def query(layout: Layout, model: Metamodel) -> ValidatedObjectQuery:
     """The read every batch runs: three includes off the root and one
     back-reference revisiting it."""
     return preflight(
-        deserialize_query(
-            {
-                "target": "Owner",
-                "predicate": {"all": {}},
-                "includes": [
-                    {"segments": [{"rel": "Owner.nodes"}]},
-                    {"segments": [{"rel": "Owner.special", "narrowTo": ["Alpha"]}]},
-                    {"segments": [{"rel": "Owner.favorite"}]},
-                    {"segments": [{"rel": "Owner.nodes"}, {"rel": "Node.owner"}]},
-                ],
-            }
-        ),
+        _WORKLOADS[layout].query,
         model=model,
         form="graph",
     )
@@ -306,7 +267,7 @@ def fetch_plan(validated: ValidatedObjectQuery, model: Metamodel) -> deep_fetch.
 
 
 def compiled_levels(
-    plan: deep_fetch.ObjectQueryPlan, model: Metamodel
+    layout: Layout, plan: deep_fetch.ObjectQueryPlan, model: Metamodel
 ) -> tuple[CompiledRead | None, ...]:
     """One compiled read per source level: the root at 0, plan level ``i`` at
     ``i + 1``, and absence for the back-reference level, which issues no statement.
@@ -323,7 +284,7 @@ def compiled_levels(
             continue
         reads.append(
             compile_read(
-                level.query_for(_level_keys(level.attach_key)),
+                level.query_for(_level_keys(layout, level.attach_key)),
                 model,
                 POSTGRES,
                 result_form="instance",
@@ -334,7 +295,7 @@ def compiled_levels(
 
 def prepared_levels(
     model: CatalogedModel, reads: Sequence[CompiledRead | None]
-) -> tuple[PreparedRead[MaterializedReadRow] | None, ...]:
+) -> tuple[PreparedRead | None, ...]:
     """One prepared read per compiled one, indexed as :func:`compiled_levels`
     indexes its reads.
 
@@ -353,112 +314,94 @@ def prepared_levels(
 
 @dataclass(frozen=True, slots=True)
 class _RowSpec:
-    """One stored row: the concrete Entity it resolves to, the join values it
-    carries, and the seed every other member's value is derived from."""
+    """One fixture-authored logical row and the concrete Entity it resolves to."""
 
     entity: str
-    joins: Mapping[str, object]
-    seed: int
+    values: Mapping[str, object]
 
 
-def _owner_id(index: int) -> int:
-    return 1_000 + index
+def _row_spec(entity: str, row: Mapping[str, object]) -> _RowSpec:
+    return _RowSpec(entity.rsplit(".", 1)[-1], row)
 
 
-def _node_id(index: int, offset: int) -> int:
-    return 10_000 + index * 10 + offset
-
-
-def _node_spec(index: int, offset: int) -> _RowSpec:
-    node = _node_id(index, offset)
-    return _RowSpec(
-        entity="Alpha" if offset < DUPLICATES else "Beta",
-        joins={"id": node, "ownerId": _owner_id(index)},
-        seed=node,
-    )
-
-
-def _specs(attach_key: str, owners: int, first: int) -> tuple[_RowSpec, ...]:
-    indices = range(first, first + owners)
-    if attach_key == _ROOT:
-        return tuple(
-            _RowSpec(
-                entity="Owner",
-                joins={"id": _owner_id(index), "favoriteId": _node_id(index, 0)},
-                seed=_owner_id(index),
-            )
-            for index in indices
+def _specs(layout: Layout, attach_key: str, owners: int, first: int) -> tuple[_RowSpec, ...]:
+    scripted = _WORKLOADS[layout].rows(first + owners)
+    owner_rows = scripted.entity("snapshot.materialization.Owner")[first:]
+    owner_ids = {row["id"] for row in owner_rows}
+    favorite_ids = {row["favoriteId"] for row in owner_rows}
+    alpha = scripted.entity("snapshot.materialization.Alpha")
+    beta = scripted.entity("snapshot.materialization.Beta")
+    nodes = tuple(
+        sorted(
+            (row for row in (*alpha, *beta) if row["ownerId"] in owner_ids),
+            key=lambda row: cast("int", row["id"]),
         )
-    if attach_key == _NODES:
-        return tuple(_node_spec(index, offset) for index in indices for offset in range(FANOUT))
-    if attach_key == _NARROWED:
-        return tuple(_node_spec(index, offset) for index in indices for offset in range(DUPLICATES))
-    if attach_key == _FAVORITE:
-        return tuple(_node_spec(index, 0) for index in indices)
-    return ()
+    )
+    if attach_key == _ROOT:
+        selected = (("snapshot.materialization.Owner", row) for row in owner_rows)
+    elif attach_key == _NODES:
+        selected = (
+            (
+                "snapshot.materialization.Alpha"
+                if row in alpha
+                else "snapshot.materialization.Beta",
+                row,
+            )
+            for row in nodes
+        )
+    elif attach_key == _NARROWED:
+        selected = (
+            ("snapshot.materialization.Alpha", row) for row in alpha if row["ownerId"] in owner_ids
+        )
+    elif attach_key == _FAVORITE:
+        selected = (
+            (
+                "snapshot.materialization.Alpha"
+                if row in alpha
+                else "snapshot.materialization.Beta",
+                row,
+            )
+            for row in nodes
+            if row["id"] in favorite_ids
+        )
+    else:
+        return ()
+    return tuple(_row_spec(entity, row) for entity, row in selected)
 
 
-def _level_keys(attach_key: str) -> list[object]:
+def _level_keys(layout: Layout, attach_key: str) -> list[object]:
     """The distinct parent keys a level's statement binds, as the fixture fixes
     them — what the batch's own ``_gather_keys`` answers.
 
     Always the whole fixture's keys, whatever a caller then converts: a statement
     is compiled once and its binds are not what a row materializes under."""
-    if attach_key == _FAVORITE:
-        return [_node_id(index, 0) for index in range(OWNERS)]
-    return [_owner_id(index) for index in range(OWNERS)]
+    rows = _WORKLOADS[layout].rows(OWNERS).entity("snapshot.materialization.Owner")
+    key = "favoriteId" if attach_key == _FAVORITE else "id"
+    return [row[key] for row in rows]
 
 
-def _managed(neutral_type: NeutralType, seed: int) -> object:
-    """One conforming value of ``neutral_type``, fixed by ``seed``."""
-    match neutral_type:
-        case Boolean():
-            return seed % 2 == 0
-        case Int32():
-            return seed % 2_000
-        case Int64():
-            return seed * 7
-        case Float32():
-            return float(seed % 64) + 0.5
-        case Float64():
-            return float(seed % 1_024) + 0.25
-        case String():
-            return f"text-{seed}"
-        case Decimal(precision=precision, scale=scale):
-            whole = seed % 10 ** (precision - scale)
-            fraction = f"{seed % 10**scale:0{scale}d}" if scale else ""
-            return PyDecimal(f"{whole}.{fraction}" if scale else f"{whole}")
-        case Bytes():
-            return bytes((seed % 251, (seed * 3) % 251, 7))
-        case Date():
-            return _EPOCH + dt.timedelta(days=seed % 900)
-        case Time():
-            return dt.time(seed % 24, seed % 60, (seed * 7) % 60)
-        case Timestamp():
-            return _INSTANT + dt.timedelta(seconds=seed % 86_400)
-        case Uuid():
-            return uuid.UUID(int=seed)
-        case Json():
-            return {"seed": seed}
-
-
-def _document(shape: DocumentShape, seed: int) -> dict[str, DocumentValue]:
-    """One conforming document of ``shape``, every leaf in its canonical spelling."""
-    document: dict[str, DocumentValue] = {}
-    for position, member in enumerate(shape.members):
-        match member:
-            case Leaf(name=name, type=neutral_type):
-                document[name] = cast(
-                    "DocumentValue",
-                    encode_leaf(neutral_type, _managed(neutral_type, seed + position)),
-                )
-            case Occurrence(name=name, multiplicity=multiplicity, shape=nested):
-                document[name] = (
-                    [_document(nested, seed + position + element) for element in range(NESTED)]
-                    if multiplicity is Multiplicity.MANY
-                    else _document(nested, seed + position)
-                )
-    return document
+def _occurrence_value(
+    shape: DocumentShape, multiplicity: Multiplicity, raw: object
+) -> DocumentValue:
+    if multiplicity is Multiplicity.MANY:
+        if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
+            return cast("DocumentValue", raw)
+        source = cast("Sequence[object]", raw)
+        return cast(
+            "DocumentValue",
+            [
+                fixture_document(shape, cast("Mapping[str, object]", element))
+                if isinstance(element, Mapping)
+                else element
+                for element in source
+            ],
+        )
+    return cast(
+        "DocumentValue",
+        fixture_document(shape, cast("Mapping[str, object]", raw))
+        if isinstance(raw, Mapping)
+        else raw,
+    )
 
 
 def _driver_row(
@@ -474,43 +417,64 @@ def _driver_row(
     }
     projected = frozenset(member.storage.name for member in compiled.projected_documents)
     row: dict[str, object] = {}
-    document: dict[str, DocumentValue] = {}
+    document_attributes = tuple(
+        member
+        for member in layout.attributes
+        if isinstance(table.placement(member.identity), DocumentPath)
+    )
+    document_occurrences = tuple(
+        member
+        for member in layout.occurrences
+        if isinstance(table.placement(member.identity), DocumentPath)
+    )
+    document = cast(
+        "dict[str, DocumentValue]",
+        fixture_document(
+            entity_shape(document_attributes, document_occurrences),
+            spec.values,
+            preserve_unknown=False,
+        ),
+    )
     for attribute in layout.attributes:
-        contract = contracts[attribute.identity]
-        scalar = spec.joins.get(
-            attribute.identity.name, _managed(attribute.type, spec.seed + len(row))
-        )
-        if isinstance(table.placement(attribute.identity), DirectColumn):
-            row[contract.result_key] = (
-                encode_leaf(attribute.type, scalar) if contract.encoded else scalar
-            )
-        else:
-            document[attribute.identity.name] = cast(
-                "DocumentValue", encode_leaf(attribute.type, scalar)
-            )
-    for occurrence in layout.occurrences:
-        if occurrence.storage.name not in projected:
+        if not isinstance(table.placement(attribute.identity), DirectColumn):
             continue
-        shape = occurrence_shape(occurrence)
-        occurrence_value: DocumentValue = (
-            [_document(shape, spec.seed + element) for element in range(NESTED)]
-            if occurrence.multiplicity is Multiplicity.MANY
-            else _document(shape, spec.seed)
+        contract = contracts[attribute.identity]
+        raw = spec.values.get(attribute.identity.name)
+        scalar = (
+            fixture_literal(attribute.type, raw)
+            if attribute.identity.name in spec.values and raw is not None
+            else None
         )
-        if isinstance(table.placement(occurrence.identity), DirectColumn):
-            row[occurrence.storage.name] = PresentDocument(occurrence_value)
-        else:
-            document[occurrence.identity.path[-1]] = occurrence_value
+        row[contract.result_key] = (
+            encode_leaf(attribute.type, scalar)
+            if contract.encoded and scalar is not None
+            else scalar
+        )
+    for occurrence in layout.occurrences:
+        if occurrence.storage.name not in projected or not isinstance(
+            table.placement(occurrence.identity), DirectColumn
+        ):
+            continue
+        name = occurrence.identity.path[-1]
+        raw = spec.values.get(name)
+        row[occurrence.storage.name] = (
+            PresentDocument(
+                _occurrence_value(occurrence_shape(occurrence), occurrence.multiplicity, raw)
+            )
+            if name in spec.values and raw is not None
+            else SQL_NULL
+        )
     discriminator = _discriminator(meta, entity)
     if discriminator is not None and len(compiled.resolved_position) > 1:
         row[discriminator[0]] = discriminator[1]
     column = compiled.structured_column
     if column is not None:
         row[column] = PresentDocument(document)
-    return row
+    return tuple(row.get(result_key) for result_key in compiled.result_keys)
 
 
 def driver_rows(
+    layout: Layout,
     model: CatalogedModel,
     compiled: CompiledRead,
     attach_key: str,
@@ -520,24 +484,18 @@ def driver_rows(
     """Every row one level's statement returns for ``owners`` root objects
     beginning at ``first``, keyed by that statement's own result keys.
 
-    ``first`` moves the whole tree's keys and every value seeded from them, so
-    two ranges that do not overlap share no key, no composed row, and no value of
-    a Neutral Type whose domain the earlier range did not cover. ``Boolean`` is
-    the one type it does cover: :func:`_managed` answers it from ``seed % 2``, and
-    every range carries both parities. The other modular domains are SAMPLED
-    rather than exhausted — a range's seeds are scattered rather than contiguous,
-    so a further range still carries ``Float32`` and ``Time`` values the earlier
-    one did not. That is what lets a caller hand a warmed process rows it has
-    never decoded, and what bounds the claim to rows rather than to every value in
-    one."""
+    Values come only from ``layout``'s catalog row descriptors. ``first`` moves
+    the generated fixture's whole key range, so non-overlapping ranges share no
+    key or composed row."""
     meta = model.meta
     return [
         _driver_row(model, compiled, _identity(meta, spec.entity), spec)
-        for spec in _specs(attach_key, owners, first)
+        for spec in _specs(layout, attach_key, owners, first)
     ]
 
 
 def rows_per_level(
+    layout: Layout,
     model: CatalogedModel,
     plan: deep_fetch.ObjectQueryPlan,
     reads: Sequence[CompiledRead | None],
@@ -547,13 +505,13 @@ def rows_per_level(
     """Every level's rows, indexed as :func:`compiled_levels` indexes its reads."""
     root = reads[0]
     assert root is not None
-    rows: list[tuple[Row, ...]] = [tuple(driver_rows(model, root, _ROOT, owners, first))]
+    rows: list[tuple[Row, ...]] = [tuple(driver_rows(layout, model, root, _ROOT, owners, first))]
     for index, level in enumerate(plan.levels):
         compiled = reads[index + 1]
         rows.append(
             ()
             if compiled is None
-            else tuple(driver_rows(model, compiled, level.attach_key, owners, first))
+            else tuple(driver_rows(layout, model, compiled, level.attach_key, owners, first))
         )
     return tuple(rows)
 
@@ -562,29 +520,28 @@ def rows_per_level(
 # The batch: the shipped per-level loop, with compilation lifted out of it.    #
 # --------------------------------------------------------------------------- #
 
-_slot_table = _read._slot_table  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_convert_rows = _read._convert_rows  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_parent_refs = _read._parent_refs  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_guarded_parents = _read._guarded_parents  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_gather_keys = _read._gather_keys  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_correlation_member = _read._correlation_member  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_children = _read._attach_children  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_empty = _read._attach_empty  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
-_attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_slot_table = _read.slot_table
+_convert_rows = _read.convert_rows
+_parent_refs = _read.parent_refs
+_guarded_parents = _read.guarded_parents
+_gather_keys = _read.gather_keys
+_correlation_member = _read.correlation_member
+_attach_children = _read.attach_children
+_attach_empty = _read.attach_empty
+_attach_back_reference = _read.attach_back_reference
 
 
 def batch(
     model: CatalogedModel,
     plan: deep_fetch.ObjectQueryPlan,
-    prepared: Sequence[PreparedRead[MaterializedReadRow] | None],
+    prepared: Sequence[PreparedRead | None],
     rows: Sequence[Sequence[Row]],
-) -> SnapshotGraph:
-    """One whole graph, built the way ``build_graph`` builds one.
+) -> Page:
+    """One whole Page, built through the shipped raw-row conversion loop.
 
-    The root statement's rows are materialized WHOLE before the loop opens and
-    held until it closes, as ``read_roots`` materializes them and as the read it
-    answers holds them; a level below the root converts straight out of its own
-    lazy materialization and holds one row at a time.
+    The root statement's provider rows are held as one returned batch. A level
+    below the root converts straight out of its own lazy result and holds one row
+    at a time.
 
     Each level's gathered keys decide its branch and stay live across the
     conversion beneath them, which is the compiled child query holding them in
@@ -595,8 +552,8 @@ def batch(
     meta = model.meta
     root = prepared[0]
     assert root is not None
-    root_rows = tuple(map(root.materialize, rows[0]))
-    builder = GraphBuilder(ViewSchema(_slot_table(plan)))
+    root_rows = tuple(rows[0])
+    builder = PageBuilder(ViewSchema(_slot_table(plan)))
     observations = ObservedRows()
     root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
     level_refs: list[tuple[int, ...]] = []
@@ -619,12 +576,12 @@ def batch(
             builder,
             index + 1,
             level_read,
-            map(level_read.materialize, rows[index + 1]),
+            rows[index + 1],
             observations,
         )
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
-    return builder.seal(root_refs, _PIN)
+    return builder.finish(root_refs, _PIN)
 
 
 # --------------------------------------------------------------------------- #
@@ -691,15 +648,9 @@ DECLARABLE_TYPES: Final = frozenset(
 absent: no Python annotation denotes it, so a class-backed model declares none."""
 
 
-def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, graph: SnapshotGraph) -> None:
-    """That the batch measured is the one described: the stated shape, every
-    member position filled from the stored row, and no stored-data issue anywhere.
-
-    A row whose keys did not match what the statement projected would leave
-    ``ABSENT`` positions or raise an issue, so this is also what holds the
-    synthesized fixture to the compiled projection.
-    """
-    rows = graph_rows(graph)
+def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, page: Page) -> None:
+    """That the fixture-authored batch has the stated shape and no data issues."""
+    rows = page_rows(page)
     assert len(rows.layouts) == PROJECTIONS_PER_BATCH, len(rows.layouts)
     assert len(rows.roots) == OWNERS, len(rows.roots)
     assert len(plan.levels) == 4, len(plan.levels)

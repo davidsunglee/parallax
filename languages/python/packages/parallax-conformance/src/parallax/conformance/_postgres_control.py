@@ -60,6 +60,7 @@ if TYPE_CHECKING:
         ConnectionContext,
         DocumentReadOrdinals,
         IsolationLevel,
+        PipelineStatement,
         PoolMetricsSource,
         Row,
         TransactionOutcome,
@@ -178,6 +179,9 @@ class PostgresControl:
     ) -> list[Row]:
         return self._execution.execute(sql, binds, document_reads)
 
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return self._execution.execute_pipeline(statements)
+
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._execution.execute_write(sql, binds)
 
@@ -192,7 +196,7 @@ class PostgresControl:
     def terminate_session(self, target: DatabaseConnection) -> None:
         """End ``target``'s session by asking the server, not its transport."""
         (row,) = target.execute(_BACKEND_PID, [])
-        self.execute(_TERMINATE_BACKEND, [row["pid"]])
+        self.execute(_TERMINATE_BACKEND, [row[0]])
 
     def close(self) -> None:
         """Release this session, and report the release to whoever tracks it.

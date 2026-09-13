@@ -1,40 +1,40 @@
-"""``parallax.snapshot.handle._materializer`` — a sealed Snapshot graph into frozen nodes.
+"""Typed publication of one Root View into frozen Entity nodes.
 
 Private handle implementation, never re-exported: ``_read`` is its only caller,
-and the frozen graphs it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
+and the frozen value trees it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
 roots.
 
-It owns nothing about row layout, identity, merging, or root classification —
+It owns nothing about row layout, root-local identity, view union, or root classification —
 :mod:`parallax.snapshot.materialize` settles all four before this module runs —
 and nothing about Pydantic, cycle
 closure, or the private lifecycle slot, which
 :class:`~parallax.core.entity.EntityGraphConstruction` owns. What is left is the
-thin translation between them: merge state in, ``allocate`` / ``populate`` calls
+thin translation between them: Root View state in, ``allocate`` / ``populate`` calls
 out, and one :class:`~parallax.snapshot._inspection.SnapshotNodeState` per node
 built in the state factory, where every handle resolves to its final instance.
 Building the state there is what closes a cyclic narrowed view without exposing a
 partial object.
 
-Construction covers the classified scope rather than the whole merge: a node no
+Construction covers the classified scope rather than the whole Root View: a node no
 publishable root reaches is never allocated, so atomic publication keeps meaning
 *everything constructible publishes together, or nothing does*. Each root then
 leaves here as itself or as its :class:`~parallax.snapshot.materialize.InvalidData`
 record — the classification decided which; this module only fills a hydrated
 root's ``data``.
 
-A merged view's shape carries its own arm: a tuple is loaded-many (empty included),
+A unioned view's shape carries its own arm: a tuple is loaded-many (empty included),
 ``None`` is loaded-null, and a lone allocation index is loaded-one. A slot reading
 ``ABSENT`` names nothing, so its relationship position keeps the unloaded
 sentinel — which is what makes the closed world structural rather than a
 convention this module has to restate.
 
 The writer takes two positional rows, and only one of them is built here. A
-node's member row crosses ``populate`` **by reference**: the merge already laid
+node's member row crosses ``populate`` **by reference**: the Root View already laid
 it out against that node's exact Entity member layout, which is the same layout
 the writer reads it against, so no node pays a copy and nothing translates. The
 broad-relationship row is built here, one position per direction in the layout's
 canonical order, and dies with the ``populate`` call it is handed to. Nothing
-here is retained by Snapshot or the merge.
+here is retained by Snapshot or the Root View.
 
 Hashability is conditional, exactly per spec §3: nothing here makes a node hashable
 or guards against one — a back-reference closing a cycle makes the derived hash
@@ -65,84 +65,80 @@ from parallax.core.metamodel import (
 from parallax.core.temporal_read import Edge, milestone_edge_of
 from parallax.core.unit_work import SourceHint
 from parallax.snapshot._inspection import SnapshotNodeState
-from parallax.snapshot.materialize import (
+from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
-    GraphClassification,
-    GraphMerge,
-    InvalidData,
-    SnapshotGraph,
+    RootClassifications,
     classify_roots,
-    merge_graph_input,
 )
-from parallax.snapshot.materialize._graph import ABSENT
+from parallax.snapshot.materialize._invalid import InvalidData
+from parallax.snapshot.materialize._page import ABSENT
+from parallax.snapshot.materialize._root import RootView
 
-__all__ = ["materialize_graph"]
+__all__ = ["typed_root"]
 
 
-def materialize_graph(
-    graph: SnapshotGraph,
+def typed_root(
+    root: RootView,
     model: Metamodel,
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
     sources: Mapping[int, SourceHint] = MappingProxyType({}),
 ) -> tuple[object | InvalidData[object], ...]:
-    """Merge ``graph``, classify its roots, and construct the ones that hydrate.
+    """Classify ``root`` and construct the nodes that hydrate.
 
     Every constructible node is allocated before any is populated, so a cycle
     closes on an object that already exists, and everything constructible
     publishes at once or not at all.
 
-    ``ordinal_offset`` is where this graph's roots start in the ordered result the
-    caller publishes, which is nonzero only where one Snapshot spans several
-    graphs. ``sources`` is the Source Hint the executor retained per projection,
+    ``ordinal_offset`` is where this Root View's roots start in the ordered result
+    the caller publishes, including a later root or streamed Page. ``sources`` is
+    the Source Hint the executor retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """
-    merge = merge_graph_input(graph)
     return _Materialization(
-        merge,
+        root,
         model,
-        classify_roots(merge, model, ordinal_offset=ordinal_offset),
-        merge.by_allocation(sources),
+        classify_roots(root, model, ordinal_offset=ordinal_offset),
+        root.by_allocation(sources),
     ).run(construction)
 
 
 class _Materialization:
-    """One graph's construction drive: the merge, its classification, and the two
+    """One root's construction drive: the Root View, its classification, and the two
     callbacks over them.
 
     Between the two callbacks it retains the allocation handles and nothing else.
-    A node's own broad-relationship row is built from the merge at the callback
-    that needs it and dies with it, and its member row is the merge's own, so no
-    payload is accumulated into a second graph-sized structure beside the sealed
-    graph and the merge itself.
+    A node's own broad-relationship row is built from the Root View at the
+    callback that needs it and dies with it, and its member row is Page-owned, so
+    no payload is accumulated into a second Page-sized structure.
     """
 
     __slots__ = (
         "_classification",
         "_handles",
-        "_merge",
         "_model",
         "_pending",
+        "_root",
         "_scope",
         "_sources",
     )
 
     def __init__(
         self,
-        merge: GraphMerge,
+        root: RootView,
         model: Metamodel,
-        classification: GraphClassification,
+        classification: RootClassifications,
         sources: Mapping[int, SourceHint],
     ) -> None:
-        self._merge = merge
+        self._root = root
         self._model = model
         self._classification = classification
         self._sources = sources
         self._scope = tuple(
-            index for index in range(len(merge.order)) if index not in classification.excluded
+            index for index in range(len(root.order)) if index not in classification.excluded
         )
         self._handles: dict[int, NodeHandle] = {}
         self._pending = iter(self._scope)
@@ -153,12 +149,12 @@ class _Materialization:
         return self._published(construction.construct(self.build, state_factory=self.state))
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = self._merge.order
+        order = self._root.order
         self._handles = {index: writer.allocate(order[index]) for index in self._scope}
         for index in self._scope:
             writer.populate(
                 self._handles[index],
-                self._merge.member_values(index),
+                self._root.member_values(index),
                 self._broad_arms(index),
             )
         return tuple(
@@ -174,7 +170,7 @@ class _Materialization:
         reading ``ABSENT`` names nothing, so its position keeps the unloaded
         sentinel the row starts every position at.
 
-        Positions come from the same member layout the merge laid the node out
+        Positions come from the same member layout the Root View laid the node out
         against, so the row is the model's own width by construction. A view
         schema may still lay out a slot for a direction this concrete does not
         declare — an unguarded level attaches its slot to every concrete it can
@@ -187,10 +183,10 @@ class _Materialization:
         Entities may declare one local name, and matching on the name alone would
         write a foreign direction's arm at the declared one's position.
         """
-        layout = self._merge.layout(index)
+        layout = self._root.layout(index)
         row: list[object] = [UNLOADED] * len(layout.relationships)
-        for slot, key in enumerate(self._merge.view_layout(index).slots):
-            if key.narrowed_view is not None or (value := self._merge.view(index, slot)) is ABSENT:
+        for slot, key in enumerate(self._root.view_layout(index).slots):
+            if key.narrowed_view is not None or (value := self._root.view(index, slot)) is ABSENT:
                 continue
             position = layout.relationship_index.get(key.relationship)
             if position is None:
@@ -227,14 +223,14 @@ class _Materialization:
         index = next(self._pending)
         edge = self._edge(index)
         return SnapshotNodeState(
-            entity=self._merge.layout(index).concrete,
+            entity=self._root.layout(index).concrete,
             views={
                 key.narrowed_view: self._resolved(view, value)
-                for slot, key in enumerate(self._merge.view_layout(index).slots)
+                for slot, key in enumerate(self._root.view_layout(index).slots)
                 if key.narrowed_view is not None
-                and (value := self._merge.view(index, slot)) is not ABSENT
+                and (value := self._root.view(index, slot)) is not ABSENT
             },
-            pin=self._merge.pin if edge is not None else None,
+            pin=self._root.pin if edge is not None else None,
             edge=edge,
             source=self._sources.get(index),
         )
@@ -262,11 +258,11 @@ class _Materialization:
         interval members are read at the root's own Attribute Identities — the
         identities an inherited member reaches every concrete descendant under.
         """
-        layout = self._merge.layout(index)
+        layout = self._root.layout(index)
         declaring = _declaring(self._model, layout.concrete)
         if declaring is None or not declaring.declared_as_of_axes:
             return None
-        values = self._merge.member_values(index)
+        values = self._root.member_values(index)
         return milestone_edge_of(
             declaring,
             {
@@ -315,9 +311,9 @@ def _by_arm[T](
     one: Callable[[int], T],
     many: Callable[[tuple[int, ...]], T],
 ) -> T:
-    """Dispatch on a merged view's arm — the one place its shape is read.
+    """Dispatch on a unioned view's arm — the one place its shape is read.
 
-    A merged view carries its arm in its shape (`_merge`): a tuple is
+    A Root View carries its arm in its shape: a tuple is
     loaded-many, ``None`` is loaded-null, and a lone allocation index is
     loaded-one. Every consumer of an arm goes through here, so adding an arm is
     one cascade to change rather than one per consumer.

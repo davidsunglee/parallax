@@ -33,7 +33,7 @@ predicate write also runs
 extraction a resolved row's Predecessor Row shares with a real find's),
 and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
-:func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
+:func:`~parallax.snapshot.handle._read.publishable_rows` — the resolving
 read brackets its Database Call through the package's one read-call seam, then
 passes its materialized rows through the shared publication gate before this
 lane derives observations or writes.
@@ -47,11 +47,11 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core.db_port import DatabaseConnection, Row
+from parallax.core.db_port import DatabaseConnection, MappingRow
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
     DocumentShape,
@@ -79,6 +79,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ChunkedColumnBuilder,
+    EntityStateRow,
     MaterializedWriteGroup,
     ObjectKey,
     ObservedStateKey,
@@ -117,14 +118,16 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
+from parallax.snapshot.handle._materialization import Materializer, RowPublication
 from parallax.snapshot.handle._read import (
-    StagedRows,
     entity_read_lock,
     execute_read,
-    stage_publishable_rows,
+    publishable_rows,
 )
 from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import reject_temporal_delete, validate_window
+from parallax.snapshot.materialize import RootView
+from parallax.snapshot.materialize._page import ABSENT
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -538,7 +541,7 @@ def _materialize_predicate_write(
     # target's Predecessor Row retains it (`m-unit-work`) — which is what lets a
     # successor be patched from the document the row actually held — without a
     # second extraction that could disagree with the first.
-    def resolve() -> tuple[CompiledRead, StagedRows]:
+    def resolve() -> tuple[CompiledRead, RowPublication]:
         with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
@@ -556,21 +559,37 @@ def _materialize_predicate_write(
                 result_form="row",
                 lock=lock,
             )
-            driver_rows = execute_read(conn, compiled, read)
-            return compiled, stage_publishable_rows(model, compiled, driver_rows, pin=Pin())
+            return compiled, publishable_rows(
+                model,
+                compiled,
+                lambda: execute_read(conn, compiled, read),
+                pin=Pin(),
+            )
 
     compiled, stage = uow.read(resolve)
     structured_column = compiled.structured_column
-    resolved = stage.rows
+    resolved = stage.documents
     if not resolved:
         return
-    rows = [stage.prepared.observable_columns(materialized) for materialized in resolved]
+
+    def state_row(root: RootView, _position: int) -> Iterator[EntityStateRow]:
+        (node,) = root.roots
+        if node is not None:
+            yield EntityStateRow.over_members(
+                root.layout(node), root.member_values(node), absent=ABSENT
+            )
+
+    rows = list(Materializer().roots(stage.page, state_row))
+    if len(rows) != len(
+        resolved
+    ):  # pragma: no cover - publishable staging has one valid root per row
+        raise ValueError("predicate-write staging requires one Entity State per resolved row")
     pk_attrs = family_primary_key(meta, entity)
     key_attributes = tuple(attr.identity.name for attr in pk_attrs)
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
     matched = 0
 
-    def append_key(row: Row) -> None:
+    def append_key(row: MappingRow) -> None:
         for builder, value in zip(
             key_builders, _key_column_values(pk_attrs, layout, row), strict=True
         ):
@@ -579,7 +598,7 @@ def _materialize_predicate_write(
     declaring_entity = declaring(meta, entity)
     selected: list[ObservedStateKey] = []
 
-    def select_state(row: Row, observation: WriteObservation) -> None:
+    def select_state(row: MappingRow, observation: WriteObservation) -> None:
         keys = zip(key_attributes, _key_column_values(pk_attrs, layout, row), strict=True)
         object_key = ObjectKey(entity.identity, tuple(keys))
         selected.append(observed_state_key(object_key, observation, declaring_entity))
@@ -614,7 +633,7 @@ def _materialize_predicate_write(
     attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for materialized, row in zip(resolved, rows, strict=True):
+    for document, row in zip(resolved, rows, strict=True):
         if assignment_bearing and _is_no_op_assignment(
             shape, member_columns, comparison_assignments, row
         ):
@@ -626,7 +645,7 @@ def _materialize_predicate_write(
         for name in value_object_names:
             value_object_builders[name].append(payload[name])
         if structured_column is not None:
-            document_builder.append(materialized.document)
+            document_builder.append(document)
         select_state(row, TemporalObservation(predecessor=PredecessorRow(payload)))
         matched += 1
     if matched == 0:
@@ -696,7 +715,7 @@ def _is_no_op_assignment(
     shape: DocumentShape,
     member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
-    row: Row,
+    row: MappingRow,
 ) -> bool:
     """Whether ``row`` is one an assignment-bearing verb would leave unchanged
     (`m-opt-lock` per-row no-op elimination): the effective change set of these
@@ -727,7 +746,7 @@ def _is_no_op_assignment(
 
 
 def _key_column_values(
-    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: Row
+    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: MappingRow
 ) -> tuple[object, ...]:
     """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
     order — a Materialized Write Group's own per-row key-column contribution.
@@ -736,7 +755,7 @@ def _key_column_values(
 
 
 def _predecessor_payload(
-    member_columns: Mapping[str, tuple[str, bool]], row: Row
+    member_columns: Mapping[str, tuple[str, bool]], row: MappingRow
 ) -> dict[str, object]:
     """One resolved row's COMPLETE Predecessor Row payload — every applicable
     member, value-object documents included.

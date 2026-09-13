@@ -22,8 +22,8 @@ then:
     - sql:
         postgres: select t0.id, t0.name from tenant t0
     - sql:
-        postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where t0.tenant_id in (?) and t0.out_z = ?
-      binds: [1, infinity]
+        postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where t0.tenant_id = any(?) and t0.out_z = ?
+      binds: [[1], infinity]
   referenceSql: select id, name from tenant
   graph:
     Tenant:

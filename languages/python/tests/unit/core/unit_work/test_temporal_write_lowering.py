@@ -33,7 +33,7 @@ import pytest
 
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.db_port import JsonDocument, Row
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -135,7 +135,7 @@ def _observed(
 
     Every corpus model spells its axis bounds `txStart`/`txEnd` and, when it
     declares Valid Time, `validStart`/`validEnd`, so one builder serves them
-    all: the bounds join ``payload`` inside the one Predecessor Row, which is
+    all: the bounds join ``payload`` inside the one Predecessor MappingRow, which is
     where a close reads its address and its gate from.
     """
     members: dict[str, object] = dict(payload or {})
@@ -797,7 +797,7 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
 # for an open bound. They share nothing a close addresses or gates on — distinct
 # Valid-Time windows and distinct `in_z` — so every bind below names exactly one
 # of them.
-_CURRENT_RECTANGLE: Row = {
+_CURRENT_RECTANGLE: MappingRow = {
     "id": 1,
     "acct_num": "A",
     "value": Decimal("100.00"),
@@ -807,7 +807,7 @@ _CURRENT_RECTANGLE: Row = {
     "out_z": INFINITY_INSTANT,
 }
 
-_RETROACTIVE_RECTANGLE: Row = {
+_RETROACTIVE_RECTANGLE: MappingRow = {
     "id": 1,
     "acct_num": "A",
     "value": Decimal("50.00"),
@@ -1131,7 +1131,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     # The fan-out drops the Structured Column from a row's member columns, so a
     # temporal observation would lose it exactly where a successor needs it. `find`
     # hands it to the collector beside those columns instead, and the Predecessor
-    # Row retains it beside — never among — the members it was decoded from, so a
+    # MappingRow retains it beside — never among — the members it was decoded from, so a
     # key no member declares is still there when the successor is patched
     # (`m-unit-work`).
     model, entity = _accepted("SpotQuote", QUOTE)

@@ -1,9 +1,9 @@
-"""The wire materializer: one merged graph into a finite tree of frozen values.
+"""The wire materializer: one Root View into a finite tree of frozen values.
 
-A PEER of :mod:`parallax.snapshot.handle._materializer`, not a wrapper of it.
-Both consume the same :class:`~parallax.snapshot.materialize.GraphMerge` and the
+A peer of :mod:`parallax.snapshot.materialize._typed`, not a wrapper of it.
+Both consume the same :class:`~parallax.snapshot.materialize.RootView` and the
 same root classification; neither calls the other, and a typed read constructs
-nothing defined here. What differs is only what a merged node becomes: a frozen
+nothing defined here. What differs is only what a Root View node becomes: a frozen
 Entity instance there, and here the :class:`WireEntity` mapping a caller with no
 compiled Entity Class can still read.
 
@@ -20,7 +20,7 @@ holds — the whole of it, at every position where carried and held part — is 
 of it: the carrier is the reduced record that contract already produced, which is
 why the published node and the hydrated Entity value observe one document.
 
-**The include tree bounds the walk, not the identity graph.** A merged node keeps
+**The include tree bounds the walk, not Page identity.** A Root View node keeps
 every view any level loaded onto it, so following a node's own views would revisit
 an ancestor forever. The unwind instead descends an :class:`UnwindTree` — the
 requested Include Paths, realized as the views to follow — which strictly shrinks
@@ -29,7 +29,7 @@ That is what replaces a primary-key stub: the tree, not a cycle detector, is wha
 makes the value finite.
 
 Aliasing is preserved rather than copied: the unwind memoizes on
-``(node, subtree)``, so every position reaching one merged node under one subtree
+``(node, subtree)``, so every position reaching one Root View node under one subtree
 answers the identical frozen object. The cache lives for one materialization pass
 and dies with it, so its scope IS the materialization unit.
 """
@@ -57,9 +57,9 @@ from parallax.core.metamodel import (
 from parallax.core.unit_work import SourceHint
 from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
-from parallax.snapshot.materialize._graph import ABSENT, RelationshipViewKey
 from parallax.snapshot.materialize._invalid import InvalidData
-from parallax.snapshot.materialize._merge import GraphMerge
+from parallax.snapshot.materialize._page import ABSENT, RelationshipViewKey
+from parallax.snapshot.materialize._root import RootView
 
 __all__ = [
     "EMPTY_UNWIND",
@@ -325,8 +325,8 @@ class UnwindTree:
 
     Identity-compared on purpose: it is the second half of the unwind's memo key,
     and two positions in one tree are two positions however alike their subtrees
-    look. A node's children are keyed exactly as a merged node keys its views, so
-    following the tree and reading the merge need no translation between them.
+    look. A node's children are keyed exactly as a Root View node keys its views, so
+    following the tree and reading the Root View need no translation between them.
     """
 
     children: Mapping[RelationshipViewKey, UnwindTree]
@@ -338,14 +338,14 @@ members and no relationship at all."""
 
 
 def wire_roots(
-    merge: GraphMerge,
+    root_view: RootView,
     model: Metamodel,
     includes: UnwindTree = EMPTY_UNWIND,
     *,
     ordinal_offset: int = 0,
     sources: Mapping[int, SourceHint] = MappingProxyType({}),
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    """``merge``'s roots as Wire values, in result order.
+    """``root_view``'s roots as Wire values, in result order.
 
     Classification runs first and exactly once, so this materializer publishes
     the same verdicts the typed one does: a conforming root answers as itself, a
@@ -356,10 +356,11 @@ def wire_roots(
     ``sources`` is the Source Hint the read retained per allocation index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
-    license exactly the same writes.
+    license exactly the same writes. ``ordinal_offset`` is nonzero when this Root
+    View begins after earlier result positions, including later streamed Pages.
     """
-    classification = classify_roots(merge, model, ordinal_offset=ordinal_offset)
-    unwind = _Unwind(merge, model, sources)
+    classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
+    unwind = _Unwind(root_view, model, sources)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
@@ -374,17 +375,15 @@ class _Unwind:
     """One materialization pass's walk, and the memo it shares across roots.
 
     The memo is per pass rather than per root deliberately: two roots reaching
-    one merged node under one subtree share the merged node in the typed lane
+    one Root View node under one subtree share the same node in the typed lane
     too, and a value that refuses mutation through the instance is safely
     shared. It dies when the pass returns.
     """
 
-    __slots__ = ("_cache", "_merge", "_model", "_sources")
+    __slots__ = ("_cache", "_model", "_root", "_sources")
 
-    def __init__(
-        self, merge: GraphMerge, model: Metamodel, sources: Mapping[int, SourceHint]
-    ) -> None:
-        self._merge = merge
+    def __init__(self, root: RootView, model: Metamodel, sources: Mapping[int, SourceHint]) -> None:
+        self._root = root
         self._model = model
         self._sources = sources
         self._cache: dict[tuple[int, int], _WireEntityNode] = {}
@@ -395,7 +394,7 @@ class _Unwind:
         if cached is not None:
             return cached
         entity = self._build(index, subtree)
-        # Two positions reaching one merged node under one subtree answer the
+        # Two positions reaching one Root View node under one subtree answer the
         # identical object and therefore the identical claim, exactly as two
         # positions reaching one Entity instance do in the typed lane.
         object.__setattr__(entity, "_source", self._sources.get(index))
@@ -403,8 +402,8 @@ class _Unwind:
         return entity
 
     def _build(self, node: int, subtree: UnwindTree) -> _WireEntityNode:
-        layout = self._merge.layout(node)
-        values = self._merge.member_values(node)
+        layout = self._root.layout(node)
+        values = self._root.member_values(node)
         rendered: dict[str, WireValue] = {}
         for position, attribute in enumerate(layout.attributes):
             value = values[position]
@@ -421,9 +420,9 @@ class _Unwind:
                     occurrence.identity.path[-1],
                     _occurrence(value, occurrence, _STORED),
                 )
-        view_layout = self._merge.view_layout(node)
+        view_layout = self._root.view_layout(node)
         for view, child in subtree.children.items():
-            # A merged row is the union of the source rows its own concrete can
+            # A Root View row is the union of the source rows its own concrete can
             # carry, so a node whose concrete a path-root guard excluded from the
             # level attaching this view holds NO SLOT for it, and renders none.
             # The union's other unloaded state — a slot present and holding
@@ -435,7 +434,7 @@ class _Unwind:
             slot = view_layout.index_of.get(view)
             if slot is None:
                 continue
-            value = self._merge.view(node, slot)
+            value = self._root.view(node, slot)
             if value is ABSENT:  # pragma: no cover - see above: a slot this walk names is written
                 continue
             key = view.narrowed_view or view.relationship.name
@@ -443,9 +442,9 @@ class _Unwind:
         return _frozen_mapping(_WireEntityNode, rendered)
 
     def _related(self, value: object, subtree: UnwindTree) -> WireValue:
-        """One loaded view's arm resolved against the graph's own nodes.
+        """One loaded view's arm resolved against the Root View's own nodes.
 
-        The arm travels in the value's SHAPE (`_merge`): a tuple is loaded-many,
+        The arm travels in the value's SHAPE: a tuple is loaded-many,
         ``None`` is loaded-null, and a lone allocation index is loaded-one.
         """
         if isinstance(value, tuple):

@@ -149,7 +149,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     observed_state = engine.read_table_state(profile_run.port, model_of(meta))
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
     for table, expected_rows in expected_state.items():
-        compare_rows(observed_state[table], expected_rows)
+        compare_rows([dict(row) for row in observed_state[table]], expected_rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -916,9 +916,11 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(profile_run: Any) -> No
     assert [dog.name for dog in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
     bob_dogs = view(by_name["Fido"].owner, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
-    # The Cat reaches the SAME owner object the Dog does; the guard excludes only
-    # the WildBoar, whose whole branch of the path is therefore absent.
-    assert by_name["Whiskers"].owner is alice
+    # The Cat reaches the same owner state through its own Root View; root-local
+    # publication keeps that node distinct. The guard excludes only the WildBoar,
+    # whose whole branch of the path is therefore absent.
+    assert by_name["Whiskers"].owner is not alice
+    assert by_name["Whiskers"].owner == alice
     assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
     assert db.round_trips == [3]
 

@@ -4,9 +4,9 @@
 # The headline property is the one `expectRoundTrips` declares: a delivery costs
 # `ceil(N / B)` root statements and `ceil(N / B) * L` child statements — the
 # `1 + L` deep-fetch ceiling applied ONCE PER PAGE. What is declared here is that
-# count and the page statements behind it, not a delivery: like every fixture in
-# this directory this one carries golden SQL rather than an Object Query, so a run
-# executes these page statements as authored and reports how many it issued.
+# count and the page statements behind it, not a delivery: the fixture's Object
+# Query defines the target workload while the benchmark runner executes its
+# independent golden page statements as authored and reports how many it issued.
 # `roundTrips` beside this `expectRoundTrips` therefore keeps the arithmetic and
 # the statement list consistent with each other; what grades a target's own paged
 # read is `m-snapshot-read-027` and its sibling streamed-delivery cases.
@@ -36,6 +36,14 @@ dataset:
     rows: 200
     recipe: orders-tree
     fanout: 5
+objectQuery:
+  target: parallax.compatibility.Order
+  predicate: { all: {} }
+  includes:
+    - segments:
+        - rel: parallax.compatibility.Order.items
+delivery:
+  pageSizes: [1, 32, 128]
 workloads:
   - name: stream-page-5
     note: 20 roots at page size 5 — four pages each asking for six, one child level per page, and no terminal statement

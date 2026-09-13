@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/python/cost-report-envelope.schema.json",
+  "title": "Parallax Python Cost Report Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "subject",
+    "provenance",
+    "authority",
+    "readings",
+    "comparisons",
+    "incomplete",
+    "errors"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "subject": { "type": "string", "minLength": 1 },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "authority": { "enum": ["authoritative", "non-authoritative"] },
+    "readings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reading" }
+    },
+    "comparisons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/comparison" }
+    },
+    "incomplete": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "dirty",
+        "budgetContractDigest",
+        "workloadDigest",
+        "lockDigest",
+        "machine",
+        "cpu",
+        "cores",
+        "ramGiB",
+        "os",
+        "cpython",
+        "postgres",
+        "sampling"
+      ],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty": { "type": "boolean" },
+        "budgetContractDigest": { "$ref": "#/$defs/digest" },
+        "workloadDigest": { "$ref": "#/$defs/digest" },
+        "lockDigest": { "$ref": "#/$defs/digest" },
+        "machine": { "type": "string", "minLength": 1 },
+        "cpu": { "type": "string", "minLength": 1 },
+        "cores": { "type": "integer", "minimum": 1 },
+        "ramGiB": { "type": "integer", "minimum": 1 },
+        "os": { "type": "string", "minLength": 1 },
+        "cpython": { "type": "string", "minLength": 1 },
+        "postgres": { "type": "string", "minLength": 1 },
+        "sampling": { "type": "object" }
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload", "cell", "value", "unit", "samples"],
+      "properties": {
+        "workload": { "type": "string", "minLength": 1 },
+        "cell": { "type": "string", "minLength": 1 },
+        "value": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "samples": {
+          "type": "array",
+          "items": { "type": "number" }
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload", "cell", "operator", "limit", "unit", "outcome"],
+      "properties": {
+        "workload": { "type": "string", "minLength": 1 },
+        "cell": { "type": "string", "minLength": 1 },
+        "operator": { "enum": ["at-most", "at-least"] },
+        "limit": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
+        "outcome": { "enum": ["within", "outside", "unavailable"] }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

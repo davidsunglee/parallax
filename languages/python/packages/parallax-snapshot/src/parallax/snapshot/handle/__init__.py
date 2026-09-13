@@ -88,10 +88,10 @@ live:
   its own rules raise, and :class:`SnapshotStreamContinuationError`, which the
   stored data does. The loop that says where the delivery stands, and the
   per-root publication below it, live here.
-- :mod:`~parallax.snapshot.handle._page` — the page that loop is written
-  against: how many roots to ask for, which node asks for them, which of the
-  returned roots survive, and the coordinate the next one resumes from, settled
-  in one operation over the read executor's own two halves.
+- :mod:`~parallax.snapshot.handle._paging` — the pure policy that determines how
+  many roots a streamed Page asks for and which returned prefix survives.
+- :mod:`~parallax.snapshot.handle._materialization` — the shared Materializer
+  that executes and assembles eager, flat, and streamed Pages.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, :func:`entity_read_lock`, the composed
   per-Entity read-lock derivation every participating read resolves its own
@@ -105,7 +105,7 @@ live:
 The Wire result vocabulary — :class:`WireEntity`, the frozen Entity node every
 Wire read publishes, and :data:`WireValue`, the recursive plain-value shape its
 positions carry — is :mod:`parallax.snapshot.materialize`'s, built by the wire
-materializer beside the merge every materializer consumes, and re-exported here
+materializer from the Root View every materializer consumes, and re-exported here
 beside the views that answer it. The invalid-result vocabulary a classified root
 publishes — :class:`InvalidData`, :class:`StoredDataIssue`,
 :class:`InvalidDataError`, and :class:`~parallax.core.unit_work.ObjectKey`, the
@@ -199,6 +199,7 @@ from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.materialize import (
     InvalidData,
     InvalidDataError,
+    SnapshotConsistencyError,
     StoredDataIssue,
     WireEntity,
     WireValue,
@@ -226,6 +227,7 @@ __all__ = [
     "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotConsistencyError",
     "SnapshotMaterializationError",
     "SnapshotStream",
     "SnapshotStreamContinuationError",

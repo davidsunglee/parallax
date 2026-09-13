@@ -10,8 +10,8 @@ of ``stories.py``'s write stories: an example whose behavior is only observable
 by executing it must run through the
 shipped surface, not merely serialize a statement — a ``graph`` grade proves the
 Wire value tree is correct, but says nothing about what only the TYPED lane has:
-the frozen entity nodes (`parallax.snapshot.handle`) ``db.find`` builds over the
-same merge — identity surviving materialization, `is_view_loaded`/
+the frozen entity nodes (`parallax.snapshot.handle`) ``db.find`` publishes from
+the same Page/Root View contract — identity surviving materialization, `is_view_loaded`/
 `UnloadedRelationshipError`, closed-world zero-SQL access, `pin_of`/`edge_of`
 on a materialized node. Those developer-facing guarantees are exactly what the
 API Conformance Suite exists to prove (`m-api-conformance` "Two proof paths").

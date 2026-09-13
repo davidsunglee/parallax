@@ -37,8 +37,13 @@ without forcing non-idiomatic structures.
 
 A benchmark fixture is a YAML document under `core/compatibility/benchmarks/`. It
 names a model descriptor, a dataset to load, and an ordered list of **workloads**
-to measure. The shipped fixtures cover the five workload families the spec calls
-out:
+to measure. A fixture MAY additionally carry `objectQuery`, the canonical Object
+Query a language implementation executes when measuring its own delivery path,
+and `delivery.pageSizes`, the positive page sizes at which that delivery is
+graded. Those two members do not change the reference harness's authored-SQL
+workload: they let one fixture own the target delivery shape beside the portable
+database statement shape. The shipped fixtures cover the five workload families
+the spec calls out:
 
 | Workload family | Statement shape its golden SQL is | Example fixture |
 |---|---|---|
@@ -48,8 +53,9 @@ out:
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | the `m-agg` aggregate statement | folded into `read-mix.yaml` |
 
-**What a fixture observes, in all five families.** A workload declares golden SQL
-rather than an Object Query, so a run of it executes the AUTHORED statements. What
+**What the reference harness observes, in all five families.** A workload declares
+golden SQL independently of an optional fixture-level Object Query, so a reference
+run executes the AUTHORED statements. What
 lands in the report is therefore the cost of the WORKLOAD against the database —
 those statements, that dataset, and the round trips between them — rather than the
 cost of a target's own path to them. That is what makes one number mean the same
@@ -73,10 +79,12 @@ levels costs `ceil(N / B)` root statements and `ceil(N / B) x L` child statement
 delivered the last roots rather than by a statement of its own — and each
 workload's `expectRoundTrips` is that arithmetic evaluated at its own page size.
 
-What the family exports is that count and the page statements behind it — the
+What the family exports to the reference harness is that count and the page statements behind it — the
 shape a conforming delivery of the result must produce. It exports no delivery: a
-fixture here carries golden SQL and no Object Query, so a run of it executes those
-page statements as authored and reports how many it issued. The adapter's
+fixture's workload carries golden SQL, so a run of it executes those page
+statements as authored and reports how many it issued. A language delivery report
+instead executes the fixture-level `objectQuery`; neither lane substitutes for the
+other. The adapter's
 `benchmark` command carries each workload's `roundTrips` beside its
 `expectRoundTrips`, and the two agreeing says the arithmetic this module states
 and the statements the fixture authors are consistent with each other. It says
@@ -119,6 +127,52 @@ A recipe names the Entities it fills by emitting their keys, so a generated
 dataset declares a row count and a recipe and nothing else about which Entity it
 builds. A recipe may fill several — the `orders-tree` shape fills three — so no
 single Entity property could describe one honestly.
+
+The recipe names and their deterministic semantics are below. Each emitted row
+contains exactly the listed members; a model member not listed is absent.
+
+- `accounts-sequential` emits Accounts for `id = 1..rows`: `owner` is
+  `owner-<id>`, `balance` is the decimal string `<id * 100>.00`, and `version`
+  is `1`.
+- `orders-tree` emits Orders for `id = 1..rows`. Their `name` is
+  `order-<id>` with the decimal ID zero-padded to six digits; `sku` is `A-100`,
+  `qty` is `5`, `price` is `10.50`, `active` is true, and `orderedOn` is
+  `2024-01-05`. Each Order emits `fanout` OrderItems in parent-then-child
+  order, with independently sequential IDs, the parent `orderId`, `sku` `SKU`,
+  `quantity` `1`, and `shippedOn` `2024-02-01`. Each item likewise emits
+  `fanout` OrderStatuses with independently sequential IDs, its Order's
+  `orderId`, its parent `orderItemId`, and `code` `OPEN`.
+- `travelers-tree` emits Travelers for `id = 1..rows`: `displayName` is
+  `traveler-<id>`, `score` is `id`, `joinedOn` is `2026-01-15`, `note` is
+  `note-<id>`, `address` is `{city: Oslo, geo: {country: NO}}`, and `tags`
+  contains `fanout` documents `{label: tag-<offset>}` for zero-based offset.
+  It also emits `fanout` Trips per Traveler in parent-then-child order: IDs are
+  global and sequential, `travelerId` is the parent ID, `destination` is
+  `destination-<offset>`, and `nights` is `offset + 1`.
+- `document-milestones` emits Voyages for `id = 1..rows`: `title` is
+  `voyage-<id>`, `crew` is `4`, `manifest` is `{cargo: timber}`, `txStart`
+  is `2026-01-01T00:00:00+00:00`, and `txEnd` is `infinity`. It also emits
+  the Charters defined by `bitemporal-current` for the same ID range.
+- `versioned-documents` emits Ledgers for `id = 1..rows`: `version` is `1`,
+  `label` is `ledger-<id>`, `balance` is `10.00`, and `details` is
+  `{code: OPEN}`.
+- `bitemporal-current` emits Charters for `id = 1..rows`: `route` is
+  `route-<id>`, `terms` is `{clause: standard}`, both `validStart` and
+  `txStart` are `2026-01-01T00:00:00+00:00`, and both `validEnd` and `txEnd`
+  are `infinity`.
+- `materialization-stress` emits Owners for zero-based `index = 0..rows-1`.
+  The Owner's `id` is `1000 + index`, `name` is `owner-<index>`, and
+  `favoriteId` is `10000 + index * 10`. Each Owner emits `fanout` Nodes for
+  zero-based `offset`: `id` is `favoriteId + offset`, `ownerId` is the
+  Owner ID, `label` is `node-<index>-<offset>`, and `tags` is empty. Offsets
+  below `2` are Alpha and the rest Beta; offset `0` is the favorite.
+
+Every implementation of a recipe MUST preserve these Entity counts, parent-child
+fan-out, key relationships, traversal order, and fixed member values. It MAY
+construct rows lazily and MAY use host-native managed carriers after canonical
+Wire decoding. A target-side workload catalog MUST read recipe selection,
+`objectQuery`, and `delivery.pageSizes` from the fixture rather than restating
+them in a report or test.
 
 ## Measurement protocol
 

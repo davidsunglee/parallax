@@ -49,6 +49,7 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     IsolationLevel,
     JsonDocument,
+    PipelineStatement,
     RollbackFailed,
     RollbackTrigger,
     RolledBack,
@@ -224,17 +225,17 @@ def fold_document_reads(
     for raw in rows:
         if len(raw) != len(names):
             raise ValueError("a database row does not match its result description")
-        row: Row = {}
-        for ordinal, (name, value) in enumerate(zip(names, raw, strict=True)):
+        row: list[object] = []
+        for ordinal, value in enumerate(raw):
             if ordinal in omitted:
                 continue
             presence = by_document.get(ordinal)
             if value is _PRESENT_JSON_NULL:
                 value = None
-            row[name] = (
+            row.append(
                 dialect.parse_document_read(raw[presence], value) if presence is not None else value
             )
-        managed.append(row)
+        managed.append(tuple(row))
     return managed
 
 
@@ -400,12 +401,37 @@ class PostgresConnection:
             if document_reads:
                 return fold_document_reads(self.dialect, names, cursor.fetchall(), document_reads)
             return [
-                {
-                    name: None if value is _PRESENT_JSON_NULL else value
-                    for name, value in zip(names, raw, strict=True)
-                }
+                tuple(None if value is _PRESENT_JSON_NULL else value for value in raw)
                 for raw in cursor.fetchall()
             ]
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        connection = self._native()
+        with translating_driver_errors(self.dialect), contextlib.ExitStack() as cursors:
+            pending: list[tuple[psycopg.Cursor[TupleRow], tuple[DocumentReadOrdinals, ...]]] = []
+            with connection.pipeline():
+                for statement in statements:
+                    cursor = cursors.enter_context(connection.cursor())
+                    pending.append((cursor, statement.document_reads))
+                    cursor.execute(statement.sql.encode(), adapt_binds(statement.binds))
+
+            results: list[list[Row]] = []
+            for cursor, document_reads in pending:
+                if cursor.description is None:
+                    results.append([])
+                    continue
+                names = [column.name for column in cursor.description]
+                raw = cursor.fetchall()
+                if document_reads:
+                    results.append(fold_document_reads(self.dialect, names, raw, document_reads))
+                else:
+                    results.append(
+                        [
+                            tuple(None if value is _PRESENT_JSON_NULL else value for value in row)
+                            for row in raw
+                        ]
+                    )
+            return results
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         connection = self._native()

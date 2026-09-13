@@ -23,9 +23,9 @@ then:
         postgres: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
         mariadb: select t0.id, t0.target_id, not t0.details is null, t0.details from profile_owner t0
     - sql:
-        postgres: select t0.id from profile_target t0 where t0.id in (?)
+        postgres: select t0.id from profile_target t0 where t0.id = any(?)
         mariadb: select t0.id from profile_target t0 where t0.id in (?)
-      binds: [10]
+      binds: { postgres: [[10]], mariadb: [10] }
   referenceSql: select id, target_id, details from profile_owner
   graph:
     ProfileOwner:

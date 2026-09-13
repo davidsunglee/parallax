@@ -86,7 +86,13 @@ from parallax.snapshot.handle._connection_lifecycle import (
     exit_connection,
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
+from parallax.snapshot.handle._materialization import (
+    DeliveryPage,
+    DeliveryPlan,
+    Materializer,
+    StreamPageRead,
+)
+from parallax.snapshot.handle._paging import At
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
@@ -378,8 +384,8 @@ class ReadScope:
         return publication_for(selected, interface)
 
     def page(
-        self, read: _BegunRead, page_plan: PagePlan, at: At, batch: StreamBatchActivity
-    ) -> StreamPage:
+        self, read: _BegunRead, page_plan: DeliveryPlan, at: At, batch: StreamBatchActivity
+    ) -> DeliveryPage:
         """One page of a delivery, read inside its begun read's own bracket.
 
         A page IS an eager read of a bounded root query, so it threads the same
@@ -391,15 +397,17 @@ class ReadScope:
         """
         model = read.selected.model
 
-        def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPage:
-            return read_stream_page(
-                page_plan,
-                at,
-                model,
-                inputs.connection,
-                preference=inputs.preference,
-                ledger=inputs.ledger,
-                calls=calls,
+        def body(calls: DatabaseCallScope, inputs: ReadInputs) -> DeliveryPage:
+            return Materializer().read_page(
+                StreamPageRead(
+                    page_plan,
+                    at,
+                    model,
+                    inputs.connection,
+                    inputs.preference,
+                    inputs.ledger,
+                    calls,
+                )
             )
 
         return read.page(batch, body)

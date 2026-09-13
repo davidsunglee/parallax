@@ -107,6 +107,8 @@ def test_fetch_level_refuses_a_queryable_product_without_its_child_member() -> N
 
     with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
         dataclasses.replace(level, related_member=None).query_for((1,))
+    with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
+        dataclasses.replace(level, related_member=None).query_template()
 
 
 def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
@@ -405,6 +407,8 @@ def test_child_query_raises_on_a_back_reference_level() -> None:
     assert back_reference.is_back_reference
     with pytest.raises(deep_fetch.DeepFetchError):
         back_reference.query_for([1])
+    with pytest.raises(deep_fetch.DeepFetchError, match="back-reference level"):
+        back_reference.query_template()
 
 
 # --------------------------------------------------------------------------- #

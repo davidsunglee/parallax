@@ -45,7 +45,7 @@ from parallax.conformance._mechanism.model_facts import (
 from parallax.conformance._mechanism.transaction_control import transact, underlying
 from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import dialect_for
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
@@ -176,7 +176,7 @@ def run_read_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], list[Row], int]:
+) -> tuple[list[Emission], list[MappingRow], int]:
     """Run a row-form read case through the production values lane.
 
     The whole lane is ``db.read_rows`` / ``tx.read_rows``: canonicalization,
@@ -287,7 +287,7 @@ def run_graph_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
+) -> tuple[list[Emission], dict[str, list[MappingRow | None]], int, list[dict[str, object]] | None]:
     """Run a single-graph deep-fetch / snapshot read, reporting the Wire result
     production published as the wire `then.graph` shape (root-class-keyed) and,
     for a root whose stored state contradicted the model, the record it published
@@ -335,7 +335,7 @@ def run_stream_case(
     case: case_format.Case,
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
-) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
+) -> tuple[list[Emission], dict[str, list[MappingRow | None]], int, list[dict[str, object]] | None]:
     """Run a streamed read through ``db.wire.stream`` and report what it delivered.
 
     The whole lane is production's streamed read at the case's own declared page
@@ -382,12 +382,12 @@ def run_streamed_graphs_case(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
-    """Run a streamed milestone-set read and report its per-milestone graphs.
+    """Run one streamed milestone-set read and report its flat roots as authored entries.
 
     :func:`run_stream_case`'s milestone peer, standing to it exactly as
     :func:`run_graphs_case` stands to :func:`run_graph_case`. The delivery is the
     same one — production's streamed read at the case's declared page size — and
-    what differs is the observation it is reported as: a milestone-set delivery
+    what differs is only the authored observation shape: the flat delivery
     publishes one root per milestone, each standing at its own edge pin, so the
     `{pin, graph}` entries are recovered from those pins rather than from a second
     read per milestone.
@@ -482,14 +482,14 @@ def _is_single_graph(query: ObjectQueryNode) -> bool:
 
 def _milestone_partition(
     entity: EntityMetadata, roots: Sequence[object]
-) -> list[tuple[Pin, list[Row | None]]]:
+) -> list[tuple[Pin, list[MappingRow | None]]]:
     """One ordered milestone-set result partitioned back into its own graphs.
 
     Roots arrive in the executor's chronological milestone order, so a partition
     closes as soon as the edge changes: grouping by first appearance would fold
     two milestones a scan legitimately answers twice.
     """
-    partitions: list[tuple[Pin, list[Row | None]]] = []
+    partitions: list[tuple[Pin, list[MappingRow | None]]] = []
     for root in roots:
         pin = _root_pin(entity, root)
         if not partitions or partitions[-1][0] != pin:
@@ -500,7 +500,7 @@ def _milestone_partition(
 
 def _milestone_groups(
     entity: EntityMetadata, roots: Sequence[object]
-) -> list[tuple[Pin, list[Row | None]]]:
+) -> list[tuple[Pin, list[MappingRow | None]]]:
     """One streamed milestone-set delivery grouped back into its own graphs.
 
     Deliberately NOT :func:`_milestone_partition`'s adjacency rule. A delivery
@@ -516,7 +516,7 @@ def _milestone_groups(
     have visited them in would make the observation depend on the page size the
     member exists to say nothing about.
     """
-    groups: dict[Pin, list[Row | None]] = {}
+    groups: dict[Pin, list[MappingRow | None]] = {}
     for root in roots:
         groups.setdefault(_root_pin(entity, root), []).append(envelope.graph_root(root))
     return sorted(groups.items(), key=lambda entry: _edge_rank(entity, entry[0]))

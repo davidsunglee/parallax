@@ -30,7 +30,7 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.unit_work import FixedClock, ObservedStateKey, RetainedObservation, instructions
@@ -65,7 +65,7 @@ _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
 # The bitemporal pair the evidence-lifetime tests deliver: an observed state
 # exists for a temporal Entity without a version attribute, and `Policy` is the
 # one mirrored model whose root reaches an included child worth retaining alone.
-_POLICY_ROW: Row = {
+_POLICY_ROW: MappingRow = {
     "id": 1,
     "name": "P-1",
     "from_z": _TX_START,
@@ -73,7 +73,7 @@ _POLICY_ROW: Row = {
     "in_z": _TX_START,
     "out_z": _INFINITY,
 }
-_COVERAGE_ROW: Row = {
+_COVERAGE_ROW: MappingRow = {
     "id": 10,
     "policy_id": 1,
     "amount": Decimal("250.00"),
@@ -85,7 +85,7 @@ _COVERAGE_ROW: Row = {
 _POLICY_QUERY = Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
 
 
-def _account_row(account_id: int, *, balance: str = "100.00") -> Row:
+def _account_row(account_id: int, *, balance: str = "100.00") -> MappingRow:
     return {
         "id": account_id,
         "owner": f"owner-{account_id}",
@@ -365,7 +365,7 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
 # --------------------------------------------------------------------------- #
 # A streamed milestone root is a historical view: read-only, both namespaces.  #
 # --------------------------------------------------------------------------- #
-_POSITION_MILESTONES: tuple[Row, ...] = (
+_POSITION_MILESTONES: tuple[MappingRow, ...] = (
     {
         "pos_id": 1,
         "acct_num": "A",

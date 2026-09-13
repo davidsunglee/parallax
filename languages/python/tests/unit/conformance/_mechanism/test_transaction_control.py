@@ -13,7 +13,7 @@ from parallax.conformance._mechanism.transaction_control import (
     committed,
     write_connection,
 )
-from parallax.core.db_port import DatabaseConnection, RolledBack
+from parallax.core.db_port import DatabaseConnection, PipelineStatement, RolledBack
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
@@ -23,7 +23,8 @@ def test_the_aborting_port_passes_reads_and_writes_through() -> None:
     # have committed.
     inner = FakeWritePort(find_rows=[{"id": 1}])
     port = write_connection(inner, rollback=True)
-    assert port.execute("select 1", []) == [{"id": 1}]
+    assert port.execute("select 1", []) == [(1,)]
+    assert port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
     assert port.execute_write("update account set balance = ?", [1]) == 1
     assert inner.reads and inner.writes
 

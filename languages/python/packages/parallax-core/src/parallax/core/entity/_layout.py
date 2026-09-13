@@ -159,6 +159,7 @@ class EntityLayout:
     relationship_index: Mapping[RelationshipIdentity, int]
     to_many: frozenset[RelationshipIdentity]
     primary_key: tuple[int, ...]
+    temporal_starts: tuple[int, ...] = ()
 
     def key_of(self, row: tuple[object, ...]) -> object:
         """``row``'s logical key: the raw scalar for a single-column primary key,
@@ -269,6 +270,7 @@ class LayoutCatalog:
                 if direction.cardinality.target is Multiplicity.MANY
             ),
             primary_key=self._key_positions(identity, position.root, index_of),
+            temporal_starts=self._temporal_start_positions(position.root, index_of),
         )
 
     def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:
@@ -278,6 +280,18 @@ class LayoutCatalog:
         if declaring is None:  # pragma: no cover - an accepted model declares every family root
             return frozenset()
         return frozenset(axis.end_attribute for axis in declaring.declared_as_of_axes)
+
+    def _temporal_start_positions(
+        self, root: EntityIdentity, index_of: Mapping[MemberIdentity, int]
+    ) -> tuple[int, ...]:
+        """The family's axis starts in canonical rank, as row positions."""
+        declaring = self._model.entity(root)
+        if declaring is None:  # pragma: no cover - an accepted model declares every family root
+            return ()
+        return tuple(
+            index_of[axis.start_attribute]
+            for axis in sorted(declaring.declared_as_of_axes, key=lambda axis: axis.dimension.value)
+        )
 
     def _key_positions(
         self,
