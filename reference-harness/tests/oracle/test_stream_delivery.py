@@ -386,7 +386,7 @@ def test_each_pages_child_levels_are_consumed_before_the_next_pages_root(
 
     statements = case.golden_statements("postgres")
     assert reads.statements[3] == statements[3]
-    assert reads.calls[3][1] == (1, 2, 42, 2, 3)
+    assert reads.calls[3][1] == (1, 2, 42, 2, 2, 3, 1, 2, 42, 3, 3)
 
 
 def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
@@ -403,7 +403,7 @@ def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
     assert_case_read(case, reads)
 
     assert len(reads.calls) == 5
-    assert reads.calls[2][1] == (1, 2, 3, 42, 2, 3)
+    assert reads.calls[2][1] == (1, 2, 3, 42, 2, 2, 3, 1, 2, 3, 42, 3, 3)
 
 
 def test_the_same_delivery_at_two_batch_sizes_publishes_the_same_roots(
@@ -464,7 +464,7 @@ def test_a_nullable_sort_key_ends_its_delivery_on_the_null_root_it_places_last(
     assert_case_read(case, reads)
 
     assert len(reads.calls) == 4
-    assert reads.calls[2][1] == ("B-200", "B-200", 2, 3)
+    assert reads.calls[2][1] == ("B-200", "B-200", "B-200", 2, 3, 3, 3)
 
 
 def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_test(
@@ -578,6 +578,9 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
         1000,
         "2024-04-01T00:00:00.000000Z",
         2,
+        100,
+        2,
+        2,
     )
 
 
@@ -587,7 +590,7 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
 def test_a_page_seeking_from_the_wrong_root_is_refused(damaged_case: CaseLoader) -> None:
     """The continuation is the previous page's LAST root, derived rather than trusted."""
     case = damaged_case(_DEEP_FETCH)
-    _statements(case)[3]["binds"][3] = 1
+    _statements(case)[3]["binds"]["postgres"][3] = 1
     reads = ScriptedReads(results=_deep_fetch_script())
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
@@ -639,7 +642,7 @@ def test_a_continuing_page_that_does_not_seek_is_refused(damaged_case: CaseLoade
     entries[3]["sql"] = copy.deepcopy(entries[0]["sql"])
     reads = ScriptedReads(results=_deep_fetch_script())
 
-    with pytest.raises(CaseFailure, match="repeats the FIRST page's root SQL"):
+    with pytest.raises(CaseFailure, match="continuing arm"):
         assert_case_read(case, reads)
 
 
@@ -654,7 +657,7 @@ def test_a_page_hoisting_the_wrong_leading_coordinate_is_refused(
     coordinate the range compares against.
     """
     case = damaged_case(_MIXED_DIRECTIONS)
-    _statements(case)[1]["binds"][0] = False
+    _statements(case)[1]["binds"]["postgres"][0] = False
     reads = ScriptedReads(results=_mixed_directions_script())
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
@@ -669,7 +672,7 @@ def test_a_page_binding_the_wrong_tie_coordinate_is_refused(damaged_case: CaseLo
     root's KEY alone, as a single-term order allows, would accept it.
     """
     case = damaged_case(_MIXED_DIRECTIONS)
-    _statements(case)[1]["binds"][3] = 5
+    _statements(case)[1]["binds"]["postgres"][3] = 5
     reads = ScriptedReads(results=_mixed_directions_script())
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
@@ -681,7 +684,7 @@ def test_a_page_dropping_its_hoisted_range_is_refused(damaged_case: CaseLoader) 
 
     Removing it leaves a statement that selects exactly the same roots, so every
     result-level oracle passes; the delivery has simply given up the leading
-    index range a non-nullable leading term is entitled to.
+    index range a direct leading term with a non-null carrier requires.
     """
     case = damaged_case(_MIXED_DIRECTIONS)
     entry = _statements(case)[1]
@@ -689,7 +692,8 @@ def test_a_page_dropping_its_hoisted_range_is_refused(damaged_case: CaseLoader) 
         dialect: sql.replace("where t0.active <= ? and (", "where (")
         for dialect, sql in entry["sql"].items()
     }
-    del entry["binds"][0]
+    for binds in entry["binds"].values():
+        del binds[0]
     reads = ScriptedReads(results=_mixed_directions_script())
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
@@ -707,9 +711,7 @@ def test_a_continuing_page_respelling_its_seek_is_refused(damaged_case: CaseLoad
     case = damaged_case(_NULLABLE_PLACEMENT)
     entry = _statements(case)[2]
     entry["sql"] = {
-        dialect: sql.replace(
-            "where (t0.sku > ? or t0.sku is null or", "where (t0.sku is null or t0.sku > ? or"
-        )
+        dialect: sql.replace("(t0.sku > ? or t0.sku is null or", "(t0.sku is null or t0.sku > ? or")
         for dialect, sql in entry["sql"].items()
     }
     reads = ScriptedReads(results=_nullable_script())
@@ -1031,14 +1033,18 @@ def test_a_milestone_page_seeking_past_the_key_alone_is_refused(
     for entry in _statements(case)[1:]:
         entry["sql"] = {
             dialect: sql.replace(
-                "and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?))", "and t0.id > ?"
+                "and t0.id >= ? and (t0.id > ? or t0.id is null or "
+                "(t0.id = ? and (t0.in_z > ? or t0.in_z is null)))",
+                "and t0.id >= ? and (t0.id > ? or t0.id is null)",
+            ).replace(
+                "and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?))",
+                "and t0.id >= ? and t0.id > ?",
             )
             for dialect, sql in entry["sql"].items()
         }
-        entry["binds"] = [entry["binds"][0], entry["binds"][1], entry["binds"][-1]]
     reads = ScriptedReads(results=_history_script())
 
-    with pytest.raises(CaseFailure, match="root binds"):
+    with pytest.raises(CaseFailure, match="one branch per tie depth"):
         assert_case_read(case, reads)
 
 
@@ -1052,8 +1058,8 @@ def test_a_milestone_page_continuing_from_another_milestone_is_refused(
     simply resumes from the wrong rectangle. Only the derivation says which.
     """
     case = damaged_case(_MILESTONE_EDGE_PINS)
-    binds = _statements(case)[2]["binds"]
-    binds[7] = _statements(case)[1]["binds"][7]
+    binds = _statements(case)[2]["binds"]["postgres"]
+    binds[7] = _statements(case)[1]["binds"]["postgres"][7]
     reads = ScriptedReads(results=[[_POSITIONS[0], _POSITIONS[1]], [_POSITIONS[1], _POSITIONS[2]]])
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):

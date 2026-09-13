@@ -433,14 +433,11 @@ def test_the_hold_includes_the_acquisitions_own_finished_delivery(
     assert released.hold_duration_ns == 9 * _STEP
 
 
-def test_a_consumer_pause_between_pages_is_inside_the_streams_hold(
+def test_a_consumer_pause_between_pages_is_outside_every_page_hold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A delivery holds ONE connection from its first page to its settlement, so
-    # what the caller does between pages is time the connection was occupied.
-    # The pause is neither an acquisition nor a release, and a hold that
-    # excluded it would describe the pool's own bookkeeping rather than this
-    # operation's occupancy.
+    # Each page returns its connection before publication, so consumer time and
+    # the pause before the next page belong to no connection hold.
     clock = _stepping(monkeypatch)
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
@@ -454,14 +451,10 @@ def test_a_consumer_pause_between_pages_is_inside_the_streams_hold(
             clock.burn(3)
 
     (observed,) = recorder.roots
-    (released,) = _of(observed, ReleaseFinished)
-    # Three roots over two pages, so the second of the three pauses is a
-    # between-pages one. The hold is every reading from the acquisition's
-    # closing one — the second of the run — to the release's closing one, which
-    # is the last, PLUS the nine steps the consumer spent; the release itself is
-    # its own two adjacent readings, so no pause is inside it.
-    assert released.duration_ns == _STEP
-    assert released.hold_duration_ns == (clock.readings - 2) * _STEP + 9 * _STEP
+    released = _of(observed, ReleaseFinished)
+    assert len(released) == 2
+    assert all(event.duration_ns == _STEP for event in released)
+    assert [event.hold_duration_ns for event in released] == [4 * _STEP, 4 * _STEP]
 
 
 def test_neither_duration_includes_reading_the_cleanup_fact_off_the_resource(

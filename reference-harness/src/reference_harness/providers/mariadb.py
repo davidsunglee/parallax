@@ -145,16 +145,17 @@ def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(_to_db_bind(value) for value in physical)
 
 
-def _is_boolean_field(type_code: Any, column_length: Any) -> bool:
-    """True for a MariaDB ``tinyint(1)`` result column — the ``boolean`` mapping.
+def _is_boolean_field(type_code: Any, _column_length: Any) -> bool:
+    """True for a MariaDB ``tinyint`` result column — the ``boolean`` mapping.
 
     ``boolean`` is the ONLY neutral type that maps to ``tinyint(1)`` (ddl_builder),
-    which pymysql reports as ``FIELD_TYPE.TINY`` with a display length of ``1`` and
-    reads back as int ``0`` / ``1``. Every other integer column is a wider type code
-    (``int32`` -> ``int`` / ``FIELD_TYPE.LONG``, ``int64`` -> ``bigint`` /
-    ``FIELD_TYPE.LONGLONG``), so this never coerces a non-boolean integer.
+    which pymysql reports as ``FIELD_TYPE.TINY`` and reads back as int ``0`` / ``1``.
+    A derived ``union all`` result can widen its display length while retaining that
+    type code. Every other integer column uses a wider type code (``int32`` -> ``int``
+    / ``FIELD_TYPE.LONG``, ``int64`` -> ``bigint`` / ``FIELD_TYPE.LONGLONG``), so
+    this never coerces a neutral integer.
     """
-    return type_code == FIELD_TYPE.TINY and column_length == 1
+    return type_code == FIELD_TYPE.TINY
 
 
 def _from_db_value(value: Any, *, is_boolean: bool = False) -> Any:
@@ -164,7 +165,7 @@ def _from_db_value(value: Any, *, is_boolean: bool = False) -> Any:
       native boolean, so pymysql reads the column back as int ``0`` / ``1``. The
       row comparator keeps ``bool`` OUT of numeric space (m-case-format layer 2:
       ``true`` is never ``1``), so an int would never match the fixture's boolean;
-      the caller passes ``is_boolean`` from the column's ``tinyint(1)`` field
+      the caller passes ``is_boolean`` from the column's ``tinyint`` field
       metadata (:func:`_is_boolean_field`) so the value compares correctly. A NULL
       boolean column stays ``None``;
     * the max-sentinel ``DATETIME`` -> the literal ``"infinity"`` (m-dialect), so a
@@ -199,7 +200,7 @@ def _decode_rows(
 ) -> list[dict[str, Any]]:
     """Decode a MariaDB cursor's fetched rows to the suite's canonical dicts.
 
-    Reads each result column's ``tinyint(1)`` (``boolean``) flag from the cursor
+    Reads each result column's ``tinyint`` (``boolean``) flag from the cursor
     ``description`` once, then adapts every value through :func:`_from_db_value`.
     Shared verbatim by :meth:`MariaDbProvider.query` and :meth:`_MariaTxSession.query`
     so a future canonicalization change updates one decoding path.

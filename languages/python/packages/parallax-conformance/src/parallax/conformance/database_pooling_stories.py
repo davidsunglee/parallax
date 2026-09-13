@@ -276,9 +276,9 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
 
     The Provider is offered the source once, before ``connect`` returns, and the
     registration it answers with lives exactly as long as the handle. Sampling
-    runs no statement and takes no connection, which is why the reading taken
-    from inside a streaming loop below — while the delivery is holding the only
-    slot — succeeds rather than queueing behind it.
+    runs no statement and takes no connection. The reading below is taken after
+    one root is published, when that page's lease has returned and before the
+    next page asks for one.
     """
     provider = PoolWatchingProvider()
     with connect(adapter, model, lifecycle_provider=provider) as db:
@@ -313,8 +313,8 @@ async def pooled_database(
     and is bounded by its own configuration, since a graceful-shutdown timeout
     cancels whatever has not finished and cancelling an ``asyncio.to_thread``
     await ends the await rather than the worker beneath it. Closing here is safe
-    either way, which is Parallax's half of the bargain: work already admitted
-    finishes on the connection it holds, and anything needing a new one is
+    either way, which is Parallax's half of the bargain: an acquisition already
+    admitted finishes its bounded work, and anything needing a new one is
     refused.
 
     Both halves are offloaded because both block. Composition opens the pool and
@@ -338,13 +338,13 @@ async def serve_account_balances(db: Database) -> list[Decimal]:
     The boundary matters more than the offload. What crosses it is one complete
     operation — every statement, the materialization, and the release — so the
     connection is taken and given back inside the worker thread and the event
-    loop is never holding one. Handing back a Snapshot to be walked on the loop,
-    or a stream to be iterated there, would move part of the operation back onto
-    it and keep the connection for as long as the loop took to get around to it.
+    loop is never holding one. Handing back a stream to be iterated there would
+    instead run each blocking page acquisition and read on the loop, even though
+    a standalone stream returns the lease before publishing that page's roots.
 
-    Pool capacity is not HTTP concurrency for the same reason: each of these
-    occupies a worker thread AND a connection for its whole duration, so the
-    number of them that can run at once is the smaller of the two.
+    Pool capacity is not HTTP concurrency for the same reason: each database
+    phase occupies a worker thread and a connection together, so that phase's
+    concurrency is the smaller capacity of the two.
     """
     return await asyncio.to_thread(account_balances, db)
 

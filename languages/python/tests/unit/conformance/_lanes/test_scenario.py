@@ -386,7 +386,12 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
         "/scenario/2/objectQuery",
         "/scenario/3/write",
     ]
-    assert [binds for _sql, binds in port.reads] == [(3,), (2, 3), (3,), (2, 3)]
+    assert [binds for _sql, binds in port.reads] == [
+        (3,),
+        (2, 2, 3, 3, 3),
+        (3,),
+        (2, 2, 3, 3, 3),
+    ]
     assert [e.binds for e in run.emissions if e.case_pointer.endswith("write")] == [
         (125.00, 2, 1, 1),
         (175.00, 3, 1, 2),

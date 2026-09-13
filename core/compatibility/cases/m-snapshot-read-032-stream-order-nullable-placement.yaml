@@ -1,16 +1,14 @@
 # A Sort Key over a NULLABLE member changes what a streamed page can seek
-# (m-snapshot-read): the leading term is not hoisted, and a null coordinate is
-# sought through a null check rather than through a comparison.
+# (m-snapshot-read): a non-null coordinate gives the range arm its hoist, while
+# a disjoint second arm retains the trailing NULL region.
 #
 # `Order.sku` is nullable and order 4 has none, so the Continuation Order
 # `sku asc (nulls last), id asc` places that root last. The consequence the
-# authored pages spell out is that no continuing page carries the redundant
-# leading range a non-nullable term hoists: with the nulls placed after a
-# non-null coordinate, "after" is two disjoint ranges of the index and no single
-# comparison covers both — which is exactly what the first branch of pages 2 and
-# 3 says instead, `t0.sku > ? or t0.sku is null`. Nothing here seeks PAST a null
-# coordinate: the null root sorts last, so the page delivering it comes back
-# short of the lookahead root it asked for and the delivery ends on it.
+# authored pages spell out is that every continuing statement has two arms: the
+# seekable `t0.sku >= ?` arm covers non-NULL values, and `t0.sku is null` covers
+# the disjoint tail before an outer order and limit merge one page. Nothing here
+# seeks PAST a null coordinate: the null root sorts last, so the page delivering
+# it comes back short of the lookahead root it asked for and the delivery ends.
 # m-snapshot-read-046 is where that branch is reachable, under the mirrored
 # placement that puts a null root first.
 #
@@ -49,13 +47,13 @@ then:
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.sku is null, t0.sku asc, t0.id asc limit ?
       binds: [3]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [A-300, A-300, 3, 3]
+        postgres: select u.id, u.name, u.sku, u.qty, u.price, u.active, u.ordered_on, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku >= ? and (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?) union all (select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku is null order by t0.sku asc, t0.id asc limit ?)) u order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
+        mariadb: select u.id, u.name, u.sku, u.qty, u.price, u.active, u.ordered_on, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku >= ? and (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?) union all (select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku is null order by t0.sku is null, t0.sku asc, t0.id asc limit ?)) u order by u.parallax_seek_0 is null, u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
+      binds: { postgres: ["A-300", "A-300", "A-300", 3, 3, 3, 3], mariadb: ["A-300", "A-300", "A-300", 3, 3, 3, 3] }
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [B-200, B-200, 2, 3]
+        postgres: select u.id, u.name, u.sku, u.qty, u.price, u.active, u.ordered_on, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku >= ? and (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?) union all (select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku is null order by t0.sku asc, t0.id asc limit ?)) u order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
+        mariadb: select u.id, u.name, u.sku, u.qty, u.price, u.active, u.ordered_on, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku >= ? and (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?) union all (select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.sku is null order by t0.sku is null, t0.sku asc, t0.id asc limit ?)) u order by u.parallax_seek_0 is null, u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
+      binds: { postgres: ["B-200", "B-200", "B-200", 2, 3, 3, 3], mariadb: ["B-200", "B-200", "B-200", 2, 3, 3, 3] }
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:
     Order:

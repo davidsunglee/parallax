@@ -71,21 +71,18 @@ class StreamRead(Protocol):
     advance of the delivery runs under.
 
     A stream begins its read at entry and retains it through every page, so the
-    selection it was opened under, whose activity the stream is, which connection
-    every page runs on, and how a failure escaping the delivery reaches the
-    caller are one answer given once. A standalone delivery is a Root Execution
-    of its own that adopted its selection at entry, acquires its own connection
-    when it reads its first page, and names that edition on an ordinary failure
-    escaping an advance; a participating one is a child of the current
+    selection it was opened under, whose activity the stream is, and how a
+    failure escaping the delivery reaches the caller are one answer given once.
+    A standalone delivery is a Root Execution of its own that adopted its
+    selection at entry, leases one connection per page, and names that edition on
+    an ordinary failure escaping an advance; a participating one is a child of the current
     Transaction Attempt, serves the transaction's fixed selection, runs on the
     attempt's connection, and lets a failure propagate to the invocation that
     contextualizes it once.
 
-    ``release`` is the delivery's end of that connection. The stream calls it
-    where the delivery settles rather than where the caller leaves the scope,
-    so an exhausted or failed delivery stops occupying capacity at the moment it
-    is over. It is idempotent, because the scope exit calls it too — for a
-    caller who simply stopped reading.
+    ``release`` settles any lane-owned resource at the delivery boundary. Both
+    current lanes answer no-op: standalone leases end inside each page and a
+    participating stream owns no connection of its own.
     """
 
     @property
@@ -296,16 +293,11 @@ class SnapshotStream[T]:
     a delivery advances on the coordinate the database evaluated for each root,
     which exists whatever that root's stored values turned out to be.
 
-    ONE stored value falls outside that: the LEADING Continuation Order term —
-    the query's first ``order_by`` term, or the primary key when it declared no
-    ordering — resolved to a direct Column the model declares non-nullable,
-    holding a stored ``NULL`` anyway. The leading range a page after the first
-    hoists for the planner may leave such a root out, so a smaller page can drop
-    the root a larger one delivered. Nothing narrows it to the key, and nothing
-    widens it past a Column: a leading term at a Document Path hoists no range,
-    so a ``NULL`` its extraction reads is ordinary invalid stored data the
-    delivery publishes and continues past. `m-snapshot-read` *Streamed delivery*
-    settles the bound.
+    A continuing page over a direct leading Column keeps its planner range and,
+    where NULLs follow the coordinate, joins a disjoint NULL-tail arm under the
+    same outer order and cap. A leading term at a Document Path hoists no range,
+    so the branch tree itself admits a NULL its extraction reads. Page size is
+    therefore a performance dial even over either source of a leading NULL.
     """
 
     __slots__ = (
@@ -402,11 +394,8 @@ class SnapshotStream[T]:
         self._state = _CLOSED
         failure = self._failure
         self._failure = None
-        # Released before the observed stream finishes, and released here at all
-        # only for a delivery that stopped without settling: a caller who broke
-        # out of the loop reaches no terminal state, so this is where its
-        # connection goes back. An exhausted or failed delivery already released
-        # at the moment it ended, and this is then a no-op.
+        # Settle lane-owned resources before the observed stream finishes. Page
+        # leases have already ended, and participating streams own none.
         read = self._read
         if read is not None:
             read.release(failure)
@@ -526,9 +515,7 @@ class SnapshotStream[T]:
         Exhaustion finishes the observed stream HERE, where it was discovered,
         rather than at the scope exit that follows it: the outcome is true at
         this point, and settling it here is what leaves a later caller error with
-        nothing to rewrite. The connection goes back here for the same reason —
-        a delivery that is over must not keep capacity until the caller happens
-        to leave its ``with`` block. A failure is remembered instead, because the scope's
+        nothing to rewrite. A failure is remembered instead, because the scope's
         own exit is where a stream announces one — and remembering it is what
         keeps the verdict correct for a caller that caught the failure and left
         the block normally. The reference is dropped at that exit, so a failed

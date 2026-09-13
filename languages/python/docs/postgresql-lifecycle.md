@@ -251,8 +251,8 @@ async def pooled_database(
     and is bounded by its own configuration, since a graceful-shutdown timeout
     cancels whatever has not finished and cancelling an ``asyncio.to_thread``
     await ends the await rather than the worker beneath it. Closing here is safe
-    either way, which is Parallax's half of the bargain: work already admitted
-    finishes on the connection it holds, and anything needing a new one is
+    either way, which is Parallax's half of the bargain: an acquisition already
+    admitted finishes its bounded work, and anything needing a new one is
     refused.
 
     Both halves are offloaded because both block. Composition opens the pool and
@@ -276,13 +276,13 @@ async def serve_account_balances(db: Database) -> list[Decimal]:
     The boundary matters more than the offload. What crosses it is one complete
     operation — every statement, the materialization, and the release — so the
     connection is taken and given back inside the worker thread and the event
-    loop is never holding one. Handing back a Snapshot to be walked on the loop,
-    or a stream to be iterated there, would move part of the operation back onto
-    it and keep the connection for as long as the loop took to get around to it.
+    loop is never holding one. Handing back a stream to be iterated there would
+    instead run each blocking page acquisition and read on the loop, even though
+    a standalone stream returns the lease before publishing that page's roots.
 
-    Pool capacity is not HTTP concurrency for the same reason: each of these
-    occupies a worker thread AND a connection for its whole duration, so the
-    number of them that can run at once is the smaller of the two.
+    Pool capacity is not HTTP concurrency for the same reason: each database
+    phase occupies a worker thread and a connection together, so that phase's
+    concurrency is the smaller capacity of the two.
     """
     return await asyncio.to_thread(account_balances, db)
 ```
@@ -297,28 +297,26 @@ cancelling an `await asyncio.to_thread(...)` ends the await rather than the
 worker thread running the operation, so a blocking operation can still be
 running when the lifespan closes the handle. Size that timeout for the longest
 operation you offload. What makes closing there survivable regardless is
-Parallax's own part of the bargain: work already admitted finishes on the
-connection it holds, including statements it has not issued yet, while anything
-needing a new connection is refused from the close onward.
+Parallax's own part of the bargain: an acquisition already admitted finishes its
+bounded work, while anything needing a new connection is refused from the close
+onward.
 
 **Offload complete operations.** From an async endpoint, what crosses into the
 worker thread must be the WHOLE operation — statements, materialization, and the
-release. Handing a `Snapshot` back to be walked on the event loop, or a stream to
-be iterated there, moves part of the operation onto the loop and keeps the
-connection for as long as the loop takes to get around to it. Synchronous
-endpoints need none of this: the server already runs them off the loop.
+release. Handing a stream back to be iterated on the event loop moves each
+blocking page acquisition and read onto the loop, although a standalone stream
+holds no connection between pages. Synchronous endpoints need none of this: the
+server already runs them off the loop.
 
 Parallax adds no async interface, so no Parallax call ever awaits while holding a
-connection. Your own code still can: entering `db.stream(...)` on the event loop,
-reading its first page, and then awaiting anything before the delivery ends holds
-that connection for the whole of the await, and a slow client or a busy loop
-decides how long that is. A delivery is the shape to watch, because it is the one
-that outlives the call that started it — which is what offloading complete
-operations prevents.
+connection. A standalone stream takes and returns one lease inside each blocking
+page read; awaiting between published roots holds no pool slot. The delivery is
+still the shape to watch because asking for its next page on the event loop blocks
+that loop, which is what offloading complete operations prevents.
 
-**Pool capacity is not HTTP concurrency.** An operation occupies a worker thread
-and a connection for its whole duration, so the number that can run at once is
-the smaller of the two, and raising `max_size` past the threadpool buys nothing.
+**Pool capacity is not HTTP concurrency.** A database phase occupies a worker
+thread and a connection together, so the number that can run at once is the
+smaller of the two, and raising `max_size` past the threadpool buys nothing.
 Budget in the other direction as well: total connections is
 `max_size` × runtimes-per-process × processes-per-host × hosts, and the server's
 own `max_connections` (minus what it reserves for superusers, and minus what
@@ -431,9 +429,9 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
 
     The Provider is offered the source once, before ``connect`` returns, and the
     registration it answers with lives exactly as long as the handle. Sampling
-    runs no statement and takes no connection, which is why the reading taken
-    from inside a streaming loop below — while the delivery is holding the only
-    slot — succeeds rather than queueing behind it.
+    runs no statement and takes no connection. The reading below is taken after
+    one root is published, when that page's lease has returned and before the
+    next page asks for one.
     """
     provider = PoolWatchingProvider()
     with connect(adapter, model, lifecycle_provider=provider) as db:

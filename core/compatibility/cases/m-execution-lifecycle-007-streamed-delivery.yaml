@@ -14,24 +14,19 @@
 #
 # Two pages over three orders at `batchSize: 2`, with one include level, so the
 # tree has every relation the module states about a stream. Activity 1 is the
-# stream and spans the whole delivery. Activities 3 and 6 are its pages, each
-# bracketing that page's own two Database Calls and nothing else: a Stream Batch
+# stream and spans the whole delivery. Activities 2 and 7 are its pages, each
+# bracketing that page's connection lease and two Database Calls: a Stream Batch
 # IS the page-read activity, so no Read activity appears anywhere in this stream
 # even though a page runs the same executor an eager deep fetch runs.
 #
-# One connection serves both pages, and the two ends of it are where the
-# delivery's own boundaries are. The Acquisition (activity 2) is the stream's
-# first child and stands in FRONT of page 1's batch: a stream adopts its edition
-# when its scope is entered but takes no connection until it reads a page, and
-# the connection then belongs to the delivery rather than to the page that asked
-# first — page 2 runs on it and acquires nothing. The Release (activity 9)
-# stands after page 2's batch and before the stream's own end, because a
-# delivery releases where it SETTLES: exhaustion was discovered inside page 2,
-# so the connection goes back there rather than being held until the caller
-# leaves its scope.
+# Each page leases one connection. Its Acquisition is the batch's first child,
+# its Release is the last, and conversion finishes before release and batch
+# completion. Root publication follows the batch, so no connection is held while
+# the caller consumes a root or between pages. A participating stream would emit
+# neither resource child and would use its attempt's connection instead.
 #
 # What the sequence pins down is the batch BOUNDARY. Page 1's batch finishes
-# (sequence 9) before page 2's opens (sequence 10), so no batch spans another and
+# (sequence 11) before page 2's opens (sequence 12), so no batch spans another and
 # none of them spans the caller consuming the roots it delivered: a batch
 # completes once the page's converted result is ready rather than once the caller
 # is done with it. Delivering a root to the caller emits no event of its own, so
@@ -80,9 +75,11 @@ then:
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: { postgres: [[1, 2]], mariadb: [1, 2] }
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 3, 2, 3]
+        postgres: select u.id, u.name, u.sku, u.qty, u.price, u.active, u.ordered_on, u.parallax_seek_0 from ((select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+      binds:
+        postgres: [1, 2, 3, 2, 2, 3, 1, 2, 3, 3, 3]
+        mariadb: [1, 2, 3, 2, 2, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
@@ -134,80 +131,96 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            acquisitionStarted: {}
+            streamBatchStarted: {}
           - sequence: 3
-            activity: 2
-            parent: 1
-            acquisitionFinished: { outcome: acquired }
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
           - sequence: 4
             activity: 3
-            parent: 1
-            streamBatchStarted: {}
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
           - sequence: 5
             activity: 4
-            parent: 3
+            parent: 2
             databaseCallStarted:
               target: parallax.compatibility.Order
               kind: read
               statement: 0
           - sequence: 6
             activity: 4
-            parent: 3
+            parent: 2
             databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
           - sequence: 7
             activity: 5
-            parent: 3
+            parent: 2
             databaseCallStarted:
               target: parallax.compatibility.OrderItem
               kind: read
               statement: 1
           - sequence: 8
             activity: 5
-            parent: 3
+            parent: 2
             databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
           - sequence: 9
-            activity: 3
-            parent: 1
-            streamBatchFinished: { outcome: completed }
+            activity: 6
+            parent: 2
+            releaseStarted: {}
           - sequence: 10
             activity: 6
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            streamBatchFinished: { outcome: completed }
+          - sequence: 12
+            activity: 7
             parent: 1
             streamBatchStarted: {}
-          - sequence: 11
-            activity: 7
-            parent: 6
+          - sequence: 13
+            activity: 8
+            parent: 7
+            acquisitionStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 7
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 15
+            activity: 9
+            parent: 7
             databaseCallStarted:
               target: parallax.compatibility.Order
               kind: read
               statement: 2
-          - sequence: 12
-            activity: 7
-            parent: 6
+          - sequence: 16
+            activity: 9
+            parent: 7
             databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 13
-            activity: 8
-            parent: 6
+          - sequence: 17
+            activity: 10
+            parent: 7
             databaseCallStarted:
               target: parallax.compatibility.OrderItem
               kind: read
               statement: 3
-          - sequence: 14
-            activity: 8
-            parent: 6
+          - sequence: 18
+            activity: 10
+            parent: 7
             databaseCallFinished: { outcome: readCompleted, returnedRows: 0 }
-          - sequence: 15
-            activity: 6
+          - sequence: 19
+            activity: 11
+            parent: 7
+            releaseStarted: {}
+          - sequence: 20
+            activity: 11
+            parent: 7
+            releaseFinished: { cleanup: returned }
+          - sequence: 21
+            activity: 7
             parent: 1
             streamBatchFinished: { outcome: completed }
-          - sequence: 16
-            activity: 9
-            parent: 1
-            releaseStarted: {}
-          - sequence: 17
-            activity: 9
-            parent: 1
-            releaseFinished: { cleanup: returned }
-          - sequence: 18
+          - sequence: 22
             activity: 1
             parent: null
             snapshotStreamFinished: { outcome: exhausted }

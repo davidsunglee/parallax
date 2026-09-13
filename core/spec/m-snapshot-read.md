@@ -439,6 +439,16 @@ distinction and representation is not, so a stream is a peer of the read it
 streams in every representation that read has — one delivery mechanism, never a
 format argument.
 
+Each root has one atomic publication boundary. Its whole root-local graph and
+classification are prepared before any value for that root reaches the consumer;
+failure while preparing it publishes none of that root. Publication of one root does
+not wait for a later root, however, so every failure preserves exactly the maximal
+prefix already published. This applies whether the failure is a projection conflict,
+a provider or continuation failure on a later page, invalid-data refusal in the
+default view, or a lifecycle failure during publication. The checked view differs
+only by publishing classified invalid data in band; both views judge the same root
+sequence and retain the same prefix boundary.
+
 Roots arrive in the **Continuation Order**: a deterministic total order the
 delivery derives rather than an Object Query clause. It is composed the same way
 for every read — the query's authored Sort Keys, in the precedence the query
@@ -597,19 +607,18 @@ undecodable scalar, a wrong-kind document, and a missing member all reach the ca
 this way. Where such a value leaves an ordering term evaluating to `NULL` — which a
 missing member, a JSON null, and a wrong-kind parent all do to a document-resident
 term — the emitted clause still ranks that `NULL` somewhere, and the seek's branches
-are measured against where it ranked it, so the root is still admitted. The one value
-that is not is the stored `NULL` in a non-nullable leading **Column** named above,
-which the hoisted leading range may exclude. A coordinate missing after execution is a
+are measured against where it ranked it, so the root is still admitted. For a direct
+leading Column, a continuing page whose placement leaves NULLs ahead joins a
+NULL-tail arm to its seekable non-NULL range, so even a stored `NULL` under a dropped
+`NOT NULL` constraint is admitted. A coordinate missing after execution is a
 violation of the `m-sql` / `m-db-port` contract rather than a stream state.
 
-The two deliver the same roots at the same pins and in the same Continuation
-Order whatever the query, save the one root the stated exception above lets a
-continuing page's hoisted range exclude, which a whole-result read has no seek to
-exclude with. A milestone-set whole result is the finite form of the same flat
-delivery: it ranks the leading authored term or primary key before the milestone
-edge and never regroups roots by milestone. Across several keys, milestones may
-therefore interleave exactly as the Continuation Order places them in both eager
-and streamed results.
+The two deliver the same roots at the same pins and in the same Continuation Order
+whatever the query and whatever positive page size the delivery uses. A milestone-set
+whole result is the finite form of the same flat delivery: it ranks the leading
+authored term or primary key before the milestone edge and never regroups roots by
+milestone. Across several keys, milestones may therefore interleave exactly as the
+Continuation Order places them in both eager and streamed results.
 
 ### Ending a delivery at a tie
 
@@ -771,34 +780,23 @@ can demonstrate the independence from `N` rather than assert it.
 
 ### The connection a delivery holds
 
-Where an implementation owns connection lifetimes (`m-db-port`), a delivery
-holds ONE connection and holds it for exactly as long as it is delivering.
+Where an implementation owns connection lifetimes (`m-db-port`), a standalone
+delivery may lease one connection **per page**. The lease begins inside that page's
+Stream Batch before its first statement and ends after the page's converted result is
+ready, before any root from it is published. Every root and relationship statement in
+one page therefore observes one connection, while no connection is promised or held
+between pages or while caller code processes a published root.
 
-It is acquired at the **first page**, not at scope entry: entering a delivery
-does its deterministic work and reaches no database, so a delivery a caller
-opened and closed without reading acquires nothing and releases nothing. Every
-later page — and every relationship statement under it — runs on that same
-connection, so a delivery emits no second acquisition and nothing about a page
-boundary reaches the resource.
+Entering a delivery still does deterministic work and reaches no database, so a
+delivery opened and closed without reading acquires and releases nothing. A later page
+may receive a different connection and a different per-statement database view; that
+is the resource form of the per-page consistency contract above, not transparent
+recovery from a connection lost while a page was running. Such a loss fails that page,
+and the already-published prefix stands.
 
-It is released where the delivery **SETTLES** — at exhaustion, at a failure, or
-at an explicit early close — rather than at the lexical exit that follows. An
-exhausted delivery that kept a connection until its caller happened to leave the
-scope would be occupying capacity nothing is using, and a caller cannot see the
-difference except as work elsewhere waiting. A caller that simply stopped
-reading reaches no terminal state, so its scope exit is where the release
-happens instead; releasing twice is not observable, because the second is a
-no-op.
-
-A delivery that lost its connection **fails**. There is no transparent
-replacement and no resumption: the roots already delivered stand, and continuing
-would be a second read of a database that has moved.
-
-Capacity a delivery is holding is capacity other work waits for. An independent
-operation started inside a consuming loop needs a connection of its own, and
-where a delivery occupies all of them it will wait and may time out — which is
-the one resource consequence a consumer has to design around rather than a
-defect.
+Capacity not occupied by the current page is available to independent work, including
+an operation started inside the consuming loop. A pool with one slot can therefore
+serve that work between page reads without waiting for the delivery's scope to close.
 
 A **participating** delivery — one inside a transaction — acquires nothing at
 all: it runs on the attempt's connection, and it is one more thing running on

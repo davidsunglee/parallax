@@ -3,11 +3,9 @@
 The internal seams are proven elsewhere. What is proven here is the surface an
 application actually holds: connect from configuration, run typed and Wire
 operations, and close — with the resource consequences that are visible from
-outside. A whole eager read is one connection; a whole delivery is one
-connection that goes back where the delivery ends; a retry acquires afresh; and
-capacity a stream is occupying is capacity an independent transaction has to
-wait for, which is the one pooling consequence an application has to design
-around.
+outside. A whole eager read is one connection; each standalone delivery page is
+one lease returned before publication; a retry acquires afresh; and
+participating work uses its attempt's connection.
 """
 
 from __future__ import annotations
@@ -131,9 +129,9 @@ def test_a_startup_that_cannot_reach_a_server_publishes_no_handle(profile_run: A
 # --------------------------------------------------------------------------- #
 
 
-def test_a_whole_eager_read_and_a_whole_delivery_each_need_one_slot(profile_run: Any) -> None:
-    # One connection is enough for both shapes end to end: the read materializes
-    # inside its own acquisition, and the delivery reads every page on one.
+def test_a_whole_eager_read_and_each_delivery_page_need_one_slot(profile_run: Any) -> None:
+    # One connection is enough for both shapes: the eager read materializes
+    # inside its acquisition, and each delivery page returns its lease in turn.
     _seeded(profile_run)
     with connect(profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT) as db:
         assert _accounts(db)
@@ -160,10 +158,9 @@ def test_an_exhausted_delivery_gives_its_slot_back_before_its_scope_ends(
         assert _accounts(db)
 
 
-def test_a_delivery_still_reading_holds_its_slot(profile_run: Any) -> None:
-    # The other side of the same fact, and the one an application has to design
-    # around: an independent operation inside a stream loop needs another slot
-    # and times out when the stream occupies them all.
+def test_an_independent_read_uses_the_only_slot_between_delivery_pages(profile_run: Any) -> None:
+    # Publication happens after the page lease returns, so independent work in
+    # the consuming loop can use the only slot before the next page asks for it.
     _seeded(profile_run)
     with (
         connect(
@@ -173,11 +170,7 @@ def test_a_delivery_still_reading_holds_its_slot(profile_run: Any) -> None:
         db.stream(Account.where(Account.all), batch_size=1) as roots,
     ):
         next(iter(roots))
-        with pytest.raises(ExecutionFailure) as refused:
-            _accounts(db)
-
-    assert isinstance(refused.value.__cause__, ConnectionAcquisitionError)
-    assert refused.value.__cause__.reason == "timeout"
+        assert _accounts(db)
 
 
 def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: Any) -> None:
@@ -256,8 +249,8 @@ def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
     profile_run: Any,
 ) -> None:
     # The executable story, against the real pool it describes: registered
-    # before the handle is published, read while a delivery is holding the only
-    # slot, and detached once the handle closes.
+    # before the handle is published, read after a delivery page returned the
+    # only slot, and detached once the handle closes.
     _seeded(profile_run)
     configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1))
 
@@ -269,9 +262,9 @@ def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
 
     assert reading.at_rest.managed == 1
     assert reading.at_rest.idle == 1
-    # The delivery holds the runtime's one slot, and the reading still happens:
-    # sampling takes no connection, so it could not have queued behind it.
-    assert reading.while_working.idle == 0
+    # The sample is taken after one root was published, between pages, so the
+    # page lease has returned even though the delivery remains open.
+    assert reading.while_working.idle == 1
     assert reading.while_working.checkouts > reading.at_rest.checkouts
     assert reading.while_working.waiting == 0
     assert reading.detached_after_close

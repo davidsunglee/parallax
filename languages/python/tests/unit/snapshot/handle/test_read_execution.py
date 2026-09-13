@@ -491,21 +491,22 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
         assert read.page(stream.batch(), body) is _ANSWER
 
     (root,) = provider.roots
-    # Nothing precedes the batch but the delivery taking its connection: the
-    # Acquisition is the stream's own child and stands in front of the first
-    # page, the batch opens where the page begins, and the body runs inside it.
+    # The page's Stream Batch starts before its lease, and the body runs only
+    # after that batch-owned Acquisition has finished.
     assert body.only.transitions == (
         "SnapshotStreamStarted",
+        "StreamBatchStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "StreamBatchStarted",
     )
     assert _parentage(root) == [
         ("SnapshotStreamStarted", 1, None),
-        ("AcquisitionStarted", 2, 1),
-        ("AcquisitionFinished", 2, 1),
-        ("StreamBatchStarted", 3, 1),
-        ("StreamBatchFinished", 3, 1),
+        ("StreamBatchStarted", 2, 1),
+        ("AcquisitionStarted", 3, 2),
+        ("AcquisitionFinished", 3, 2),
+        ("ReleaseStarted", 4, 2),
+        ("ReleaseFinished", 4, 2),
+        ("StreamBatchFinished", 2, 1),
         ("SnapshotStreamFinished", 1, None),
     ]
     handed = body.only.inputs

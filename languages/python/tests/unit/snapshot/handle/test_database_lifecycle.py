@@ -208,14 +208,14 @@ def test_an_exhausted_stream_releases_where_it_ends_rather_than_at_its_scope_exi
         assert adapter.cleanups == [Returned()]
 
 
-def test_a_stream_a_caller_abandoned_releases_at_its_scope_exit() -> None:
-    # A caller who simply stopped reading reaches no terminal state, so the
-    # scope exit is where its connection goes back.
+def test_a_stream_a_caller_abandoned_has_already_released_its_page() -> None:
+    # Publication begins only after the page lease has returned, so abandoning
+    # the delivery leaves no connection for scope exit to settle.
     adapter = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))
     with _db(adapter, ORDERS_MODEL) as db:
         with db.stream(_orders_query(), batch_size=2) as roots:
             next(iter(roots))
-            assert adapter.cleanups == []
+            assert adapter.cleanups == [Returned()]
         assert adapter.cleanups == [Returned()]
 
 

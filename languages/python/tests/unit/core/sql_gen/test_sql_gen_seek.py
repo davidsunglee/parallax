@@ -45,6 +45,7 @@ POSITIONS = accepted_model("position")
 
 _TRAVELER_JOINED = "parallax.compatibility.Traveler.joinedOn"
 _ORDER_NAME = "parallax.compatibility.Order.name"
+_ORDER_SKU = "parallax.compatibility.Order.sku"
 _POSITION_VALID_END = "parallax.compatibility.Position.validEnd"
 _ORDER_ACTIVE = "parallax.compatibility.Order.active"
 
@@ -218,12 +219,16 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     plan = _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END))
     node = plan.after(ContinuationCoordinate((INFINITY, 1)), limit=2)
     statement = _lowered(POSITIONS, node)
-    assert statement.sql.endswith(
+    assert statement.sql.startswith("select u.")
+    assert (
         "where t0.thru_z = ? and t0.out_z = ? and t0.thru_z >= ? "
         "and (t0.thru_z > ? or t0.thru_z is null "
         "or (t0.thru_z = ? and (t0.pos_id > ? or t0.pos_id is null))) "
         "order by t0.thru_z asc, t0.pos_id asc limit ?"
-    )
+    ) in statement.sql
+    assert ") union all (select " in statement.sql
+    assert "where t0.thru_z = ? and t0.out_z = ? and t0.thru_z is null" in statement.sql
+    assert statement.sql.endswith("order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?")
     assert statement.binds[2:5] == (INFINITY, INFINITY, INFINITY)
     assert statement.wire_binds()[2:5] == (INFINITY_LITERAL,) * 3
 
@@ -268,22 +273,45 @@ def test_a_non_nullable_terms_branch_follows_the_emitted_placement_not_the_decla
     assert "t0.active < ?" in descending.sql
 
 
-def test_the_hoisted_leading_range_re_excludes_the_null_its_own_branch_admits() -> None:
-    # The one deliberate exception, graded so removing it is a decision rather
-    # than an edit. The leading term is declared non-nullable, so the page hoists
-    # `t0.active >= ?` for the planner; the branch beneath it still admits the
-    # NULLs the emitted clause placed after the coordinate, and the hoist then
-    # excludes them again. A stored NULL in that column is therefore skipped —
-    # the price `m-snapshot-read` *Streamed delivery* records for the leading
-    # index range.
+def test_the_hoisted_leading_range_keeps_its_null_tail_in_a_second_arm() -> None:
+    # The range arm stays seekable without omitting a NULL the emitted order put
+    # after the coordinate: the disjoint second arm admits the whole NULL tail,
+    # and the outer order and cap merge the two into one continuing page.
     statement = _lowered(
         ORDERS,
         _planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)).after(
             ContinuationCoordinate((True, 1)), limit=2
         ),
     )
-    seek = statement.sql.partition(" where ")[2].partition(" order by ")[0]
-    assert seek.startswith("t0.active >= ? and (t0.active > ? or t0.active is null or ")
+    assert "where t0.active >= ? and (t0.active > ? or t0.active is null or " in statement.sql
+    assert ") union all (select " in statement.sql
+    assert "where t0.active is null order by t0.active asc, t0.id asc limit ?" in statement.sql
+    assert statement.sql.endswith("order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?")
+
+
+def test_a_single_term_continuation_order_hoists_its_direct_range() -> None:
+    statement = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order").after(ContinuationCoordinate((1,)), limit=2),
+    )
+
+    assert "where t0.id >= ? and (t0.id > ? or t0.id is null)" in statement.sql
+    assert ") union all (select " in statement.sql
+    assert "where t0.id is null order by t0.id asc limit ?" in statement.sql
+    assert statement.binds == (1, 1, 2, 2, 2)
+
+
+def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_arm_shape() -> None:
+    statement = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order", OrderKey(attr=_ORDER_SKU, nulls="last")).after(
+            ContinuationCoordinate(("A-100", 1)), limit=2
+        ),
+    )
+
+    assert "where t0.sku >= ? and (t0.sku > ? or t0.sku is null or " in statement.sql
+    assert "where t0.sku is null order by t0.sku asc, t0.id asc limit ?" in statement.sql
+    assert statement.sql.endswith("order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?")
 
 
 _RESIDENT_KEY: Final = _records.Metamodel(

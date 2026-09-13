@@ -491,9 +491,8 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
     Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: the
     lexicographic remainder — one branch per tie depth, disjoined, each branch
     tying with every coordinate above it before comparing its own in that term's
-    direction and EMITTED placement — behind the range a leading direct Column
-    declared non-nullable hoists. A single-term order composes neither part: one
-    strict comparison already is the top-level conjunct the hoist supplies. A
+    direction and EMITTED placement — behind the range any leading direct Column
+    with a non-null carrier hoists. A
     null coordinate carries no coordinate bind at any depth, both spellings that
     reach it being null checks, and where the emitted clause placed nulls last it
     contributes no branch at all: nothing sorts after a null there.
@@ -501,14 +500,9 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
     Placement is the emitted one rather than the authored one, because that is
     what decides which rows the clause actually ranked after the coordinate: a
     key the model declares non-nullable lowers plain and takes the dialect's own
-    convention. The hoist is the one part that still turns on the DECLARATION,
-    and deliberately (`m-snapshot-read` *Streamed delivery*): over a direct
-    Column it buys the leading index range at the price of skipping a stored NULL
-    non-conforming storage left in a `NOT NULL` column. It stops at the Column,
-    though — a document-resident leading term hoists nothing, because its
-    extraction reads NULL for ordinary invalid stored data that same
-    specification guarantees is delivered, and a range over an extraction is no
-    index range to trade for it.
+    convention. The hoist stops at a direct Column; a document-resident leading
+    term has no direct index range to exploit. Where emitted placement trails
+    NULLs, a separate disjoint arm collects that tail.
 
     Grading the SHAPE is what the binds cannot do — a page that seeks the wrong
     way, or disjoins what the order conjoins, binds exactly what a correct one
@@ -523,12 +517,21 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
         ties = [_ties_with(terms[above], coordinates[above]) for above in range(depth)]
         branches.append(_composed("and", [*ties, after]) if ties else after)
     lead = terms[0]
-    if len(terms) == 1:
-        return branches[0]
     remainder = _composed("or", branches)
-    if lead.nullable or lead.document_resident or coordinates[0] is None:
+    if lead.document_resident or coordinates[0] is None:
         return remainder
     return _composed("and", [_hoisted_range(lead, coordinates[0]), remainder])
+
+
+def emits_null_tail(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -> bool:
+    """Whether this continuing page needs the disjoint leading-NULL arm."""
+    lead = terms[0]
+    return not lead.document_resident and coordinates[0] is not None and lead.placement == "last"
+
+
+def null_tail_seek(terms: list[ContinuationTerm]) -> ComposedSeek:
+    """The predicate carried by a continuing page's disjoint NULL-tail arm."""
+    return _null_leaf(terms[0])
 
 
 def _strictly_after(term: ContinuationTerm, coordinate: Any) -> ComposedSeek | None:
@@ -720,6 +723,18 @@ def _captured_cell(cell: Expr, dialect: str) -> tuple[str, str]:
 
 
 # --- grading one page's own text ---------------------------------------------
+
+
+def continuing_arms(sql: str) -> tuple[str, ...]:
+    """The independently limited SELECT arms of one continuing-page statement."""
+    marker = " from (("
+    if marker not in sql:
+        return (sql,)
+    start = sql.index(marker) + len(marker)
+    separator = ") union all ("
+    split = sql.index(separator, start)
+    end = sql.rindex(")) u order by ")
+    return (sql[start:split], sql[split + len(separator) : end])
 
 
 def seek_splice(first_page_sql: str, later_page_sql: str) -> tuple[int, int]:
@@ -948,6 +963,6 @@ def refuse_a_drifting_page(
         raise CaseFailure(
             f"{where} seeks {_render_seek(spelled)}, not {_render_seek(seek.node)}. A page "
             f"compares each Continuation Order term in that term's OWN direction and "
-            f"placement, one branch per tie depth DISJOINED, behind the range a non-nullable "
-            f"leading term hoists."
+            f"placement, one branch per tie depth DISJOINED, behind the range a direct "
+            f"leading term with a non-null carrier hoists."
         )

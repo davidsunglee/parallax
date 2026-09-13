@@ -10,11 +10,11 @@
 # `Animal.id`, because the physical primary key is family-wide and root-owned and
 # a concrete subtype declares none of its own.
 #
-# `barkVolume` is nullable, so the leading term is not hoisted and its branch
-# admits both ranges the descending Nulls Last placement leaves — `t0.bark_volume
-# < ? or t0.bark_volume is null`. The narrowing's own tag guard `t0.kind = ?`
-# binds AFTER the seek it is conjoined beside, which is what a page whose query
-# carries clauses of its own looks like.
+# A non-null `barkVolume` coordinate hoists the leading range into one arm, and
+# the descending Nulls Last placement leaves a disjoint `t0.bark_volume is null`
+# tail arm. The narrowing's own tag guard `t0.kind = ?` binds after each arm's
+# predicate, which is what a page whose query carries clauses of its own looks
+# like.
 #
 # Pages of 1 over the family's two dogs, each asking for 2: {Rex} at barkVolume 7
 # out of both, then {Fido} at 3 seeking past (7, 1) — ONE root for a requested
@@ -46,8 +46,8 @@ then:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
       binds: [dog, 2]
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and (t0.id > ? or t0.id is null))) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
-      binds: [7, 7, 1, dog, 2]
+        postgres: select u.id, u.kind, u.name, u.owner_id, u.license_id, u.bark_volume, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where t0.bark_volume <= ? and (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and (t0.id > ? or t0.id is null))) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?) union all (select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where t0.bark_volume is null and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?)) u order by u.parallax_seek_0 desc nulls last, u.parallax_seek_1 asc limit ?
+      binds: [7, 7, 7, 1, "dog", 2, "dog", 2, 2]
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where kind = 'dog'
   graph:
     Animal:

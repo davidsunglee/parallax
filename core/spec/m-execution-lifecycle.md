@@ -392,8 +392,10 @@ StreamBatchStarted()
 StreamBatchFinished(StreamBatchCompleted | StreamBatchFailed(failure))
 ```
 
-It starts after any read-dependency Write Batch and before page planning. Its
-Database Calls are direct children; it spans conversion and completes once the
+It starts after any read-dependency Write Batch and before page planning. For a
+standalone stream its Acquisition is the first child, its Database Calls follow as
+direct children, and its Release is the last child. A participating stream inherits
+the attempt's connection and emits neither resource child. The batch spans conversion and completes once the
 page's converted result — the one shared input every root of that page is
 published from — is ready, including a page that returned no root at all. Materializing and
 publishing those roots runs one root at a time under the parent Snapshot Stream,
@@ -406,11 +408,11 @@ nests a duplicate Read activity.
 
 ## Resource events
 
-An operation reaches the database through a connection it holds for its own
-lifetime, and how long it held one is observable. Three activities own one: a
-standalone Read, a Transaction Attempt, and a standalone Snapshot Stream — the
-same three that adopt a Model Edition, because a connection and a selection are
-held for exactly one operation (`m-db-port`). Each of them opens at most one
+An operation reaches the database through a connection it holds for the bounded
+work that needs it, and how long it held one is observable. Three activity kinds own
+one: a standalone Read, a Transaction Attempt, and each Stream Batch of a standalone
+Snapshot Stream. A stream still adopts one Model Edition for its whole delivery, but
+each page owns its own connection lease (`m-db-port`). Each owner opens at most one
 **Acquisition** and at most one **Release**, both as its own direct children:
 
 ```text
@@ -424,20 +426,19 @@ ReleaseFinished(durationNs, holdDurationNs, cleanupResult)
 They are SIBLINGS of the execution activities beside them rather than a lease
 enclosing them. An eager Read's Database Calls stay its own direct children, an
 attempt keeps its Reads, Write Batches, joined invocations, and streams, and a
-standalone stream keeps its Stream Batches: what an operation asked the adapter
-for is one more thing it did, not a scope the rest of it runs inside. Nothing
-opens under an Acquisition or a Release, and no Read, Stream Batch, or Database
-Call is duplicated to carry one.
+standalone stream keeps its Stream Batches; each standalone batch in turn keeps its
+resource children and Database Calls. What an owner asked the adapter for is one more
+thing it did, not a scope the rest of it runs inside. Nothing opens under an
+Acquisition or a Release, and no Read, Stream Batch, or Database Call is duplicated to
+carry one.
 
-The Acquisition is its owner's FIRST child and the Release its LAST. A
-standalone Read acquires before its first statement; an attempt acquires before
-its boundary is asked to begin, so an acquisition that granted nothing is the
-begin failure above; a standalone stream acquires when it reads its first page,
-before that page's Stream Batch opens, and releases where the delivery SETTLES
-rather than where the caller leaves its scope. Work that INHERITS a connection
-emits neither: a participating read, write batch, stream, or joined invocation
-runs on the attempt's connection, and a stream's later pages run on the one its
-first page took.
+The Acquisition is its owner's FIRST child and the Release its LAST. A standalone
+Read acquires before its first statement; an attempt acquires before its boundary is
+asked to begin, so an acquisition that granted nothing is the begin failure above;
+each standalone Stream Batch acquires after the batch opens and releases before that
+batch finishes. Root publication happens after the batch and therefore after release.
+Work that INHERITS a connection emits neither: a participating read, write batch,
+stream batch, or joined invocation runs on the attempt's connection.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
 `queue-rejected`, `closed`, `preparation-failed` — and is outside the
@@ -640,7 +641,7 @@ This module owns ten cases:
 | retry then commit | one invocation contains a rolled-back attempt and a later committed attempt, each acquiring and releasing its own connection, and the first releases before the second acquires; zero-row enforcement is attributed to the completed call |
 | retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
 | joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit batch |
-| streamed delivery | a Snapshot Stream root acquires once before its first page, brackets one Stream Batch per page, each page's Database Calls are that batch's own, and it releases where the delivery finishes exhausted |
+| streamed delivery | a Snapshot Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
 | cleanup after commit | a Release reporting an unrelinquished connection leaves the attempt committed and the invocation committed |

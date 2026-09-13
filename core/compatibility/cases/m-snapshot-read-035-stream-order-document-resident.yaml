@@ -26,8 +26,8 @@
 # change, and both dialects answer it for a missing key and for an explicit JSON
 # null alike (m-storage-layout-021 measures that).
 #
-# Both resident terms are nullable, so no continuing page hoists a leading range:
-# with the nulls placed after a non-null coordinate, "after" is two disjoint
+# Both leading terms are document-resident, so no continuing page hoists a
+# leading range: with the nulls placed after a non-null coordinate, "after" is two disjoint
 # ranges and no single comparison covers both. That is what the leading branch
 # `<destination> < ? or <destination> is null` says instead. The SECOND term's
 # own two-way branch is grouped — `(<destination> = ? and (<nights> < ? or

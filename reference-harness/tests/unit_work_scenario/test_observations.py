@@ -1142,7 +1142,7 @@ def test_a_streamed_step_page_seeking_from_the_wrong_root_is_refused(
 ) -> None:
     """A step's pages reach the delivery oracle, not a single-statement find path."""
     case = damaged_case(_STREAMED_EVIDENCE)
-    _steps(case)[0]["statements"][1]["binds"][0] = 1
+    _steps(case)[0]["statements"][1]["binds"]["postgres"][0] = 1
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(*_FIRST_DELIVERY)))
