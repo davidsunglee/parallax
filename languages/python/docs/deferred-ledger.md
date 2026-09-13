@@ -869,9 +869,9 @@ re-project a family superset, which is an unrelated obligation.
 
 *Low — one reported cell needs a controlled reading beside it before two
 recordings of it can be compared.* Relates to
-`languages/python/tools/snapshot_materialization_reading.py`,
+the retired standalone materialization reader,
 `languages/python/docs/snapshot-materialization-baseline.md`,
-`just python-report-snapshot-materialization`. Owner: this target.
+the unified Snapshot delivery portfolio. Owner: this target.
 
 **What.** `measure` runs its four timed seams — model preparation, compilation,
 `bind`, and twenty batches — before it starts `tracemalloc` and reads what the

@@ -6,11 +6,10 @@ root. `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned workin
 set at `O(P_B + G_max)` and names three exclusions; this is the reading that puts
 a scale on both halves.
 
-Nothing here gates. `just python-report-stream-overhead` is a `report`: it passes
-no verdict and belongs to no aggregate, because a total in bytes is machine- and
-interpreter-relative — `tracemalloc` figures move with CPython, and every CI job
-runs the floating `ubuntu-latest` label, so a tight ratio can flip on an
-interpreter bump that changed nothing.
+Nothing here gates. This is dated evidence for the Snapshot member of `just
+python-report-cost`; current authority and every active ceiling live only in
+`spec/budget-contract.yaml`. The report displays outcomes but never turns an
+outside-budget observation into its exit status.
 
 The *shape* of the bound is gated instead, in
 `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost` class owns and CI

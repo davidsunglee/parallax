@@ -663,9 +663,18 @@ def compile_read(
     statement_ctx.append_fragment(compiled.statement)
     statement_ctx.append_fragment(null_tail.statement)
     outer_alias = "u"
-    projection = ", ".join(
-        dialect.qualified(outer_alias, result_key) for result_key in compiled.result_keys
-    )
+    projection_parts: list[str] = []
+    document_presence = {presence for presence, _document in compiled.document_reads}
+    ordinal = 0
+    for result_key in compiled.result_keys:
+        expression = dialect.qualified(outer_alias, result_key)
+        if ordinal in document_presence:
+            projection_parts.extend(dialect.project_document_read(expression))
+            ordinal += 2
+        else:
+            projection_parts.append(expression)
+            ordinal += 1
+    projection = ", ".join(projection_parts)
     ordering = ", ".join(
         dialect.null_order(
             dialect.qualified(outer_alias, term.alias), term.term.direction, term.term.nulls

@@ -18,11 +18,10 @@ The report command now times `PreparedRead.convert_driver` through `PageBuilder.
 
 The Page-era Budget Contract is executable in `tests/unit/snapshot/test_snapshot_materialization_scaling.py`, `tests/unit/snapshot/test_snapshot_evidence_retention.py`, and `tests/unit/snapshot/test_snapshot_stream_retention.py`. It grades fixed prepared state, one Page plus one published root at suspension, no accumulation of prior Pages, independence from total result size and equivalent cross-page position, peak dependence on the currently published root rather than unrelated Page roots, and immutable predecessor evidence shared until successor lowering detaches a writable document. Whole-interpreter readings remain confined to `in_a_child_interpreter`; `just python-check-cost` is the one local focused gate for this portfolio.
 
-Nothing here gates. `just python-report-snapshot-materialization` is a `report`:
-it passes no verdict and belongs to no aggregate, because elapsed time is a
-property of the machine that ran it — every CI job runs the floating
-`ubuntu-latest` label — and a total in bytes is machine- and interpreter-relative,
-since `tracemalloc` figures move with CPython. The *shape* of the claim is gated
+Nothing here gates. This is dated evidence for the Snapshot member of `just
+python-report-cost`; current authority and every active ceiling live only in
+`spec/budget-contract.yaml`. The report displays outcomes but never turns an
+outside-budget observation into its exit status. The *shape* of the claim is gated
 instead, in `tests/unit/test_snapshot_materialization_scaling.py`, which the
 `cost` class owns and CI runs on every change: it asserts that what preparation
 holds is fixed by the model's exact Entity layouts and by the compiled reads,
@@ -538,7 +537,7 @@ anticipates.
 | Machine | Apple M5, 10 cores, 32 GiB, darwin/arm64 |
 | OS | macOS 26.6.2 (build 25G83) |
 | Interpreters | CPython 3.13.15 and 3.14.7 (both `main`, Aug 5 2026, Clang 21.0.0) |
-| Command | `just python-report-snapshot-materialization` |
+| Current report | Snapshot member of `just python-report-cost` |
 | Source (before) | branch `cor-137-speed-up-snapshot-materialization-0ou36c`, base commit `431936be` |
 | Source (rows) | the same branch at `72949d45`, the head of the four slices in *Where each saving came from* |
 | Source (codec) | the same branch with the canonical-decoding slice applied — the commit this column landed in |
@@ -602,7 +601,7 @@ twice, or for none of it.
 ## The workload
 
 A fourth workload model, because none of the three that exist fits:
-`tools/snapshot_graph_overhead.py` is `Columns`-only and declares four Neutral
+the retired standalone graph report was `Columns`-only and declared four Neutral
 Types, `tests/unit/_document_layout_support.py` is a layout twin at the
 accepted-Metamodel level with no `DomainModel` for `prepare_model` to prepare, and
 `test_snapshot_graph_retention.py`'s workload is the frozen 64-graph cost item.
@@ -647,12 +646,11 @@ refuses both before any window opens. That is also what makes the path measured 
 ## Rerunning it
 
 ```sh
-just python-report-snapshot-materialization
+just python-report-cost
 ```
 
-It takes about three minutes and prints, per supported minor and per storage
-layout, the steady-state timings, the memory readings, the call counts, and the
-secondary workload. Comparing against the tables above needs the same conditions —
+The current command writes the complete report portfolio and its Snapshot
+delivery envelope. Comparing against the historical tables above needs the same conditions —
 the same machine class, the same interpreters, no competing load — because the
 absolute numbers are machine-relative even where the ratios are not. A reading
 taken on a different CPython is a reading of that CPython as much as of this code.

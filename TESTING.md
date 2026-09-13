@@ -92,10 +92,9 @@ check-all` resolve exactly what each run contains.
 | One language spec, drafted or complete | `just core-show-language-spec languages/python/spec/python.md` |
 | The compatibility-matrix report | `just report-matrix` |
 | The execution lifecycle's dispatch and overhead baseline | `just python-report-lifecycle-overhead` |
-| The Snapshot graph's retained and build overhead baseline | `just python-report-snapshot-graph-overhead` |
-| The streamed delivery's working set per page size | `just python-report-stream-overhead` |
+| The complete Snapshot delivery Budget Contract portfolio | `just python-report-snapshot-delivery` |
 | The published instance-state three-arm retained and timing matrix | `just python-report-instance-state` |
-| The production materialization throughput and memory matrix per storage layout | `just python-report-snapshot-materialization` |
+| Every quantitative Python report, collected fail-late | `just python-report-cost` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 
 No focused selector is part of `just check`, so a green focused run is never
@@ -138,10 +137,11 @@ it locally safe.
 | `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6`, one cell per shard of the class, together the one run the command owns |
+| `python-report-cost` | — | Advisory merge-base/head cost portfolio with commit-keyed artifacts; non-required |
 | `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` |
 
-Every job but the last runs a command `check-all` contains.
-`python-test-pydantic-floor` runs a focused selector, which
+The `python-report-cost` job is advisory observation rather than a gate, and the
+last job runs a focused selector. `python-test-pydantic-floor`
 [`core/spec/language-testing.md`](core/spec/language-testing.md) §3 keeps out of
 every aggregate, so it is the one gate here that no local aggregate reaches and
 CI alone owns — the same division as the 3.13 `python-check-dbfree` leg, where
