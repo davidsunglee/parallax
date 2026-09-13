@@ -3,7 +3,7 @@
 One projection is a reference to its exact Entity's member layout plus one
 ``member_values`` tuple read against it — Attributes in the layout's order first,
 then top-level Value Object occurrences — plus one relationship view row, the
-source level that produced it, one dense graph-local logical-node ID, and, only
+source level that produced it, one dense Page-local logical-node ID, and, only
 where stored data contradicted the model, its issues. Nothing wraps a cell: what
 a row holds at a position is the decoded value itself.
 
@@ -32,30 +32,27 @@ is stated — and the four spellings stay mutually distinct at every depth:
 ===============================  =========================================
 
 Edges and roots are exact nonnegative built-in ``int`` projection indexes, and
-:class:`GraphBuilder` refuses ``bool``, a non-``int``, a negative, and an
+:class:`PageBuilder` refuses ``bool``, a non-``int``, a negative, and an
 out-of-range index where the edge is recorded — so a graph that exists is a graph
 whose references resolve, and no whole-graph validation pass stands between
 building one and merging it.
 
-:meth:`GraphBuilder.seal` transfers the accumulated arrays into an opaque
-:class:`SnapshotGraph` and invalidates the builder in one step, so nothing
+:meth:`PageBuilder.finish` transfers the accumulated arrays into an opaque
+:class:`Page` and invalidates the builder in one step, so nothing
 observes a half-published graph and nothing writes to a published one. The
 per-family key map the builder assigns logical identity through is discarded
 there: identity is computed once, while building, and a merge consumes the dense
 IDs without re-extracting or re-hashing a key.
 
-A sealed graph is also where result SCOPE is expressed. Because a merge's whole
-universe is the roots it is handed, :func:`root_scoped` narrows a graph to one
-of them by rebuilding the row shell alone — every array shared by reference —
-and everything downstream runs unchanged over the result. :func:`root_edges` is
-the other half of publishing one: the milestone each root of a scan stands at,
-or its absence for every root that stands at the graph's own pin.
+A Page is also where result scope is expressed. A Root View selects one root
+without copying any page-owned array. :func:`page_edges` supplies the milestone
+each root of a scan stands at, or its absence for a root at the Page's own pin.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
@@ -79,16 +76,17 @@ from parallax.snapshot.materialize._views import (
 
 __all__ = [
     "ABSENT",
-    "GraphBuilder",
-    "GraphRows",
+    "EntityState",
     "InvalidRootInput",
+    "LogicalKey",
+    "Page",
+    "PageBuilder",
+    "PageRows",
     "RelationshipViewKey",
-    "SnapshotGraph",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
-    "graph_rows",
-    "root_edges",
-    "root_scoped",
+    "page_edges",
+    "page_rows",
 ]
 
 
@@ -108,7 +106,7 @@ type StoredDataIssueCode = Literal[
 _INVALID_KEY_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
     {"stored-data-primary-key-null", "stored-data-primary-key-undecodable"}
 )
-"""The codes that leave a projection with no usable graph-local identity."""
+"""The codes that leave a projection with no usable Page-local identity."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +117,7 @@ class StoredDataIssueInput:
     ``stored_value`` is the already-frozen evidence of what was rejected, frozen
     where conversion translated the finding: nothing downstream re-reads or
     re-freezes it. Whether this record is the one its logical node publishes is
-    settled by :meth:`GraphBuilder.add`, which answers a repeated judgment with
+    settled by :meth:`PageBuilder.add`, which answers a repeated judgment with
     the record that node already retains and drops the arriving copy. The
     retained record is what every seam above shares by reference.
     """
@@ -146,42 +144,69 @@ class InvalidRootInput:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphRows:
-    """One sealed graph's arrays, all indexed by projection.
+class LogicalKey:
+    """The page-wide identity of one logical Entity state."""
+
+    family: EntityIdentity
+    primary_key: object
+    coordinates: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class EntityState:
+    """One judged positional payload shared by Root Views in a Page."""
+
+    member_row: tuple[object, ...]
+    findings: tuple[StoredDataIssueInput, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PageRows:
+    """One sealed Page's arrays, all indexed by projection.
 
     ``view_rows`` are positional against ``schema``: projection ``i``'s row is
     laid out by the source layout its own ``sources[i]`` and layout resolve to,
-    so a reader translating one into a merged row asks the schema for the
+    so a reader translating one into a Root View row asks the schema for the
     translation rather than carrying a key beside every value.
 
-    Reached only through :func:`graph_rows`, which is what makes
-    :class:`SnapshotGraph` opaque to the result holders that carry one.
+    Reached only through :func:`page_rows`, which is what makes
+    :class:`Page` opaque to the result holders that carry one.
     """
 
     layouts: tuple[EntityLayout, ...]
     member_rows: tuple[tuple[object, ...], ...]
     issues: tuple[tuple[StoredDataIssueInput, ...], ...]
     logical_ids: tuple[int, ...]
+    keys: tuple[LogicalKey | None, ...]
     sources: tuple[SourceLevel, ...]
     view_rows: tuple[tuple[object, ...], ...]
     schema: ViewSchema
     roots: tuple[int | InvalidRootInput, ...]
     pin: Pin
+    judged_states: dict[LogicalKey, EntityState]
+    validated_keys: set[LogicalKey]
+    observer: object | None = None
+    witnesses: tuple[object, ...] = ()
+    source_ordinals: tuple[int, ...] = ()
+    claims: tuple[int | tuple[int, ...], ...] = ()
+    decoders: tuple[
+        Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]], ...
+    ] = ()
 
 
-class SnapshotGraph:
-    """One materialization's whole graph: every projection, the roots in result
-    order, and the whole-graph pin every projection was read at.
+class Page:
+    """One materialization's Page: every occurrence, the roots in result order,
+    and the Page pin every occurrence was read at.
 
     Opaque, and opaque publicly rather than only by convention: a result holder
     carrying one can read no row, layout, edge, identity, or issue off it, and
-    has nothing to read one with. The merge that consumes it lives beside it in
-    this scope and reads the sealed arrays through :func:`graph_rows`, which is
+    has nothing to read one with. The Root View that consumes it lives beside it
+    in this scope and reads the sealed arrays through :func:`page_rows`, which is
     never exported.
 
-    :attr:`pin` is the one exception, and it is one because the whole-graph pin
+    :attr:`pin` is the one exception, and it is one because the Page pin
     is a fact about the RESULT rather than about the representation: a Snapshot
-    publishes it, so a result holder reads it off the graph it holds rather than
+    publishes it, so a result holder reads it off the Page it holds rather than
     off a second copy travelling beside one.
 
     A root whose primary key is null or undecodable is an
@@ -191,46 +216,43 @@ class SnapshotGraph:
 
     __slots__ = ("_rows",)
 
-    def __init__(self, rows: GraphRows) -> None:
+    def __init__(self, rows: PageRows) -> None:
         self._rows = rows
 
     @property
     def pin(self) -> Pin:
-        """The whole-graph pin every projection of this graph was read at."""
+        """The Page pin every occurrence was read at."""
         return self._rows.pin
 
+    @property
+    def root_count(self) -> int:
+        """The number of result positions this Page carries."""
+        return len(self._rows.roots)
 
-def graph_rows(graph: SnapshotGraph) -> GraphRows:
-    """``graph``'s sealed arrays — the internal read a merge and an importing
-    builder take, and the whole of what either is granted."""
-    return graph._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a sealed graph through
+    @property
+    def judged_states(self) -> dict[LogicalKey, EntityState]:
+        """The states judged so far, shared for this Page's lifetime."""
+        return self._rows.judged_states
 
-
-def root_scoped(graph: SnapshotGraph, position: int, *, pin: Pin | None = None) -> SnapshotGraph:
-    """``graph`` narrowed to the single root at ``position``.
-
-    A merge's whole universe is the roots it is handed, so narrowing them is the
-    whole of what root-local scope IS — a new row shell over every one of
-    ``graph``'s arrays, shared by reference and copied nowhere. Scope is
-    therefore a property of the graph rather than a mode: the merge, the
-    classification, and both materializers run unchanged over what this answers,
-    and none of them learns that anything narrowed.
-
-    ``pin`` overrides the whole-graph pin for this root alone, which is what a
-    root standing at its own milestone edge needs; omitting it keeps ``graph``'s.
-    """
-    rows = graph_rows(graph)
-    return SnapshotGraph(
-        replace(rows, roots=(rows.roots[position],), pin=rows.pin if pin is None else pin)
-    )
+    @property
+    def observer(self) -> object | None:
+        """The aggregate-only observer for this delivery, when installed."""
+        return self._rows.observer
 
 
-def root_edges(graph: SnapshotGraph, declaring: EntityMetadata | None) -> Iterator[Edge | None]:
+def page_rows(page: object) -> PageRows:
+    """``page``'s sealed arrays — the internal read a Root View is granted."""
+    if not isinstance(page, Page):
+        raise TypeError("a Root View requires a finished Page")
+    return page._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a finished page through
+
+
+def page_edges(page: Page, declaring: EntityMetadata | None) -> Iterator[Edge | None]:
     """Each root's own As-Of edge in result order, or absence where it has none.
 
     ``declaring`` is the Entity whose declaration carries the family's axes for a
     MILESTONE-SET read, and ``None`` for every read at one instant — whose roots
-    stand at the graph's own pin and have no edge of their own to be published
+    stand at the Page's own pin and have no edge of their own to be published
     at.
 
     Absent, too, for a milestone root whose axis starts did not decode. Such a
@@ -238,7 +260,7 @@ def root_edges(graph: SnapshotGraph, declaring: EntityMetadata | None) -> Iterat
     what a delivery advances by is the coordinate the database evaluated, not
     anything this root's stored data turned out to be.
     """
-    rows = graph_rows(graph)
+    rows = page_rows(page)
     for root in rows.roots:
         if declaring is None or isinstance(root, InvalidRootInput):
             yield None
@@ -246,37 +268,38 @@ def root_edges(graph: SnapshotGraph, declaring: EntityMetadata | None) -> Iterat
         yield _root_edge(declaring, rows, root)
 
 
-def _root_edge(declaring: EntityMetadata, rows: GraphRows, root: int) -> Edge | None:
+def _root_edge(declaring: EntityMetadata, rows: PageRows, root: int) -> Edge | None:
     layout = rows.layouts[root]
-    values = rows.member_rows[root]
+    key = rows.keys[root]
+    if key is None:  # pragma: no cover - a temporal result root with no key has no edge
+        return None
     try:
         return milestone_edge_of(
             declaring,
             {
-                cast("AttributeIdentity", layout.members[position]): values[position]
-                for position in range(layout.attribute_count)
-                if values[position] is not ABSENT
+                cast("AttributeIdentity", layout.members[position]): value
+                for position, value in zip(layout.temporal_starts, key.coordinates, strict=True)
+                if value is not ABSENT
             },
         )
     except TemporalReadError:
         return None
 
 
-class GraphBuilder:
-    """One materialization's accumulation arrays and graph-local identity scope.
+class PageBuilder:
+    """One materialization's accumulation arrays and Page-local identity scope.
 
     Two roles, and the second is a deliberate concession rather than an
-    accumulating surface. It **accumulates**: a converted row is appended with
-    :meth:`add`, an already-sealed row is carried over with
-    :meth:`import_projection`, a level's fan-back is recorded with
-    :meth:`write_view`, and :meth:`seal` publishes the lot. It also **answers**
-    four questions about rows it already holds — :meth:`member_value`,
-    :meth:`concrete_of`, :meth:`resolve`, and :meth:`issues_of` — because a read
-    level gathers its keys, filters its parents, resolves a back-reference, and
-    decides what a write observes against exactly those rows, and until sealing
-    nothing else holds them. Nothing beyond that fan-out may reach for the four.
+    accumulating surface. It **accumulates**: an already-decoded row is appended
+    with :meth:`add`, an identity-first occurrence with :meth:`add_claim`, a
+    level's fan-back is recorded with :meth:`write_view`, and :meth:`finish`
+    publishes the lot. It also **answers** three questions about rows it already
+    holds — :meth:`member_value`, :meth:`concrete_of`, and :meth:`resolve` —
+    because a read level gathers its keys, filters its parents, and resolves a
+    back-reference against exactly those rows, and until finishing nothing else
+    holds them. Nothing beyond that fan-out may reach for the three.
 
-    Graph-local identity resolution promises projection reuse within one builder
+    Page-local identity resolution promises projection reuse within one builder
     and never beyond it, so the builder is the unit a caller chooses: a ``find``
     gives its whole result one, and a milestone-set read gives each milestone its
     own. The FIRST projection registered for a logical key is the one a later
@@ -291,32 +314,44 @@ class GraphBuilder:
     """
 
     __slots__ = (
+        "_decoders",
         "_first",
         "_identity",
         "_issues",
+        "_keys",
         "_layouts",
         "_logical_ids",
         "_member_rows",
-        "_retained",
+        "_observer",
+        "_occurrence_positions",
         "_schema",
         "_sealed",
         "_slots",
+        "_source_ordinals",
         "_sources",
         "_views",
+        "_witnesses",
     )
 
-    def __init__(self, schema: ViewSchema) -> None:
+    def __init__(self, schema: ViewSchema, observer: object | None = None) -> None:
         self._schema = schema
+        self._observer = observer
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
         self._issues: list[tuple[StoredDataIssueInput, ...]] = []
         self._logical_ids: list[int] = []
+        self._keys: list[LogicalKey | None] = []
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object]] = []
-        self._identity: dict[tuple[EntityIdentity, object], int] = {}
+        self._identity: dict[LogicalKey, int] = {}
         self._first: list[int] = []
-        self._retained: dict[int, list[StoredDataIssueInput]] = {}
+        self._decoders: list[
+            Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
+        ] = []
+        self._witnesses: list[object] = []
+        self._occurrence_positions: list[tuple[int, int]] = []
+        self._source_ordinals: dict[int, int] = {}
         self._sealed = False
 
     # ----------------------------------------------------------------------- #
@@ -349,41 +384,60 @@ class GraphBuilder:
         two equal ones. This is the earliest point where sharing is possible: the
         logical node a row belongs to is not known until its members decode.
         """
+        key = (
+            None
+            if _keyless(issues)
+            else LogicalKey(
+                layout.family,
+                layout.key_of(member_values),
+                tuple(member_values[position] for position in layout.temporal_starts),
+            )
+        )
+        return self.add_claim(
+            source,
+            layout,
+            key,
+            member_values,
+            member_values,
+            issues,
+            lambda: (member_values, issues),
+        )
+
+    def add_claim(
+        self,
+        source: SourceLevel,
+        layout: EntityLayout,
+        key: LogicalKey | None,
+        witness: object,
+        raw_member_values: tuple[object, ...],
+        identity_issues: tuple[StoredDataIssueInput, ...],
+        decode: Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]],
+    ) -> int:
+        """Append an identity claim without judging its payload."""
         self._require_open()
         slots = self._schema.source(source, layout)
         projection = len(self._layouts)
-        logical = self._logical(layout, member_values, issues, projection)
+        existing = None if key is None else self._identity.get(key)
+        if existing is None:
+            logical = self._fresh(projection)
+            if key is not None:
+                self._identity[key] = logical
+        else:
+            logical = existing
         self._layouts.append(layout)
-        self._member_rows.append(member_values)
-        self._issues.append(self._shared_issues(logical, issues))
+        self._member_rows.append(raw_member_values)
+        self._issues.append(identity_issues)
+        self._decoders.append(decode)
         self._sources.append(source)
         self._slots.append(slots)
         self._views.append([ABSENT] * len(slots.slots))
         self._logical_ids.append(logical)
+        self._keys.append(key)
+        source_ordinal = self._source_ordinals.get(source, 0)
+        self._source_ordinals[source] = source_ordinal + 1
+        self._occurrence_positions.append((source, source_ordinal))
+        self._witnesses.append(witness)
         return projection
-
-    def import_projection(self, source: SourceLevel, graph: SnapshotGraph, projection: int) -> int:
-        """Carry one sealed projection's row into this builder, by reference.
-
-        Its layout, member row, and issues are the ones the sealed graph already
-        holds — nothing is decoded twice — while its logical-node ID is
-        RE-DERIVED here, exactly as a converted row's is. That keeps one way an
-        ID comes into existence: remapping the source graph's own IDs would work
-        only by accident, because a staging graph holding many milestones at once
-        already collapses two milestones of one row onto one ID while their
-        partitions must not share one.
-
-        Its view row is NOT carried: ``source`` names where the row lands in THIS
-        builder's own plan, so the importing graph lays out what the imported row
-        can receive rather than inheriting a width from the graph it left.
-        """
-        rows = graph_rows(graph)
-        return self.add(
-            source,
-            rows.layouts[projection],
-            rows.member_rows[projection],
-            rows.issues[projection],
-        )
 
     def write_view(self, projection: int, view: RelationshipViewKey, value: object) -> None:
         """Record one relationship view on an already-added projection.
@@ -414,13 +468,13 @@ class GraphBuilder:
             )
         self._views[projection][slot] = value
 
-    def seal(self, roots: tuple[int, ...], pin: Pin) -> SnapshotGraph:
-        """Publish this builder's arrays as one sealed graph, roots in result order.
+    def finish(self, roots: tuple[int, ...], pin: Pin) -> Page:
+        """Publish this builder's arrays as one sealed Page, roots in result order.
 
         The builder is invalidated in the same step, and every array it
         accumulated into is dropped with it — the key map it assigned identity
         through and the pool it interned issue records against included: what a
-        sealed graph carries is what a merge reads, nothing observes a
+        sealed Page carries is what a Root View reads, nothing observes a
         half-published graph or writes to a published one, and a caller holding
         the sealed builder holds none of what it published.
 
@@ -432,11 +486,24 @@ class GraphBuilder:
         count = len(self._layouts)
         for root in roots:
             _require_index(root, count, "a root")
-        rows = GraphRows(
+        for root in dict.fromkeys(roots):
+            if self._keys[root] is not None:
+                continue
+            member_values, issues = self._decoders[root]()
+            if self._issues[root]:
+                issues = tuple(dict.fromkeys((*issues, *self._issues[root])))
+            self._member_rows[root] = member_values
+            self._issues[root] = issues
+            self._decoders[root] = lambda values=member_values, held=issues: (values, held)
+        claims: list[list[int]] = [[] for _ in self._first]
+        for projection, logical in enumerate(self._logical_ids):
+            claims[logical].append(projection)
+        rows = PageRows(
             layouts=tuple(self._layouts),
             member_rows=tuple(self._member_rows),
             issues=tuple(self._issues),
             logical_ids=tuple(self._logical_ids),
+            keys=tuple(self._keys),
             sources=tuple(self._sources),
             view_rows=tuple(tuple(row) for row in self._views),
             schema=self._schema,
@@ -447,19 +514,35 @@ class GraphBuilder:
                 for ordinal, root in enumerate(roots)
             ),
             pin=pin,
+            judged_states={},
+            validated_keys=set(),
+            observer=self._observer,
+            witnesses=tuple(self._witnesses),
+            source_ordinals=tuple(position[1] for position in self._occurrence_positions),
+            claims=tuple(
+                group[0]
+                if len(group) == 1
+                else tuple(sorted(group, key=self._occurrence_positions.__getitem__))
+                for group in claims
+            ),
+            decoders=tuple(self._decoders),
         )
         self._sealed = True
         self._layouts = []
         self._member_rows = []
         self._issues = []
         self._logical_ids = []
+        self._keys = []
         self._sources = []
         self._slots = []
         self._views = []
         self._identity = {}
         self._first = []
-        self._retained = {}
-        return SnapshotGraph(rows)
+        self._decoders = []
+        self._witnesses = []
+        self._occurrence_positions = []
+        self._source_ordinals = {}
+        return Page(rows)
 
     # ----------------------------------------------------------------------- #
     # Read back, for the read executor's fan-out helpers alone.                 #
@@ -482,68 +565,23 @@ class GraphBuilder:
         self._require_open()
         return self._layouts[projection].concrete
 
-    def issues_of(self, projection: int) -> tuple[StoredDataIssueInput, ...]:
-        """Every issue classified for ``projection``, without deduplication."""
-        self._require_open()
-        return self._issues[projection]
-
     def resolve(self, family: EntityIdentity, key: object) -> int | None:
         """The first projection registered under ``(family, key)``, if any — how a
         back-reference level reaches an ancestor it issues no query for."""
         self._require_open()
-        logical = self._identity.get((family, key))
+        logical = next(
+            (
+                value
+                for identity, value in self._identity.items()
+                if identity.family == family and identity.primary_key == key
+            ),
+            None,
+        )
         return None if logical is None else self._first[logical]
 
     # ----------------------------------------------------------------------- #
     # Internals.                                                                #
     # ----------------------------------------------------------------------- #
-
-    def _logical(
-        self,
-        layout: EntityLayout,
-        member_values: tuple[object, ...],
-        issues: tuple[StoredDataIssueInput, ...],
-        projection: int,
-    ) -> int:
-        if _keyless(issues):
-            return self._fresh(projection)
-        key = (layout.family, layout.key_of(member_values))
-        existing = self._identity.get(key)
-        if existing is not None:
-            return existing
-        logical = self._fresh(projection)
-        self._identity[key] = logical
-        return logical
-
-    def _shared_issues(
-        self, logical: int, issues: tuple[StoredDataIssueInput, ...]
-    ) -> tuple[StoredDataIssueInput, ...]:
-        """``issues`` with every record equal to one ``logical`` already retains
-        replaced by that record — the same objects, and so the same frozen
-        rejected values.
-
-        Two projections of one logical node are two rows, judged apart and frozen
-        apart, and only the later one's arrival can tell they judged the same
-        occurrence the same way. Sharing is decided per record rather than per
-        projection: levels project different columns, so two projections overlap
-        partially as readily as they agree entirely, and a judgment repeated
-        beside a new one still costs one frozen value. A record no earlier
-        projection of this node carried is retained here as the one a later
-        repeat of it collapses onto.
-        """
-        if not issues:
-            return issues
-        return tuple(self._retain(logical, issue) for issue in issues)
-
-    def _retain(self, logical: int, issue: StoredDataIssueInput) -> StoredDataIssueInput:
-        """``issue``, or the record ``logical`` retains equal to it — keyed by
-        node rather than allocated per node, since most nodes carry none."""
-        retained = self._retained.setdefault(logical, [])
-        for already in retained:
-            if already == issue:
-                return already
-        retained.append(issue)
-        return issue
 
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)
@@ -552,18 +590,16 @@ class GraphBuilder:
 
     def _require_open(self) -> None:
         if self._sealed:
-            raise ValueError(
-                "this graph builder sealed its arrays into a SnapshotGraph and holds nothing"
-            )
+            raise ValueError("this page builder finished its arrays into a Page and holds nothing")
 
 
 def _keyless(issues: tuple[StoredDataIssueInput, ...]) -> bool:
-    """Whether ``issues`` leave a projection with no usable graph-local identity."""
+    """Whether ``issues`` leave a projection with no usable Page-local identity."""
     return any(issue.code in _INVALID_KEY_CODES for issue in issues)
 
 
 def _require_edge(value: object, count: int) -> None:
-    """Refuse a relationship view value no sealed graph could resolve."""
+    """Refuse a relationship view value no sealed Page could resolve."""
     if value is None:
         return
     if isinstance(value, tuple):

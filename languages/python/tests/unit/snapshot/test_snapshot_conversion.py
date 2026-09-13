@@ -59,6 +59,7 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
+from parallax.core.unit_work import EntityStateRow
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -67,18 +68,16 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
     MISSING_STORED_VALUE,
     InvalidRootInput,
+    PageBuilder,
+    RootView,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._convert import (
-    LevelContext,
-    convert_row,
-    observable_columns,
-)
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._page import ABSENT, page_rows
+from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._corpus_model_support import formed
@@ -178,18 +177,31 @@ def _reads(
 def _converted(
     model: Metamodel, entity: str, row: dict[str, object], **provenance: Any
 ) -> _Projection:
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     index = convert_row(row, _context(model, entity), builder, source=ROOT_LEVEL, **provenance)
-    rows = graph_rows(builder.seal((index,), Pin()))
-    return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    root = RootView(page)
+    return _Projection(
+        rows.layouts[index],
+        rows.member_rows[index] if root.roots == (None,) else root.member_values(0),
+        root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0),
+    )
 
 
 def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
     """One row converted under a caller-built level context."""
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     index = convert_row(row, context, builder, source=ROOT_LEVEL)
-    rows = graph_rows(builder.seal((index,), Pin()))
-    return _Projection(rows.layouts[index], rows.member_rows[index], rows.issues[index])
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    root = RootView(page)
+    return _Projection(rows.layouts[index], root.member_values(0), root.issues(0))
+
+
+def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> EntityStateRow:
+    projection = _converted(model, entity, row)
+    return EntityStateRow.over_members(projection.layout, projection.values, absent=ABSENT)
 
 
 def _occurrence(node: _Projection, name: str) -> Any:
@@ -716,7 +728,7 @@ def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
     # Graph-local identity resolution names the FIRST projection registered for a
     # key, which is what a back-reference level resolves against. A single-column
     # key resolves by its raw scalar, the spelling the layout's own rule gives it.
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     context = _context(ORDERS, "Order")
     first = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
     second = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
@@ -725,13 +737,13 @@ def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
 
 
 def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
-    assert GraphBuilder(ViewSchema.of()).resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
+    assert PageBuilder(ViewSchema.of()).resolve(EntityIdentity(_NAMESPACE, "Order"), 999) is None
 
 
 # --------------------------------------------------------------------------- #
-# The observation extraction, which is deliberately physical.                  #
+# The physical-key view over shared Entity State.                               #
 # --------------------------------------------------------------------------- #
-def test_observable_columns_answers_the_whole_row_with_documents_decoded() -> None:
+def test_entity_state_row_answers_the_whole_row_with_documents_decoded() -> None:
     # A Predecessor Row is column-keyed by contract (`m-unit-work`), and the
     # document it retains carries the DECODED declared members — the same
     # spelling a successor's carried-versus-changed comparison reads.
@@ -740,13 +752,24 @@ def test_observable_columns_answers_the_whole_row_with_documents_decoded() -> No
         "name": "Ada",
         "address": PresentDocument({"street": "1 Park Ave", "city": "Oslo"}),
     }
-    columns = observable_columns(row, _context(CUSTOMER, "Customer"))
+    columns = _state_row(CUSTOMER, "Customer", row)
     assert columns["id"] == 1
     assert columns["name"] == "Ada"
-    assert cast("dict[str, Any]", columns["address"])["city"] == "Oslo"
+    address = cast("Mapping[str, object]", columns["address"])
+    assert address["city"] == "Oslo"
+    with pytest.raises(KeyError):
+        columns["not-a-column"]
+    with pytest.raises(KeyError):
+        address["not-a-member"]
+    with pytest.raises(KeyError):
+        address["geo"]
+
+    projection = _converted(CUSTOMER, "Customer", row)
+    with pytest.raises(ValueError, match="align"):
+        EntityStateRow.over_members(projection.layout, projection.values[:-1], absent=ABSENT)
 
 
-def test_observable_columns_renders_a_many_occurrence_as_a_list() -> None:
+def test_entity_state_row_exposes_many_occurrences_without_rebuilding_them() -> None:
     entity = Entity(
         name="Fleet",
         table="fleet",
@@ -761,8 +784,9 @@ def test_observable_columns_renders_a_many_occurrence_as_a_list() -> None:
         ),
     )
     meta = formed(DescriptorMetamodel(entities=(entity,)))
-    columns = observable_columns({"id": 1, "stops": [{"label": "a"}]}, _context(meta, "Fleet"))
-    assert columns["stops"] == [{"label": "a"}]
+    columns = _state_row(meta, "Fleet", {"id": 1, "stops": [{"label": "a"}]})
+    stops = cast("tuple[Mapping[str, object], ...]", columns["stops"])
+    assert tuple(map(dict, stops)) == ({"label": "a"},)
 
 
 def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurrence() -> None:
@@ -797,14 +821,14 @@ def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     ],
 )
 def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(row, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL)
-    graph = builder.seal((ref,), Pin())
-    root = graph_rows(graph).roots[0]
+    graph = builder.finish((ref,), Pin())
+    root = page_rows(graph).roots[0]
     assert isinstance(root, InvalidRootInput)
     assert root.issues[0].code == code
-    (root,) = materialize_graph(
-        graph,
+    (root,) = typed_root(
+        RootView(graph),
         CUSTOMER,
         graph_construction_for(vo_models.CUSTOMER_MODEL),
     )

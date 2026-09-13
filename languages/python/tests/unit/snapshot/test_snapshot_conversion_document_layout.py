@@ -37,8 +37,8 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import StoredDataIssueInput
-from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize import PageBuilder, RootView, StoredDataIssueInput
+from parallax.snapshot.materialize._page import page_rows
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
@@ -62,12 +62,12 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     """One stored row through the production read sequence, database aside."""
     compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
     prepared = bind(CatalogedModel(model), compiled)
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     index = prepared.convert(prepared.materialize(stored), builder, source=ROOT_LEVEL)
-    rows = graph_rows(builder.seal((index,), Pin()))
-    return _Converted(
-        rendered_members(rows.layouts[index], rows.member_rows[index]), rows.issues[index]
-    )
+    page = builder.finish((index,), Pin())
+    rows = page_rows(page)
+    root = RootView(page)
+    return _Converted(rendered_members(rows.layouts[index], root.member_values(0)), root.issues(0))
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:

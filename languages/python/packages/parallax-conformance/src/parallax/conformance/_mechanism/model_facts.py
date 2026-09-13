@@ -22,12 +22,13 @@ from typing import Literal
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core import deep_fetch, inheritance
+from parallax.core import continuation, deep_fetch, inheritance
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.entity import DomainModel
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
+from parallax.core.temporal_read import scans_an_axis
 from parallax.snapshot.handle import ServingModel, prepare_model
 from parallax.snapshot.handle._preflight import preflight
 
@@ -217,6 +218,8 @@ def canonicalize_read(
     canonicalization before SQL sees the result.
     """
     validated = preflight(query, model=model, form=form)
+    if form == "graph" and scans_an_axis(query):
+        validated = continuation.ordered(validated, model)
     projection = deep_fetch.ReadProjectionRequest(
         "none" if form == "rows" else "all",
         form == "graph",

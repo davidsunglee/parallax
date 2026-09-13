@@ -5,8 +5,8 @@ the per-node state factory — over graphs built exactly as a read driver
 builds them: diamond collapse onto one instance, cycle closure by object
 identity, narrowed views across every authoring route, loaded-null versus
 loaded-empty versus unloaded, polymorphic concrete-class resolution, Value Object
-construction, whole-graph pin and per-node edge, and the first-projection-wins /
-view-union split the merge is stated in.
+construction, whole-graph pin and per-node edge, and the Payload Witness /
+view-union split the Root View is stated in.
 
 Per-row conversion lives in `test_snapshot_conversion.py`; the inspection surface
 these assertions read through has its own suite in `test_snapshot_inspection.py`.
@@ -46,10 +46,11 @@ from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, 
 from parallax.snapshot.materialize import (
     InvalidRootInput,
     RelationshipViewKey,
+    RootView,
+    SnapshotConsistencyError,
     StoredDataIssueInput,
-    merge_graph_input,
 )
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize._page import ABSENT, PageBuilder, page_rows
 from tests._support import snapshot_models as sm
 from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
 
@@ -165,7 +166,7 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
 
-    merge = merge_graph_input(fixture.graph(first, keyless, second))
+    merge = RootView(fixture.graph(first, keyless, second))
     assert merge.roots == (0, None, 1)
     assert [issue.code for record in merge.invalid_roots for issue in record.issues] == [
         "stored-data-primary-key-null"
@@ -196,7 +197,7 @@ def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> Non
     fixture = GraphFixture(_ORDERS)
     valid = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
-    merge = merge_graph_input(fixture.graph(valid, keyless))
+    merge = RootView(fixture.graph(valid, keyless))
     assert [record.ordinal for record in merge.invalid_roots] == [1]
 
 
@@ -278,25 +279,32 @@ def test_each_to_many_view_keeps_its_own_order_through_the_merge() -> None:
     assert root.items[1] is root.items_by_ship_date[0]
 
 
-def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None:
-    # Duplicate projections of one logical node are value-identical by
-    # construction — same row, same pin — so the merge takes the first entry it
-    # sees and compares nothing. A second projection carrying a DIFFERENT value
-    # is unreachable through a read; what the assertion pins is that no
-    # comparison happens and no refusal is raised.
-    fixture = GraphFixture(
-        _STORY_ORDERS,
-        "parallax.compatibility.Order.items",
-        "parallax.compatibility.Order.itemsByShipDate",
+def test_unequal_scalar_witnesses_refuse_instead_of_selecting_a_projection() -> None:
+    items = "parallax.compatibility.Order.items"
+    by_ship_date = "parallax.compatibility.Order.itemsByShipDate"
+
+    def conflict(*views: str) -> SnapshotConsistencyError:
+        fixture = GraphFixture(_STORY_ORDERS, *views)
+        order = fixture.node("Order", _ORDER_ROW)
+        first = fixture.node("OrderItem", _ITEM_ROW)
+        second = fixture.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
+        fixture.attach(order, items, (first,))
+        fixture.attach(order, by_ship_date, (second,))
+        with pytest.raises(SnapshotConsistencyError) as raised:
+            fixture.materialize(order)
+        return raised.value
+
+    forward = conflict(items, by_ship_date)
+    reverse = conflict(by_ship_date, items)
+    assert forward.code == reverse.code == "snapshot-projection-conflict"
+    assert forward.object_key == reverse.object_key
+    assert forward.coordinates == reverse.coordinates
+    assert forward.occurrences == reverse.occurrences
+    assert (
+        forward.members
+        == reverse.members
+        == (AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "sku"),)
     )
-    order = fixture.node("Order", _ORDER_ROW)
-    first = fixture.node("OrderItem", _ITEM_ROW)
-    second = fixture.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
-    fixture.attach(order, "parallax.compatibility.Order.items", (first,))
-    fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (second,))
-    (root,) = fixture.materialize(order)
-    assert isinstance(root, _soOrder)
-    assert root.items[0].sku == "x"
 
 
 def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
@@ -322,14 +330,13 @@ def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
     )
 
     graph = fixture.graph(order)
-    rows = graph_rows(graph)
-    assert rows.issues[via_ship_date][0] is rows.issues[via_items][0]
-    merge = merge_graph_input(graph)
-    item = _sole_node(merge, "OrderItem")
-    assert [issue.code for issue in merge.issues(item)] == ["stored-data-leaf-undecodable"]
+    root = RootView(graph)
+    item = _sole_node(root, "OrderItem")
+    assert [issue.code for issue in root.issues(item)] == ["stored-data-leaf-undecodable"]
+    assert len(graph.judged_states) == 2
 
 
-def test_a_duplicate_projection_that_judged_differently_contributes_its_own_finding() -> None:
+def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> None:
     # Sibling levels project different columns, so two projections of one node
     # may see different stored state. Sharing is what two equal judgments earn,
     # not what arriving second costs: a distinct rejected value is a distinct
@@ -345,15 +352,12 @@ def test_a_duplicate_projection_that_judged_differently_contributes_its_own_find
     fixture.attach(order, "parallax.compatibility.Order.items", (via_items,))
     fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
 
-    merge = merge_graph_input(fixture.graph(order))
-    item = _sole_node(merge, "OrderItem")
-    assert [issue.stored_value for issue in merge.issues(item)] == [
-        "not-a-date",
-        "also-not-a-date",
-    ]
+    with pytest.raises(SnapshotConsistencyError) as raised:
+        RootView(fixture.graph(order))
+    assert raised.value.code == "snapshot-projection-conflict"
 
 
-def test_a_duplicate_sharing_one_judgment_of_several_shares_that_one() -> None:
+def test_a_duplicate_with_one_different_document_member_conflicts() -> None:
     # One row can hold several rejected occurrences at once, and two reads of it
     # agree about some and not others: both reject the identical stored `geo`
     # subtree while rejecting different `phones` ones. Sharing is earned per
@@ -364,19 +368,12 @@ def test_a_duplicate_sharing_one_judgment_of_several_shares_that_one() -> None:
     first = fixture.node("Customer", _customer_row("home"))
     second = fixture.node("Customer", _customer_row("work"))
 
-    graph = fixture.graph(first, second)
-    rows = graph_rows(graph)
-    assert rows.issues[second][0] is rows.issues[first][0]
-    assert rows.issues[second][1] is not rows.issues[first][1]
-    merge = merge_graph_input(graph)
-    assert [issue.path for issue in merge.issues(0)] == [
-        ("address", "geo"),
-        ("address", "phones"),
-        ("address", "phones"),
-    ]
+    with pytest.raises(SnapshotConsistencyError) as raised:
+        RootView(fixture.graph(first, second))
+    assert raised.value.code == "snapshot-projection-conflict"
 
 
-def test_a_judgment_first_made_after_a_clean_projection_is_shared_from_there() -> None:
+def test_clean_and_rejected_witnesses_for_one_key_conflict_before_judgment() -> None:
     # The projection a node is first reached through may reject nothing, which
     # says nothing about the ones behind it. Retention belongs to the node
     # rather than to its first projection, so the second read of one rejected
@@ -389,12 +386,9 @@ def test_a_judgment_first_made_after_a_clean_projection_is_shared_from_there() -
     rejected = fixture.node("Customer", _customer_row("home"))
     rejected_again = fixture.node("Customer", _customer_row("home"))
 
-    graph = fixture.graph(clean, rejected, rejected_again)
-    rows = graph_rows(graph)
-    assert rows.issues[clean] == ()
-    assert rows.issues[rejected_again][0] is rows.issues[rejected][0]
-    assert rows.issues[rejected_again][1] is rows.issues[rejected][1]
-    assert len(merge_graph_input(graph).issues(0)) == 2
+    with pytest.raises(SnapshotConsistencyError) as raised:
+        RootView(fixture.graph(clean, rejected, rejected_again))
+    assert raised.value.code == "snapshot-projection-conflict"
 
 
 def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
@@ -434,7 +428,7 @@ def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
     invalid = fixture.node("OrderItem", {**_ITEM_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.Order.items", (invalid,))
 
-    merge = merge_graph_input(fixture.graph(order))
+    merge = RootView(fixture.graph(order))
     item = _sole_node(merge, "OrderItem")
     assert [issue.code for issue in merge.issues(item)] == ["stored-data-primary-key-null"]
     published = invalid_record(fixture.materialize(order)[0])
@@ -719,6 +713,41 @@ def test_a_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
+def test_temporal_starts_distinguish_page_logical_identity() -> None:
+    fixture = GraphFixture(read_models.BALANCE_MODEL)
+    first_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    second_start = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    first = fixture.node(
+        "Balance",
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("5.00"),
+            "in_z": first_start,
+            "out_z": second_start,
+        },
+    )
+    second = fixture.node(
+        "Balance",
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("7.00"),
+            "in_z": second_start,
+            "out_z": dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        },
+    )
+    page = fixture.graph(first, second)
+
+    RootView(page, 0)
+    RootView(page, 1)
+    rows = page_rows(page)
+    first_key, second_key = rows.keys[first], rows.keys[second]
+    assert first_key is not None and second_key is not None
+    assert [first_key.coordinates, second_key.coordinates] == [(first_start,), (second_start,)]
+    assert len(page.judged_states) == 2
+
+
 # A table-per-concrete-subtype family whose bitemporal axes are declared on the
 # abstract ROOT and inherited by every concrete descendant (m-inheritance
 # "Inherited members") — the corpus's own Rate/DepositRate shape
@@ -782,7 +811,7 @@ class _Ordinal(IntEnum):
     FIRST = 0
 
 
-def _one_projection() -> tuple[GraphBuilder, int]:
+def _one_projection() -> tuple[PageBuilder, int]:
     """One builder holding exactly one projection, so ``1`` is out of range."""
     fixture = GraphFixture(_ORDERS)
     return fixture.builder, fixture.node("SnapOrder", _ORDER_ROW)
@@ -865,20 +894,20 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
 def test_a_root_outside_the_graph_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
     with pytest.raises(ValueError, match="a root names projection 3"):
-        builder.seal((3,), Pin())
+        builder.finish((3,), Pin())
 
 
 def test_a_sealed_builder_refuses_every_further_use() -> None:
     fixture = GraphFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW)
     builder = fixture.builder
-    builder.seal((order,), Pin())
+    builder.finish((order,), Pin())
     for use in (
         lambda: builder.write_view(order, _ITEMS, None),
         lambda: builder.concrete_of(order),
-        lambda: builder.seal((order,), Pin()),
+        lambda: builder.finish((order,), Pin()),
     ):
-        with pytest.raises(ValueError, match="sealed its arrays"):
+        with pytest.raises(ValueError, match="finished its arrays"):
             use()
 
 
@@ -895,7 +924,7 @@ def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     fixture.attach(order, "parallax.compatibility.Order.items", (item,))
     builder = fixture.builder
     kept = ("_schema", "_sealed")
-    accumulators = tuple(name for name in GraphBuilder.__slots__ if name not in kept)
+    accumulators = tuple(name for name in PageBuilder.__slots__ if name not in kept)
 
     assert any(getattr(builder, name) for name in accumulators)
     fixture.graph(order)
@@ -904,8 +933,8 @@ def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
 
 def test_a_merge_refuses_a_builder_that_has_published_no_graph() -> None:
     builder, _ = _one_projection()
-    with pytest.raises(TypeError, match="publishes no graph to read"):
-        merge_graph_input(builder)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(TypeError, match="requires a finished Page"):
+        RootView(builder)  # pyright: ignore[reportArgumentType]
 
 
 # --------------------------------------------------------------------------- #
@@ -924,7 +953,7 @@ def test_every_merge_accessor_answers_the_identical_object_on_a_second_call() ->
     duplicate = fixture.node("SnapOrder", _ORDER_ROW)
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
     fixture.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
-    merge = merge_graph_input(fixture.graph(order, keyless, duplicate))
+    merge = RootView(fixture.graph(order, keyless, duplicate))
 
     assert merge.layout(0) is merge.layout(0)
     assert merge.member_values(0) is merge.member_values(0)
@@ -949,14 +978,14 @@ def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2})
     fixture.attach(first, "parallax.compatibility.SnapOrder.items", ())
     fixture.attach(second, "parallax.compatibility.SnapOrder.items", ())
-    merge = merge_graph_input(fixture.graph(first, second))
+    merge = RootView(fixture.graph(first, second))
     assert merge.view_layout(0) is merge.view_layout(1)
 
 
 def test_a_member_the_read_did_not_carry_reads_absent_rather_than_null() -> None:
     fixture = GraphFixture(_ORDERS)
     order = fixture.node("SnapOrder", {key: _ORDER_ROW[key] for key in ("id", "name")})
-    merge = merge_graph_input(fixture.graph(order))
+    merge = RootView(fixture.graph(order))
     layout = merge.layout(0)
     values = merge.member_values(0)
     assert values[layout.index_of[AttributeIdentity(_ORDER_IDENTITY, "name")]] == "Ada"
@@ -976,7 +1005,7 @@ def test_two_unreadable_projections_of_one_row_never_merge_with_each_other() -> 
     second = fixture.node("SnapOrder", unreadable)
     readable = fixture.node("SnapOrder", _ORDER_ROW)
     again = fixture.node("SnapOrder", _ORDER_ROW)
-    merge = merge_graph_input(fixture.graph(first, second, readable, again))
+    merge = RootView(fixture.graph(first, second, readable, again))
     # Both unreadable roots are invalid-root holes, and the two readable ones
     # collapse onto one allocation — so the graph allocated one node, not three.
     assert merge.roots == (None, None, 0, 0)
@@ -999,11 +1028,10 @@ def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
     first = fixture.node("Customer", dict(stored))
     second = fixture.node("Customer", dict(stored))
     graph = fixture.graph(first, second)
-    rows = graph_rows(graph)
-    (frozen,) = rows.issues[first]
+    root = RootView(graph)
+    (frozen,) = root.issues(0)
     assert frozen.stored_value == {"type": "home"}
-    assert rows.issues[second][0].stored_value is frozen.stored_value
-    assert merge_graph_input(graph).issues(0) == (frozen,)
+    assert root.issues(0) == (frozen,)
 
 
 def test_no_published_value_is_the_absent_sentinel() -> None:

@@ -1422,7 +1422,7 @@ def test_normalizing_production_encoded_assignments_yields_the_managed_compariso
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
-    # A resolved row's scalars arrive from `observable_columns` in their declared
+    # A resolved row's scalars arrive from the shared Entity State in their declared
     # Neutral Type's managed carrier, and an assignment already carries one, so
     # normalization leaves both sides alone and the comparison weighs two host
     # values without an encode/decode round trip between them. Nothing on either

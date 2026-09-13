@@ -1,8 +1,7 @@
 """Relationship view slots, fixed once per execution.
 
-One fetch plan yields one :class:`ViewSchema`, and every graph that execution
-builds — its staging graph, each milestone graph, and every projection in any of
-them — reads its slots off that one schema. A projection's relationship view row
+One fetch plan yields one :class:`ViewSchema`, and its delivery Page and every
+projection in it read their slots off that one schema. A projection's relationship view row
 is then a fixed-width row of positions rather than a mapping: which positions it
 has is a function of the source level that produced it and the concrete Entity
 it resolved to, and nothing about the row itself.
@@ -24,7 +23,7 @@ and interned by the slot tuple they admit, so concretes that no guard splits
 share one :class:`SourceViewLayout` object. Building on demand also degrades
 gracefully: a projection resolving a concrete nothing enumerated is laid out for
 rather than failed on. Every layout published is immutable, which is what lets
-the graphs of one execution share a schema, and the memo is execution-scoped
+the Root Views of one Page share a schema, and the memo is execution-scoped
 internal state — no query shape is retained for the lifetime of a model.
 """
 
@@ -54,7 +53,7 @@ type SourceLevel = int
 ``i`` is ``i + 1``."""
 
 ROOT_LEVEL: Final[SourceLevel] = 0
-"""The source level of a root projection, and the only one a graph built from a
+"""The source level of a root projection, and the only one a Page built from a
 plan carrying no levels has."""
 
 
@@ -142,7 +141,7 @@ class ViewSchema:
 
     Two constructors, because guards exist on root-parented levels only.
     :meth:`of` states one unguarded source level directly, which is what lets a
-    merge be exercised with no plan, no executor, and no database; the
+    Root View be exercised with no plan, no executor, and no database; the
     initializer takes the whole slot table a guarded plan derives, indexed by
     source level.
     """

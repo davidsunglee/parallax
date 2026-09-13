@@ -31,7 +31,7 @@ it is observable is where it is graded, as the ``orderBy`` of the node
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -55,7 +55,7 @@ from parallax.core.object_query._validated import (
 )
 from parallax.core.temporal_read import scans_validated_axis
 
-__all__ = ["ContinuationError", "ContinuationPlan", "plan"]
+__all__ = ["ContinuationError", "ContinuationPlan", "ordered", "plan"]
 
 
 class ContinuationError(ValueError):
@@ -127,6 +127,10 @@ class ContinuationPlan:
         seek = ValidatedSeek(tuple(term.portable for term in self._terms), coordinate)
         return self._page(Paging(seek=seek), limit=limit)
 
+    def ordered(self) -> ValidatedObjectQuery:
+        """The query in Continuation Order without paging capture or a cap."""
+        return replace(self._query, order_by=tuple(term.resolved for term in self._terms))
+
     def _page(self, paging: Paging, *, limit: int) -> ValidatedObjectQuery:
         return derive_page(
             self._query,
@@ -159,6 +163,15 @@ def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
         if all(term.identity != identity for term in terms):
             terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
     return ContinuationPlan(model, query, tuple(terms))
+
+
+def ordered(query: ValidatedObjectQuery, model: Metamodel) -> ValidatedObjectQuery:
+    """``query`` ordered by its Continuation Order without making it a page.
+
+    Eager milestone-set delivery needs the same deterministic root sequence as a
+    stream while retaining one ordinary, uncaptured database result.
+    """
+    return plan(query, model).ordered()
 
 
 def _milestone_edge(

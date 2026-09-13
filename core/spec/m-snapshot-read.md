@@ -92,6 +92,14 @@ decoding. No cursor judges an unrequested sibling or descendant. Layout parity
 fixes *where* the same requested logical member is judged without turning
 classification into whole-subtree validation.
 
+Judgment is once per requested logical structured value, not once per projection
+that happened to carry it. Materialization first establishes the logical Entity
+State claims reachable in one Page, compares every claim for one logical key,
+and only then judges and decodes the selected Payload Witness. Equal witnesses
+share that one judgment and its frozen evidence. Entity Graph Construction and
+Wire publication trust the resulting judged Entity State and never invoke a
+second codec or scalar-admission pass over it.
+
 An issue anywhere in a root's requested include tree classifies that result root.
 Shared affected nodes repeat the issue for every result root that reaches them,
 while duplicate diagnoses within one root collapse. Classification preserves the
@@ -175,6 +183,17 @@ one member's zero** — and this section answers all three. Every other statemen
 them, in this specification or in any surface built over it, is a consequence of
 what is stated here rather than an independent rule.
 
+An **Entity State** is the page-owned, judged positional member row for one
+logical Entity at one lowered coordinate, together with the findings produced by
+that one judgment. It is independent of any result root and of either public
+representation. Every Root View that reaches the same logical state in one Page
+reads that same Entity State by reference. Relationship loadedness is not Entity
+State: it belongs to the Root View, because two roots may have reached the same
+row through different requested paths. A published Typed or Wire value retains
+only the member state and private write-origin state its lifecycle requires; it
+retains no Page, Root View, raw provider row, unused witness, or other root's
+relationship view.
+
 For a **conforming** member, a materialized Value Object occurrence carries what
 the stored document held: a member the document omits is absent from the
 materialized value, and a member it stores as JSON null is carried, as null. That
@@ -226,9 +245,44 @@ answers both, from one materialization: its getter answers the reading above, an
 omitted member. So the two representations of one read observe one value, and
 neither turns a stored absence into a stored null the other leaves absent.
 
-## Graph-local identity resolution
+## Identity-first materialization
 
-Within **one materialized graph**, one row is **one node**:
+Each database row occurrence first makes an **identity claim** consisting of its
+resolved concrete Entity, its family-normalized logical key, and the level and
+row ordinal where it occurred. The logical key is **(entity family, primary key,
+lowered as-of coordinate per declared axis)**, degrading to (family, primary
+key) for a non-temporal entity. An unreadable primary key makes the occurrence
+keyless: it shares with nothing and is classified at its own result position.
+
+The remainder of the occurrence is its exact **Payload Witness**: the resolved
+concrete Entity plus the provider-normalized values selected for the Entity's
+positional member row. Witness equality is exact positional structural equality,
+including stored-document structure and presence. It is independent of arrival
+order and Include Path order. Before decoding a payload, a Page groups every
+reachable claim by logical key:
+
+- One witness establishes one Entity State and is decoded and judged once.
+- Equal witnesses establish the same Entity State and reuse that one decode and
+  its findings.
+- Unequal witnesses are a **Snapshot Projection Conflict**. The read refuses
+  with the logical Object Key and lowered coordinates, the member identities at
+  every differing witness position, and the two occurrence positions (level and
+  ordinal), but with no raw stored value. The selected pair and differing-member
+  sequence are canonical, so reversing row arrival or Include Path order cannot
+  change the refusal.
+- A concrete-Entity disagreement is a witness disagreement even where all
+  member cells compare equal. It is reported with the same conflict family and
+  an empty differing-member sequence where no shared member position names it.
+
+A **Page** is the bounded, page-owned occurrence table produced by one eager read
+or one streamed batch: occurrence headers and raw witnesses, root ordinals,
+root-local relationship rows, the paging verdict, and the Entity States judged
+so far. Eager delivery uses one Page for its whole database-ordered result. A
+stream drops each Page before it reads the next. A **Root View** is one root's
+borrowed reachability and relationship-view union over a Page; it owns no payload
+copy and does not outlive publication of that root.
+
+Within **one Root View**, one logical key is **one node**:
 
 - Two include paths that reach the same row — the diamond — materialize a
   **single** node referenced from both positions, never two equal copies. The
@@ -247,22 +301,11 @@ Within **one materialized graph**, one row is **one node**:
   reference). Diamonds are expected; a back-reference include path produces a
   true in-memory cycle, which is legal — JSON-safety is the job of serialization
   shapes producing **Domain Snapshots**, never a constraint on the graph.
-- Resolution is **graph-local**: two *separate* materializations make no
-  same-node promise, and no node is ever interned beyond its own graph. There is
-  no scope wider than the graph in this module.
-- **A result is not necessarily one graph**, so graph-local is narrower than
-  result-wide. A milestone-set read materializes one graph per milestone; a
-  streamed delivery materializes one graph per root, which is the bound that
-  surface exists for; how an **eager** read divides its result is not pinned at
-  all, and materializing the whole result as one graph is conforming. What every
-  one of them promises is the same sentence above, applied to the graph a node
-  was published from — and the only division every one of them shares is a
-  single root's own tree, so **root-local is the floor every materialization
-  meets and the whole of what any of them promises**. A row that two *result
-  roots* both reach is therefore one node wherever one graph carries both, which
-  an eager read materialized as one graph observably does and a streamed
-  delivery does not; that wider sharing is permitted and never promised. A
-  caller that needs to know two roots reached one row compares their identities.
+- Resolution is **root-local**. Two result roots always publish distinct node
+  objects even when they borrow the same page-owned Entity State. No node is
+  interned beyond its Root View, and eager and streamed delivery therefore make
+  the same identity promise. A caller that needs to know two roots reached one
+  logical row compares their identities.
 - A **value object** (`m-value-object`) is not a node: it has no identity, adds
   no relationship hop, and materializes *with* its owning entity as a plain
   nested value carrying the members *What a materialized value carries* fixes
@@ -279,10 +322,13 @@ coordinate. Hard pointers are safe *because* of this rule — every node in one
 graph represents the same instant, so a reference can never silently cross
 temporal contexts.
 
-A `history` / `asOfRange` read returns **one graph per milestone**, each pinned
-at its **edge pin** — the milestone's own from-instant (`m-temporal-read`; for a
-half-open `[from, to)` interval the from-instant is the one instant guaranteed
-to select exactly that milestone). Combining a history read with `includes` is
+A `history` / `asOfRange` read returns one flat root sequence in Continuation
+Order, each root pinned at its **edge pin** — the milestone's own from-instant
+(`m-temporal-read`; for a half-open `[from, to)` interval the from-instant is the
+one instant guaranteed to select exactly that milestone). A conformance oracle
+may group that flat sequence by edge to state `then.graphs`; the grouping is a
+presentation of the result, not a materialization boundary. Combining a history
+read with `includes` is
 the **`snapshot-history-includes` feature** — carried on its own feature tag so
 the conformance adapter's claimed capability set can include or defer it
 independently. This is an implementation claim, not a database-provider
@@ -460,26 +506,22 @@ them: it ends no checked delivery, which is stated below the four.
 **Because a stream publishes one root at a time**, it never holds two roots'
 results together, and three divergences follow:
 
-- **Sharing narrows to root-local.** A row two result roots both reach is one
-  node per root, where a whole-result read may answer one node for both. The
-  promise is root-local either way, so what changes is what a caller can observe
-  beyond it rather than what they may rely on. Stated in full under *Graph-local
-  identity resolution* above, because the promise governs both.
 - **A milestone set arrives one root at a time rather than grouped by
-  milestone.** A whole-result `history` / `asOfRange` read answers one graph per
-  milestone, in chronological edge order, with every root of one milestone
-  together. A stream has no graphs to group into: each root stands at its **own**
-  edge pin — the same pin the whole-result read gives the graph that root would
-  have belonged to — and a milestone-set delivery answers the **empty** pin for
+  milestone.** Both whole-result and streamed `history` / `asOfRange` reads use
+  the Continuation Order and publish a flat root sequence; a whole-result caller
+  receives the finite tuple together while a stream receives one root at a time.
+  Each root stands at its **own** edge pin, and a milestone-set delivery answers
+  the **empty** pin for
   itself, exactly as the whole result of the same query does, because a scan is
   not a pin. Exactly as the whole result does, it also retains no write evidence:
   every milestone root stands at a finite Transaction-Time edge and is read-only
   through every keyed verb.
-- **A milestone root whose edge did not decode is published at the page's own
-  pin.** Every other milestone root stands at its own edge; this one has none to
-  stand at, and the delivery continues past it. A whole-result milestone read
-  refuses the whole read instead, because it must decode an edge before it can
-  partition its rows at all — a refusal a per-root publication has no need of.
+- **A milestone root whose edge did not decode is published in band with no
+  edge.** Every other milestone root stands at its own edge; this one has none to
+  stand at. In both eager and streamed checked views it is an `InvalidData` at
+  its database-arrival ordinal, carrying no edge, and delivery continues past it.
+  A default view refuses it by the ordinary invalid-data rule. No history lane
+  partitions before classification or gives this state a separate refusal.
 
 **Because a stream derives a Continuation Order the query did not declare**, it
 answers in a total order where a whole-result read may answer in none, and one

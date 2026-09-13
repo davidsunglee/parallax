@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY_LITERAL, NeutralType
+from parallax.core.base import INFINITY_LITERAL, NeutralType, detach_json_container
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import (
     Dialect,
@@ -728,7 +728,7 @@ def _successor_document(
         return _row_document(resident, attributes, value_objects)
     patches = _successor_patches(resident, attributes, value_objects, predecessor)
     if not patches:
-        return predecessor.document
+        return detach_json_container(predecessor.document)
     shape = entity_shape(
         tuple(attribute for attribute, _path in resident.attributes),
         tuple(occurrence for occurrence, _path in resident.value_objects),

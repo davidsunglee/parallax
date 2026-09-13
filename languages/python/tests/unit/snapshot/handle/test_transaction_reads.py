@@ -138,6 +138,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
+    assert len(call.result.sources) == 1
     (hint,) = call.result.sources.values()
     assert hint.participation is None
     assert hint.observation is not None

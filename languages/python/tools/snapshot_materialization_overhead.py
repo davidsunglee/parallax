@@ -1,11 +1,11 @@
 """What a production Snapshot read spends turning returned rows into a sealed
-graph, under both storage layouts and on every supported CPython minor.
+Page, under both storage layouts and on every supported CPython minor.
 
 The representative workload — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the shipped loop from ``PreparedRead.materialize`` to ``GraphBuilder.seal``.
+the shipped loop from ``PreparedRead.materialize`` to ``PageBuilder.finish``.
 The workload itself is ``tests/unit/_snapshot_materialization_support.py``, which
 the gated scaling regression drives through the same functions, so the report and
 its grader measure one workload rather than two.
@@ -15,22 +15,23 @@ time is a property of the machine that ran it and a total in bytes moves with th
 interpreter. The SHAPE of the claim is gated instead, in
 ``tests/unit/snapshot/test_snapshot_materialization_scaling.py``, which proves prepared
 state is fixed by the model's exact layouts and the compiled reads rather than by
-rows or graphs. What has been read off this, and under what conditions, is
+rows or Pages. What has been read off this, and under what conditions, is
 ``docs/snapshot-materialization-baseline.md``.
 
 **What is inside the clock and what is not.** Model preparation and
 compiled-read preparation are timed once each and reported separately, and the
 binding a compiled read pays for its levels is reported within the second. The
 repeated batch holds exactly what a read pays per statement of rows: row
-materialization, conversion, the observation every hydrating row takes, view
-fan-back, and sealing.
-Fixture construction, SQL execution, merge, classification, and Typed or Wire
+materialization, identity claims, exact Payload Witness capture, view fan-back,
+and Page finishing. Payload judgment is lazy and begins when a Root View reaches
+an Entity State, so it is outside this assembly window.
+Fixture construction, SQL execution, Root View construction, classification, and Typed or Wire
 publication are outside it — the fixture rows are built before any window opens,
 so a reading counts the position a row takes and not the leaf it references.
 
 **Compilation cannot be inside the batch.** A child level's ``compile_read`` runs
 between gathering its parents' keys and converting its rows, so timing
-``build_graph`` as one unit would recompile four statements per repetition and
+the whole read as one unit would recompile four statements per repetition and
 call the result throughput. The batch therefore compiles and binds once, against
 the fixture's own keys, and still gathers those keys per repetition because
 production does.
@@ -44,7 +45,7 @@ complete. `core/spec/language-testing.md` §5 asks that structurally rather than
 inspection: an import that is not here is a route no guard has to answer for.
 
 **The secondary workload** is ``tools/snapshot_graph_overhead.py``'s own plan —
-the direct-converter shape the 64-graph cost item is built over — timed in the
+the direct-converter shape a Page scaling cost item is built over — timed in the
 same child so its per-projection rate is comparable with the production one. The
 cost ITEM is never re-run from a tool: its duration is read from
 ``tests/_support/cost_durations.json`` and printed as what it last cost.
@@ -92,10 +93,10 @@ numbers, and they would not be the numbers the recorded baseline is stated over.
 
 DURATIONS: Final = WORKSPACE / "tests" / "_support" / "cost_durations.json"
 COST_ITEM: Final = (
-    "tests/unit/snapshot/test_snapshot_graph_retention.py::"
-    "test_a_models_layout_catalog_is_the_same_size_after_one_graph_and_after_sixty_four"
+    "tests/unit/snapshot/test_snapshot_materialization_scaling.py::"
+    "test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_four"
 )
-"""The 64-graph cost item, and the file recording what it last cost. Read rather
+"""The 64-execution cost item, and the file recording what it last cost. Read rather
 than re-run: the item owns its own instruments and its duration is a fact about
 the class's balance, not a measurement this report may retake."""
 
@@ -178,7 +179,7 @@ CONTRIBUTORS: Final = (
     Contributor("convert_row", "_convert.py", "convert_row", False),
     Contributor("LevelContext (bound per read)", "_convert.py", "__post_init__", False),
     Contributor("attribute_reads (contract scan)", "_compile.py", "attribute_reads", False),
-    Contributor("observable_columns", "_convert.py", "observable_columns", False),
+    Contributor("claim_identity", "_identity.py", "claim_identity", False),
 )
 """Every contributor the baseline names.
 
@@ -213,7 +214,7 @@ class Reading(NamedTuple):
     """Decode preparation the compiled read owns, within that total: the bind
     that derives one level per Entity a read can resolve."""
     batch_ns: float
-    retained_graph_bytes: int
+    retained_page_bytes: int
     peak_bytes: int
     prepared_bytes: int
     prepared_reads: int
@@ -226,7 +227,7 @@ class Reading(NamedTuple):
     catalog_references: int
     counts: Mapping[str, int]
     secondary_build_s: float
-    secondary_merge_s: float
+    secondary_root_view_s: float
     secondary_projections: int
 
     @property
@@ -239,13 +240,13 @@ class Reading(NamedTuple):
 
     @property
     def transient_bytes(self) -> int:
-        """What one batch allocated and freed again on the way to the graph it
+        """What one batch allocated and freed again on the way to the Page it
         kept: the high-water mark less the state that survives it.
 
         Derived rather than measured, because the two are one reading taken from
         both ends — measuring each against its own floor would let a batch be
         charged for its own product twice, or for none of it."""
-        return self.peak_bytes - self.retained_graph_bytes
+        return self.peak_bytes - self.retained_page_bytes
 
     @property
     def transient_bytes_per_row(self) -> float:
@@ -253,7 +254,7 @@ class Reading(NamedTuple):
 
     @property
     def retained_bytes_per_projection(self) -> float:
-        return self.retained_graph_bytes / self.projections
+        return self.retained_page_bytes / self.projections
 
     @property
     def prepared_bytes_per_read(self) -> float:
@@ -451,7 +452,7 @@ def missing_cells(matrix: Matrix, runtimes: Sequence[str]) -> list[str]:
 
 
 def recorded_cost_item_seconds() -> float | None:
-    """What the 64-graph cost item last cost, as its own class's balance data
+    """What the 64-cell Page cost item last cost, as its own class's balance data
     records it — or absence, which is a fact about the file rather than about the
     item."""
     try:
@@ -475,7 +476,7 @@ def _conditions(runtimes: Sequence[str], warmups: Sequence[int]) -> list[tuple[s
         ("Timings", f"mean of {REPETITIONS} batches, taken untraced"),
         ("Batch", f"{ROWS_PER_BATCH} rows over {PROJECTIONS_PER_BATCH} projections, 5 levels"),
         ("Isolation", "one fresh child interpreter per (minor, layout)"),
-        ("Excluded", "fixture rows, SQL execution, merge, classification, publication"),
+        ("Excluded", "fixture rows, SQL execution, Root Views, classification, publication"),
     ]
 
 
@@ -503,7 +504,7 @@ def _timing_line(reading: Reading) -> str:
 
 def _memory_line(reading: Reading) -> str:
     return (
-        f"{reading.layout:<10} {reading.retained_graph_bytes:>11,} "
+        f"{reading.layout:<10} {reading.retained_page_bytes:>11,} "
         f"{reading.retained_bytes_per_projection:>9.1f} {reading.peak_bytes:>10,} "
         f"{reading.transient_bytes:>12,} {reading.transient_bytes_per_row:>14,.0f} "
         f"{reading.prepared_bytes:>11,} {reading.prepared_bytes_per_read:>9,.0f} "
@@ -531,17 +532,17 @@ def _count_lines(readings: Sequence[Reading]) -> list[str]:
 
 def _secondary_lines(readings: Sequence[Reading], recorded: float | None) -> list[str]:
     build = sum(r.secondary_build_s for r in readings) / len(readings)
-    merge = sum(r.secondary_merge_s for r in readings) / len(readings)
+    root_view = sum(r.secondary_root_view_s for r in readings) / len(readings)
     projections = readings[0].secondary_projections
     duration = "not recorded" if recorded is None else f"{recorded:.1f} s"
     return [
-        "secondary workload — the direct-converter 64-graph shape",
+        "secondary workload — the direct-converter 64-cell Page shape",
         f"  build (convert, write, seal)  = {build * 1e3:.2f} ms "
         f"({build / projections * 1e6:.2f} us/projection, "
         f"{projections / build:,.0f} projections/s)",
-        f"  merge                         = {merge * 1e3:.2f} ms "
-        f"({merge / projections * 1e6:.2f} us/projection)",
-        f"  the 64-graph cost item        = {duration} "
+        f"  Root View                     = {root_view * 1e3:.2f} ms "
+        f"({root_view / projections * 1e6:.2f} us/projection)",
+        f"  the 64-cell Page cost item    = {duration} "
         "(read from cost_durations.json, never re-run)",
         "  the two cells of one runtime measure one layout-independent workload, so the",
         "  spread between them is this reading's own repeatability.",
@@ -588,12 +589,12 @@ def _scope() -> list[str]:
         "                those reads pays for its levels, once per execution. `decode` is the",
         "                decode preparation the compiled read owns: the bind alone.",
         "  batch         one steady-state batch from an already prepared model and prepared",
-        "                reads: row materialization, conversion, the observation every",
-        "                hydrating row takes, view fan-back, and sealing.",
+        "                reads: row materialization, identity claims, Payload Witness capture,",
+        "                view fan-back, and Page finishing.",
         "  prep rows     rows of steady-state work one whole preparation costs, and `compile",
         "                rows` the same for compiled-read preparation alone. A REPAYMENT row",
         "                count needs two halves and is computed in the baseline document.",
-        "  retained B    bytes the sealed graph keeps, reachable at the sample point.",
+        "  retained B    bytes the sealed Page keeps, reachable at the sample point.",
         "  peak B        the high-water mark one batch reached above its collected floor.",
         "  transient B   peak less retained: what a batch allocated and freed again.",
         "  prepared B    bytes the compiled reads and their bound levels keep, derived inside",
@@ -614,7 +615,7 @@ def _scope() -> list[str]:
 
 def render(matrix: Matrix, recorded: float | None) -> list[str]:
     """The whole report, given a complete matrix."""
-    lines = ["parallax snapshot materialization — production row-to-graph path", ""]
+    lines = ["parallax snapshot materialization — production row-to-Page path", ""]
     warmups = [
         cell.warmup
         for cells in matrix.values()

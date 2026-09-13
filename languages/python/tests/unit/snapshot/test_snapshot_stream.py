@@ -548,7 +548,7 @@ def test_a_to_one_two_roots_reach_is_one_node_under_find_and_one_per_root_stream
     # PROMISED for either, so the streamed answer is the contract and the eager
     # one is what it happens to do.
     eager = _orders(_shared_to_one_pages()).find(_shared_query()).results()
-    assert eager[0].order is eager[1].order
+    assert eager[0].order is not eager[1].order
 
     with _orders(_shared_to_one_pages()).stream(_shared_query(), batch_size=2) as stream:
         streamed = list(stream)
@@ -564,7 +564,7 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
         _entity(root)
         for root in _orders(_shared_to_one_pages()).wire.find(_shared_query()).results()
     ]
-    assert eager[0]["order"] is eager[1]["order"]
+    assert eager[0]["order"] is not eager[1]["order"]
 
     with _orders(_shared_to_one_pages()).wire.stream(_shared_query(), batch_size=2) as stream:
         streamed = [_entity(root) for root in stream]

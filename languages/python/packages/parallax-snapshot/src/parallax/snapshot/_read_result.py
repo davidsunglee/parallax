@@ -1,21 +1,21 @@
 """``parallax.snapshot._read_result`` enforcement scope (m-snapshot-read).
 
-What a snapshot read HANDS BACK: the sealed Snapshot graph, and nothing about the
+What a snapshot read HANDS BACK: the sealed delivery Page, and nothing about the
 execution that produced it. A read publishes its transient Read activity through
 the composition-supplied lifecycle seam while it runs (`m-execution-lifecycle`),
 so a result carries no trace, no round-trip count, and no lifecycle record at
 all — which is why nothing in this module names that vocabulary.
 
 This scope alone carries the module tag's full grant, `m-execution-lifecycle`
-included. The row-to-graph work sits in the separate, narrower
-``parallax.snapshot.materialize`` scope, which turns driver rows into graph
+included. The row-to-Page work sits in the separate, narrower
+``parallax.snapshot.materialize`` scope, which turns driver rows into Page
 inputs. The split is what keeps `m-sql` outside the closure of the grant every
-consumer of the row-to-graph surface holds: a forbidden contract is the
+consumer of the row-to-Page surface holds: a forbidden contract is the
 complement of a closure, so a scope that must stay clear of SQL generation has
 to be granted a scope that does not reach it.
 
-Every lane's result sits here rather than beside the merge because a result is
-what the read ANSWERS, while the row-to-graph vocabulary is what a materializer
+Every lane's result sits here rather than beside Root View construction because a result is
+what the read ANSWERS, while the row-to-Page vocabulary is what a materializer
 consumes; keeping the answer in the wider scope is what leaves the narrower one
 free of everything `m-execution-lifecycle` drags in, `m-sql` included.
 """
@@ -26,11 +26,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import SourceHint
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     InvalidData,
-    SnapshotGraph,
+    Page,
     UnwindTree,
 )
 
@@ -44,35 +45,31 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's sealed Snapshot graph.
+    """A find's sealed delivery Page.
 
     ``includes`` is the query's own Include Paths as the relationship views a
-    wire unwind follows. The merged graph alone cannot supply them: it keeps
+    wire unwind follows. The Root View alone cannot supply them: it keeps
     every view any level loaded onto a node, so a back-reference would revisit
     its target forever. The executor knows the plan, so it hands the tree on.
 
     ``sources`` is the private Source Hint each observed projection's value will
-    carry, keyed by that projection's own index in the graph. It travels
-    with the graph because only the executor holds the row and the
+    carry, keyed by that projection's own index in the Page. It travels
+    with the Page because only the executor holds the row and the
     projection at once: a materializer builds the value, but the row it came from
     is gone by then.
     """
 
-    graph: SnapshotGraph
+    page: Page
     includes: UnwindTree = EMPTY_UNWIND
     sources: Mapping[int, SourceHint] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryFindResult:
-    """A milestone-set find's ordered per-milestone graphs.
+    """A milestone-set find's one database-ordered page of flat roots."""
 
-    Each entry is a root-only graph pinned at its own milestone's from-instant
-    (m-snapshot-read "The whole-graph pin"); a v1 milestone-set graph carries no
-    includes (m-case-format).
-    """
-
-    graphs: tuple[SnapshotGraph, ...]
+    page: Page
+    milestones: EntityMetadata
 
 
 type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]
