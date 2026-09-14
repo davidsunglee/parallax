@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -22,6 +23,10 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert all(cell.value > 0 for cell in cells)
     assert set(contract.authority) == {"machine", "cpu", "cores", "ramGiB", "cpython", "postgres"}
     assert set(contract.sampling) == {"timing", "memory"}
+    assert contract.timing_warmups == 3
+    assert contract.timing_measured == 9
+    assert contract.memory_children == 3
+    assert contract.memory_scaling_arms == (200, 2_000)
 
 
 def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None:
@@ -90,3 +95,24 @@ def test_budget_contract_rejects_missing_fixture_and_non_numeric_cells(tmp_path:
     )
     with pytest.raises(ValueError, match="budget cell must be numeric"):
         invalid_cell.cells("x")
+
+
+def test_budget_contract_rejects_malformed_sampling_protocols() -> None:
+    contract = BudgetContract.load()
+    with pytest.raises(ValueError, match=r"sampling\.timing is not a mapping"):
+        _ = replace(contract, sampling={"timing": []}).timing_warmups
+    with pytest.raises(
+        ValueError,
+        match=r"sampling\.memory\.children is not a positive integer",
+    ):
+        _ = replace(contract, sampling={"memory": {"children": 0}}).memory_children
+    with pytest.raises(ValueError, match="scalingArms is not a sequence"):
+        _ = replace(
+            contract,
+            sampling={"memory": {"scalingArms": 200}},
+        ).memory_scaling_arms
+    with pytest.raises(ValueError, match="must contain distinct scaling counts"):
+        _ = replace(
+            contract,
+            sampling={"memory": {"scalingArms": [200, 200]}},
+        ).memory_scaling_arms

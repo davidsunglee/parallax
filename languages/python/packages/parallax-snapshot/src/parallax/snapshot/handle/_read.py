@@ -994,6 +994,14 @@ class RootsOf(Protocol):
     ) -> Iterator[object]: ...
 
 
+class _DeliveryWireEncoder(Protocol):
+    def __call__(self, neutral_type: Any, value: Any, /) -> object: ...
+
+    def begin_page(self) -> None: ...
+
+    def release(self) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResultPublication:
     """Which materializer a read publishes through, as the ONE conversion every
@@ -1007,7 +1015,10 @@ class ResultPublication:
     equivalence the Typed and Wire interfaces promise is structural rather than
     maintained by inspection.
 
-    :attr:`roots_of` is deliberately per-Page rather than per-result. An eager
+    :attr:`roots_of` is deliberately per-Page rather than per-result. The
+    publication itself is delivery-scoped: an eager read uses it once and a
+    stream reuses it across every bounded Page, then :attr:`release` drops any
+    representation-specific reuse state. An eager
     find and a milestone-set find each publish one Page, while a streamed read
     publishes one bounded Page at a time. Every root receives a transient Root
     View, which keeps result scope a property of the root being published rather
@@ -1028,21 +1039,25 @@ class ResultPublication:
     interface: ReadInterface
     roots_of: RootsOf
     edition: str
+    release: Callable[[], None]
 
     def from_find(self, result: FindResult) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
-        return Snapshot(
-            tuple(
-                self.roots_of(
-                    result.page,
-                    result.includes,
-                    atomic=True,
-                    sources=result.sources,
-                )
-            ),
-            result.page.pin,
-            self.edition,
-        )
+        try:
+            return Snapshot(
+                tuple(
+                    self.roots_of(
+                        result.page,
+                        result.includes,
+                        atomic=True,
+                        sources=result.sources,
+                    )
+                ),
+                result.page.pin,
+                self.edition,
+            )
+        finally:
+            self.release()
 
     def from_history(self, result: HistoryFindResult) -> Snapshot[Any]:
         """Every milestone's roots as ONE ordered result.
@@ -1053,11 +1068,18 @@ class ResultPublication:
         so every root publishes root-only, and the outer pin
         is empty because a scan is not a pin.
         """
-        return Snapshot(
-            tuple(self.roots_of(result.page, atomic=True, milestones=result.milestones)),
-            Pin(),
-            self.edition,
-        )
+        try:
+            return Snapshot(
+                tuple(self.roots_of(result.page, atomic=True, milestones=result.milestones)),
+                Pin(),
+                self.edition,
+            )
+        finally:
+            self.release()
+
+
+def _release_nothing() -> None:
+    pass
 
 
 def typed_publication(
@@ -1103,11 +1125,27 @@ def typed_publication(
             prepare=lambda root: root.prime(sources),
         )
 
-    return ResultPublication("typed", roots_of, edition)
+    return ResultPublication("typed", roots_of, edition, _release_nothing)
 
 
 def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
     """Publish through the wire materializer: frozen declared-name value trees."""
+
+    from parallax.snapshot.materialize._wire import shared_wire_encoder
+
+    encode: _DeliveryWireEncoder | None = shared_wire_encoder()
+    variants: dict[EntityIdentity, str | None] = {}
+    released = False
+
+    def release() -> None:
+        nonlocal encode, released
+        if released:
+            return
+        released = True
+        variants.clear()
+        if encode is not None:
+            encode.release()
+            encode = None
 
     def roots_of(
         page: Page,
@@ -1123,10 +1161,11 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             None if edge is None else edge_pin(edge) for edge in page_edges(page, milestones)
         )
 
-        from parallax.snapshot.materialize._wire import shared_wire_encoder
-
-        encode = shared_wire_encoder()
-        variants: dict[EntityIdentity, str | None] = {}
+        nonlocal encode
+        current = encode
+        if released or current is None:
+            raise RuntimeError("a released Wire publication cannot publish another Page")
+        current.begin_page()
 
         def publish(root: RootView, position: int) -> Iterator[object]:
             yield from wire_roots(
@@ -1135,7 +1174,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
                 includes,
                 ordinal_offset=ordinal_offset + position,
                 sources=sources,
-                encode=encode,
+                encode=current,
                 variants=variants,
             )
 
@@ -1152,7 +1191,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             prepare=lambda root: root.prime(sources),
         )
 
-    return ResultPublication("wire", roots_of, edition)
+    return ResultPublication("wire", roots_of, edition, release)
 
 
 def _materialize_result_page(

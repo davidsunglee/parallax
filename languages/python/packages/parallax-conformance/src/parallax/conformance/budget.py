@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -83,6 +83,47 @@ class BudgetContract:
     @property
     def workload_ids(self) -> tuple[str, ...]:
         return tuple(self.workloads)
+
+    @property
+    def timing_warmups(self) -> int:
+        return self._sampling_count("timing", "warmups")
+
+    @property
+    def timing_measured(self) -> int:
+        return self._sampling_count("timing", "measured")
+
+    @property
+    def memory_children(self) -> int:
+        return self._sampling_count("memory", "children")
+
+    @property
+    def memory_scaling_arms(self) -> tuple[int, ...]:
+        memory = self._sampling_group("memory")
+        arms = memory.get("scalingArms")
+        if not isinstance(arms, Sequence) or isinstance(arms, str | bytes):
+            raise ValueError("sampling.memory.scalingArms is not a sequence")
+        counts = tuple(
+            self._positive_int(value, "sampling.memory.scalingArms")
+            for value in cast("Sequence[object]", arms)
+        )
+        if len(counts) < 2 or len(set(counts)) != len(counts):
+            raise ValueError("sampling.memory.scalingArms must contain distinct scaling counts")
+        return counts
+
+    def _sampling_count(self, group: str, name: str) -> int:
+        return self._positive_int(self._sampling_group(group).get(name), f"sampling.{group}.{name}")
+
+    def _sampling_group(self, name: str) -> Mapping[str, object]:
+        group = self.sampling.get(name)
+        if not isinstance(group, Mapping):
+            raise ValueError(f"sampling.{name} is not a mapping")
+        return cast("Mapping[str, object]", group)
+
+    @staticmethod
+    def _positive_int(value: object, address: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{address} is not a positive integer")
+        return value
 
     def fixture(self, workload: str) -> Path:
         definition = self.workloads[workload]

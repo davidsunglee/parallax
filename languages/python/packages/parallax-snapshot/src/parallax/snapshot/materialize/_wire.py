@@ -525,25 +525,43 @@ def _trusted_wire_scalar(neutral_type: NeutralType, value: object, encode: _Enco
 
 
 class _SharedWireEncoder:
-    __slots__ = ("_encoded",)
+    """A delivery encoder retaining at most the current and preceding Page.
+
+    Advancing a Page drops everything older than its predecessor. Equal values
+    repeated across a boundary still reuse their encoded object, while values
+    visited only once cannot accumulate with the delivery position.
+    """
+
+    __slots__ = ("_current", "_previous")
 
     def __init__(self) -> None:
-        self._encoded: dict[tuple[NeutralType, ManagedValue], object] = {}
+        self._current: dict[tuple[NeutralType, ManagedValue], object] = {}
+        self._previous: dict[tuple[NeutralType, ManagedValue], object] = {}
+
+    def begin_page(self) -> None:
+        self._previous = self._current
+        self._current = {}
 
     def __call__(self, neutral_type: NeutralType, value: ManagedValue) -> object:
         try:
             key = (neutral_type, value)
-            held = self._encoded.get(key, ABSENT)
+            held = self._current.get(key, ABSENT)
+            if held is ABSENT:
+                held = self._previous.pop(key, ABSENT)
         except TypeError:
             return encode_managed_wire(neutral_type, value)
         if held is ABSENT:
             held = encode_managed_wire(neutral_type, value)
-            self._encoded[key] = held
+        self._current[key] = held
         return held
 
+    def release(self) -> None:
+        self._current.clear()
+        self._previous.clear()
 
-def shared_wire_encoder() -> _Encoder:
-    """A trusted encoder whose reuse is bounded to one Page publication."""
+
+def shared_wire_encoder() -> _SharedWireEncoder:
+    """A trusted encoder whose bounded reuse lasts for one delivery."""
     return _SharedWireEncoder()
 
 

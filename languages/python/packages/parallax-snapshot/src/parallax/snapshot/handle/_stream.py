@@ -308,6 +308,7 @@ class SnapshotStream[T]:
         "_milestones",
         "_node",
         "_page_plan",
+        "_pages",
         "_pin",
         "_publication",
         "_read",
@@ -331,6 +332,7 @@ class SnapshotStream[T]:
         self._read: StreamRead | None = None
         self._publication: ResultPublication | None = None
         self._page_plan: DeliveryPlan | None = None
+        self._pages: Generator[object] | None = None
         self._pin: Pin = Pin()
         self._milestones: EntityMetadata | None = None
         self._activity: SnapshotStreamActivity = INERT
@@ -356,23 +358,27 @@ class SnapshotStream[T]:
         self._require(_ENTER_ONCE, _CREATED)
         read = self._scope.begin()
         publication = self._scope.publication(read.selected, self._interface)
-        meta = read.selected.model.meta
-        validated = preflight(self._node, model=meta, form="graph")
-        entity = self._entity(meta)
-        declaring = declaring_metadata(meta, entity.identity)
-        self._page_plan = DeliveryPlan(
-            PagePlan(continuation.plan(validated, meta), self._batch_size, self._node.limit)
-        )
-        if scans_validated_axis(validated.temporal):
-            self._milestones = declaring
-            self._pin = Pin()
-        else:
-            self._pin = validated_query_pin(validated.temporal)
-        self._read = read
         self._publication = publication
-        self._activity = read.open_stream(
-            self._node.target, publication.interface, self._batch_size
-        ).__enter__()
+        try:
+            meta = read.selected.model.meta
+            validated = preflight(self._node, model=meta, form="graph")
+            entity = self._entity(meta)
+            declaring = declaring_metadata(meta, entity.identity)
+            self._page_plan = DeliveryPlan(
+                PagePlan(continuation.plan(validated, meta), self._batch_size, self._node.limit)
+            )
+            if scans_validated_axis(validated.temporal):
+                self._milestones = declaring
+                self._pin = Pin()
+            else:
+                self._pin = validated_query_pin(validated.temporal)
+            self._read = read
+            self._activity = read.open_stream(
+                self._node.target, publication.interface, self._batch_size
+            ).__enter__()
+        except BaseException:
+            self._release_publication()
+            raise
         self._state = _OPEN
         return self
 
@@ -394,6 +400,8 @@ class SnapshotStream[T]:
         self._state = _CLOSED
         failure = self._failure
         self._failure = None
+        self._release_pages()
+        self._release_publication()
         # Settle lane-owned resources before the observed stream finishes. Page
         # leases have already ended, and participating streams own none.
         read = self._read
@@ -528,13 +536,29 @@ class SnapshotStream[T]:
         read = self._read
         if read is not None:
             read.release(failure)
+        self._release_pages()
+        self._release_publication()
         if terminal == _EXHAUSTED:
             self._activity.exhausted()
         else:
             self._failure = failure
 
+    def _release_publication(self) -> None:
+        publication = self._publication
+        self._publication = None
+        if publication is not None:
+            publication.release()
+
+    def _release_pages(self) -> None:
+        pages = self._pages
+        self._pages = None
+        if pages is not None:
+            pages.close()
+
     def _drain(self, *, checked: bool) -> Iterator[object]:
-        return _Delivery(self._advance, self._roots(checked=checked))
+        pages = self._roots(checked=checked)
+        self._pages = pages
+        return _Delivery(self._advance, pages)
 
     def _roots(self, *, checked: bool) -> Generator[object]:
         """One root at a time, page after page, holding only the position.

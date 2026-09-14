@@ -63,19 +63,29 @@ Run it through `just python-report-lifecycle-overhead`.
 
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
-import platform
 import queue
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from types import TracebackType
 from typing import Final, NamedTuple
 
+from parallax.conformance.budget import BudgetContract
+from parallax.conformance.cost_envelope import (
+    Comparison,
+    CostReportEnvelope,
+    Provenance,
+    Reading,
+    classify_authority,
+    validate,
+)
 from parallax.conformance.story_models import ACCOUNT_MODEL, Account
+from parallax.conformance.workloads import workload_digest
 from parallax.core.base import DocumentReadOrdinals
 from parallax.core.db_port import (
     Bind,
@@ -135,6 +145,7 @@ of those, so every projection here understates the denominator it would have."""
 DISPATCH_CEILING_US: Final = 5.0
 P50_OVERHEAD_CEILING: Final = 0.05
 P95_OVERHEAD_CEILING: Final = 0.10
+SUBJECT: Final = "lifecycle-overhead"
 
 
 class _SoleRuntime:
@@ -493,46 +504,147 @@ def _shape() -> _Shape:
     return _Shape(counting.total[0], port.statements)
 
 
-def _conditions(shape: _Shape) -> list[tuple[str, str]]:
-    return [
-        ("python", f"{platform.python_version()} ({platform.python_implementation()})"),
-        ("platform", f"{platform.system().lower()}/{platform.machine()}"),
-        ("processor", platform.processor() or "unknown"),
-        ("pairs", f"{PAIRS} timed, {WARMUP_PAIRS} discarded, per configuration"),
-        ("workload", f"{shape.events} events and {shape.statements} statements"),
+def _comparison(workload: str, cell: str, value: float, limit: float, unit: str) -> Comparison:
+    return Comparison(
+        workload,
+        cell,
+        "at-most",
+        limit,
+        unit,
+        "within" if value <= limit else "outside",
+    )
+
+
+def build_envelope(
+    contract: BudgetContract,
+    provenance: Provenance,
+    measurements: Mapping[str, _Measurement],
+    shape: _Shape,
+) -> CostReportEnvelope:
+    """Retain every value the lifecycle report computes in its own envelope."""
+    readings = [
+        Reading("workload", "events", float(shape.events), "count"),
+        Reading("workload", "statements", float(shape.statements), "count"),
     ]
+    comparisons: list[Comparison] = []
+    for label, measurement in measurements.items():
+        plain_p50 = _percentile(measurement.plain, 0.50) / 1_000
+        plain_p95 = _percentile(measurement.plain, 0.95) / 1_000
+        observed_p50 = _percentile(measurement.observed, 0.50) / 1_000
+        observed_p95 = _percentile(measurement.observed, 0.95) / 1_000
+        delta_p50 = _percentile(measurement.difference, 0.50) / 1_000
+        delta_p95 = _percentile(measurement.difference, 0.95) / 1_000
+        dispatch_p50 = delta_p50 / shape.events
+        dispatch_p95 = delta_p95 / shape.events
+        ranked_p50 = observed_p50 / plain_p50 - 1
+        ranked_p95 = observed_p95 / plain_p95 - 1
+        paired_p50 = _percentile(measurement.ratio, 0.50)
+        paired_p95 = _percentile(measurement.ratio, 0.95)
+        values = (
+            ("plain.p50", plain_p50, "us"),
+            ("plain.p95", plain_p95, "us"),
+            ("observed.p50", observed_p50, "us"),
+            ("observed.p95", observed_p95, "us"),
+            ("pairedDelta.p50", delta_p50, "us"),
+            ("pairedDelta.p95", delta_p95, "us"),
+            ("dispatchPerEvent.p50", dispatch_p50, "us/event"),
+            ("dispatchPerEvent.p95", dispatch_p95, "us/event"),
+            ("rankedOverhead.p50", ranked_p50, "ratio"),
+            ("rankedOverhead.p95", ranked_p95, "ratio"),
+            ("pairedOverhead.p50", paired_p50, "ratio"),
+            ("pairedOverhead.p95", paired_p95, "ratio"),
+        )
+        readings.extend(Reading(label, cell, value, unit) for cell, value, unit in values)
+        for latency in LATENCY_PROJECTION_US:
+            denominator = plain_p50 + shape.statements * latency
+            readings.append(
+                Reading(
+                    label,
+                    f"latencyProjection.{latency}us",
+                    delta_p50 / denominator,
+                    "ratio",
+                )
+            )
+        comparisons.extend(
+            (
+                _comparison(
+                    label,
+                    "dispatchPerEvent.p95",
+                    dispatch_p95,
+                    DISPATCH_CEILING_US,
+                    "us/event",
+                ),
+                _comparison(
+                    label,
+                    "rankedOverhead.p50",
+                    ranked_p50,
+                    P50_OVERHEAD_CEILING,
+                    "ratio",
+                ),
+                _comparison(
+                    label,
+                    "rankedOverhead.p95",
+                    ranked_p95,
+                    P95_OVERHEAD_CEILING,
+                    "ratio",
+                ),
+            )
+        )
+    envelope = CostReportEnvelope(
+        SUBJECT,
+        provenance,
+        classify_authority(provenance, contract),
+        tuple(readings),
+        tuple(comparisons),
+    )
+    validate(envelope)
+    return envelope
 
 
-def _section(label: str, measurement: _Measurement, shape: _Shape) -> list[str]:
-    plain_p50 = _percentile(measurement.plain, 0.50)
-    plain_p95 = _percentile(measurement.plain, 0.95)
-    observed_p50 = _percentile(measurement.observed, 0.50)
-    observed_p95 = _percentile(measurement.observed, 0.95)
-    delta_p50 = _percentile(measurement.difference, 0.50)
-    delta_p95 = _percentile(measurement.difference, 0.95)
+def canary(contract: BudgetContract, provenance: Provenance) -> CostReportEnvelope:
+    """Build one schema-valid measured envelope without running the timer."""
+    measurement = _Measurement()
+    measurement.plain = [100, 110]
+    measurement.observed = [120, 130]
+    measurement.difference = [20, 20]
+    measurement.ratio = [0.20, 130 / 110 - 1]
+    return build_envelope(
+        contract,
+        provenance,
+        {"canary": measurement},
+        _Shape(events=2, statements=3),
+    )
 
-    lines = [
-        f"  {label}",
-        "                              p50            p95",
-        f"    no provider      {plain_p50 / 1_000:11.2f} us {plain_p95 / 1_000:11.2f} us",
-        f"    observed         {observed_p50 / 1_000:11.2f} us {observed_p95 / 1_000:11.2f} us",
-        f"    paired delta     {delta_p50 / 1_000:11.2f} us {delta_p95 / 1_000:11.2f} us",
-        f"    dispatch/event   {delta_p50 / shape.events / 1_000:11.3f} us "
-        f"{delta_p95 / shape.events / 1_000:11.3f} us"
-        f"   (ceiling {DISPATCH_CEILING_US:.0f} us p95)",
-        f"    overhead, ranked {observed_p50 / plain_p50 - 1:11.1%} "
-        f"{observed_p95 / plain_p95 - 1:11.1%}"
-        f"   (ceilings {P50_OVERHEAD_CEILING:.0%} p50, {P95_OVERHEAD_CEILING:.0%} p95)",
-        f"    overhead, paired {_percentile(measurement.ratio, 0.50):11.1%} "
-        f"{_percentile(measurement.ratio, 0.95):11.1%}",
-        "",
-        "    the same p50 overhead once a statement costs a round trip:",
-    ]
-    for latency in LATENCY_PROJECTION_US:
-        denominator = plain_p50 + shape.statements * latency * 1_000
-        lines.append(f"      + {latency:>5} us per round trip   {delta_p50 / denominator:6.1%}")
-    lines.append("")
-    return lines
+
+class _VersionSource:
+    def __init__(self, version: str) -> None:
+        self._version = version
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> list[Mapping[str, object]]:
+        del binds, document_reads
+        if sql != "show server_version":
+            raise ValueError(sql)
+        return [{"server_version": self._version}]
+
+
+def _provenance(contract: BudgetContract) -> Provenance:
+    return Provenance.capture(
+        contract,
+        workload_digest=workload_digest(),
+        postgres=_VersionSource("not-used"),
+        sampling={
+            "timing": {
+                "warmupPairs": WARMUP_PAIRS,
+                "measuredPairs": PAIRS,
+                "interleaved": True,
+            }
+        },
+    )
 
 
 def _fanout(logger: logging.Logger, sample: int) -> FanoutLifecycleProvider:
@@ -576,7 +688,7 @@ def _configurations(
 
 
 def main(argv: list[str]) -> int:
-    """Measure and print; never judge.
+    """Measure and emit an envelope; never judge.
 
     Exit codes: 0 — the measurement ran; 2 — usage error. There is no exit code
     for a number that is too large, deliberately.
@@ -588,13 +700,13 @@ def main(argv: list[str]) -> int:
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()
     plain = Database(_SoleRuntime(port), ACCOUNT_MODEL)
-    lines = ["parallax execution lifecycle overhead", ""]
-    lines += [f"  {name:<12}{value}" for name, value in _conditions(shape)]
-    lines += [""]
+    measurements: dict[str, _Measurement] = {}
     for label, provider in _configurations(records):
         observed = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=provider)
-        lines += _section(label, _measure(plain, observed, records), shape)
-    print("\n".join(lines))
+        measurements[label] = _measure(plain, observed, records)
+    contract = BudgetContract.load()
+    envelope = build_envelope(contract, _provenance(contract), measurements, shape)
+    print(json.dumps(envelope.document(), indent=2, sort_keys=True))
     return 0
 
 

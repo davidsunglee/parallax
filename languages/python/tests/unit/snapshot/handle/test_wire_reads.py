@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import gc
 import json
 import pickle
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
@@ -56,6 +58,7 @@ from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import InvalidData, WireEntity, connect, handle
+from parallax.snapshot.handle._read import wire_publication
 from parallax.snapshot.handle._read_scope import wire_query_node
 from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
@@ -64,10 +67,15 @@ from parallax.snapshot.materialize import (
     read_origin_of,
     wire_roots,
 )
+from parallax.snapshot.materialize import (
+    _wire as wire_materialize,
+)
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
+    _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
+    _stored_entries,  # pyright: ignore[reportPrivateUsage] - positional entry naming is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     shared_wire_encoder,
 )
@@ -186,6 +194,85 @@ def test_wire_encoding_reuse_is_scoped_to_one_encoder() -> None:
     assert reused is first
     assert isolated == first
     assert isolated is not first
+
+
+def test_wire_encoding_retains_only_the_current_and_preceding_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Encoded:
+        pass
+
+    def encoded(*_args: object) -> object:
+        return Encoded()
+
+    monkeypatch.setattr(wire_materialize, "encode_managed_wire", encoded)
+    encoder = _SharedWireEncoder()
+    first_value = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    second_value = dt.datetime(2024, 1, 2, tzinfo=dt.UTC)
+
+    encoder.begin_page()
+    first = encoder(TIMESTAMP, first_value)
+    retained = weakref.ref(first)
+    encoder.begin_page()
+    second = encoder(TIMESTAMP, second_value)
+    released = weakref.ref(second)
+    del first
+    assert retained() is not None
+    encoder.begin_page()
+    gc.collect()
+    assert retained() is None
+
+    del second
+    encoder.release()
+    gc.collect()
+    assert released() is None
+
+
+def test_an_eager_wire_publication_releases_its_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[weakref.ReferenceType[object]] = []
+    factory = wire_materialize.shared_wire_encoder
+
+    class ObservedEncoder:
+        def __init__(self) -> None:
+            self.delegate = factory()
+
+        def __call__(self, *args: Any) -> object:
+            return self.delegate(*args)
+
+        def begin_page(self) -> None:
+            self.delegate.begin_page()
+
+        def release(self) -> None:
+            self.delegate.release()
+
+    def observed_encoder() -> ObservedEncoder:
+        encoder = ObservedEncoder()
+        created.append(weakref.ref(encoder))
+        return encoder
+
+    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", observed_encoder)
+    root = (
+        _wire_database(QueuePort([[_order_row()]]))
+        .wire.find(deserialize_query({"target": "Order", "predicate": {"all": {}}}))
+        .result()
+    )
+    gc.collect()
+
+    assert isinstance(root, WireEntity)
+    assert len(created) == 1
+    assert created[0]() is None
+
+
+def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
+    publication = wire_publication(CUSTOMER_META, "edition")
+    publication.release()
+    publication.release()
+    empty = PageBuilder(ViewSchema.of()).finish((), Pin())
+
+    with pytest.raises(RuntimeError, match="released Wire publication"):
+        list(publication.roots_of(empty))
 
 
 def test_default_wire_encoding_preserves_temporal_infinity() -> None:
@@ -336,6 +423,22 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     assert "city" not in _mapping(node["address"])
     assert "elevation" not in _mapping(_mapping(node["address"])["geo"])
     assert _absent_free(node) == 0
+
+
+def test_stored_entry_names_include_held_nested_occurrences() -> None:
+    identity = identity_of(CUSTOMER_META, "Customer")
+    (address,) = documents_of(CUSTOMER_META, identity)
+    nested_values = [object() for _ in address.value_objects]
+    row = tuple([ABSENT] * len(address.attributes) + nested_values)
+    expected = dict(
+        zip(
+            (nested.identity.path[-1] for nested in address.value_objects),
+            nested_values,
+            strict=True,
+        )
+    )
+
+    assert _stored_entries(row, address) == expected
 
 
 def _absent_free(value: object) -> int:

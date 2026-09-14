@@ -57,8 +57,6 @@ if Path(stress_support.__file__ or "").resolve() != SUPPORT_MODULE:
 
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
 
-WARMUPS: Final = 3
-MEASURED: Final = 9
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})
 
 
@@ -202,17 +200,26 @@ def _streamed(database: Database, workload: Workload, page_size: int) -> int:
     return count
 
 
+def _last_streamed(database: Database, workload: Workload, page_size: int) -> object:
+    latest: object | None = None
+    with database.wire.stream(workload.query, batch_size=page_size) as stream:
+        for root in stream:
+            latest = root
+    assert latest is not None
+    return latest
+
+
 def _first(database: Database, workload: Workload, page_size: int) -> object:
     with database.wire.stream(workload.query, batch_size=page_size) as stream:
         return next(iter(stream))
 
 
-def _timed(work: Callable[[], object]) -> tuple[float, ...]:
+def _timed(work: Callable[[], object], *, warmups: int, measured: int) -> tuple[float, ...]:
     with untraced():
-        for _ in range(WARMUPS):
+        for _ in range(warmups):
             work()
         samples: list[float] = []
-        for _ in range(MEASURED):
+        for _ in range(measured):
             started = perf_counter()
             work()
             samples.append((perf_counter() - started) * 1_000)
@@ -227,7 +234,13 @@ def _page_size(path: str) -> int:
 
 
 def _live_timing(
-    workload: Workload, path: str, connection_info: str
+    workload: Workload,
+    path: str,
+    roots: int,
+    connection_info: str,
+    *,
+    warmups: int,
+    measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
     with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as database:
         work: Callable[[], object]
@@ -251,15 +264,15 @@ def _live_timing(
             work = first_work
         else:
             raise ValueError(path)
-        milliseconds = _timed(work)
+        milliseconds = _timed(work, warmups=warmups, measured=measured)
     if path.endswith("minRootsPerSecond"):
-        samples = tuple(200_000 / elapsed for elapsed in milliseconds)
+        samples = tuple(roots * 1_000 / elapsed for elapsed in milliseconds)
         return float(sorted(samples)[len(samples) // 2]), "roots/s", samples
     return float(sorted(milliseconds)[len(milliseconds) // 2]), "ms", milliseconds
 
 
 def _provider_free(
-    workload: Workload, path: str, roots: int
+    workload: Workload, path: str, roots: int, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
     page_size = 32 if ".page32." in path else None
 
@@ -274,7 +287,7 @@ def _provider_free(
         finally:
             database.close()
 
-    milliseconds = _timed(work)
+    milliseconds = _timed(work, warmups=warmups, measured=measured)
     if path.endswith("minRootsPerSecond"):
         samples = tuple(roots * 1_000 / elapsed for elapsed in milliseconds)
         return float(sorted(samples)[len(samples) // 2]), "roots/s", samples
@@ -296,8 +309,7 @@ def _live_memory(
         if page_size is None:
             database.wire.find(workload.query)
         else:
-            with database.wire.stream(workload.query, batch_size=page_size) as stream:
-                assert next(iter(stream)) is not None
+            _last_streamed(database, workload, page_size)
         gc.collect()
         gc.collect()
         tracemalloc.start()
@@ -309,10 +321,9 @@ def _live_memory(
                 gc.collect()
                 current, peak = tracemalloc.get_traced_memory()
             else:
-                with database.wire.stream(workload.query, batch_size=page_size) as stream:
-                    held = next(iter(stream))
-                    gc.collect()
-                    current, peak = tracemalloc.get_traced_memory()
+                held = _last_streamed(database, workload, page_size)
+                gc.collect()
+                current, peak = tracemalloc.get_traced_memory()
             value = current - before if path.endswith("retainedKiB") else peak - before
             assert held is not None
         finally:
@@ -355,8 +366,10 @@ def _stress_layout(workload: str) -> Any:
     return next(layout for layout in stress_support.LAYOUTS if layout == name)
 
 
-def _stress_timing(prepared: _PreparedStress, path: str) -> tuple[float, str, tuple[float, ...]]:
-    milliseconds = _timed(prepared.run)
+def _stress_timing(
+    prepared: _PreparedStress, path: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    milliseconds = _timed(prepared.run, warmups=warmups, measured=measured)
     projections = stress_support.PROJECTIONS_PER_BATCH
     if path.endswith("maxUsPerProjection"):
         samples = tuple(elapsed * 1_000 / projections for elapsed in milliseconds)
@@ -411,9 +424,12 @@ def measure(
     path: str,
     roots: int,
     connection_info: str | None,
+    *,
+    warmups: int,
+    measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
     if path.startswith("providerFreeCpu."):
-        return _provider_free(workload, path, roots)
+        return _provider_free(workload, path, roots, warmups=warmups, measured=measured)
     if path.startswith("stress."):
         prepared = _PreparedStress(_stress_layout(workload.id))
         return (
@@ -426,13 +442,20 @@ def measure(
                     "preparedSetKiB",
                 )
             )
-            else _stress_timing(prepared, path)
+            else _stress_timing(prepared, path, warmups=warmups, measured=measured)
         )
     if connection_info is None:
         raise ValueError(f"{path} requires --connection-info")
     if path.startswith(("eagerMemory.", "streamedMemory.")):
         return _live_memory(workload, path, roots, connection_info)
-    return _live_timing(workload, path, connection_info)
+    return _live_timing(
+        workload,
+        path,
+        roots,
+        connection_info,
+        warmups=warmups,
+        measured=measured,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -440,13 +463,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--workload", required=True)
     parser.add_argument("--cell", required=True)
     parser.add_argument("--roots", required=True, type=int)
+    parser.add_argument("--warmups", required=True, type=int)
+    parser.add_argument("--measured", required=True, type=int)
     parser.add_argument("--connection-info")
     args = parser.parse_args(argv)
     contract = BudgetContract.load()
+    if (args.warmups, args.measured) != (
+        contract.timing_warmups,
+        contract.timing_measured,
+    ):
+        parser.error("timing sampling counts do not match the Budget Contract")
     workload = catalog(contract)[args.workload]
     if args.cell not in {cell.path for cell in contract.cells(args.workload)}:
         parser.error(f"{args.workload}.{args.cell} is not a Budget Contract cell")
-    value, reading_unit, samples = measure(workload, args.cell, args.roots, args.connection_info)
+    value, reading_unit, samples = measure(
+        workload,
+        args.cell,
+        args.roots,
+        args.connection_info,
+        warmups=args.warmups,
+        measured=args.measured,
+    )
     print(json.dumps({"value": value, "unit": reading_unit, "samples": samples}))
     return 0
 

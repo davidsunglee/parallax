@@ -1,26 +1,57 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import json
+from dataclasses import replace
 from typing import cast
 
-from cost_report import MEMBERS, legacy_envelope
+import pytest
+
+import lifecycle_overhead
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from snapshot_delivery_overhead import ChildReading, canary
 
 
-def test_every_member_has_a_valid_minimal_envelope() -> None:
+def test_snapshot_member_has_a_valid_minimal_envelope() -> None:
+    contract = BudgetContract.load()
     snapshot = canary(
-        BudgetContract.load(),
-        lambda _request: ChildReading(1.0, "ms", (1.0,) * 9),
-    ).document()
-    provenance = cast("Mapping[str, object]", snapshot["provenance"])
-    envelopes: list[Mapping[str, object]] = [snapshot]
-    envelopes.extend(
-        legacy_envelope(member, provenance, snapshot["authority"], "canary")
-        for member in MEMBERS
-        if not member.envelope
+        contract,
+        lambda _request: ChildReading(
+            1.0,
+            "ms",
+            (1.0,) * contract.timing_measured,
+        ),
     )
-    assert len(envelopes) == len(MEMBERS)
-    for envelope in envelopes:
-        validate(envelope)
+    validate(snapshot)
+
+
+def test_lifecycle_member_has_a_valid_measured_envelope() -> None:
+    contract = BudgetContract.load()
+    snapshot = canary(
+        contract,
+        lambda _request: ChildReading(
+            1.0,
+            "ms",
+            (1.0,) * contract.timing_measured,
+        ),
+    )
+    provenance = replace(snapshot.provenance, sampling={"timing": {"canary": 2}})
+    envelope = lifecycle_overhead.canary(contract, provenance)
+    validate(envelope)
+    assert envelope.subject == "lifecycle-overhead"
+    assert envelope.readings
+    assert envelope.comparisons
+
+
+def test_lifecycle_entrypoint_stdout_is_only_its_owned_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(lifecycle_overhead, "PAIRS", 2)
+    monkeypatch.setattr(lifecycle_overhead, "WARMUP_PAIRS", 1)
+    assert lifecycle_overhead.main([]) == 0
+    captured = capsys.readouterr()
+    document = cast("dict[str, object]", json.loads(captured.out))
+    assert captured.err == ""
+    assert document["subject"] == "lifecycle-overhead"
+    validate(document)

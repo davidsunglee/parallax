@@ -87,6 +87,7 @@ class Provenance:
         *,
         workload_digest: str,
         postgres: PostgresVersionSource,
+        sampling: Mapping[str, object] | None = None,
     ) -> Provenance:
         repo = case_format.find_repo_root()
         memory = _sysctl("hw.memsize")
@@ -110,7 +111,7 @@ class Provenance:
             os=platform.platform(),
             cpython=platform.python_version(),
             postgres=_postgres_version(postgres),
-            sampling=contract.sampling,
+            sampling=contract.sampling if sampling is None else sampling,
         )
 
     def document(self) -> dict[str, object]:

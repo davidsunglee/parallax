@@ -10,7 +10,7 @@ deliberately warmed with a ``PrivateAttr`` and a ``cached_property``, is reporte
 beside them and excluded from it, because that state is the author's rather than
 the representation's.
 
-**Two different comparisons are printed, and each says which it is.** The
+**Two different comparisons are retained, and each says which it is.** The
 aggregates are legacy against compact: the representation change, which is the
 before and after the measurement contract states its target over. The ordinary
 arm enters neither, and answers the other question a caller asks — what a
@@ -19,10 +19,9 @@ comparison ``spec/python.md`` §2 states every Interface figure over.
 
 It is a `report`, so it DECIDES nothing about what it measures. It computes the
 two comparisons the measurement contract names — the aggregate reduction beside
-its target, and each representative operation beside its limit — and displays
-them as an escalation block, so a missed target is read here rather than noticed
-by whoever re-adds the table. `core/spec/language-testing.md` §2 is what makes
-that display diagnostic rather than a verdict: a non-blocking command may say
+its target, and each representative operation beside its limit — as envelope
+comparisons. `core/spec/language-testing.md` §2 is what makes those comparisons
+diagnostic rather than verdicts: a non-blocking command may say
 which side of a stated limit a measurement fell on, and may not decide anything
 on the answer. So no comparison here reaches an exit code, and the one thing this
 exits non-zero on is COMPLETENESS — a matrix cell that has no reading is named
@@ -139,7 +138,18 @@ import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final, NamedTuple, cast
+from typing import Any, Final, Literal, NamedTuple, cast
+
+from parallax.conformance.budget import BudgetContract
+from parallax.conformance.cost_envelope import (
+    Comparison,
+    CostReportEnvelope,
+    Provenance,
+    classify_authority,
+    validate,
+)
+from parallax.conformance.cost_envelope import Reading as EnvelopeReading
+from parallax.conformance.workloads import workload_digest
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 """The Python workspace root — where a child interpreter of another minor is
@@ -212,6 +222,8 @@ SUPPORTED_MINORS: Final = 2
 """How many CPython minors are supported at once — `spec/python.md` §10's policy
 is "the latest minor + one prior minor", which makes the declared
 ``requires-python`` floor the prior one and fixes the range's width above it."""
+
+SUBJECT: Final = "instance-state"
 
 
 class ArmReading(NamedTuple):
@@ -988,14 +1000,214 @@ def render(matrix: Matrix) -> list[str]:
     return [*lines, "", *escalation_block(matrix), "", *_scope(), "", *_detail()]
 
 
+_ARM_METRICS: Final = (
+    ("cells", "count"),
+    ("retained_bytes", "B"),
+    ("bare_bytes", "B"),
+    ("lifecycle_bytes", "B"),
+    ("peak_bytes", "B"),
+    ("transient_bytes", "B"),
+    ("construct_ns", "ns"),
+    ("call_ns", "ns"),
+    ("scaffolding_ns", "ns"),
+    ("unreproduced_ns", "ns"),
+    ("read_ns", "ns"),
+    ("dump_ns", "ns"),
+)
+
+
+def _metric_name(name: str) -> str:
+    head, *tail = name.split("_")
+    return head + "".join(part.title() for part in tail)
+
+
+def _operation_name(operation: Operation) -> str:
+    return operation.name.replace(" ", "-")
+
+
+def _comparison(
+    workload: str,
+    cell: str,
+    value: float,
+    operator: Literal["at-most", "at-least"],
+    limit: float,
+) -> Comparison:
+    return Comparison(
+        workload,
+        cell,
+        operator,
+        limit,
+        "ratio",
+        "within" if (value >= limit if operator == "at-least" else value <= limit) else "outside",
+    )
+
+
+def build_envelope(
+    contract: BudgetContract,
+    provenance: Provenance,
+    matrix: Matrix,
+) -> CostReportEnvelope:
+    """Retain the complete instance-state matrix and its advisory comparisons."""
+    readings: list[EnvelopeReading] = []
+    comparisons: list[Comparison] = []
+    for runtime, cells in matrix.items():
+        for scenario in REPORTED:
+            cell = cells.get(scenario.name)
+            if not isinstance(cell, Reading):
+                raise ValueError(f"CPython {runtime}, {scenario.name} has no reading")
+            workload = f"cpython-{runtime}/{scenario.name}"
+            readings.extend(
+                (
+                    EnvelopeReading(workload, "fields", float(cell.fields), "count"),
+                    EnvelopeReading(workload, "warmups", float(cell.warmup), "count"),
+                )
+            )
+            for arm_name in ("ordinary", "legacy", "compact"):
+                arm = cast("ArmReading", getattr(cell, arm_name))
+                readings.extend(
+                    EnvelopeReading(
+                        workload,
+                        f"{arm_name}.{_metric_name(metric)}",
+                        float(getattr(arm, metric)),
+                        unit,
+                    )
+                    for metric, unit in _ARM_METRICS
+                )
+            readings.extend(
+                (
+                    EnvelopeReading(
+                        workload, "vsLegacy.retainedReduction", cell.reduction, "ratio"
+                    ),
+                    EnvelopeReading(
+                        workload, "vsLegacy.bareReduction", cell.bare_reduction, "ratio"
+                    ),
+                    EnvelopeReading(
+                        workload,
+                        "vsOrdinary.retainedReduction",
+                        cell.ordinary_reduction,
+                        "ratio",
+                    ),
+                    EnvelopeReading(
+                        workload,
+                        "vsOrdinary.bareReduction",
+                        cell.ordinary_bare_reduction,
+                        "ratio",
+                    ),
+                )
+            )
+
+        workload = f"cpython-{runtime}"
+        mix = canonical(cells)
+        primary, secondary = aggregates(mix)
+        ordinary = against_ordinary(mix)
+        for name, aggregate in (
+            ("aggregate.retained", primary),
+            ("aggregate.bare", secondary),
+            ("vsOrdinary.retained", ordinary),
+        ):
+            readings.extend(
+                (
+                    EnvelopeReading(workload, f"{name}.before", float(aggregate.before), "B"),
+                    EnvelopeReading(workload, f"{name}.after", float(aggregate.after), "B"),
+                    EnvelopeReading(workload, f"{name}.reduction", aggregate.reduction, "ratio"),
+                )
+            )
+        comparisons.append(
+            _comparison(
+                workload,
+                "aggregate.retained.reduction",
+                primary.reduction,
+                "at-least",
+                AGGREGATE_TARGET,
+            )
+        )
+        for operation in OPERATIONS:
+            name = f"operation.{_operation_name(operation)}"
+            arm_ratio = mix_ratio(mix, operation)
+            readings.extend(
+                (
+                    EnvelopeReading(workload, f"{name}.armAgainstArm", arm_ratio, "ratio"),
+                    EnvelopeReading(
+                        workload,
+                        f"{name}.likeForLike",
+                        like_for_like_ratio(mix, operation),
+                        "ratio",
+                    ),
+                    EnvelopeReading(
+                        workload,
+                        f"{name}.vsOrdinary",
+                        ordinary_ratio(mix, operation),
+                        "ratio",
+                    ),
+                )
+            )
+            comparisons.append(
+                _comparison(
+                    workload,
+                    f"{name}.armAgainstArm",
+                    arm_ratio,
+                    "at-most",
+                    REGRESSION_LIMIT,
+                )
+            )
+    envelope = CostReportEnvelope(
+        SUBJECT,
+        provenance,
+        classify_authority(provenance, contract),
+        tuple(readings),
+        tuple(comparisons),
+    )
+    validate(envelope)
+    return envelope
+
+
+class _VersionSource:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> list[Mapping[str, object]]:
+        del binds, document_reads
+        if sql != "show server_version":
+            raise ValueError(sql)
+        return [{"server_version": "not-used"}]
+
+
+def _sampling(matrix: Matrix) -> Mapping[str, object]:
+    warmups = sorted(
+        {
+            cell.warmup
+            for cells in matrix.values()
+            for cell in cells.values()
+            if isinstance(cell, Reading)
+        }
+    )
+    return {
+        "runtimes": list(matrix),
+        "scenarios": [scenario.name for scenario in REPORTED],
+        "timing": {"warmups": warmups, "repetitions": REPETITIONS},
+        "construction": {"marginalNodes": MARGINAL_NODES},
+        "isolation": "one-child-per-scenario",
+    }
+
+
+def _provenance(contract: BudgetContract, matrix: Matrix) -> Provenance:
+    return Provenance.capture(
+        contract,
+        workload_digest=workload_digest(),
+        postgres=_VersionSource(),
+        sampling=_sampling(matrix),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Entry points.                                                                #
 # --------------------------------------------------------------------------- #
 
 
 def main(argv: list[str]) -> int:
-    """Spawn the children, print what they answer; judge only whether the
-    measurement is complete.
+    """Spawn the children and emit their envelope; judge only completeness.
 
     Exit codes: 0 — the measurement ran; 2 — usage error; 3 — a matrix cell has
     no reading. Every one of them is a statement about whether there is output to
@@ -1023,7 +1235,9 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 3
-    print("\n".join(render(matrix)))
+    contract = BudgetContract.load()
+    envelope = build_envelope(contract, _provenance(contract, matrix), matrix)
+    print(json.dumps(envelope.document(), indent=2, sort_keys=True))
     return 0
 
 
