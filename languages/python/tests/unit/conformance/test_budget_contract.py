@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
+from parallax.conformance.workloads import workload_digest
 
 
 def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
@@ -16,6 +22,28 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert all(cell.value > 0 for cell in cells)
     assert set(contract.authority) == {"machine", "cpu", "cores", "ramGiB", "cpython", "postgres"}
     assert set(contract.sampling) == {"timing", "memory"}
+
+
+def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None:
+    repo = case_format.find_repo_root()
+    portfolio = cast(
+        "Mapping[str, object]",
+        json.loads(
+            (repo / "languages/python/docs/snapshot-delivery-envelope/portfolio.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    members = cast("Sequence[Mapping[str, object]]", portfolio["members"])
+    snapshot = next(member for member in members if member["subject"] == "snapshot-delivery")
+    provenance = cast("Mapping[str, object]", snapshot["provenance"])
+
+    assert provenance["budgetContractDigest"] == BudgetContract.load().digest
+    assert provenance["workloadDigest"] == workload_digest()
+    assert (
+        provenance["lockDigest"]
+        == hashlib.sha256((repo / "languages/python/uv.lock").read_bytes()).hexdigest()
+    )
 
 
 @pytest.mark.parametrize(
