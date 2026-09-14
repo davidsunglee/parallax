@@ -1,0 +1,238 @@
+{
+  "authority": "non-authoritative",
+  "command": "uv run python reports/phase7-preparation-cache-experiment/measure_read_plan_cache.py",
+  "eager": {
+    "capacity1": {
+      "deliveryMedianMs": 12.659417,
+      "planningMedianMs": 3.779541,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 27282
+      },
+      "statistics": {
+        "capacity": 1,
+        "evictions": 11,
+        "hits": 0,
+        "misses": 12,
+        "size": 1
+      }
+    },
+    "capacity16": {
+      "deliveryMedianMs": 9.174666,
+      "planningMedianMs": 1.976084,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 143276
+      },
+      "statistics": {
+        "capacity": 16,
+        "evictions": 0,
+        "hits": 5,
+        "misses": 7,
+        "size": 7
+      }
+    },
+    "capacity2": {
+      "deliveryMedianMs": 13.107792,
+      "planningMedianMs": 3.451167,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 38627
+      },
+      "statistics": {
+        "capacity": 2,
+        "evictions": 7,
+        "hits": 3,
+        "misses": 9,
+        "size": 2
+      }
+    },
+    "capacity32": {
+      "deliveryMedianMs": 9.147875,
+      "planningMedianMs": 1.983542,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 143276
+      },
+      "statistics": {
+        "capacity": 32,
+        "evictions": 0,
+        "hits": 5,
+        "misses": 7,
+        "size": 7
+      }
+    },
+    "capacity4": {
+      "deliveryMedianMs": 10.896375,
+      "planningMedianMs": 2.682542,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 76726
+      },
+      "statistics": {
+        "capacity": 4,
+        "evictions": 4,
+        "hits": 4,
+        "misses": 8,
+        "size": 4
+      }
+    },
+    "capacity8": {
+      "deliveryMedianMs": 9.899209,
+      "planningMedianMs": 2.148458,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 143276
+      },
+      "statistics": {
+        "capacity": 8,
+        "evictions": 0,
+        "hits": 5,
+        "misses": 7,
+        "size": 7
+      }
+    },
+    "noCrossDeliveryReuse": {
+      "deliveryMedianMs": 11.820875,
+      "planningMedianMs": 3.018917,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 336
+      },
+      "statistics": {
+        "capacity": 0,
+        "evictions": 0,
+        "hits": 0,
+        "misses": 0,
+        "size": 0
+      }
+    }
+  },
+  "postgresLoader": {
+    "afterLoaderReleaseKiB": -1.2890625,
+    "retainedKiBWhileLoaderLives": -0.359375,
+    "uniqueNames": 5000
+  },
+  "streaming": {
+    "capacity1": {
+      "deliveryMedianMs": 9.609958,
+      "planningMedianMs": 1.797375,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 28865
+      },
+      "statistics": {
+        "capacity": 1,
+        "evictions": 5,
+        "hits": 4,
+        "misses": 6,
+        "size": 1
+      }
+    },
+    "capacity16": {
+      "deliveryMedianMs": 8.818792,
+      "planningMedianMs": 1.069208,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 42502
+      },
+      "statistics": {
+        "capacity": 16,
+        "evictions": 0,
+        "hits": 8,
+        "misses": 2,
+        "size": 2
+      }
+    },
+    "capacity2": {
+      "deliveryMedianMs": 8.811708,
+      "planningMedianMs": 1.065167,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 42502
+      },
+      "statistics": {
+        "capacity": 2,
+        "evictions": 0,
+        "hits": 8,
+        "misses": 2,
+        "size": 2
+      }
+    },
+    "capacity32": {
+      "deliveryMedianMs": 9.301583,
+      "planningMedianMs": 1.064583,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 42502
+      },
+      "statistics": {
+        "capacity": 32,
+        "evictions": 0,
+        "hits": 8,
+        "misses": 2,
+        "size": 2
+      }
+    },
+    "capacity4": {
+      "deliveryMedianMs": 8.72225,
+      "planningMedianMs": 1.077584,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 42502
+      },
+      "statistics": {
+        "capacity": 4,
+        "evictions": 0,
+        "hits": 8,
+        "misses": 2,
+        "size": 2
+      }
+    },
+    "capacity8": {
+      "deliveryMedianMs": 8.783041,
+      "planningMedianMs": 1.0625,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 42502
+      },
+      "statistics": {
+        "capacity": 8,
+        "evictions": 0,
+        "hits": 8,
+        "misses": 2,
+        "size": 2
+      }
+    },
+    "noCrossDeliveryReuse": {
+      "deliveryMedianMs": 11.51175,
+      "planningMedianMs": 3.789542,
+      "retention": {
+        "afterReleaseBytes": 32,
+        "retainedBytes": 336
+      },
+      "statistics": {
+        "capacity": 0,
+        "evictions": 0,
+        "hits": 0,
+        "misses": 0,
+        "size": 0
+      }
+    }
+  },
+  "traceDefinitions": {
+    "eager": {
+      "literals": 3,
+      "queryFamilies": 3,
+      "requests": 12
+    },
+    "streaming": {
+      "continuationCoordinates": 7,
+      "pageSizes": [
+        32,
+        128
+      ],
+      "requests": 10
+    }
+  }
+}
