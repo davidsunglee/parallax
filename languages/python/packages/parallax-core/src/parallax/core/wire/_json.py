@@ -91,40 +91,45 @@ def _decoded_source(text: str | bytes) -> str:
     return text.decode(json.detect_encoding(text), errors="surrogatepass")
 
 
-class _PreparedLoader:
-    __slots__ = ("_decoder", "_name_cache", "_source")
+class _SourceState:
+    __slots__ = ("name_cache", "source")
 
     def __init__(self, name_cache: dict[str, str] | None) -> None:
-        self._name_cache = name_cache
-        self._source = ""
+        self.name_cache = name_cache
+        self.source = ""
+
+    def reject_constant(self, token: str) -> object:
+        raise json.JSONDecodeError(f"invalid JSON numeric constant {token!r}", self.source, 0)
+
+    def unique_object(self, pairs: list[tuple[str, object]]) -> Mapping[str, object]:
+        value: dict[str, object] = {}
+        for name, member in pairs:
+            if self.name_cache is not None:
+                name = self.name_cache.setdefault(name, name)
+            if name in value:
+                raise json.JSONDecodeError(f"duplicate object member name {name!r}", self.source, 0)
+            value[name] = member
+        return value
+
+
+class _PreparedLoader:
+    __slots__ = ("_decoder", "_state")
+
+    def __init__(self, name_cache: dict[str, str] | None) -> None:
+        self._state = _SourceState(name_cache)
         self._decoder = json.JSONDecoder(
             parse_int=_AuthoredInt,
             parse_float=_AuthoredFloat,
-            parse_constant=self._reject_constant,
-            object_pairs_hook=self._unique_object,
+            parse_constant=self._state.reject_constant,
+            object_pairs_hook=self._state.unique_object,
         )
 
     def __call__(self, text: str | bytes) -> WireValue:
-        self._source = _decoded_source(text)
+        self._state.source = _decoded_source(text)
         try:
-            return cast("WireValue", self._decoder.decode(self._source))
+            return cast("WireValue", self._decoder.decode(self._state.source))
         finally:
-            self._source = ""
-
-    def _reject_constant(self, token: str) -> object:
-        raise json.JSONDecodeError(f"invalid JSON numeric constant {token!r}", self._source, 0)
-
-    def _unique_object(self, pairs: list[tuple[str, object]]) -> Mapping[str, object]:
-        value: dict[str, object] = {}
-        for name, member in pairs:
-            if self._name_cache is not None:
-                name = self._name_cache.setdefault(name, name)
-            if name in value:
-                raise json.JSONDecodeError(
-                    f"duplicate object member name {name!r}", self._source, 0
-                )
-            value[name] = member
-        return value
+            self._state.source = ""
 
 
 def prepared_loads(

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import case_format
+from parallax.conformance import case_format, workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import Workload, catalog, workload_digest
@@ -74,16 +74,43 @@ def test_workload_digest_covers_the_catalog_inputs() -> None:
     assert workload_digest(catalog()) == digest
 
 
+def test_workload_digest_changes_with_the_generated_key_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = workload_digest()
+    monkeypatch.setattr(workloads, "_GENERATED_KEY_OFFSET", 512)
+    assert workload_digest() != original
+
+
+@pytest.mark.parametrize("roots", BudgetContract.load().memory_scaling_arms)
+def test_generated_scaling_arms_use_uncached_keys_without_changing_row_payloads(roots: int) -> None:
+    for workload in catalog().values():
+        rows = workload.rows(roots)
+        for entity_rows in rows.entities.values():
+            for row in entity_rows:
+                for name, value in row.items():
+                    if name == "id" or name.endswith("Id"):
+                        assert isinstance(value, int) and value > 256, (workload.id, name, value)
+    orders = catalog()["conventional-fanout"].rows(roots)
+    assert orders.entity("parallax.compatibility.Order")[0]["name"] == "order-000001"
+    travelers = catalog()["document-heavy"].rows(roots)
+    traveler_rows = travelers.entity("parallax.compatibility.Traveler")
+    trips = travelers.entity("parallax.compatibility.Trip")
+    assert traveler_rows[0]["score"] == 1
+    assert trips[0]["travelerId"] == traveler_rows[0]["id"]
+    assert trips[-1]["travelerId"] == traveler_rows[-1]["id"]
+
+
 def test_orders_tree_rows_are_lazy_sequences_with_exact_relationship_keys() -> None:
     rows = catalog()["conventional-fanout"].rows(3)
     orders = rows.entity("parallax.compatibility.Order")
     items = rows.entity("parallax.compatibility.OrderItem")
     statuses = rows.entity("parallax.compatibility.OrderStatus")
-    assert orders[-1]["id"] == 3
-    assert [row["id"] for row in orders[1:3]] == [2, 3]
-    assert items[5]["orderId"] == 2
-    assert statuses[25]["orderId"] == 2
-    assert statuses[25]["orderItemId"] == 6
+    assert orders[-1]["id"] == 259
+    assert [row["id"] for row in orders[1:3]] == [258, 259]
+    assert items[5]["orderId"] == 258
+    assert statuses[25]["orderId"] == 258
+    assert statuses[25]["orderItemId"] == 262
     assert len(tuple(statuses)) == 75
     assert rows.entity("missing") == ()
     with pytest.raises(IndexError):

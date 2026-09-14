@@ -6464,6 +6464,14 @@ locking unions retain the core refusal.
   ceiling. The authority fingerprint is machine model, CPU, physical core count,
   RAM GiB, CPython version, and PostgreSQL version. The operating-system identity
   is recorded as provenance but is not compared as part of that fingerprint.
+  For streamed memory, `sampling.memory.collectAtPageBoundary` requires
+  collection of unreachable objects after each page-size group of roots, before
+  reading the next page, and again after exhaustion. The reading retains only
+  the last root and keeps the peak over the whole drain; collection never resets
+  that peak. These ceilings price Parallax-owned page state and driver-owned
+  Python state, excluding CPython cycle-collector scheduling over per-statement
+  garbage. Without boundary collection, measured growth tracks that scheduling
+  rather than live page state.
 - **Snapshot Delivery Workload Catalog.** `parallax.conformance.workloads` reads
   every workload named by the Budget Contract from its benchmark fixture and is
   the only Python owner of fixture discovery, Object Query lowering, provider-free
@@ -6472,7 +6480,11 @@ locking unions retain the core refusal.
   database-free whole-tree check requires exact agreement among catalog IDs,
   contract IDs, and fixtures carrying `objectQuery` and `delivery.pageSizes`;
   report expansion and gated coverage join that equality when the portfolio is
-  introduced.
+  introduced. Generated identity and foreign-key cells in the delivery workloads
+  start above CPython's small-int cache in every scaling arm, so both arms price
+  fresh result integers. The Python catalog's key offset participates in the
+  workload digest as a reviewed rebaseline input; fixture labels and non-key
+  scalar values retain their authored recipe.
 - **Cost Report Envelope.**
   [`cost-report-envelope.schema.json`](cost-report-envelope.schema.json) is the
   versioned schema every quantitative Python report emits. Each envelope carries
@@ -6502,10 +6514,11 @@ locking unions retain the core refusal.
   envelope that closed the current Budget Contract is retained as review
   evidence under `languages/python/docs/snapshot-delivery-envelope/`
   (`portfolio.json` and `summary.md`). A database-free check recomputes its
-  Budget Contract, workload-catalog, and `uv.lock` digests from the committed
-  inputs, so the retained envelope and the contract it graded cannot drift
-  apart. Rebaselining replaces it with the clean authoritative envelope taken
-  under the revised contract.
+  Budget Contract and workload-catalog digests from the committed inputs, so
+  changing either requires recapture. The `uv.lock` digest records the producing
+  run's dependencies for reproducibility; subsequent dependency updates do not
+  invalidate that historical provenance. Rebaselining replaces it with the clean
+  authoritative envelope taken under the revised contract.
   Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
   clean authoritative envelopes under both the old and proposed contracts plus an
   explicit reviewed contract change and rationale for every relaxed ceiling.
