@@ -153,12 +153,15 @@ class CatalogPort:
         del document_reads
         if "order_item t0" in sql:
             parents = cast("list[int]", binds[0])
+            first_id = cast("int", self._orders[0]["id"])
             return projected_rows(
                 sql,
                 (
                     _item_row(row)
                     for parent in parents
-                    for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
+                    for row in self._items[
+                        (parent - first_id) * self._fanout : (parent - first_id + 1) * self._fanout
+                    ]
                 ),
             )
         limited = " limit " in sql
@@ -200,11 +203,16 @@ def _streamed(database: Database, workload: Workload, page_size: int) -> int:
     return count
 
 
-def _last_streamed(database: Database, workload: Workload, page_size: int) -> object:
+def _last_streamed(
+    database: Database, workload: Workload, page_size: int, *, collect_at_page_boundary: bool
+) -> object:
     latest: object | None = None
     with database.wire.stream(workload.query, batch_size=page_size) as stream:
-        for root in stream:
+        for count, root in enumerate(stream, start=1):
             latest = root
+            if collect_at_page_boundary and count % page_size == 0:
+                gc.collect()
+    gc.collect()
     assert latest is not None
     return latest
 
@@ -299,6 +307,8 @@ def _live_memory(
     path: str,
     roots: int,
     connection_info: str,
+    *,
+    collect_at_page_boundary: bool,
 ) -> tuple[float, str, tuple[float, ...]]:
     page_size = (
         (_page_size(path) if path.startswith("streamedMemory.page") else 1)
@@ -309,7 +319,9 @@ def _live_memory(
         if page_size is None:
             database.wire.find(workload.query)
         else:
-            _last_streamed(database, workload, page_size)
+            _last_streamed(
+                database, workload, page_size, collect_at_page_boundary=collect_at_page_boundary
+            )
         gc.collect()
         gc.collect()
         tracemalloc.start()
@@ -321,8 +333,9 @@ def _live_memory(
                 gc.collect()
                 current, peak = tracemalloc.get_traced_memory()
             else:
-                held = _last_streamed(database, workload, page_size)
-                gc.collect()
+                held = _last_streamed(
+                    database, workload, page_size, collect_at_page_boundary=collect_at_page_boundary
+                )
                 current, peak = tracemalloc.get_traced_memory()
             value = current - before if path.endswith("retainedKiB") else peak - before
             assert held is not None
@@ -427,6 +440,7 @@ def measure(
     *,
     warmups: int,
     measured: int,
+    collect_at_page_boundary: bool,
 ) -> tuple[float, str, tuple[float, ...]]:
     if path.startswith("providerFreeCpu."):
         return _provider_free(workload, path, roots, warmups=warmups, measured=measured)
@@ -447,7 +461,13 @@ def measure(
     if connection_info is None:
         raise ValueError(f"{path} requires --connection-info")
     if path.startswith(("eagerMemory.", "streamedMemory.")):
-        return _live_memory(workload, path, roots, connection_info)
+        return _live_memory(
+            workload,
+            path,
+            roots,
+            connection_info,
+            collect_at_page_boundary=collect_at_page_boundary,
+        )
     return _live_timing(
         workload,
         path,
@@ -483,6 +503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.connection_info,
         warmups=args.warmups,
         measured=args.measured,
+        collect_at_page_boundary=contract.memory_collect_at_page_boundary,
     )
     print(json.dumps({"value": value, "unit": reading_unit, "samples": samples}))
     return 0

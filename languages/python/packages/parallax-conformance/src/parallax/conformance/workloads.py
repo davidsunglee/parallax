@@ -24,6 +24,8 @@ __all__ = ["ScriptedRows", "Workload", "catalog", "workload_digest"]
 type RowDocument = Mapping[str, object]
 type FixtureRows = Mapping[str, Sequence[RowDocument]]
 
+_GENERATED_KEY_OFFSET: Final = 256
+
 
 class Provisioning(Protocol):
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None: ...
@@ -268,7 +270,7 @@ def _load_catalog(budget: BudgetContract) -> Mapping[str, Workload]:
 
 def workload_digest(workloads: Mapping[str, Workload] | None = None) -> str:
     selected = workloads or catalog()
-    digest = hashlib.sha256()
+    digest = hashlib.sha256(f"generated-key-offset:{_GENERATED_KEY_OFFSET}\0".encode())
     for workload_id, workload in selected.items():
         digest.update(workload_id.encode("utf-8"))
         digest.update(b"\0")
@@ -299,7 +301,12 @@ def _generated(recipe: str, roots: int, fanout: int) -> ScriptedRows:
         return _document_milestones(roots)
     if recipe == "accounts-sequential":
         accounts = tuple(
-            {"id": index, "owner": f"owner-{index}", "balance": f"{index * 100}.00", "version": 1}
+            {
+                "id": index + _GENERATED_KEY_OFFSET,
+                "owner": f"owner-{index}",
+                "balance": f"{index * 100}.00",
+                "version": 1,
+            }
             for index in range(1, roots + 1)
         )
         return ScriptedRows(
@@ -312,7 +319,7 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
     def order_at(offset: int) -> RowDocument:
         order_id = offset + 1
         return {
-            "id": order_id,
+            "id": order_id + _GENERATED_KEY_OFFSET,
             "name": f"order-{order_id:06d}",
             "sku": "A-100",
             "qty": 5,
@@ -324,8 +331,8 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
     def item_at(offset: int) -> RowDocument:
         item_id = offset + 1
         return {
-            "id": item_id,
-            "orderId": offset // fanout + 1,
+            "id": item_id + _GENERATED_KEY_OFFSET,
+            "orderId": offset // fanout + 1 + _GENERATED_KEY_OFFSET,
             "sku": "SKU",
             "quantity": 1,
             "shippedOn": "2024-02-01",
@@ -335,9 +342,9 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
         status_id = offset + 1
         item_offset = offset // fanout
         return {
-            "id": status_id,
-            "orderId": item_offset // fanout + 1,
-            "orderItemId": item_offset + 1,
+            "id": status_id + _GENERATED_KEY_OFFSET,
+            "orderId": item_offset // fanout + 1 + _GENERATED_KEY_OFFSET,
+            "orderItemId": item_offset + 1 + _GENERATED_KEY_OFFSET,
             "code": "OPEN",
         }
 
@@ -356,7 +363,7 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
 def _travelers_tree(roots: int, fanout: int) -> ScriptedRows:
     travelers = tuple(
         {
-            "id": index,
+            "id": index + _GENERATED_KEY_OFFSET,
             "displayName": f"traveler-{index}",
             "score": index,
             "joinedOn": "2026-01-15",
@@ -368,8 +375,8 @@ def _travelers_tree(roots: int, fanout: int) -> ScriptedRows:
     )
     trips = tuple(
         {
-            "id": (index - 1) * fanout + offset + 1,
-            "travelerId": index,
+            "id": (index - 1) * fanout + offset + 1 + _GENERATED_KEY_OFFSET,
+            "travelerId": index + _GENERATED_KEY_OFFSET,
             "destination": f"destination-{offset}",
             "nights": offset + 1,
         }
@@ -390,7 +397,7 @@ def _travelers_tree(roots: int, fanout: int) -> ScriptedRows:
 def _versioned_documents(roots: int) -> ScriptedRows:
     rows = tuple(
         {
-            "id": index,
+            "id": index + _GENERATED_KEY_OFFSET,
             "version": 1,
             "label": f"ledger-{index}",
             "balance": "10.00",
@@ -405,7 +412,7 @@ def _versioned_documents(roots: int) -> ScriptedRows:
 def _bitemporal_current(roots: int) -> ScriptedRows:
     rows = tuple(
         {
-            "id": index,
+            "id": index + _GENERATED_KEY_OFFSET,
             "route": f"route-{index}",
             "terms": {"clause": "standard"},
             "validStart": "2026-01-01T00:00:00.000000Z",
@@ -422,7 +429,7 @@ def _bitemporal_current(roots: int) -> ScriptedRows:
 def _document_milestones(roots: int) -> ScriptedRows:
     voyages = tuple(
         {
-            "id": index,
+            "id": index + _GENERATED_KEY_OFFSET,
             "title": f"voyage-{index}",
             "crew": 4,
             "manifest": {"cargo": "timber"},

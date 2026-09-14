@@ -97,6 +97,13 @@ class BudgetContract:
         return self._sampling_count("memory", "children")
 
     @property
+    def memory_collect_at_page_boundary(self) -> bool:
+        value = self._sampling_group("memory").get("collectAtPageBoundary")
+        if not isinstance(value, bool):
+            raise ValueError("sampling.memory.collectAtPageBoundary is not a boolean")
+        return value
+
+    @property
     def memory_scaling_arms(self) -> tuple[int, ...]:
         memory = self._sampling_group("memory")
         arms = memory.get("scalingArms")

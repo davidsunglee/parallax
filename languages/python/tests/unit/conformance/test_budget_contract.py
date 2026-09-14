@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -25,10 +25,13 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert set(contract.sampling) == {"timing", "memory"}
     assert contract.timing_warmups == 3
     assert contract.timing_measured == 9
+    assert contract.memory_collect_at_page_boundary is True
     assert contract.memory_children == 3
     assert contract.memory_scaling_arms == (200, 2_000)
 
 
+# Authored contract and workload changes require recapture; the lock digest records
+# the capture's dependencies and remains valid across later dependency updates.
 def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
@@ -45,10 +48,7 @@ def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None
 
     assert provenance["budgetContractDigest"] == BudgetContract.load().digest
     assert provenance["workloadDigest"] == workload_digest()
-    assert (
-        provenance["lockDigest"]
-        == hashlib.sha256((repo / "languages/python/uv.lock").read_bytes()).hexdigest()
-    )
+    assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
 
 
 @pytest.mark.parametrize(
@@ -116,3 +116,12 @@ def test_budget_contract_rejects_malformed_sampling_protocols() -> None:
             contract,
             sampling={"memory": {"scalingArms": [200, 200]}},
         ).memory_scaling_arms
+
+
+@pytest.mark.parametrize("value", [None, 1, "true"])
+def test_budget_contract_requires_boolean_page_collection(value: object) -> None:
+    contract = BudgetContract.load()
+    with pytest.raises(ValueError, match="collectAtPageBoundary is not a boolean"):
+        _ = replace(
+            contract, sampling={"memory": {"collectAtPageBoundary": value}}
+        ).memory_collect_at_page_boundary

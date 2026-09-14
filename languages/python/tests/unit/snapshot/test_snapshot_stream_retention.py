@@ -311,14 +311,17 @@ class _GeneratingPort(ConnectsAsItself):
         del document_reads
         if "order_item t0" in sql:
             parents = tuple(cast("list[int]", binds[0]))
+            first_id = cast("int", self._orders[0]["id"])
             return [
                 tuple(_item_row(row).values())
                 for parent in parents
-                for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
+                for row in self._items[
+                    (parent - first_id) * self._fanout : (parent - first_id + 1) * self._fanout
+                ]
             ]
         return [
-            projected_row(sql, _order_row(self._orders[order_id - 1]))
-            for order_id in self._next_page(cast("int", binds[-1]))
+            projected_row(sql, _order_row(self._orders[position - 1]))
+            for position in self._next_page(cast("int", binds[-1]))
         ]
 
     def _next_page(self, size: int) -> tuple[int, ...]:
