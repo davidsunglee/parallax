@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+import cost_report
 from cost_report import (
     MEMBERS,
     Member,
@@ -20,7 +22,7 @@ from cost_report import (
     verify,
 )
 from parallax.conformance.budget import BudgetContract
-from parallax.conformance.cost_envelope import CostReportEnvelope
+from parallax.conformance.cost_envelope import CostReportEnvelope, validate
 from snapshot_delivery_overhead import (
     ChildReading,
     build_envelope,
@@ -260,3 +262,125 @@ def test_collection_attempts_later_members_after_an_invalid_required_matrix() ->
     assert failed_required
     assert results[0].envelope is None
     assert all(result.envelope is not None for result in results[1:])
+
+
+def test_strict_verification_detects_changed_checkout_lock_without_changing_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    snapshot["provenance"].update(dict(contract.authority), dirty=False)
+    snapshot["authority"] = "authoritative"
+    document = {"schemaVersion": 1, "members": [snapshot], "failures": []}
+    original_lock = (cost_report.WORKSPACE / "uv.lock").read_bytes()
+    lock = tmp_path / "uv.lock"
+    lock.write_bytes(original_lock)
+    monkeypatch.setattr(cost_report, "WORKSPACE", tmp_path)
+    portfolio = tmp_path / "portfolio.json"
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
+
+    assert verify(document) == []
+    assert cost_report.main(["--verify", str(portfolio)]) == 0
+    matching = capsys.readouterr()
+    assert "lock freshness matches" in matching.out
+    assert matching.err == ""
+
+    lock.write_bytes(original_lock + b"\n")
+    expected = (
+        "stale snapshot-delivery evidence: "
+        f"recorded lockDigest={hashlib.sha256(original_lock).hexdigest()}; "
+        f"inspected lockDigest={hashlib.sha256(lock.read_bytes()).hexdigest()} ({lock})"
+    )
+    assert verify(document) == [expected]
+    assert cost_report.main(["--verify", str(portfolio)]) == 1
+    assert capsys.readouterr().err == expected + "\n"
+    validate(snapshot)
+    assert snapshot["authority"] == "authoritative"
+
+
+def test_staleness_preserves_other_verification_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    reading = snapshot["readings"][0]
+    comparison = snapshot["comparisons"][0]
+    reading["value"] = comparison["limit"] * 2
+    reading["samples"] = [reading["value"]] * contract.timing_measured
+    comparison["outcome"] = "outside"
+    scaling = next(
+        item for item in snapshot["readings"] if item["cell"].startswith("streamedMemory.")
+    )
+    scaling["samples"][contract.memory_children :] = [scaling["value"] + 100] * (
+        contract.memory_children * (len(contract.memory_scaling_arms) - 1)
+    )
+    scaling_comparison = next(
+        item
+        for item in snapshot["comparisons"]
+        if (item["workload"], item["cell"]) == (scaling["workload"], scaling["cell"])
+    )
+    scaling_comparison["outcome"] = "outside"
+    snapshot["incomplete"] = [{"code": "unavailable", "message": "incomplete observation"}]
+    snapshot["errors"] = [{"code": "error", "message": "observation error"}]
+    document = {"schemaVersion": 1, "members": [snapshot], "failures": []}
+    expected = verify(document)
+    assert expected == [
+        "the snapshot-delivery envelope is not authoritative",
+        "the snapshot-delivery envelope is incomplete",
+        "the snapshot-delivery envelope contains errors",
+        f"{comparison['workload']}.{comparison['cell']} is outside",
+        f"{scaling['workload']}.{scaling['cell']} is outside",
+        f"{scaling['workload']}.{scaling['cell']} grows 100.000 KiB between memory arms",
+    ]
+    (tmp_path / "uv.lock").write_bytes(b"updated dependencies")
+    monkeypatch.setattr(cost_report, "WORKSPACE", tmp_path)
+    failures = verify(document)
+    assert failures[0].startswith("stale snapshot-delivery evidence:")
+    assert failures[1:] == expected
+    snapshot["comparisons"].clear()
+    failures = verify(document)
+    assert failures[0].startswith("stale snapshot-delivery evidence:")
+    assert "comparison matrix is not exact" in failures[1]
+
+
+def test_freshness_only_compares_an_explicit_lock_without_revalidating_historical_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    merge_lock = tmp_path / "merge.lock"
+    merge_lock.write_bytes(b"event merge dependencies")
+    snapshot = {
+        "subject": "snapshot-delivery",
+        "provenance": {"lockDigest": hashlib.sha256(merge_lock.read_bytes()).hexdigest()},
+    }
+    portfolio = tmp_path / "portfolio.json"
+    portfolio.write_text(json.dumps({"members": [snapshot]}), encoding="utf-8")
+    args = ["--freshness-only", str(portfolio), "--lock-file", str(merge_lock)]
+    assert cost_report.main(args) == 0
+    assert "lock freshness matches" in capsys.readouterr().out
+    merge_lock.write_bytes(b"later dependencies")
+    assert cost_report.main(args) == 1
+    assert "stale snapshot-delivery evidence:" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("members", [[], [{"subject": "snapshot-delivery", "provenance": None}]])
+def test_freshness_reports_unavailable_evidence_without_losing_validation_diagnostics(
+    tmp_path: Path, members: list[dict[str, object]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    portfolio = tmp_path / "portfolio.json"
+    portfolio.write_text(json.dumps({"members": members}), encoding="utf-8")
+    assert cost_report.main(["--freshness-only", str(portfolio)]) == 1
+    assert "lock freshness unavailable:" in capsys.readouterr().out
+    assert cost_report.main(["--verify", str(portfolio)]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "invalid:" in diagnostic if members else "no required" in diagnostic
+
+
+def test_explicit_lock_cannot_silently_override_strict_checkout_verification(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cost_report.main(["--verify", "portfolio.json", "--lock-file", str(tmp_path / "uv.lock")])
+    assert error.value.code == 2
+    assert "--lock-file requires --freshness-only" in capsys.readouterr().err

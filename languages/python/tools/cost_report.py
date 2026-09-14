@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import subprocess
@@ -282,8 +283,27 @@ def _snapshot(document: Mapping[str, object]) -> Mapping[str, object] | None:
     return snapshots[0] if len(snapshots) == 1 else None
 
 
+def lock_freshness(
+    document: Mapping[str, object], lock_path: Path | None = None
+) -> tuple[bool, str]:
+    """Compare retained dependencies with a lock file without reclassifying authority."""
+    snapshot = _snapshot(document)
+    if snapshot is None:
+        return False, "lock freshness unavailable: expected one snapshot-delivery envelope"
+    provenance = snapshot.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return False, "lock freshness unavailable: snapshot-delivery provenance is not a mapping"
+    recorded = cast("Mapping[str, object]", provenance).get("lockDigest")
+    inspected = lock_path or WORKSPACE / "uv.lock"
+    current = hashlib.sha256(inspected.read_bytes()).hexdigest()
+    digests = f"recorded lockDigest={recorded}; inspected lockDigest={current} ({inspected})"
+    if recorded != current:
+        return False, f"stale snapshot-delivery evidence: {digests}"
+    return True, f"snapshot-delivery lock freshness matches: {digests}"
+
+
 def verify(document: Mapping[str, object], contract: BudgetContract | None = None) -> list[str]:
-    """Return every reason the required portfolio is not authoritative and within."""
+    """Return every reason the required portfolio is not fresh, authoritative, and within."""
     active = contract or BudgetContract.load()
     snapshots = _snapshots(document)
     if not snapshots:
@@ -291,12 +311,13 @@ def verify(document: Mapping[str, object], contract: BudgetContract | None = Non
     if len(snapshots) != 1:
         return ["the portfolio has more than one snapshot-delivery envelope"]
     snapshot = snapshots[0]
-    failures: list[str] = []
+    fresh, freshness = lock_freshness(document)
+    failures: list[str] = [] if fresh else [freshness]
     try:
         validate(snapshot)
         validate_snapshot_matrix(snapshot, active)
     except (KeyError, TypeError, ValueError, ValidationError) as error:
-        return [f"the snapshot-delivery envelope is invalid: {error}"]
+        return [*failures, f"the snapshot-delivery envelope is invalid: {error}"]
     if snapshot.get("authority") != "authoritative":
         failures.append("the snapshot-delivery envelope is not authoritative")
     if snapshot.get("incomplete"):
@@ -378,10 +399,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--verify", type=Path)
+    parser.add_argument("--freshness-only", type=Path, metavar="PORTFOLIO")
+    parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
     args = parser.parse_args(argv)
+    if args.lock_file is not None and args.freshness_only is None:
+        parser.error("--lock-file requires --freshness-only")
+    if args.freshness_only is not None:
+        fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
+        print(freshness)
+        return 0 if fresh else 1
     if args.verify is not None:
-        failures = verify(_load(args.verify))
+        document = _load(args.verify)
+        fresh, freshness = lock_freshness(document)
+        if fresh:
+            print(freshness)
+        failures = verify(document)
         for failure in failures:
             print(failure, file=sys.stderr)
         return 1 if failures else 0

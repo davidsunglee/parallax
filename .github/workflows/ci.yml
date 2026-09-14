@@ -256,8 +256,23 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "BASE_SHA=$(git merge-base HEAD origin/${{ github.base_ref }})" >> "$GITHUB_ENV"
           fi
+      - name: Verify committed evidence against head lock
+        shell: bash
+        run: |
+          echo "## Committed evidence: head lock $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/snapshot-delivery-envelope/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check committed evidence against event merge lock
+        if: github.event_name == 'pull_request' && !cancelled()
+        shell: bash
+        env:
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          echo "## Committed evidence: event merge lock $MERGE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          git fetch --no-tags origin "$MERGE_SHA"
+          git show "$MERGE_SHA:languages/python/uv.lock" > "$RUNNER_TEMP/event-merge-uv.lock"
+          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/snapshot-delivery-envelope/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Measure merge-base
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && !cancelled()
         shell: bash
         run: |
           git worktree add --detach "$RUNNER_TEMP/parallax-base" "$BASE_SHA"

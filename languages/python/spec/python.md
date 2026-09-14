@@ -6517,8 +6517,19 @@ locking unions retain the core refusal.
   Budget Contract and workload-catalog digests from the committed inputs, so
   changing either requires recapture. The `uv.lock` digest records the producing
   run's dependencies for reproducibility; subsequent dependency updates do not
-  invalidate that historical provenance. Rebaselining replaces it with the clean
-  authoritative envelope taken under the revised contract.
+  invalidate that historical provenance. `cost_report.py --verify` separately
+  compares this digest with the inspected checkout's `languages/python/uv.lock`
+  and fails with a distinct stale-evidence diagnostic naming both digests when
+  they differ, alongside authority, completeness, comparison, and scaling checks.
+  The non-required cost-report CI job verifies the committed portfolio against
+  its checked-out head lock and reports freshness explicitly in the job summary,
+  including a match even when another verification check fails. Pull requests
+  also check the event merge commit's lock without moving the head or merge-base
+  measurements. Verification failure preserves collection and artifact upload.
+  Lock freshness is advisory and relative to the inspected checkout; required
+  database-free gates retain Budget Contract and workload-catalog equality.
+  Rebaselining replaces the evidence with the clean authoritative envelope taken
+  under the revised contract.
   Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
   clean authoritative envelopes under both the old and proposed contracts plus an
   explicit reviewed contract change and rationale for every relaxed ceiling.
