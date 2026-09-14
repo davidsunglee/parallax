@@ -1,0 +1,46 @@
+{
+  "authority": "non-authoritative",
+  "comparisons": [],
+  "errors": [],
+  "incomplete": [
+    {
+      "code": "legacy-evidence-report",
+      "message": "python-report-lifecycle-overhead remains text evidence; its successful output is retained separately"
+    }
+  ],
+  "provenance": {
+    "budgetContractDigest": "b49bab3cddb21ca776c88b34761fb6626031887e8468d9fab8b032a6cb45248e",
+    "commit": "b1d76be9fff1bc709418fda7446eb59103a176b5",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": true,
+    "lockDigest": "ecd51fd65a48d3d9c66c5cd6f844968be2a764b946e15fa2863a6187d9c6d262",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "18.6",
+    "ramGiB": 32,
+    "sampling": {
+      "memory": {
+        "armGrowthMaxKiB": 16,
+        "children": 3,
+        "individualMax": 1.1,
+        "medianMeetsCeiling": true,
+        "scalingArms": [
+          200,
+          2000
+        ]
+      },
+      "timing": {
+        "measured": 9,
+        "medianMeetsCeiling": true,
+        "secondSlowestMax": 1.25,
+        "warmups": 3
+      }
+    },
+    "workloadDigest": "7e3f8b589d6a400c52fdf84af943a05b3aa2a8128304e633ffea998b04e6e7a4"
+  },
+  "readings": [],
+  "schemaVersion": 1,
+  "subject": "lifecycle-overhead"
+}

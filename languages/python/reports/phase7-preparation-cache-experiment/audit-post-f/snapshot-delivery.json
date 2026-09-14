@@ -1,0 +1,2125 @@
+{
+  "authority": "non-authoritative",
+  "comparisons": [
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 12.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 16000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 20.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 10000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 15.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 12903.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 2.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "limit": 10.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "limit": 19048.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "limit": 13.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "limit": 15385.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 800.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1350.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 256.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 768.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 18.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 11111.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 24.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 8333.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 22.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 9091.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 3.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "limit": 14.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "limit": 13793.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "limit": 17.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "limit": 11765.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 820.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1500.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 320.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 1100.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 22.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 9091.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 28.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 7143.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 27.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 7407.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 2.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 3.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 975.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1900.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 96.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 400.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 1280.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 5.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 36364.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 6.75,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 29630.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 0.6,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 275.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 475.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 336.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 6.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 30769.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 10.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 20000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.25,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 330.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 425.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 352.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "limit": 175.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "limit": 5714.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "projections/s",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "limit": 2800.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "limit": 3328.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "limit": 400.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "limit": 210.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "limit": 4762.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "projections/s",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "limit": 3200.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "limit": 3328.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "limit": 425.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "limit": 80.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-document"
+    }
+  ],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContractDigest": "b49bab3cddb21ca776c88b34761fb6626031887e8468d9fab8b032a6cb45248e",
+    "commit": "b1d76be9fff1bc709418fda7446eb59103a176b5",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": true,
+    "lockDigest": "ecd51fd65a48d3d9c66c5cd6f844968be2a764b946e15fa2863a6187d9c6d262",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "18.6",
+    "ramGiB": 32,
+    "sampling": {
+      "memory": {
+        "armGrowthMaxKiB": 16,
+        "children": 3,
+        "individualMax": 1.1,
+        "medianMeetsCeiling": true,
+        "scalingArms": [
+          200,
+          2000
+        ]
+      },
+      "timing": {
+        "measured": 9,
+        "medianMeetsCeiling": true,
+        "secondSlowestMax": 1.25,
+        "warmups": 3
+      }
+    },
+    "workloadDigest": "7e3f8b589d6a400c52fdf84af943a05b3aa2a8128304e633ffea998b04e6e7a4"
+  },
+  "readings": [
+    {
+      "cell": "live.eager.maxMs",
+      "samples": [
+        8.76879197312519,
+        8.691790979355574,
+        9.232249984052032,
+        8.522957970853895,
+        8.656499965582043,
+        8.642417029477656,
+        8.582458016462624,
+        8.594624989200383,
+        8.763791003730148
+      ],
+      "unit": "ms",
+      "value": 8.656499965582043,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "samples": [
+        22984.762102489192,
+        23624.139098120035,
+        22642.363788522005,
+        23140.44819308192,
+        23608.569877178572,
+        23680.78214773014,
+        23500.727086980827,
+        23079.143006054936,
+        23516.96152411002
+      ],
+      "unit": "roots/s",
+      "value": 23500.727086980827,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "samples": [
+        12.758374970871955,
+        13.107542006764561,
+        12.697584053967148,
+        12.251208012457937,
+        12.357708998024464,
+        12.45300000300631,
+        12.212083034683019,
+        12.020499969366938,
+        12.177500000689179
+      ],
+      "unit": "ms",
+      "value": 12.357708998024464,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "samples": [
+        16287.47392704453,
+        15297.829603008282,
+        15699.049294704788,
+        16009.605747130658,
+        16818.38244010449,
+        15670.705852869405,
+        15693.967624998357,
+        15477.679078943873,
+        16088.917648126211
+      ],
+      "unit": "roots/s",
+      "value": 15699.049294704788,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "samples": [
+        9.72170801833272,
+        9.569209010805935,
+        10.252790991216898,
+        9.549582959152758,
+        9.509249997790903,
+        9.473416022956371,
+        9.371458028908819,
+        9.29383299080655,
+        9.18370799627155
+      ],
+      "unit": "ms",
+      "value": 9.509249997790903,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "samples": [
+        20357.442059396322,
+        20426.661859666612,
+        19500.622136445065,
+        20093.18217991342,
+        20472.050572165102,
+        21233.958455283268,
+        20892.09243177155,
+        19946.477532060897,
+        20997.467969634254
+      ],
+      "unit": "roots/s",
+      "value": 20426.661859666612,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "samples": [
+        0.7820409955456853,
+        0.8115419768728316,
+        1.0013330029323697,
+        0.6985419895499945,
+        0.7167920120991766,
+        0.7322910241782665,
+        0.6927080103196204,
+        0.8321659988723695,
+        0.6903329631313682
+      ],
+      "unit": "ms",
+      "value": 0.7322910241782665,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "samples": [
+        1.4271249528974295,
+        1.338500005658716,
+        1.6454999567940831,
+        1.224875042680651,
+        1.23645894927904,
+        1.290665997657925,
+        1.2232500012032688,
+        1.2344170245341957,
+        1.1382920201867819
+      ],
+      "unit": "ms",
+      "value": 1.23645894927904,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "samples": [
+        8.235207991674542,
+        8.141459024045616,
+        8.165542036294937,
+        8.131082984618843,
+        8.060124993789941,
+        8.124915999360383,
+        8.118624973576516,
+        8.108750043902546,
+        8.066541980952024
+      ],
+      "unit": "ms",
+      "value": 8.124915999360383,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "samples": [
+        23900.930617226477,
+        24205.99495759079,
+        24255.531034175267,
+        24535.987536137567,
+        24537.61919394607,
+        24456.108391265723,
+        24656.732129569013,
+        24553.811203922192,
+        24868.919039232806
+      ],
+      "unit": "roots/s",
+      "value": 24535.987536137567,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "samples": [
+        9.416416985914111,
+        9.302124963141978,
+        9.19741700636223,
+        9.282167011406273,
+        9.22675000037998,
+        9.171041019726545,
+        9.376041998621076,
+        9.55662498017773,
+        9.566458989866078
+      ],
+      "unit": "ms",
+      "value": 9.302124963141978,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "samples": [
+        21212.655351703226,
+        21552.69261858942,
+        21553.756367204383,
+        21638.87415808725,
+        21566.732597180744,
+        21663.386198913187,
+        21358.964099758807,
+        21362.860775441564,
+        21673.168594004863
+      ],
+      "unit": "roots/s",
+      "value": 21553.756367204383,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "samples": [
+        491.546875,
+        491.546875,
+        491.546875
+      ],
+      "unit": "KiB",
+      "value": 491.546875,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "samples": [
+        1218.9873046875,
+        1218.9873046875,
+        1218.9873046875
+      ],
+      "unit": "KiB",
+      "value": 1218.9873046875,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "samples": [
+        6.013671875,
+        6.013671875,
+        6.013671875,
+        6.013671875,
+        6.013671875,
+        6.013671875
+      ],
+      "unit": "KiB",
+      "value": 6.013671875,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "samples": [
+        32.56640625,
+        32.56640625,
+        32.56640625,
+        32.56640625,
+        32.56640625,
+        32.56640625
+      ],
+      "unit": "KiB",
+      "value": 32.56640625,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "samples": [
+        143.8125,
+        143.8125,
+        143.8125,
+        143.8125,
+        143.8125,
+        143.8125
+      ],
+      "unit": "KiB",
+      "value": 143.8125,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "samples": [
+        543.0361328125,
+        543.0361328125,
+        543.0361328125,
+        543.0361328125,
+        543.0361328125,
+        543.0361328125
+      ],
+      "unit": "KiB",
+      "value": 543.0361328125,
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "samples": [
+        14.5202919957228,
+        14.721165993250906,
+        14.88458301173523,
+        14.7752920165658,
+        14.487708976957947,
+        14.260332973208278,
+        14.334250008687377,
+        13.613249990157783,
+        13.641791010741144
+      ],
+      "unit": "ms",
+      "value": 14.487708976957947,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "samples": [
+        13707.744843849963,
+        13664.079686465362,
+        13441.650638504196,
+        13514.731664493554,
+        13920.023342387778,
+        14189.134906015448,
+        14053.78564933379,
+        14649.913192847413,
+        14633.610619509807
+      ],
+      "unit": "roots/s",
+      "value": 13920.023342387778,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "samples": [
+        18.229999986942858,
+        18.107625015545636,
+        17.666207975707948,
+        17.134124995209277,
+        17.174582986626774,
+        17.27566699264571,
+        17.092791968025267,
+        17.0845829998143,
+        17.01983402017504
+      ],
+      "unit": "ms",
+      "value": 17.174582986626774,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "samples": [
+        11298.344129894198,
+        11541.207667730427,
+        11377.48071009782,
+        11776.655739713746,
+        11768.10962336512,
+        11940.803249285505,
+        11638.818391603045,
+        11841.91024838975,
+        11807.798778511029
+      ],
+      "unit": "roots/s",
+      "value": 11768.10962336512,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "samples": [
+        14.871958002913743,
+        14.819416974205524,
+        14.46929102530703,
+        13.957959017716348,
+        13.81824997952208,
+        14.000667026266456,
+        14.029957994353026,
+        14.004457974806428,
+        13.708875048905611
+      ],
+      "unit": "ms",
+      "value": 14.004457974806428,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "samples": [
+        13081.193303864333,
+        13374.050218399592,
+        13690.464585349308,
+        14062.472505579859,
+        14160.837939923473,
+        14154.490039871722,
+        14246.790053929984,
+        14139.146884538917,
+        14514.97310210529
+      ],
+      "unit": "roots/s",
+      "value": 14139.146884538917,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "samples": [
+        1.0192079935222864,
+        1.088750024791807,
+        1.0717500117607415,
+        0.8776250178925693,
+        0.9257500059902668,
+        1.0777919669635594,
+        0.9965830249711871,
+        1.154207973740995,
+        0.9556669974699616
+      ],
+      "unit": "ms",
+      "value": 1.0192079935222864,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "samples": [
+        1.9899170147255063,
+        1.8840000266209245,
+        1.9575409824028611,
+        1.7677080468274653,
+        1.7881660023704171,
+        1.7338329926133156,
+        1.7195839900523424,
+        1.6463340143673122,
+        1.5503749600611627
+      ],
+      "unit": "ms",
+      "value": 1.7677080468274653,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "samples": [
+        13.66812497144565,
+        13.515750004444271,
+        13.369457970838994,
+        13.477916014380753,
+        13.228208990767598,
+        13.32045899471268,
+        13.289791997522116,
+        13.170082995202392,
+        13.248792034573853
+      ],
+      "unit": "ms",
+      "value": 13.32045899471268,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "samples": [
+        15268.681455329724,
+        15145.34801341308,
+        14530.967958493793,
+        14465.4568692532,
+        14921.012663489524,
+        15119.967123414164,
+        15178.34633908707,
+        15189.537324584706,
+        15023.38054048326
+      ],
+      "unit": "roots/s",
+      "value": 15119.967123414164,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "samples": [
+        14.152499963529408,
+        13.964459009002894,
+        13.875750009901822,
+        14.178165991324931,
+        14.215875009540468,
+        14.401249994989485,
+        14.555459027178586,
+        14.165207976475358,
+        14.009125006850809
+      ],
+      "unit": "ms",
+      "value": 14.165207976475358,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "samples": [
+        14228.335511128624,
+        14259.10575561691,
+        14471.081611368554,
+        14463.58225704337,
+        14120.180362431543,
+        13939.710757643532,
+        14022.499928693249,
+        14079.921112502541,
+        14126.70509642117
+      ],
+      "unit": "roots/s",
+      "value": 14126.70509642117,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "samples": [
+        514.56640625,
+        514.56640625,
+        514.56640625
+      ],
+      "unit": "KiB",
+      "value": 514.56640625,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "samples": [
+        1318.2373046875,
+        1318.2373046875,
+        1318.2373046875
+      ],
+      "unit": "KiB",
+      "value": 1318.2373046875,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "samples": [
+        6.263671875,
+        6.263671875,
+        6.263671875,
+        6.263671875,
+        6.263671875,
+        6.263671875
+      ],
+      "unit": "KiB",
+      "value": 6.263671875,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "samples": [
+        42.166015625,
+        42.166015625,
+        42.166015625,
+        42.166015625,
+        42.166015625,
+        42.166015625
+      ],
+      "unit": "KiB",
+      "value": 42.166015625,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "samples": [
+        229.1630859375,
+        229.1630859375,
+        229.1630859375,
+        229.1630859375,
+        229.1630859375,
+        229.1630859375
+      ],
+      "unit": "KiB",
+      "value": 229.1630859375,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "samples": [
+        895.2158203125,
+        895.2158203125,
+        895.2158203125,
+        895.2158203125,
+        895.2158203125,
+        895.2158203125
+      ],
+      "unit": "KiB",
+      "value": 895.2158203125,
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "samples": [
+        20.931500010192394,
+        21.156291011720896,
+        21.94833301473409,
+        21.30779199069366,
+        20.782000035978854,
+        20.80554101848975,
+        21.033999975770712,
+        20.557333016768098,
+        30.572124989703298
+      ],
+      "unit": "ms",
+      "value": 21.033999975770712,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "samples": [
+        9367.882450850502,
+        9532.812571644896,
+        9408.425482776453,
+        9443.669202349634,
+        9697.00871983338,
+        9566.745996087238,
+        4486.580917276205,
+        9392.537615233216,
+        6401.194819310388
+      ],
+      "unit": "roots/s",
+      "value": 9408.425482776453,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "samples": [
+        24.85008299117908,
+        24.870124994777143,
+        25.56666696909815,
+        26.22150001116097,
+        24.94849998038262,
+        24.85045901266858,
+        24.8171670245938,
+        24.534625001251698,
+        24.460208020173013
+      ],
+      "unit": "ms",
+      "value": 24.85045901266858,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "samples": [
+        8033.970515987532,
+        8070.2515314798775,
+        8017.973738299162,
+        8098.587001708485,
+        8033.661026664011,
+        8097.370893030698,
+        8058.5726020756565,
+        7980.726549137015,
+        7809.335088419756
+      ],
+      "unit": "roots/s",
+      "value": 8033.970515987532,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "samples": [
+        21.998666983563453,
+        21.936333971098065,
+        22.129832999780774,
+        22.314082947559655,
+        22.899041010532528,
+        22.033583954907954,
+        21.658124984242022,
+        21.78704203106463,
+        21.517957968171686
+      ],
+      "unit": "ms",
+      "value": 21.998666983563453,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "samples": [
+        8966.281035621383,
+        9037.012356956564,
+        9110.42402635864,
+        9143.449442170027,
+        9091.649640420932,
+        9198.574239049447,
+        9312.14273388147,
+        9326.618162725563,
+        9336.832348224803
+      ],
+      "unit": "roots/s",
+      "value": 9143.449442170027,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "samples": [
+        0.8809159626252949,
+        0.9360419935546815,
+        1.1707500088959932,
+        0.8159159915521741,
+        0.8400840451940894,
+        0.9328750311397016,
+        0.8404580294154584,
+        0.9496670099906623,
+        0.7920420030131936
+      ],
+      "unit": "ms",
+      "value": 0.8809159626252949,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "samples": [
+        2.2937500034458935,
+        2.41966696921736,
+        2.5407500215806067,
+        2.23762501263991,
+        2.2674580104649067,
+        2.270083990879357,
+        2.3605419555678964,
+        2.379167010076344,
+        2.322375017683953
+      ],
+      "unit": "ms",
+      "value": 2.322375017683953,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "samples": [
+        839.1962890625,
+        839.2958984375,
+        839.19921875
+      ],
+      "unit": "KiB",
+      "value": 839.19921875,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "samples": [
+        1754.435546875,
+        1754.435546875,
+        1754.435546875
+      ],
+      "unit": "KiB",
+      "value": 1754.435546875,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "samples": [
+        8.2119140625,
+        8.2197265625,
+        8.2685546875,
+        8.2685546875,
+        8.2197265625,
+        8.166015625
+      ],
+      "unit": "KiB",
+      "value": 8.2197265625,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "samples": [
+        37.267578125,
+        37.3134765625,
+        37.2080078125,
+        37.2626953125,
+        37.3134765625,
+        37.259765625
+      ],
+      "unit": "KiB",
+      "value": 37.267578125,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "samples": [
+        292.1728515625,
+        292.1728515625,
+        292.1162109375,
+        292.1728515625,
+        292.1728515625,
+        292.1728515625
+      ],
+      "unit": "KiB",
+      "value": 292.1728515625,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "samples": [
+        1163.6826171875,
+        1163.6826171875,
+        1163.4248046875,
+        1163.6826171875,
+        1163.6826171875,
+        1163.6826171875
+      ],
+      "unit": "KiB",
+      "value": 1163.6826171875,
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "samples": [
+        4.588457988575101,
+        4.632500000298023,
+        4.819000023417175,
+        4.543082963209599,
+        4.581207991577685,
+        4.6279579983092844,
+        4.642625048290938,
+        4.5479999971576035,
+        4.60216699866578
+      ],
+      "unit": "ms",
+      "value": 4.60216699866578,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "samples": [
+        43472.35411523369,
+        42456.84137526318,
+        41774.36630715596,
+        42299.69010562951,
+        42850.26195913962,
+        43981.01174223874,
+        44449.79808305552,
+        44371.31090354236,
+        44244.116438009376
+      ],
+      "unit": "roots/s",
+      "value": 43472.35411523369,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "samples": [
+        7.7498339815065265,
+        7.745000009890646,
+        7.6492499792948365,
+        7.479250023607165,
+        7.475709018763155,
+        7.602332974784076,
+        7.606583007145673,
+        7.3130830423906446,
+        7.308083004318178
+      ],
+      "unit": "ms",
+      "value": 7.602332974784076,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "samples": [
+        26659.408234219736,
+        27289.9397230058,
+        27016.377599053696,
+        26797.377068982278,
+        27497.55100512437,
+        27495.347075664722,
+        27358.224114784516,
+        27286.52550059978,
+        27087.424688738996
+      ],
+      "unit": "roots/s",
+      "value": 27286.52550059978,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "samples": [
+        5.267209024168551,
+        5.249915993772447,
+        5.46854198910296,
+        5.086833029054105,
+        5.169249954633415,
+        5.15224999981001,
+        5.009207990951836,
+        5.091875034850091,
+        4.983499995432794
+      ],
+      "unit": "ms",
+      "value": 5.15224999981001,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "samples": [
+        37051.041150271485,
+        38656.05287576278,
+        37054.191723730124,
+        39103.8645792358,
+        37597.80824555976,
+        37877.891054528845,
+        38546.16227290545,
+        38384.34157176384,
+        39756.491679959334
+      ],
+      "unit": "roots/s",
+      "value": 38384.34157176384,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "samples": [
+        0.5008750013075769,
+        0.5066670128144324,
+        0.5985419848002493,
+        0.46920799650251865,
+        0.4764579934999347,
+        0.4337920108810067,
+        0.4432080313563347,
+        0.5136249819770455,
+        0.5314999725669622
+      ],
+      "unit": "ms",
+      "value": 0.5008750013075769,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "samples": [
+        0.7194170029833913,
+        0.7110420265235007,
+        0.8924169815145433,
+        0.7334160036407411,
+        0.6837910041213036,
+        0.7104169926606119,
+        0.6590830162167549,
+        0.7498339982703328,
+        0.7681659772060812
+      ],
+      "unit": "ms",
+      "value": 0.7194170029833913,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "samples": [
+        169.71484375,
+        169.658203125,
+        169.71484375
+      ],
+      "unit": "KiB",
+      "value": 169.71484375,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "samples": [
+        292.98046875,
+        292.98046875,
+        292.98046875
+      ],
+      "unit": "KiB",
+      "value": 292.98046875,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "samples": [
+        3.720703125,
+        3.6650390625,
+        3.662109375,
+        3.6748046875,
+        3.71875,
+        3.76953125
+      ],
+      "unit": "KiB",
+      "value": 3.6650390625,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "samples": [
+        21.2158203125,
+        21.26171875,
+        21.2158203125,
+        21.26171875,
+        21.1669921875,
+        21.26171875
+      ],
+      "unit": "KiB",
+      "value": 21.2158203125,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "samples": [
+        61.4697265625,
+        61.4697265625,
+        61.4697265625,
+        61.4697265625,
+        61.4697265625,
+        61.4697265625
+      ],
+      "unit": "KiB",
+      "value": 61.4697265625,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "samples": [
+        196.8896484375,
+        196.9404296875,
+        196.8896484375,
+        196.9404296875,
+        196.8837890625,
+        196.9404296875
+      ],
+      "unit": "KiB",
+      "value": 196.8896484375,
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "samples": [
+        4.825541982427239,
+        4.80070902267471,
+        5.0157090299762785,
+        4.776625020895153,
+        4.89487498998642,
+        4.980375000741333,
+        4.862083995249122,
+        4.840750014409423,
+        4.83429100131616
+      ],
+      "unit": "ms",
+      "value": 4.840750014409423,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "samples": [
+        39103.229976427494,
+        41705.76616224235,
+        41185.45734263484,
+        41652.565724848835,
+        42271.00978436159,
+        43220.27347144446,
+        41674.99277504646,
+        42526.04708409386,
+        42549.79635631283
+      ],
+      "unit": "roots/s",
+      "value": 41705.76616224235,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "samples": [
+        7.825499982573092,
+        8.5491249919869,
+        7.730333018116653,
+        7.690874976105988,
+        7.746083021629602,
+        7.585416024085134,
+        7.565250038169324,
+        7.54258397500962,
+        8.531917002983391
+      ],
+      "unit": "ms",
+      "value": 7.730333018116653,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "samples": [
+        25545.501816617958,
+        26459.25774856138,
+        25358.052649681325,
+        25896.393895169575,
+        25358.184401574912,
+        25964.614787787417,
+        26043.504601958688,
+        26571.010892991042,
+        22533.30703115884
+      ],
+      "unit": "roots/s",
+      "value": 25896.393895169575,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "samples": [
+        5.431708006653935,
+        5.48516697017476,
+        5.688042030669749,
+        5.214250006247312,
+        5.308624997269362,
+        5.290291970595717,
+        5.311166984029114,
+        5.264375009573996,
+        5.1916250376962125
+      ],
+      "unit": "ms",
+      "value": 5.308624997269362,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "samples": [
+        35928.41237347974,
+        35412.068904248255,
+        33881.07734915588,
+        36075.576101991515,
+        36973.98986769377,
+        37087.97826342963,
+        37993.92113421432,
+        38253.71780928197,
+        38884.02845042447
+      ],
+      "unit": "roots/s",
+      "value": 36973.98986769377,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "samples": [
+        0.5657909787259996,
+        0.5859590019099414,
+        0.6545000360347331,
+        0.5017920047976077,
+        0.5512909847311676,
+        0.5253750132396817,
+        0.5117090186104178,
+        0.5597079871222377,
+        0.4901670035906136
+      ],
+      "unit": "ms",
+      "value": 0.5512909847311676,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "samples": [
+        0.9710000013001263,
+        0.9381670388393104,
+        1.0842920164577663,
+        0.9207080001942813,
+        0.9194170124828815,
+        0.8878340013325214,
+        0.8387910202145576,
+        0.9073750115931034,
+        0.8501670090481639
+      ],
+      "unit": "ms",
+      "value": 0.9194170124828815,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "samples": [
+        297.5771484375,
+        295.0419921875,
+        296.1162109375
+      ],
+      "unit": "KiB",
+      "value": 296.1162109375,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "samples": [
+        394.7509765625,
+        389.5703125,
+        388.107421875
+      ],
+      "unit": "KiB",
+      "value": 389.5703125,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "samples": [
+        5.525390625,
+        5.630859375,
+        5.630859375,
+        5.580078125,
+        5.53125,
+        5.5341796875
+      ],
+      "unit": "KiB",
+      "value": 5.630859375,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "samples": [
+        27.947265625,
+        27.84765625,
+        27.896484375,
+        27.947265625,
+        27.84765625,
+        27.947265625
+      ],
+      "unit": "KiB",
+      "value": 27.896484375,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "samples": [
+        71.6982421875,
+        70.5263671875,
+        70.576171875,
+        71.251953125,
+        71.7470703125,
+        70.6240234375
+      ],
+      "unit": "KiB",
+      "value": 70.576171875,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "samples": [
+        218.9345703125,
+        217.8603515625,
+        217.8603515625,
+        216.3955078125,
+        218.4951171875,
+        216.6396484375
+      ],
+      "unit": "KiB",
+      "value": 217.8603515625,
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "samples": [
+        6.21354683971731,
+        5.6686249081394635,
+        5.4720158004784025,
+        5.538421646633651,
+        5.4349065976566635,
+        5.3756557463202626,
+        5.346360012481455,
+        5.4342499424819835,
+        5.332030923455022
+      ],
+      "unit": "us/projection",
+      "value": 5.4349065976566635,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "samples": [
+        188327.77966824858,
+        187683.26497080398,
+        188097.00327194657,
+        159534.5713746787,
+        182769.94316089418,
+        186181.81919066375,
+        179943.61462655262,
+        182055.07754040314,
+        188466.4593716377
+      ],
+      "unit": "projections/s",
+      "value": 186181.81919066375,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "samples": [
+        604.4375,
+        604.4375,
+        604.4375
+      ],
+      "unit": "B/projection",
+      "value": 604.4375,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "samples": [
+        128.0,
+        128.0,
+        128.0
+      ],
+      "unit": "B/projection",
+      "value": 128.0,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "samples": [
+        45.77734375,
+        45.77734375,
+        45.77734375
+      ],
+      "unit": "KiB",
+      "value": 45.77734375,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "samples": [
+        56.376953125,
+        56.376953125,
+        56.376953125
+      ],
+      "unit": "KiB",
+      "value": 56.376953125,
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "samples": [
+        6.190109161252622,
+        6.164718797663227,
+        6.108078196120914,
+        6.1582031776197255,
+        6.248046702239662,
+        6.0403745010262355,
+        6.062500688130967,
+        6.208983904798515,
+        6.220046998350881
+      ],
+      "unit": "us/projection",
+      "value": 6.164718797663227,
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "samples": [
+        164172.8623823403,
+        164313.22323781348,
+        164683.19419051165,
+        164365.98495383226,
+        165214.58100943462,
+        166089.6959126959,
+        162746.3338835616,
+        163491.33925514165,
+        165285.41351372478
+      ],
+      "unit": "projections/s",
+      "value": 164365.98495383226,
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "samples": [
+        620.4375,
+        620.4375,
+        620.4375
+      ],
+      "unit": "B/projection",
+      "value": 620.4375,
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "samples": [
+        192.0,
+        192.0,
+        192.0
+      ],
+      "unit": "B/projection",
+      "value": 192.0,
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "samples": [
+        50.77734375,
+        50.77734375,
+        50.77734375
+      ],
+      "unit": "KiB",
+      "value": 50.77734375,
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "samples": [
+        77.8759765625,
+        77.8759765625,
+        77.8759765625
+      ],
+      "unit": "KiB",
+      "value": 77.8759765625,
+      "workload": "stress-document"
+    }
+  ],
+  "schemaVersion": 1,
+  "subject": "snapshot-delivery"
+}
