@@ -63,7 +63,15 @@ from parallax.snapshot.materialize import (
     StoredDataIssueInput,
     _convert,
 )
-from parallax.snapshot.materialize._page import ABSENT, PageBuilder, page_rows
+from parallax.snapshot.materialize._page import (
+    ABSENT,
+    EntityState,
+    JudgedStates,
+    LogicalKey,
+    PageBuilder,
+    exact_stored_equal,
+    page_rows,
+)
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from tests._support import snapshot_models as sm
@@ -1209,6 +1217,34 @@ def test_no_published_value_is_the_absent_sentinel() -> None:
     assert isinstance(root, sm.SnapOrder)
     assert "sku" not in root.model_fields_set
     assert all(value is not ABSENT for value in vars(root).values())
+
+
+def test_judged_states_exposes_singletons_through_its_mapping_view() -> None:
+    key = LogicalKey(_soOrder.identity, 1)
+    missing = LogicalKey(_soOrder.identity, 2)
+    judged = JudgedStates((key,), (7,))
+
+    assert judged.get(key) is None
+    assert judged.get(missing) is None
+    assert judged != object()
+
+    state = EntityState((1,), ())
+    judged.set_singleton(0, state)
+    assert judged[key] == [(7, state)]
+
+
+def test_exact_stored_equality_descends_into_nested_tuple_carriers() -> None:
+    assert not exact_stored_equal(({"value": True},), ({"value": 1},))
+
+
+def test_root_view_completion_and_raw_row_release_are_idempotent() -> None:
+    fixture = PageFixture(_ORDERS)
+    root = RootView(fixture.page(fixture.node("SnapOrder", _ORDER_ROW)), defer_states=True)
+
+    root.complete()
+    root.release_raw_rows()
+    root.release_raw_rows()
+    root.complete()
 
 
 def _customer_row(phone_type: str) -> dict[str, object]:

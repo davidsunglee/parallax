@@ -58,7 +58,8 @@ first projection to carry a given view key deciding that view's value.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from array import array
+from collections.abc import Mapping, Sequence
 from typing import cast
 
 from parallax.core.entity._layout import EntityLayout
@@ -74,6 +75,7 @@ from parallax.snapshot.materialize._page import (
     ABSENT,
     EntityState,
     InvalidRootInput,
+    LogicalKey,
     Page,
     PageRows,
     StoredDataIssueInput,
@@ -88,6 +90,7 @@ from parallax.snapshot.materialize._views import RootViewLayout
 __all__ = ["SNAPSHOT_PROJECTION_CONFLICT", "RootView", "SnapshotConsistencyError"]
 
 SNAPSHOT_PROJECTION_CONFLICT = "snapshot-projection-conflict"
+_UNPRIMED = object()
 
 
 class SnapshotConsistencyError(RuntimeError):
@@ -118,9 +121,13 @@ class RootView:
 
     __slots__ = (
         "_invalid_roots",
-        "_issues",
+        "_layouts",
         "_order",
+        "_pending_invalid",
         "_pin",
+        "_primed_source",
+        "_primed_values",
+        "_releasable_rows",
         "_resolved",
         "_roots",
         "_rows",
@@ -131,90 +138,162 @@ class RootView:
     )
 
     def __init__(
-        self, page: Page, root_position: int | None = None, *, pin: Pin | None = None
+        self,
+        page: Page,
+        root_position: int | None = None,
+        *,
+        pin: Pin | None = None,
+        defer_states: bool = False,
     ) -> None:
         rows = page_rows(page)
         self._rows = rows
         self._pin = rows.pin if pin is None else pin
+        self._primed_source: Mapping[int, object] | None = None
+        self._primed_values: list[object] | None = None
         self._winner: list[int] = []
         self._resolved: dict[int, int] = {}
-        self._issues: list[tuple[StoredDataIssueInput, ...]] = []
+        self._layouts: list[EntityLayout] = []
         self._states: list[EntityState] = []
         self._view_layouts: list[RootViewLayout] = []
-        invalid_entries: list[tuple[int, int]] = []
-        root_indices: list[int | None] = []
-        root_entries = (
-            tuple(enumerate(rows.roots))
-            if root_position is None
-            else ((root_position, rows.roots[root_position]),)
-        )
-        valid_roots: list[int] = []
-        for ordinal, root in root_entries:
+        if root_position is not None:
+            root = rows.roots[root_position]
             if rows.keys[root] is None and any(
                 issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
             ):
-                invalid_entries.append((ordinal, root))
-                root_indices.append(None)
+                invalid_entries: Sequence[tuple[int, int]] = ((root_position, root),)
+                root_indices: Sequence[int | None] = (None,)
+                valid_roots: Sequence[int] = ()
             else:
-                valid_roots.append(root)
-                root_indices.append(root)
+                invalid_entries = ()
+                root_indices = (root,)
+                valid_roots = (root,)
+        else:
+            invalid_entries = []
+            root_indices = []
+            valid_roots = []
+            for ordinal, root in enumerate(rows.roots):
+                if rows.keys[root] is None and any(
+                    issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
+                ):
+                    invalid_entries.append((ordinal, root))
+                    root_indices.append(None)
+                else:
+                    valid_roots.append(root)
+                    root_indices.append(root)
 
-        reached: set[int] = set()
-        root_plans: list[tuple[tuple[int, ...], dict[int, int]]] = []
+        reached: set[int] | None = set() if len(valid_roots) > 1 else None
+        single_reached: tuple[int, ...] = ()
+        winners: list[list[object] | None] = []
+        state_nodes: dict[int, int] | None = {} if len(valid_roots) > 1 else None
         for root in valid_roots:
             reachable = self._reachable([root])
-            reached.update(reachable)
-            occurrences: dict[int, list[int]] = {}
-            for projection in reachable:
-                occurrences.setdefault(rows.logical_ids[projection], []).append(projection)
-            root_plans.append(
-                (
-                    reachable,
-                    {
-                        logical: self._canonical(tuple(group))
-                        for logical, group in occurrences.items()
-                    },
-                )
-            )
-
-        invalid_roots = tuple(
-            InvalidRootInput(ordinal, self._decode(root).findings)
-            for ordinal, root in invalid_entries
-        )
-        winners: list[list[object]] = []
-        state_nodes: dict[int, int] = {}
-        for reachable, canonical_by_logical in root_plans:
-            root_states = {
-                logical: (canonical, self._state(canonical))
-                for logical, canonical in canonical_by_logical.items()
-            }
+            if reached is None:
+                single_reached = reachable
+            else:
+                reached.update(reachable)
+            if state_nodes is None and (
+                len(reachable) == 1
+                or len({rows.logical_ids[projection] for projection in reachable}) == len(reachable)
+            ):
+                for projection in reachable:
+                    state = None if defer_states else self._state(projection)
+                    index = len(self._winner)
+                    self._winner.append(projection)
+                    self._layouts.append(rows.layouts[projection])
+                    if state is not None:
+                        self._states.append(state)
+                    root_view_layout = rows.schema.root_view(rows.layouts[projection])
+                    self._view_layouts.append(root_view_layout)
+                    carried_views: list[object] | None = (
+                        [cast("object", ABSENT)] * len(root_view_layout.slots)
+                        if root_view_layout.slots
+                        else None
+                    )
+                    winners.append(carried_views)
+                    self._resolved[projection] = index
+                for projection in reachable:
+                    index = self._resolved[projection]
+                    values = rows.view_rows[projection]
+                    carried_views = winners[index]
+                    if carried_views is None:
+                        continue
+                    to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+                    for slot, value in enumerate(values):
+                        root_view_slot = to_root_view[slot]
+                        if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
+                            carried_views[root_view_slot] = value
+                continue
+            local_claims: dict[int, int | list[int]] = {}
             for projection in reachable:
                 logical = rows.logical_ids[projection]
-                winner, state = root_states[logical]
-                index = state_nodes.get(id(state))
+                claimed = local_claims.get(logical)
+                if claimed is None:
+                    local_claims[logical] = projection
+                    continue
+                if isinstance(claimed, int):
+                    local_claims[logical] = [claimed, projection]
+                else:
+                    claimed.append(projection)
+            canonical_by_logical = {
+                logical: claimed if isinstance(claimed, int) else self._canonical(claimed)
+                for logical, claimed in local_claims.items()
+            }
+            root_states: dict[int, tuple[int, int]] = {}
+            for logical, winner in canonical_by_logical.items():
+                state = None if defer_states else self._state(winner)
+                index = None if state is None or state_nodes is None else state_nodes.get(id(state))
                 if index is None:
                     index = len(self._winner)
-                    state_nodes[id(state)] = index
+                    if state is not None and state_nodes is not None:
+                        state_nodes[id(state)] = index
                     self._winner.append(winner)
-                    self._states.append(state)
-                    self._issues.append(state.findings)
+                    self._layouts.append(rows.layouts[winner])
+                    if state is not None:
+                        self._states.append(state)
                     root_view_layout = rows.schema.root_view(rows.layouts[winner])
                     self._view_layouts.append(root_view_layout)
-                    winners.append([ABSENT] * len(root_view_layout.slots))
+                    carried_views = (
+                        [cast("object", ABSENT)] * len(root_view_layout.slots)
+                        if root_view_layout.slots
+                        else None
+                    )
+                    winners.append(carried_views)
+                root_states[logical] = winner, index
+            for projection in reachable:
+                logical = rows.logical_ids[projection]
+                _winner, index = root_states[logical]
                 self._resolved[projection] = index
                 values = rows.view_rows[projection]
                 carried_views = winners[index]
+                if carried_views is None:
+                    continue
                 to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
                 for slot, value in enumerate(values):
                     root_view_slot = to_root_view[slot]
                     if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                         carried_views[root_view_slot] = value
 
-        self._invalid_roots = invalid_roots
+        self._pending_invalid = tuple(invalid_entries)
+        self._invalid_roots = ()
         self._roots = tuple(None if root is None else self._resolved[root] for root in root_indices)
-        self._order = tuple(rows.layouts[winner].concrete for winner in self._winner)
-        self._view_rows = [tuple(self._allocation(value) for value in row) for row in winners]
-        _notify(rows.observer, "occurrences_reached", len(reached))
+        self._order = tuple(layout.concrete for layout in self._layouts)
+        self._view_rows = tuple(
+            () if row is None else tuple(self._allocation(value) for value in row)
+            for row in winners
+        )
+        self._winner = tuple(self._winner)  # pyright: ignore[reportAttributeAccessIssue]
+        self._layouts = tuple(self._layouts)  # pyright: ignore[reportAttributeAccessIssue]
+        self._states = tuple(self._states)  # pyright: ignore[reportAttributeAccessIssue]
+        self._view_layouts = tuple(self._view_layouts)  # pyright: ignore[reportAttributeAccessIssue]
+        self._resolved = None  # pyright: ignore[reportAttributeAccessIssue]
+        reached_projections = tuple(reached) if reached is not None else single_reached
+        self._releasable_rows = (
+            (rows, reached_projections) if isinstance(rows.member_rows, list) else None
+        )
+        _notify(rows.observer, "occurrences_reached", len(reached_projections))
+        if not defer_states:
+            self._complete_invalid()
+            self._rows = None
 
     # ----------------------------------------------------------------------- #
     # The whole-Root-View surface.                                                  #
@@ -238,7 +317,7 @@ class RootView:
     @property
     def has_issues(self) -> bool:
         """Whether conversion classified any issue in the reachable root view."""
-        return bool(self._invalid_roots) or any(self._issues)
+        return bool(self._invalid_roots) or any(state.findings for state in self._states)
 
     @property
     def pin(self) -> Pin:
@@ -254,14 +333,107 @@ class RootView:
         a deferred evidence mapping therefore judges nothing outside this Root
         View, and a projection no root reached contributes nothing.
         """
+        if self._primed_source is by_projection and self._primed_values is not None:
+            return cast(
+                "Mapping[int, T]",
+                {
+                    index: value
+                    for index, value in enumerate(self._primed_values)
+                    if value is not _UNPRIMED
+                },
+            )
         resolved: dict[int, T] = {}
-        for projection, index in self._resolved.items():
+        for index, projection in enumerate(self._winner):
             try:
                 value = by_projection[projection]
             except KeyError:
                 continue
-            resolved.setdefault(index, value)
+            resolved[index] = value
         return resolved
+
+    def prime[T](self, by_projection: Mapping[int, T]) -> None:
+        """Resolve canonical projection values while the borrowed Page is live."""
+        if self.has_issues:
+            return
+        primed: list[object] = [_UNPRIMED] * len(self._winner)
+        for index, projection in enumerate(self._winner):
+            try:
+                primed[index] = by_projection[projection]
+            except KeyError:
+                continue
+        self._primed_source = by_projection
+        self._primed_values = primed
+
+    def projection_value[T](self, node: int, by_projection: Mapping[int, T]) -> T | None:
+        """The canonical projection's value for one allocation, when present."""
+        if self._primed_source is by_projection and self._primed_values is not None:
+            value = self._primed_values[node]
+            return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
+        try:
+            return by_projection[self._winner[node]]
+        except KeyError:
+            return None
+
+    def release_raw_rows(self) -> None:
+        """Release reached raw member rows after all evidence lookups are primed."""
+        releasable = self._releasable_rows
+        if releasable is None:
+            return
+        page_rows, reached = releasable
+        member_rows = cast("list[tuple[object, ...]]", page_rows.member_rows)
+        for projection in reached:
+            member_rows[projection] = ()
+        self._releasable_rows = None
+
+    def release_finished_page_rows(
+        self,
+        root_position: int,
+        last_uses: tuple[array[int], array[int]],
+    ) -> None:
+        """Release Page occurrence storage no later root can reach."""
+        releasable = self._releasable_rows
+        if releasable is None:
+            return
+        rows, reached = releasable
+        projection_last, logical_last = last_uses
+        member_rows = cast("list[tuple[object, ...]]", rows.member_rows)
+        keys = cast("list[LogicalKey | None]", rows.keys)
+        view_rows = cast("list[Sequence[object]]", rows.view_rows)
+        witnesses = cast("list[object]", rows.witnesses)
+        logical_ids = cast("list[int]", rows.logical_ids)
+        for projection in reached:
+            member_rows[projection] = ()
+            if projection_last[projection] != root_position:
+                continue
+            logical = logical_ids[projection]
+            rows.issues.release(projection)
+            keys[projection] = None
+            view_rows[projection] = ()
+            witnesses[projection] = None
+            rows.decoders.release(projection)
+            logical_ids[projection] = 0
+            if logical_last[logical] == root_position:
+                rows.judged_states.release_logical(logical)
+                logical_last[logical] = -1
+        self._releasable_rows = None
+
+    def complete(self) -> None:
+        """Decode the already-consistent root after an atomic claim pass."""
+        if self._rows is None:
+            return
+        self._states = tuple(  # pyright: ignore[reportAttributeAccessIssue]
+            self._state(winner) for winner in self._winner
+        )
+        self._complete_invalid()
+        self._rows = None
+
+    def _complete_invalid(self) -> None:
+        if self._pending_invalid:
+            self._invalid_roots = tuple(
+                InvalidRootInput(ordinal, self._decode(root).findings)
+                for ordinal, root in self._pending_invalid
+            )
+            self._pending_invalid = ()
 
     # ----------------------------------------------------------------------- #
     # The per-node indexed reads.                                               #
@@ -270,7 +442,7 @@ class RootView:
     def layout(self, node: int) -> EntityLayout:
         """The member layout ``node``'s state is read against — the canonical
         occurrence's own, and therefore its resolved concrete Entity's."""
-        return self._rows.layouts[self._winner[node]]
+        return self._layouts[node]
 
     def member_values(self, node: int) -> tuple[object, ...]:
         """``node``'s Page-owned Entity State row by reference, positional
@@ -279,7 +451,7 @@ class RootView:
 
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
         """The findings from ``node``'s one Page-owned payload judgment."""
-        return self._issues[node]
+        return self._states[node].findings
 
     def view_layout(self, node: int) -> RootViewLayout:
         """``node``'s relationship view slots, in canonical order."""
@@ -302,31 +474,62 @@ class RootView:
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder reachable from this view's roots alone."""
+        rows = self._rows
+        if rows is None:  # pragma: no cover - construction owns a live Page
+            raise ValueError("a completed Root View cannot rebuild reachability")
+        if len(roots) == 1 and not rows.view_rows[roots[0]]:
+            return (roots[0],)
         order: list[int] = []
         seen: set[int] = set()
-
-        def walk(projection: int) -> None:
+        pending = list(reversed(roots))
+        while pending:
+            projection = pending.pop()
             if projection in seen:
-                return
+                continue
             seen.add(projection)
             order.append(projection)
-            for value in self._rows.view_rows[projection]:
-                for child in _edges(value):
-                    walk(child)
-
-        for root in roots:
-            walk(root)
+            for value in reversed(rows.view_rows[projection]):
+                if isinstance(value, tuple):
+                    pending.extend(reversed(cast("tuple[int, ...]", value)))
+                elif value is not None and value is not ABSENT:
+                    pending.append(value)  # pyright: ignore[reportArgumentType]
         return tuple(order)
 
     def _decode(self, projection: int) -> EntityState:
         rows = self._rows
-        member_row, findings = rows.decoders[projection]()
-        findings = dedupe_issues((*findings, *rows.issues[projection]))
+        if rows is None:  # pragma: no cover - completion owns a live Page
+            raise ValueError("a completed Root View cannot decode another state")
+        decoder = rows.decoders[projection]
+        if decoder is None:  # pragma: no cover - a judged keyed projection is read from its state
+            raise ValueError("a released projection decoder has no unjudged state")
+        if isinstance(decoder, tuple):
+            member_row, findings = cast("tuple[object, ...]", decoder), ()
+        else:
+            member_row, findings = decoder()
+        if rows.keys[projection] is not None:
+            rows.decoders[projection] = None
+        identity_findings = rows.issues[projection]
+        if not findings:
+            findings = identity_findings
+        elif identity_findings:
+            findings = dedupe_issues((*findings, *identity_findings))
         _notify(rows.observer, "states_decoded")
         return EntityState(member_row, findings)
 
-    def _canonical(self, occurrences: tuple[int, ...]) -> int:
+    def _canonical(self, occurrences: Sequence[int]) -> int:
         rows = self._rows
+        if rows is None:  # pragma: no cover - construction owns a live Page
+            raise ValueError("a completed Root View cannot compare another witness")
+        if len(occurrences) == 2 and _same_witness(rows, occurrences[0], occurrences[1]):
+            _notify(rows.observer, "witnesses_compared", 1)
+            rows.decoders[occurrences[1]] = None
+            return occurrences[0]
+        first, *remaining = occurrences
+        if all(_same_witness(rows, first, candidate) for candidate in remaining):
+            _notify(rows.observer, "witnesses_compared", len(remaining))
+            for candidate in remaining:
+                rows.decoders[candidate] = None
+            return first
         canonical, *candidates = sorted(
             occurrences,
             key=lambda projection: (
@@ -341,23 +544,41 @@ class RootView:
         for candidate in candidates:
             if not _same_witness(rows, canonical, candidate):
                 raise self._conflict(canonical, candidate)
-        return canonical
+        raise AssertionError(
+            "canonical witness ordering retained no disagreement"
+        )  # pragma: no cover
 
     def _state(self, canonical: int) -> EntityState:
         rows = self._rows
+        if rows is None:  # pragma: no cover - completion owns a live Page
+            raise ValueError("a completed Root View cannot judge another state")
         key = rows.keys[canonical]
         if key is None:
-            return self._decode(canonical)
-        for stored_projection, state in rows.judged_states.get(key, ()):
+            state = self._decode(canonical)
+            _release_witness(rows, canonical)
+            return state
+        logical = rows.logical_ids[canonical]
+        claim = rows.claims[logical]
+        if isinstance(claim, int):
+            held = rows.judged_states.singleton(logical)
+            if held is not None:
+                _notify(rows.observer, "states_shared")
+                return held
+            state = self._decode(canonical)
+            rows.judged_states.set_singleton(logical, state)
+            _release_witness(rows, canonical)
+            return state
+        states = rows.judged_states.group(logical)
+        for stored_projection, state in states:
             if _same_witness(rows, canonical, stored_projection):
                 _notify(rows.observer, "states_shared")
                 return state
         state = self._decode(canonical)
-        rows.judged_states.setdefault(key, []).append((canonical, state))
+        states.append((canonical, state))
         return state
 
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
-        rows = self._rows
+        rows = cast("PageRows", self._rows)
         left_layout = rows.layouts[left]
         right_layout = rows.layouts[right]
         left_values = cast("tuple[object, ...]", rows.witnesses[left])
@@ -437,25 +658,19 @@ def _notify(observer: object | None, name: str, *args: object) -> None:
         callback(*args)
 
 
-def _edges(value: object) -> tuple[int, ...]:
-    """The projection indexes one relationship view value reaches, in order.
-
-    The graph boundary already settled that every one is an exact in-range
-    ``int``, so the shape is read rather than re-judged. An unloaded slot and a
-    loaded null both reach nothing.
-    """
-    if value is None or value is ABSENT:
-        return ()
-    if isinstance(value, tuple):
-        return cast("tuple[int, ...]", value)
-    return (cast("int", value),)
-
-
 def _same_witness(rows: PageRows, left: int, right: int) -> bool:
     left_layout = rows.layouts[left]
     right_layout = rows.layouts[right]
     return (
         left_layout.concrete == right_layout.concrete
         and left_layout.members == right_layout.members
-        and exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
+        and (
+            rows.witnesses[left] is rows.witnesses[right]
+            or exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
+        )
     )
+
+
+def _release_witness(rows: PageRows, projection: int) -> None:
+    if isinstance(rows.witnesses, list):
+        rows.witnesses[projection] = None

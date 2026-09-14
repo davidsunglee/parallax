@@ -9,7 +9,7 @@ branches; it performs no authored reference or relationship resolution.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never, cast
@@ -234,20 +234,20 @@ class RowMaterializer:
                 pass
         return self._value(row, self.stages.result_key(resolved, key))
 
-    def classify_raw_member(
-        self, raw: object, resolved: EntityIdentity, key: str
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        """Classify a member from the carrier retained in a Payload Witness."""
+    def raw_member_classifier(
+        self, resolved: EntityIdentity, key: str
+    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
+        """Prepare one classified member's row-independent decoding walk."""
         shared = self.stages.shared_document
         if shared is not None:
             try:
-                return shared.classify_located_member_from(raw, resolved, key)
+                return shared.located_classifier(resolved, key)
             except KeyError:
                 pass
         direct = self.stages.direct_documents
         if direct is None:
             raise KeyError(key)
-        return direct.classify_member_from(raw, resolved, key)
+        return direct.member_classifier(resolved, key)
 
     def classify_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
@@ -442,11 +442,31 @@ class CompiledRead:
     ) -> object:
         return self._materializer.raw_member_of(row, resolved, key)
 
-    def classify_raw_member(
-        self, raw: object, resolved: EntityIdentity, key: str
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        """Classify a member from its Page-retained raw witness carrier."""
-        return self._materializer.classify_raw_member(raw, resolved, key)
+    def raw_member_classifier(
+        self, resolved: EntityIdentity, key: str
+    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
+        return self._materializer.raw_member_classifier(resolved, key)
+
+    def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None:
+        """Return a shared-document member key, or answer no shared carrier."""
+        shared = self._materializer.stages.shared_document
+        if shared is None:
+            return None
+        try:
+            return shared.raw_member_location(resolved, key)
+        except KeyError:
+            return None
+
+    def classified_members(self, resolved: EntityIdentity) -> frozenset[str]:
+        """Member keys whose projected document carriers require classification."""
+        return self._materializer.stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
+
+    def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None:
+        """The direct positional result ordinal for ``key``, when it has one."""
+        if key in self.classified_members(resolved):
+            return None
+        rendered = self._materializer.stages.result_key(resolved, key)
+        return self._materializer.index_by_key.get(rendered)
 
     def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
         """The logical flat-row keys left by structural materialization stages."""

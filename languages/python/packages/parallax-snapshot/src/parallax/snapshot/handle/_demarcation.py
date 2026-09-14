@@ -85,6 +85,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`.
 from parallax.snapshot.handle._adoption import AdoptedExecution
 from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import (
     ServingModel,
     read_projection,
@@ -247,7 +248,7 @@ class Demarcation:
     predecessor left.
     """
 
-    __slots__ = ("_clock", "_lifecycle", "_runtime", "_serving")
+    __slots__ = ("_clock", "_lifecycle", "_preparations", "_runtime", "_serving")
 
     def __init__(
         self,
@@ -255,11 +256,13 @@ class Demarcation:
         clock: Clock,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
+        preparations: PreparationCache | None = None,
     ) -> None:
         self._runtime = runtime
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
+        self._preparations = preparations if preparations is not None else PreparationCache()
 
     def transact[T](
         self,
@@ -376,7 +379,15 @@ class Demarcation:
                             edge = _FlushEdge(conn, meta, physical)
 
                             def body(uow: UnitOfWork) -> T:
-                                tx = Transaction(uow, conn, read, write, physical, self._lifecycle)
+                                tx = Transaction(
+                                    uow,
+                                    conn,
+                                    read,
+                                    write,
+                                    physical,
+                                    self._lifecycle,
+                                    self._preparations,
+                                )
                                 # Published for joining calls; visible only
                                 # while core's active-transaction binding is,
                                 # so it needs no cleanup.

@@ -93,6 +93,7 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._paging import At
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
     ServingModel,
@@ -288,11 +289,17 @@ class ReadScope:
     policy.
     """
 
-    __slots__ = ("_execution", "_lifecycle")
+    __slots__ = ("_execution", "_lifecycle", "_preparations")
 
-    def __init__(self, lifecycle: InstalledLifecycle | None, execution: _ReadExecution) -> None:
+    def __init__(
+        self,
+        lifecycle: InstalledLifecycle | None,
+        execution: _ReadExecution,
+        preparations: PreparationCache | None = None,
+    ) -> None:
         self._lifecycle = lifecycle
         self._execution = execution
+        self._preparations = preparations if preparations is not None else PreparationCache()
 
     def find(self, query: ObjectQuery[Any, Any]) -> Snapshot[Any]:
         """One Typed whole-result read, published as Entity Class instances."""
@@ -399,6 +406,8 @@ class ReadScope:
                     inputs.preference,
                     inputs.ledger,
                     calls,
+                    read.selected.edition,
+                    self._preparations,
                 )
             )
 
@@ -453,6 +462,8 @@ class ReadScope:
                     preference=inputs.preference,
                     ledger=inputs.ledger,
                     calls=activity,
+                    edition=selected.edition,
+                    cache=self._preparations,
                 )
             )
 
@@ -663,8 +674,13 @@ def standalone_read_scope(
     lifecycle: InstalledLifecycle | None,
     serving: ServingModel,
     runtime: DatabaseRuntime,
+    preparations: PreparationCache | None = None,
 ) -> ReadScope:
-    return ReadScope(lifecycle, _StandaloneExecution(lifecycle, serving, runtime))
+    return ReadScope(
+        lifecycle,
+        _StandaloneExecution(lifecycle, serving, runtime),
+        preparations,
+    )
 
 
 def participating_read_scope(
@@ -674,10 +690,12 @@ def participating_read_scope(
     uow: UnitOfWork,
     conn: DatabaseConnection,
     attempt: TransactionAttemptActivity,
+    preparations: PreparationCache | None = None,
 ) -> ReadScope:
     return ReadScope(
         lifecycle,
         _ParticipatingExecution(
             selected, uow, attempt, ReadInputs(conn, uow.settings.concurrency, uow)
         ),
+        preparations,
     )

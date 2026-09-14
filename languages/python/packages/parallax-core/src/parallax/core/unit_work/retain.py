@@ -19,8 +19,7 @@ the reason :mod:`~parallax.core.unit_work.planner` states.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Final
+from typing import Final, Protocol, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
@@ -45,6 +44,15 @@ class ParticipationToken:
     """
 
     __slots__ = ()
+
+
+class _DeferredReadEvidence(Protocol):
+    @property
+    def entity(self) -> EntityIdentity: ...
+
+    def object_key(self) -> ObjectKey: ...
+
+    def observation(self) -> RetainedObservation: ...
 
 
 class RetainedObservation:
@@ -89,7 +97,6 @@ class RetainedObservation:
         self._consumed = True
 
 
-@dataclass(frozen=True, slots=True)
 class ReadOrigin:
     """What one source value privately retains about the read that produced it.
 
@@ -112,8 +119,144 @@ class ReadOrigin:
     verb, Typed and Wire alike.
     """
 
-    entity: EntityIdentity
-    object_key: ObjectKey
-    participation: ParticipationToken | None
-    observation: RetainedObservation | None
-    pin: Pin | None = None
+    __slots__ = ("_context", "_source")
+
+    _context: ParticipationToken | Pin | tuple[ParticipationToken, Pin] | None
+    _source: (
+        ObjectKey
+        | tuple[ObjectKey, RetainedObservation]
+        | tuple[EntityIdentity, str, object]
+        | _DeferredReadEvidence
+    )
+
+    def __init__(
+        self,
+        entity: EntityIdentity,
+        object_key: ObjectKey,
+        participation: ParticipationToken | None,
+        observation: RetainedObservation | None,
+        pin: Pin | None = None,
+    ) -> None:
+        object.__setattr__(
+            self, "_source", object_key if observation is None else (object_key, observation)
+        )
+        object.__setattr__(
+            self,
+            "_context",
+            (participation, pin)
+            if participation is not None and pin is not None
+            else participation or pin,
+        )
+
+    @classmethod
+    def from_single_primary_key(
+        cls,
+        entity: EntityIdentity,
+        name: str,
+        value: object,
+        participation: ParticipationToken | None,
+    ) -> ReadOrigin:
+        origin = object.__new__(cls)
+        object.__setattr__(origin, "_source", (entity, name, value))
+        object.__setattr__(origin, "_context", participation)
+        return origin
+
+    @classmethod
+    def deferred(
+        cls,
+        entity: EntityIdentity,
+        evidence: _DeferredReadEvidence,
+        *,
+        pin: Pin | None,
+    ) -> ReadOrigin:
+        if evidence.entity != entity:
+            raise ValueError("deferred read evidence must name its origin's Entity")
+        origin = object.__new__(cls)
+        object.__setattr__(origin, "_source", evidence)
+        object.__setattr__(origin, "_context", pin)
+        return origin
+
+    @property
+    def entity(self) -> EntityIdentity:
+        source = self._source
+        if isinstance(source, ObjectKey):
+            return source.entity
+        if isinstance(source, tuple):
+            if isinstance(source[0], ObjectKey):
+                return cast("tuple[ObjectKey, RetainedObservation]", source)[0].entity
+            return cast("tuple[EntityIdentity, str, object]", source)[0]
+        return source.entity
+
+    @property
+    def participation(self) -> ParticipationToken | None:
+        context = self._context
+        if isinstance(context, ParticipationToken):
+            return context
+        return context[0] if isinstance(context, tuple) else None
+
+    @property
+    def pin(self) -> Pin | None:
+        context = self._context
+        if isinstance(context, Pin):
+            return context
+        return context[1] if isinstance(context, tuple) else None
+
+    def __setattr__(self, name: str, value: object) -> None:
+        del value
+        raise AttributeError(f"a Read Origin is immutable: cannot set {name!r}")
+
+    @property
+    def object_key(self) -> ObjectKey:
+        source = self._source
+        if isinstance(source, ObjectKey):
+            return source
+        if isinstance(source, tuple):
+            if isinstance(source[0], ObjectKey):
+                return cast("tuple[ObjectKey, RetainedObservation]", source)[0]
+            entity, name, value = cast("tuple[EntityIdentity, str, object]", source)
+            held = ObjectKey(entity, ((name, value),))
+            object.__setattr__(self, "_source", held)
+            return held
+        held = source.object_key()
+        object.__setattr__(self, "_source", (held, source.observation()))
+        return held
+
+    @property
+    def observation(self) -> RetainedObservation | None:
+        source = self._source
+        if isinstance(source, ObjectKey) or (
+            isinstance(source, tuple) and not isinstance(source[0], ObjectKey)
+        ):
+            return None
+        if isinstance(source, tuple):
+            return cast("tuple[ObjectKey, RetainedObservation]", source)[1]
+        key = source.object_key()
+        held = source.observation()
+        object.__setattr__(self, "_source", (key, held))
+        return held
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, ReadOrigin) and (
+            self.entity,
+            self.object_key,
+            self.participation,
+            self.observation,
+            self.pin,
+        ) == (
+            other.entity,
+            other.object_key,
+            other.participation,
+            other.observation,
+            other.pin,
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.entity, self.object_key, self.participation, self.observation, self.pin))
+
+    def __repr__(self) -> str:
+        return (
+            "ReadOrigin("
+            f"entity={self.entity!r}, object_key={self.object_key!r}, "
+            f"participation={self.participation!r}, observation={self.observation!r}, "
+            f"pin={self.pin!r})"
+        )

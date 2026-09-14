@@ -59,6 +59,7 @@ from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsRe
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope
 from parallax.snapshot.handle._retention import ObservationLedger
@@ -231,10 +232,19 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope = INERT,
+        edition: str = "",
+        cache: PreparationCache | None = None,
     ) -> FindResult:
         executed.append(_Executed("find", port, preference, ledger))
         return handle_read.find(
-            query, model, port, preference=preference, ledger=ledger, calls=calls
+            query,
+            model,
+            port,
+            preference=preference,
+            ledger=ledger,
+            calls=calls,
+            edition=edition,
+            cache=cache,
         )
 
     def recording_find_history(

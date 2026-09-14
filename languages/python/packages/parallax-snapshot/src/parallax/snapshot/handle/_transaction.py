@@ -106,6 +106,7 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import participating_read_scope
@@ -365,6 +366,7 @@ class Transaction:
         write: SelectedWriteModel,
         attempt: TransactionAttemptActivity,
         lifecycle: InstalledLifecycle | None,
+        preparations: PreparationCache | None = None,
     ) -> None:
         self._uow = uow
         self._conn = conn
@@ -391,7 +393,12 @@ class Transaction:
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition").
         self._reads = participating_read_scope(
-            lifecycle=lifecycle, selected=read, uow=uow, conn=conn, attempt=attempt
+            lifecycle=lifecycle,
+            selected=read,
+            uow=uow,
+            conn=conn,
+            attempt=attempt,
+            preparations=preparations,
         )
         # The transaction state every keyed write of this transaction reads,
         # built once because all four facts are fixed for its life and handed to

@@ -248,6 +248,12 @@ def test_a_level_context_is_hashable_and_keyed_by_the_level_it_converts() -> Non
     assert order != _context(ORDERS, "OrderItem")
 
 
+def test_a_level_context_refuses_result_ordinals_that_do_not_cover_its_members() -> None:
+    order = _context(ORDERS, "Order")
+    with pytest.raises(ValueError, match="result ordinals must align"):
+        LevelContext(order.layout, order.documents, result_ordinals=(0,))
+
+
 # --------------------------------------------------------------------------- #
 # Scalar provenance: physical columns become Attribute Identities, and only    #
 # columns this concrete actually declares contribute.                          #
@@ -808,7 +814,7 @@ def test_a_projected_occurrence_with_no_available_raw_carrier_stays_absent() -> 
         context,
         builder,
         source=ROOT_LEVEL,
-        load=lambda: (witness, (), frozenset()),
+        classifiable=(1 << len(witness)) - 1,
     )
     page = builder.finish((ref,), Pin())
     values = RootView(page).member_values(0)

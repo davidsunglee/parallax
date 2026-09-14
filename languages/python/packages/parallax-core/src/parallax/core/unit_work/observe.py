@@ -41,11 +41,6 @@ class _Layout(Protocol):
     def occurrences(self) -> tuple[ValueObjectMetadata, ...]: ...
 
 
-class _State(Protocol):
-    @property
-    def member_row(self) -> tuple[object, ...]: ...
-
-
 class EntityStateRow(Mapping[str, object]):
     """A read-only view of one already-decoded Entity State.
 
@@ -56,21 +51,16 @@ class EntityStateRow(Mapping[str, object]):
     same positional state.
     """
 
-    __slots__ = ("_absent", "_declared", "_keys", "_members", "_values")
+    __slots__ = ("_absent", "_layout", "_members", "_values")
 
-    _declared: tuple[_Occurrence | None, ...]
+    _layout: _Layout | None
     _members: Mapping[str, object] | None
 
     def __init__(self, members: Mapping[str, object]) -> None:
         self._members = members
-        self._keys: tuple[str, ...] = ()
         self._values: tuple[object, ...] = ()
-        self._declared = ()
+        self._layout = None
         self._absent: object | None = None
-
-    @classmethod
-    def over_state(cls, layout: _Layout, state: _State, *, absent: object) -> EntityStateRow:
-        return cls.over_members(layout, state.member_row, absent=absent)
 
     @classmethod
     def over_members(
@@ -79,39 +69,85 @@ class EntityStateRow(Mapping[str, object]):
         """View one positional member row through its physical storage keys."""
         attributes = layout.attributes
         occurrences = layout.occurrences
-        keys = tuple(member.storage.name for member in (*attributes, *occurrences))
-        if len(keys) != len(values):
+        if len(attributes) + len(occurrences) != len(values):
             raise ValueError("an Entity State row layout must align with its member state")
         row = object.__new__(cls)
         row._members = None
-        row._keys = keys
+        row._layout = layout
         row._values = values
-        row._declared = (*((None,) * len(attributes)), *occurrences)
         row._absent = absent
         return row
+
+    @classmethod
+    def remap(
+        cls,
+        members: Mapping[str, tuple[str, bool]],
+        state: Mapping[str, object],
+    ) -> EntityStateRow:
+        """View physical state keys through their logical member names."""
+        return cls(_RemappedMembers(members, state))
 
     def __getitem__(self, key: str) -> object:
         if self._members is not None:
             return self._members[key]
-        try:
-            position = self._keys.index(key)
-        except ValueError:
-            raise KeyError(key) from None
+        layout = cast("_Layout", self._layout)
+        attributes = layout.attributes
+        position = next(
+            (
+                index
+                for index, member in enumerate((*attributes, *layout.occurrences))
+                if member.storage.name == key
+            ),
+            None,
+        )
+        if position is None:
+            raise KeyError(key)
         value = self._values[position]
-        declared = self._declared[position]
+        declared = (
+            None if position < len(attributes) else layout.occurrences[position - len(attributes)]
+        )
         return value if declared is None else _occurrence_value(value, declared, self._absent)
 
     def __iter__(self) -> Iterator[str]:
         if self._members is not None:
             return iter(self._members)
+        layout = cast("_Layout", self._layout)
         return (
-            key
-            for key, value in zip(self._keys, self._values, strict=True)
+            member.storage.name
+            for member, value in zip(
+                (*layout.attributes, *layout.occurrences), self._values, strict=True
+            )
             if value is not self._absent
         )
 
     def __len__(self) -> int:
-        return sum(1 for _key in self)
+        return len(self._members) if self._members is not None else sum(1 for _key in self)
+
+
+class _RemappedMembers(Mapping[str, object]):
+    __slots__ = ("_members", "_state")
+
+    def __init__(
+        self,
+        members: Mapping[str, tuple[str, bool]],
+        state: Mapping[str, object],
+    ) -> None:
+        self._members = members
+        self._state = state
+
+    def __getitem__(self, key: str) -> object:
+        column, _is_value_object = self._members[key]
+        return self._state[column]
+
+    def __iter__(self) -> Iterator[str]:
+        return (
+            name
+            for name, (column, _is_value_object) in self._members.items()
+            if column in self._state
+        )
+
+    def __len__(self) -> int:
+        return sum(1 for _name in self)
 
 
 class _EntityDocumentRow(Mapping[str, object]):

@@ -368,6 +368,21 @@ def test_json_loader_preserves_only_present_json_null() -> None:
     assert load(b'{"answer": 42}') == {"answer": 42}
 
 
+def test_jsonb_loaders_share_names_locally_and_accept_driver_buffers() -> None:
+    text = connection_module._DocumentJsonbLoader(3802)  # pyright: ignore[reportPrivateUsage]
+    binary = connection_module._DocumentJsonbBinaryLoader(3802)  # pyright: ignore[reportPrivateUsage]
+
+    text_first = cast("dict[str, object]", text.load(memoryview(b'{"shared":1}')))
+    text_second = cast("dict[str, object]", text.load(memoryview(b'{"shared":2}')))
+    binary_first = cast("dict[str, object]", binary.load(memoryview(b'\x01{"shared":1}')))
+    binary_second = cast("dict[str, object]", binary.load(memoryview(b'\x01{"shared":2}')))
+
+    assert next(iter(text_first)) is next(iter(text_second))
+    assert next(iter(binary_first)) is next(iter(binary_second))
+    with pytest.raises(psycopg.DataError, match="unknown jsonb binary format"):
+        binary.load(b"\x02{}")
+
+
 def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width() -> None:
     with pytest.raises(ValueError, match="adjacent, zero-based"):
         fold_document_reads(_DIALECT, ("presence", "gap", "document"), (), ((0, 2),))

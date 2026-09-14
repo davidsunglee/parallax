@@ -141,6 +141,7 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
         "parallax/snapshot/handle/_planning.py",
         "parallax/snapshot/handle/_predicate_writes.py",
         "parallax/snapshot/handle/_preflight.py",
+        "parallax/snapshot/handle/_preparation.py",
         "parallax/snapshot/handle/_publication.py",
         "parallax/snapshot/handle/_read.py",
         "parallax/snapshot/handle/_read_scope.py",

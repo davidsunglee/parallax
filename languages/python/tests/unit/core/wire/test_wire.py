@@ -47,6 +47,20 @@ def test_authored_numbers_are_immutable_under_shallow_copy() -> None:
     assert copy.copy(authored) is authored
 
 
+def test_trusted_managed_scalars_encode_without_general_normalization() -> None:
+    assert wire_codec.encode_managed_wire(BOOLEAN, True) is True
+    assert wire_codec.encode_managed_wire(INT64, 7) == 7
+    assert wire_codec.encode_managed_wire(STRING, "value") == "value"
+
+
+def test_strict_loading_can_share_repeated_member_names_within_a_loader() -> None:
+    names: dict[str, str] = {}
+    first = cast("dict[str, object]", wire.loads('{"shared":1}', name_cache=names))
+    second = cast("dict[str, object]", wire.loads('{"shared":2}', name_cache=names))
+
+    assert next(iter(first)) is next(iter(second))
+
+
 def test_wire_public_seams_bound_defensive_codec_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -100,6 +114,16 @@ def test_canonical_integer_check_rejects_a_malformed_non_numeric_product(
         wire.decode_canonical_wire(INT64, cast("wire.WireValue", "not-a-number"))
 
     assert caught.value.reason == "noncanonical"
+
+
+def test_canonical_fast_paths_retain_string_and_integer_space_checks() -> None:
+    with pytest.raises(wire.WireDecodingError) as text:
+        wire.decode_canonical_wire(STRING, cast("wire.WireValue", "\ud800"))
+    assert text.value.reason == "out-of-space"
+
+    with pytest.raises(wire.WireDecodingError) as integer:
+        wire.decode_canonical_wire(INT32, 2**31)
+    assert integer.value.reason == "out-of-space"
 
 
 def test_float_encoding_falls_back_when_no_shorter_spelling_round_trips(

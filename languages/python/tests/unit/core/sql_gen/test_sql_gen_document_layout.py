@@ -218,8 +218,21 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
 
     assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is SQL_NULL
     assert document.classify_member_of(_DOCUMENT_ROW, person, "display_name") == ("Ada", ())
+    display_name = document.raw_member_classifier(person, "display_name")
+    assert display_name(document.raw_member_of(_DOCUMENT_ROW, person, "display_name")) == (
+        "Ada",
+        (),
+    )
+    address = document.raw_member_classifier(person, "address")
+    address_value, address_findings = address(
+        document.raw_member_of(_DOCUMENT_ROW, person, "address")
+    )
+    assert address_value == {"city": "Oslo", "geo": {"country": "NO"}}
+    assert address_findings == ()
     with pytest.raises(KeyError, match="missing"):
-        document.classify_raw_member(SQL_NULL, marker, "missing")
+        document.raw_member_classifier(marker, "missing")
+    with pytest.raises(KeyError, match="missing"):
+        document.raw_member_classifier(person, "missing")
     with pytest.raises(KeyError, match="missing"):
         document.raw_member_of(_DOCUMENT_ROW, person, "missing")
     with pytest.raises(KeyError, match="missing"):
@@ -236,6 +249,17 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     columns = compile_read(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
+    classify_address = columns.raw_member_classifier(person, "address")
+    assert classify_address(_COLUMNS_ROW["address"])[0] == {
+        "city": "Oslo",
+        "geo": {"country": "NO"},
+    }
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        classify_address({"city": "Oslo"})
+    with pytest.raises(KeyError, match="missing"):
+        columns.raw_member_classifier(person, "missing")
+    with pytest.raises(KeyError, match="missing"):
+        columns.classify_member_of(_COLUMNS_ROW, person, "missing")
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         columns.classify_member_of({**_COLUMNS_ROW, "address": {}}, person, "address")
 

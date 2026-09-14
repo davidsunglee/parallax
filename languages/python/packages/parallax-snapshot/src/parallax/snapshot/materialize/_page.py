@@ -51,9 +51,13 @@ each root of a scan stands at, or its absence for a root at the Page's own pin.
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import uuid
+from array import array
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal, NamedTuple, cast
 
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
@@ -89,7 +93,24 @@ __all__ = [
     "exact_stored_equal",
     "page_edges",
     "page_rows",
+    "release_page_rows",
+    "root_last_uses",
 ]
+
+_NO_VIEWS: Final[tuple[()]] = ()
+_ATOMIC_WITNESS_TYPES: Final = (
+    type(None),
+    bool,
+    int,
+    float,
+    str,
+    bytes,
+    decimal.Decimal,
+    dt.date,
+    dt.time,
+    dt.datetime,
+    uuid.UUID,
+)
 
 
 type StoredDataIssueCode = Literal[
@@ -144,8 +165,7 @@ class InvalidRootInput:
             raise ValueError("an invalid root carries at least one stored-data issue")
 
 
-@dataclass(frozen=True, slots=True)
-class LogicalKey:
+class LogicalKey(NamedTuple):
     """The page-wide identity of one logical Entity state."""
 
     family: EntityIdentity
@@ -153,12 +173,143 @@ class LogicalKey:
     coordinates: tuple[object, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class EntityState:
+class EntityState(NamedTuple):
     """One judged positional payload shared by Root Views in a Page."""
 
     member_row: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...]
+
+
+type _Decoder = Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
+
+
+class SparseIssues:
+    __slots__ = ("_count", "_values")
+
+    def __init__(self, count: int, values: dict[int, tuple[StoredDataIssueInput, ...]]) -> None:
+        self._count = count
+        self._values = values
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, projection: int) -> tuple[StoredDataIssueInput, ...]:
+        return self._values.get(projection, ())
+
+    def release(self, projection: int) -> None:
+        self._values.pop(projection, None)
+
+    def clear(self) -> None:
+        self._values.clear()
+        self._count = 0
+
+
+class DecoderRows:
+    __slots__ = ("_count", "_values", "_witnesses")
+
+    def __init__(
+        self,
+        count: int,
+        values: dict[int, _Decoder | None],
+        witnesses: Sequence[object],
+    ) -> None:
+        self._count = count
+        self._values = values
+        self._witnesses = witnesses
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, projection: int) -> _Decoder | tuple[object, ...] | None:
+        if projection in self._values:
+            return self._values[projection]
+        witness = self._witnesses[projection]
+        return cast("tuple[object, ...]", witness) if isinstance(witness, tuple) else None
+
+    def __setitem__(self, projection: int, value: _Decoder | None) -> None:
+        self._values[projection] = value
+
+    def release(self, projection: int) -> None:
+        self._values.pop(projection, None)
+
+    def clear(self) -> None:
+        self._values.clear()
+        self._witnesses = ()
+        self._count = 0
+
+
+class JudgedStates(Mapping[LogicalKey, list[tuple[int, EntityState]]]):
+    """Dense logical-node-indexed state groups with a mapping inspection view."""
+
+    __slots__ = ("_claims", "_groups", "_keys")
+
+    def __init__(
+        self,
+        keys: tuple[LogicalKey | None, ...],
+        claims: Sequence[int | tuple[int, ...]],
+    ) -> None:
+        self._keys = list(keys)
+        self._claims = claims if isinstance(claims, list) else list(claims)
+        self._groups: list[EntityState | list[tuple[int, EntityState]] | None] = [None] * len(keys)
+
+    def singleton(self, logical: int) -> EntityState | None:
+        group = self._groups[logical]
+        return group if isinstance(group, EntityState) else None
+
+    def set_singleton(self, logical: int, state: EntityState) -> None:
+        self._groups[logical] = state
+
+    def group(self, logical: int) -> list[tuple[int, EntityState]]:
+        group = self._groups[logical]
+        if group is None:
+            group = []
+            self._groups[logical] = group
+        if isinstance(group, EntityState):  # pragma: no cover - claim shape is fixed
+            raise ValueError("a singleton judged state has no witness-distinct group")
+        return group
+
+    def _mapping_value(self, logical: int) -> list[tuple[int, EntityState]] | None:
+        group = self._groups[logical]
+        if group is None:
+            return None
+        if isinstance(group, EntityState):
+            claim = self._claims[logical]
+            if not isinstance(claim, int):  # pragma: no cover - claim shape is fixed
+                raise ValueError("a grouped claim cannot hold singleton state")
+            return [(claim, group)]
+        return group
+
+    def __getitem__(self, key: LogicalKey) -> list[tuple[int, EntityState]]:
+        for logical, candidate in enumerate(self._keys):
+            if candidate == key and (group := self._mapping_value(logical)):
+                return group
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[LogicalKey]:
+        return (
+            key
+            for key, group in zip(self._keys, self._groups, strict=True)
+            if key is not None and group is not None
+        )
+
+    def __len__(self) -> int:
+        return sum(group is not None for group in self._groups)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return False
+        comparable = cast("Mapping[object, object]", other)
+        return dict(self.items()) == dict(comparable.items())
+
+    def release(self) -> None:
+        self._groups.clear()
+        self._keys.clear()
+        self._claims.clear()
+
+    def release_logical(self, logical: int) -> None:
+        self._groups[logical] = None
+        self._keys[logical] = None
+        self._claims[logical] = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,24 +329,22 @@ class PageRows:
     :class:`Page` opaque to the result holders that carry one.
     """
 
-    layouts: tuple[EntityLayout, ...]
-    member_rows: tuple[tuple[object, ...], ...]
-    issues: tuple[tuple[StoredDataIssueInput, ...], ...]
-    logical_ids: tuple[int, ...]
-    keys: tuple[LogicalKey | None, ...]
-    sources: tuple[SourceLevel, ...]
-    view_rows: tuple[tuple[object, ...], ...]
+    layouts: Sequence[EntityLayout]
+    member_rows: Sequence[tuple[object, ...]]
+    issues: SparseIssues
+    logical_ids: Sequence[int]
+    keys: Sequence[LogicalKey | None]
+    sources: Sequence[SourceLevel]
+    view_rows: Sequence[Sequence[object]]
     schema: ViewSchema
     roots: tuple[int, ...]
     pin: Pin
-    judged_states: dict[LogicalKey, list[tuple[int, EntityState]]]
+    judged_states: JudgedStates
+    decoders: DecoderRows
     observer: object | None = None
-    witnesses: tuple[object, ...] = ()
-    source_ordinals: tuple[int, ...] = ()
-    claims: tuple[int | tuple[int, ...], ...] = ()
-    decoders: tuple[
-        Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]], ...
-    ] = ()
+    witnesses: Sequence[object] = ()
+    source_ordinals: Sequence[int] = ()
+    claims: Sequence[int | tuple[int, ...]] = ()
 
 
 class Page:
@@ -234,7 +383,7 @@ class Page:
         return len(self._rows.roots)
 
     @property
-    def judged_states(self) -> dict[LogicalKey, list[tuple[int, EntityState]]]:
+    def judged_states(self) -> Mapping[LogicalKey, list[tuple[int, EntityState]]]:
         """The witness-distinct states judged so far for this Page."""
         return self._rows.judged_states
 
@@ -249,6 +398,55 @@ def page_rows(page: object) -> PageRows:
     if not isinstance(page, Page):
         raise TypeError("a Root View requires a finished Page")
     return page._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a finished page through
+
+
+def release_page_rows(page: Page) -> None:
+    """Release projection-sized Page storage after atomic roots detach from it."""
+    rows = page_rows(page)
+    for values in (
+        rows.layouts,
+        rows.member_rows,
+        rows.issues,
+        rows.logical_ids,
+        rows.keys,
+        rows.sources,
+        rows.view_rows,
+        rows.witnesses,
+    ):
+        if isinstance(values, list):
+            values.clear()
+    rows.issues.clear()
+    rows.decoders.clear()
+    rows.judged_states.release()
+
+
+def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
+    """Return each projection's and logical state's last reaching root position."""
+    rows = page_rows(page)
+    typecode = "h" if len(rows.roots) <= 32_768 else "i"
+    projection_last = array(typecode, [-1]) * len(rows.layouts)
+    logical_last = array(typecode, [-1]) * len(rows.claims)
+    for position, root in enumerate(rows.roots):
+        pending = [root]
+        seen: set[int] = set()
+        while pending:
+            projection = pending.pop()
+            if projection in seen:
+                continue
+            seen.add(projection)
+            projection_last[projection] = position
+            logical = rows.logical_ids[projection]
+            logical_last[logical] = position
+            claim = rows.claims[logical]
+            if not isinstance(claim, int):
+                for witness in claim:
+                    projection_last[witness] = position
+            for value in rows.view_rows[projection]:
+                if isinstance(value, tuple):
+                    pending.extend(cast("tuple[int, ...]", value))
+                elif value is not None and value is not ABSENT:
+                    pending.append(cast("int", value))
+    return projection_last, logical_last
 
 
 def page_edges(page: Page, declaring: EntityMetadata | None) -> Iterator[Edge | None]:
@@ -318,11 +516,15 @@ class PageBuilder:
     """
 
     __slots__ = (
+        "_claims",
         "_decoders",
         "_first",
         "_identity",
         "_issues",
         "_keys",
+        "_last_layout",
+        "_last_slots",
+        "_last_source",
         "_layouts",
         "_logical_ids",
         "_member_rows",
@@ -340,17 +542,19 @@ class PageBuilder:
         self._observer = observer
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
-        self._issues: list[tuple[StoredDataIssueInput, ...]] = []
+        self._issues: dict[int, tuple[StoredDataIssueInput, ...]] = {}
         self._logical_ids: list[int] = []
         self._keys: list[LogicalKey | None] = []
+        self._last_layout: EntityLayout | None = None
+        self._last_slots: SourceViewLayout | None = None
+        self._last_source: SourceLevel | None = None
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
-        self._views: list[list[object]] = []
+        self._views: list[list[object] | tuple[()]] = []
         self._identity: dict[LogicalKey, int] = {}
         self._first: list[int] = []
-        self._decoders: list[
-            Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
-        ] = []
+        self._claims: list[int | list[int]] = []
+        self._decoders: dict[int, _Decoder | None] = {}
         self._witnesses: list[object] = []
         self._sealed = False
 
@@ -412,11 +616,18 @@ class PageBuilder:
         witness: object,
         raw_member_values: tuple[object, ...],
         identity_issues: tuple[StoredDataIssueInput, ...],
-        decode: Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]],
+        decode: Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
+        | tuple[object, ...],
     ) -> int:
         """Append an identity claim without judging its payload."""
         self._require_open()
-        slots = self._schema.source(source, layout)
+        if source == self._last_source and layout is self._last_layout:
+            slots = cast("SourceViewLayout", self._last_slots)
+        else:
+            slots = self._schema.source(source, layout)
+            self._last_source = source
+            self._last_layout = layout
+            self._last_slots = slots
         projection = len(self._layouts)
         existing = None if key is None else self._identity.get(key)
         if existing is None:
@@ -425,13 +636,23 @@ class PageBuilder:
                 self._identity[key] = logical
         else:
             logical = existing
+            key = self._keys[self._first[logical]]
+            claims = self._claims[logical]
+            if isinstance(claims, int):
+                self._claims[logical] = [claims, projection]
+            else:
+                claims.append(projection)
         self._layouts.append(layout)
         self._member_rows.append(raw_member_values)
-        self._issues.append(identity_issues)
-        self._decoders.append(decode)
+        if identity_issues:
+            self._issues[projection] = identity_issues
+        if callable(decode):
+            self._decoders[projection] = decode
         self._sources.append(source)
         self._slots.append(slots)
-        self._views.append([ABSENT] * len(slots.slots))
+        self._views.append(
+            cast("list[object]", [ABSENT] * len(slots.slots)) if slots.slots else _NO_VIEWS
+        )
         self._logical_ids.append(logical)
         self._keys.append(key)
         self._witnesses.append(witness)
@@ -464,7 +685,10 @@ class PageBuilder:
                 f"{view.narrowed_view or view.relationship.name!r} to "
                 f"{self._layouts[projection].concrete.canonical}"
             )
-        self._views[projection][slot] = value
+        row = self._views[projection]
+        if isinstance(row, tuple):  # pragma: no cover - a resolved slot implies a nonempty row
+            raise ValueError("a view slot cannot belong to an empty source layout")
+        row[slot] = value
 
     def finish(self, roots: tuple[int, ...], pin: Pin) -> Page:
         """Publish this builder's arrays as one sealed Page, roots in result order.
@@ -484,37 +708,45 @@ class PageBuilder:
         count = len(self._layouts)
         for root in roots:
             _require_index(root, count, "a root")
-        claims: list[list[int]] = [[] for _ in self._first]
-        for projection, logical in enumerate(self._logical_ids):
-            claims[logical].append(projection)
-        occurrence_positions = _physical_occurrence_positions(self._sources)
+        source_ordinals = _physical_occurrence_ordinals(self._sources)
+        sealed_claims = [
+            claim
+            if isinstance(claim, int)
+            else tuple(
+                sorted(
+                    claim,
+                    key=lambda projection: (
+                        self._sources[projection],
+                        source_ordinals[projection],
+                    ),
+                )
+            )
+            for claim in self._claims
+        ]
         rows = PageRows(
-            layouts=tuple(self._layouts),
-            member_rows=tuple(self._member_rows),
-            issues=tuple(self._issues),
-            logical_ids=tuple(self._logical_ids),
-            keys=tuple(self._keys),
-            sources=tuple(self._sources),
-            view_rows=tuple(tuple(row) for row in self._views),
+            layouts=self._layouts,
+            member_rows=self._member_rows,
+            issues=SparseIssues(count, self._issues),
+            logical_ids=self._logical_ids,
+            keys=self._keys,
+            sources=self._sources,
+            view_rows=self._views,
             schema=self._schema,
             roots=roots,
             pin=pin,
-            judged_states={},
-            observer=self._observer,
-            witnesses=tuple(self._witnesses),
-            source_ordinals=tuple(position[1] for position in occurrence_positions),
-            claims=tuple(
-                group[0]
-                if len(group) == 1
-                else tuple(sorted(group, key=occurrence_positions.__getitem__))
-                for group in claims
+            judged_states=JudgedStates(
+                tuple(self._keys[first] for first in self._first), sealed_claims
             ),
-            decoders=tuple(self._decoders),
+            observer=self._observer,
+            witnesses=self._witnesses,
+            source_ordinals=source_ordinals,
+            claims=sealed_claims,
+            decoders=DecoderRows(count, self._decoders, self._witnesses),
         )
         self._sealed = True
         self._layouts = []
         self._member_rows = []
-        self._issues = []
+        self._issues = {}
         self._logical_ids = []
         self._keys = []
         self._sources = []
@@ -522,7 +754,11 @@ class PageBuilder:
         self._views = []
         self._identity = {}
         self._first = []
-        self._decoders = []
+        self._last_layout = None
+        self._last_slots = None
+        self._last_source = None
+        self._claims = []
+        self._decoders = {}
         self._witnesses = []
         return Page(rows)
 
@@ -568,6 +804,7 @@ class PageBuilder:
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)
         self._first.append(projection)
+        self._claims.append(projection)
         return logical
 
     def _require_open(self) -> None:
@@ -602,16 +839,14 @@ def _require_index(value: object, count: int, holder: str) -> None:
         )
 
 
-def _physical_occurrence_positions(
-    sources: Sequence[SourceLevel],
-) -> tuple[tuple[SourceLevel, int], ...]:
+def _physical_occurrence_ordinals(sources: Sequence[SourceLevel]) -> array[int]:
     ordinals: dict[SourceLevel, int] = {}
-    positions: list[tuple[SourceLevel, int]] = []
+    positions = array("I")
     for source in sources:
         ordinal = ordinals.get(source, 0)
-        positions.append((source, ordinal))
+        positions.append(ordinal)
         ordinals[source] = ordinal + 1
-    return tuple(positions)
+    return positions
 
 
 def layout_order_key(
@@ -654,6 +889,25 @@ def exact_stored_equal(left: object, right: object) -> bool:
     """Type-sensitive structural equality for provider-normalized stored values."""
     if type(left) is not type(right):
         return False
+    if type(left) in (str, bytes, bytearray, int, float, bool, type(None)):
+        return left == right
+    if isinstance(left, tuple):
+        left_tuple = cast("tuple[object, ...]", left)
+        other_tuple = cast("tuple[object, ...]", right)
+        if len(left_tuple) != len(other_tuple) or left_tuple != other_tuple:
+            return False
+        for one, two in zip(left_tuple, other_tuple, strict=True):
+            if type(one) is not type(two):
+                return False
+            if type(one) in _ATOMIC_WITNESS_TYPES:
+                continue
+            if (
+                is_dataclass(one)
+                or isinstance(one, Mapping)
+                or (isinstance(one, Sequence) and not isinstance(one, (str, bytes, bytearray)))
+            ) and not exact_stored_equal(cast("object", one), two):
+                return False
+        return True
     if is_dataclass(left) and not isinstance(left, type):
         return all(
             exact_stored_equal(getattr(left, item.name), getattr(right, item.name))

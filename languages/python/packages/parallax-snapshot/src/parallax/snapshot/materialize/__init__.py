@@ -85,6 +85,7 @@ from parallax.snapshot.materialize._page import (
     StoredDataIssueInput,
     page_edges,
     page_rows,
+    root_last_uses,
 )
 from parallax.snapshot.materialize._publication import (
     require_publishable,
@@ -139,6 +140,7 @@ __all__ = [
     "page_rows",
     "read_origin_of",
     "require_publishable",
+    "root_last_uses",
     "unwind_tree",
     "wire_roots",
 ]

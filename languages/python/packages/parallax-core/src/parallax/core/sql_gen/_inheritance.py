@@ -57,7 +57,7 @@ module-private spelling.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
@@ -84,7 +84,9 @@ from parallax.core.document_codec import (
     decode_occurrence_classified,
     entity_shape,
     locate_entity_member,
+    locate_raw_entity_member,
     occurrence_shape,
+    prepared_raw_member_classifier,
     reduce_declared_members_classified,
 )
 from parallax.core.inheritance import (
@@ -342,6 +344,10 @@ class DocumentFanOut:
     shape: DocumentShape | None
     members: tuple[tuple[str, tuple[str, ...]], ...]
     padding: tuple[str, ...] = ()
+    member_paths: Mapping[str, tuple[str, ...]] = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "member_paths", dict(self.members))
 
     @property
     def classified(self) -> frozenset[str]:
@@ -385,7 +391,7 @@ class SharedDocument:
         entry = self.by_entity.get(resolved)
         if entry is None:
             raise KeyError(key)
-        path = next((path for member, path in entry.members if member == key), None)
+        path = entry.member_paths.get(key)
         if path is None:
             raise KeyError(key)
         if isinstance(document_read, SqlNull):
@@ -394,27 +400,29 @@ class SharedDocument:
             raise SqlGenError(
                 f"the database port returned {type(document_read).__name__}, not a DocumentRead"
             )
-        return locate_entity_member(document_read.document, path[0])
+        return locate_raw_entity_member(document_read.document, path[0])
 
-    def classify_located_member_from(
-        self, located: object, resolved: EntityIdentity, key: str
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        """Classify one member from the exact carrier retained in its witness."""
+    def raw_member_location(self, resolved: EntityIdentity, key: str) -> str:
+        """Return a member's direct key in an already unwrapped document."""
+        entry = self.by_entity.get(resolved)
+        if entry is None or key not in entry.member_paths:
+            raise KeyError(key)
+        return entry.member_paths[key][0]
+
+    def located_classifier(
+        self, resolved: EntityIdentity, key: str
+    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
+        """The prepared classifier for one located shared-document member."""
         entry = self.by_entity.get(resolved)
         if entry is None or entry.shape is None:
             raise KeyError(key)
-        path = next((path for member, path in entry.members if member == key), None)
+        path = entry.member_paths.get(key)
         if path is None:
             raise KeyError(key)
-        decoded = _classified_located_entity_member(entry.shape, located, path)
-        value = (
-            decoded.presence.value
-            if isinstance(decoded.presence, Present)
-            else UNAVAILABLE
-            if decoded.presence is UNAVAILABLE
-            else None
+        return cast(
+            "Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]",
+            prepared_raw_member_classifier(entry.shape, path[0]),
         )
-        return value, decoded.findings
 
     def classify_member_from(
         self, document_read: object, resolved: EntityIdentity, key: str
@@ -423,7 +431,7 @@ class SharedDocument:
         entry = self.by_entity.get(resolved)
         if entry is None or entry.shape is None:
             raise KeyError(key)
-        path = next((path for member, path in entry.members if member == key), None)
+        path = entry.member_paths.get(key)
         if path is None:
             raise KeyError(key)
         decoded = _classified_entity_member(entry.shape, document_read, path)
@@ -495,7 +503,7 @@ class DirectDocuments:
             (item for item in self.by_entity.get(resolved, ()) if item[0].storage.name == key),
             (None, None),
         )
-        if occurrence is None or shape is None:
+        if occurrence is None or shape is None:  # pragma: no cover - compiled callers resolve keys
             raise KeyError(key)
         if not isinstance(document_read, (SqlNull, PresentDocument)):
             raise SqlGenError(
@@ -513,6 +521,37 @@ class DirectDocuments:
         )
         value = decoded.presence.value if isinstance(decoded.presence, Present) else None
         return value, findings
+
+    def member_classifier(
+        self, resolved: EntityIdentity, key: str
+    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
+        """The prepared classifier for one direct document occurrence."""
+        occurrence, shape = next(
+            (item for item in self.by_entity.get(resolved, ()) if item[0].storage.name == key),
+            (None, None),
+        )
+        if occurrence is None or shape is None:
+            raise KeyError(key)
+
+        def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
+            if not isinstance(document_read, (SqlNull, PresentDocument)):
+                raise SqlGenError(
+                    f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+                )
+            decoded = _classified_occurrence(
+                shape,
+                document_read,
+                multiplicity=occurrence.multiplicity,
+                nullable=occurrence.nullable,
+            )
+            findings = tuple(
+                replace(finding, path=(occurrence.identity.path[-1], *finding.path))
+                for finding in decoded.findings
+            )
+            value = decoded.presence.value if isinstance(decoded.presence, Present) else None
+            return value, findings
+
+        return classify
 
     def classify(
         self, values: dict[str, object], resolved: EntityIdentity
@@ -698,6 +737,22 @@ def _classified_occurrence(
     nullable: bool,
 ) -> DecodedMember:
     """Classify and neutral-decode one complete occurrence exactly once."""
+    raw = None if isinstance(document_read, SqlNull) else document_read.document
+    if (
+        multiplicity is Multiplicity.MANY
+        and isinstance(raw, list)
+        and all(isinstance(item, dict) for item in cast("list[object]", raw))
+    ):
+        findings: list[DocumentFinding] = []
+        reduced: list[object] = []
+        for index, item in enumerate(cast("list[object]", raw)):
+            value, nested = reduce_declared_members_classified(shape, item)
+            reduced.append(value)
+            findings.extend(replace(finding, path=(index, *finding.path)) for finding in nested)
+        return DecodedMember(Present(reduced), tuple(findings))
+    if multiplicity is not Multiplicity.MANY and isinstance(raw, dict):
+        value, one_findings = reduce_declared_members_classified(shape, raw)
+        return DecodedMember(Present(value), one_findings)
     outer = decode_occurrence_classified(
         shape,
         document_read,

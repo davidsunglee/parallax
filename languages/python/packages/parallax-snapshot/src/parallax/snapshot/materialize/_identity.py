@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Protocol, cast
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple, Protocol, cast
 
 from parallax.core.base import UnknownFamilyTag, admits_stored_scalar
 from parallax.core.document_codec import UNAVAILABLE
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import EntityIdentity, MemberIdentity, PrimaryKey
+from parallax.core.metamodel import MemberIdentity, PrimaryKey
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 from parallax.snapshot.materialize._evidence import freeze_evidence
 from parallax.snapshot.materialize._page import LogicalKey, StoredDataIssueInput
 
-__all__ = ["IdentityClaim", "PayloadWitness", "claim_identity"]
+__all__ = ["IdentityClaim", "claim_identity"]
 
 
 class _AttributeRead(Protocol):
@@ -42,22 +41,25 @@ class _Level(Protocol):
     @property
     def host_checked(self) -> tuple[int, ...]: ...
 
+    @property
+    def host_checked_set(self) -> frozenset[int]: ...
 
-@dataclass(frozen=True, slots=True)
-class PayloadWitness:
-    """One occurrence's exact pre-judgment payload in member order."""
+    @property
+    def identity_positions(self) -> tuple[int, ...]: ...
 
-    concrete: EntityIdentity
-    members: tuple[MemberIdentity, ...]
-    values: tuple[object, ...]
+    @property
+    def identity_passthrough(self) -> frozenset[int]: ...
+
+    def routing_positions(
+        self, correlation_members: tuple[MemberIdentity, ...]
+    ) -> tuple[int, ...]: ...
 
 
-@dataclass(frozen=True, slots=True)
-class IdentityClaim:
+class IdentityClaim(NamedTuple):
     """The identity facts available before the payload is judged."""
 
     key: LogicalKey | None
-    witness: PayloadWitness
+    witness: tuple[object, ...]
     identity_values: tuple[object, ...]
     payload_values: tuple[object, ...]
     routing_values: tuple[object, ...]
@@ -79,29 +81,35 @@ def claim_identity(
     raw_values = (
         _raw_member_values(values, level) if raw_member_values is None else raw_member_values
     )
-    identity_positions = tuple(dict.fromkeys((*layout.primary_key, *layout.temporal_starts)))
-    correlation_positions = tuple(
-        position
-        for member in correlation_members
-        if (position := layout.index_of.get(member)) is not None
-        and position < layout.attribute_count
-    )
-    routing_positions = tuple(dict.fromkeys((*identity_positions, *correlation_positions)))
-    decoded: dict[int, object] = {}
-    routing = list(raw_values)
+    identity_positions = level.identity_positions
+    routing_positions = level.routing_positions(correlation_members)
+    host_checked = level.host_checked_set
+    witness = raw_values if witness_values is None else witness_values
+    if unknown_family_tag is None and host_checked.isdisjoint(routing_positions):
+        identity_values = _values_at(raw_values, identity_positions)
+        key = (
+            None
+            if any(raw_values[position] is ABSENT for position in layout.primary_key)
+            else LogicalKey(
+                layout.family,
+                _key_value(layout, raw_values),
+                _values_at(raw_values, layout.temporal_starts),
+            )
+        )
+        return IdentityClaim(key, witness, identity_values, raw_values, raw_values)
+
+    routing: list[object] | None = None
     findings: list[StoredDataIssueInput] = []
-    host_checked = frozenset(level.host_checked)
     for position in routing_positions:
         attribute = layout.attributes[position]
         raw = raw_values[position]
         if raw is ABSENT:
-            decoded[position] = ABSENT
+            continue
+        if position in level.identity_passthrough:
+            continue
+        if position not in host_checked:
             continue
         value = _identity_value(raw, position, classified_members, level)
-        if position not in host_checked:
-            decoded[position] = value
-            routing[position] = value
-            continue
         admission = admits_stored_scalar(
             value,
             attribute.type,
@@ -128,29 +136,28 @@ def claim_identity(
                         stored_value=freeze_evidence(admission.rejected),
                     )
                 )
-            decoded[position] = ABSENT
+            decoded = ABSENT
         else:
-            decoded[position] = value
-        routing[position] = decoded[position]
+            decoded = value
+        if decoded is not raw:
+            routing = list(raw_values) if routing is None else routing
+            routing[position] = decoded
 
-    witness = PayloadWitness(
-        layout.concrete,
-        layout.members,
-        raw_values if witness_values is None else witness_values,
-    )
-    identity_values = tuple(decoded[position] for position in identity_positions)
-    common = (witness, identity_values, raw_values, tuple(routing), tuple(findings))
+    routed: Sequence[object] = raw_values if routing is None else routing
+    identity_values = _values_at(routed, identity_positions)
+    routing_values = raw_values if routing is None else tuple(routing)
+    common = (witness, identity_values, raw_values, routing_values, tuple(findings))
     if (
         unknown_family_tag is not None
         or any(issue.code.startswith("stored-data-primary-key-") for issue in findings)
-        or any(decoded[position] is ABSENT for position in layout.primary_key)
+        or any(routed[position] is ABSENT for position in layout.primary_key)
     ):
         return IdentityClaim(None, *common)
     return IdentityClaim(
         LogicalKey(
             layout.family,
-            _key_value(layout, decoded),
-            tuple(decoded[position] for position in layout.temporal_starts),
+            _key_value(layout, routed),
+            _values_at(routed, layout.temporal_starts),
         ),
         *common,
     )
@@ -189,6 +196,13 @@ def _identity_value(
         return raw
 
 
-def _key_value(layout: EntityLayout, decoded: dict[int, object]) -> object:
-    values = tuple(decoded[position] for position in layout.primary_key)
-    return values[0] if len(values) == 1 else values
+def _key_value(layout: EntityLayout, decoded: Sequence[object]) -> object:
+    return decoded[layout.primary_key[0]]
+
+
+def _values_at(values: Sequence[object], positions: tuple[int, ...]) -> tuple[object, ...]:
+    if not positions:
+        return ()
+    if len(positions) == 1:
+        return (values[positions[0]],)
+    return tuple(values[position] for position in positions)

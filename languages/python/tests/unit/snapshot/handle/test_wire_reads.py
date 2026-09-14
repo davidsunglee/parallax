@@ -28,7 +28,7 @@ import pytest
 from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY, STRING, PresentDocument
+from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
 from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -67,6 +67,10 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize._wire import (
+    _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is the unit under test
+    shared_wire_encoder,
+)
 from tests._support.db_port import (
     ConnectsAsItself,
     RefusingAdapter,
@@ -162,6 +166,16 @@ def test_wire_keys_are_declared_member_names_and_leaves_are_canonical() -> None:
     assert root["price"] == "10.50"
     assert root["orderedOn"] == "2024-01-05"
     assert root["active"] is True
+
+
+def test_shared_wire_encoding_delegates_unhashable_managed_values() -> None:
+    document = {"free": [1, None]}
+
+    assert shared_wire_encoder()(JSON, cast("ManagedValue", document)) == document
+
+
+def test_default_wire_encoding_preserves_temporal_infinity() -> None:
+    assert _wire_scalar(TIMESTAMP, INFINITY) == "infinity"
 
 
 def test_a_document_occurrence_publishes_the_members_the_document_held() -> None:

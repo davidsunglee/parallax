@@ -15,6 +15,7 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materialization import (
+    INERT,
     FlatPageRead,
     MaterializationObserver,
     Materializer,
@@ -62,6 +63,10 @@ class _RecordingObserver:
 
     def root_published(self, ordinal: int) -> None:
         self.events.append(("root_published", ordinal))
+
+
+def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
+    INERT.witnesses_compared(1)
 
 
 def _context() -> LevelContext:

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from array import array
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast, overload
 
 from parallax.core import deep_fetch
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import (
     DatabaseCallActivity,
     DatabaseCallScope,
@@ -24,15 +25,16 @@ from parallax.core.object_query._validated import (
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import (
     CompiledRead,
-    CompiledTemplate,
     compile_read,
-    compile_template,
 )
-from parallax.core.sql_gen._seek import NullPattern, null_pattern
 from parallax.core.temporal_read import Pin, scans_validated_axis, validated_query_pin
-from parallax.core.unit_work import Concurrency, EntityStateRow
+from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import FindResult
-from parallax.snapshot.handle._paging import At, PagePlan, PageRequest, TieFound, page_decision
+from parallax.snapshot.handle._paging import At, PagePlan, TieFound, page_decision
+from parallax.snapshot.handle._preparation import (
+    PreparationCache,
+    PreparedDelivery,
+)
 from parallax.snapshot.handle._retention import ObservationLedger, ObservedRows, ReadSources
 from parallax.snapshot.materialize import (
     Page,
@@ -41,8 +43,9 @@ from parallax.snapshot.materialize import (
     UnwindTree,
     hydrates,
     page_rows,
+    root_last_uses,
 )
-from parallax.snapshot.materialize._page import ABSENT, exact_stored_equal
+from parallax.snapshot.materialize._page import exact_stored_equal, release_page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
@@ -52,7 +55,6 @@ if TYPE_CHECKING:
 __all__ = [
     "INERT",
     "CompiledRead",
-    "CompiledTemplate",
     "DeliveryPage",
     "DeliveryPlan",
     "EagerPageRead",
@@ -62,7 +64,6 @@ __all__ = [
     "RowPublication",
     "StreamPageRead",
     "compile_read",
-    "compile_template",
 ]
 
 
@@ -126,6 +127,8 @@ class EagerPageRead:
     preference: Concurrency | None
     ledger: ObservationLedger | None
     calls: DatabaseCallScope
+    edition: str = ""
+    cache: PreparationCache | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,36 +157,11 @@ class RowPublication:
     page: Page
 
 
-@dataclass(frozen=True, slots=True)
-class _RootTemplate:
-    plan: deep_fetch.ObjectQueryPlan
-    compiled: CompiledRead
-    positions: tuple[tuple[int, int], ...]
-    limit_positions: tuple[int, ...]
-
-    def render(
-        self, coordinate: ContinuationCoordinate, size: int
-    ) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
-        binds = list(self.compiled.statement.binds)
-        for bind_index, carrier in self.positions:
-            binds[bind_index] = coordinate.carriers[carrier]
-        for bind_index in self.limit_positions:
-            binds[bind_index] = size
-        statement = replace(self.compiled.statement, binds=tuple(binds))
-        return self.plan, replace(self.compiled, statement=statement)
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class DeliveryPlan:
-    """Pure paging policy plus delivery-owned compiled statement templates."""
+    """Pure paging policy for one streamed delivery."""
 
     paging: PagePlan
-    root_after: dict[NullPattern, _RootTemplate] = field(
-        default_factory=lambda: {}, compare=False, repr=False
-    )
-    children: dict[int, CompiledTemplate] = field(
-        default_factory=lambda: {}, compare=False, repr=False
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,17 +179,26 @@ class DeliveryPage:
 
 @dataclass(slots=True)
 class _RootRead:
+    delivery: PreparedDelivery
     plan: deep_fetch.ObjectQueryPlan
     prepared: PreparedRead
-    rows: tuple[Row, ...]
+    rows: list[Row]
     coordinates: tuple[ContinuationCoordinate | None, ...]
     temporal: tuple[ValidatedTemporalSelection, ...]
     observer: MaterializationObserver = INERT
 
-    def take_rows(self) -> tuple[Row, ...]:
+    def take_rows(self) -> list[Row]:
         rows = self.rows
-        self.rows = ()
+        self.rows = []
         return rows
+
+
+def _drain_rows(rows: list[Row]) -> Iterator[Row]:
+    """Yield transferred driver rows while releasing each consumed tuple."""
+    for index in range(len(rows)):
+        row = rows[index]
+        rows[index] = cast("Row", ())
+        yield row
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +212,8 @@ class StreamPageRead:
     preference: Concurrency | None
     ledger: ObservationLedger | None
     calls: DatabaseCallScope
+    edition: str = ""
+    cache: PreparationCache | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +242,8 @@ class Materializer:
                 request.port,
                 preference=request.preference,
                 calls=request.calls,
+                edition=request.edition,
+                cache=request.cache,
             )
             return self._build_page(
                 roots,
@@ -325,40 +316,35 @@ class Materializer:
         *,
         preference: Concurrency | None = None,
         calls: DatabaseCallScope,
-        plan: deep_fetch.ObjectQueryPlan | None = None,
-        compiled: CompiledRead | None = None,
+        edition: str = "",
+        cache: PreparationCache | None = None,
+        delivery: PreparedDelivery | None = None,
     ) -> _RootRead:
         """Plan and execute the root statement for one Page."""
-        from parallax.snapshot.handle._read import entity_read_lock, execute_read
+        from parallax.snapshot.handle._read import execute_read
 
-        meta = model.meta
-        planned = (
-            deep_fetch.plan(
-                query,
-                meta,
-                projection=deep_fetch.ReadProjectionRequest("all", True),
-            )
-            if plan is None
-            else plan
-        )
-        if compiled is None:
-            compiled = compile_read(
-                planned.root,
-                meta,
-                port.dialect,
+        if delivery is None:
+            preparations = cache if cache is not None else PreparationCache(capacity=1)
+            delivery = preparations.prepare(
+                edition=edition,
+                model=model,
+                dialect=port.dialect,
+                query=query,
                 result_form="instance",
-                lock=entity_read_lock(meta, query.root.identity, preference),
+                preference=preference,
             )
-        prepared = bind(model, compiled)
-        self.observer.prepared(len(planned.levels) + 1)
+        planned_read = delivery.plan
+        compiled_read = delivery.root
+        self.observer.prepared(len(planned_read.levels) + 1)
         self.observer.statement_rendered(ROOT_LEVEL)
-        driver_rows = execute_read(port, compiled, calls)
+        driver_rows = execute_read(port, compiled_read, calls)
         self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
         return _RootRead(
-            plan=planned,
-            prepared=prepared,
-            rows=tuple(driver_rows),
-            coordinates=tuple(compiled.row_header(row)[3] for row in driver_rows),
+            delivery=delivery,
+            plan=planned_read,
+            prepared=delivery.root_rows,
+            rows=list(driver_rows),
+            coordinates=tuple(compiled_read.row_header(row)[3] for row in driver_rows),
             temporal=query.temporal,
             observer=self.observer,
         )
@@ -370,73 +356,6 @@ class Materializer:
             raise SqlGenError("a paging read returned a root carrying no evaluated coordinate")
         return cast("tuple[ContinuationCoordinate, ...]", coordinates)
 
-    @staticmethod
-    def _compiled_root(
-        delivery: DeliveryPlan,
-        query: ValidatedObjectQuery,
-        coordinate: ContinuationCoordinate | None,
-        request: PageRequest,
-        model: CatalogedModel,
-        port: DatabaseConnection,
-        preference: Concurrency | None,
-    ) -> tuple[deep_fetch.ObjectQueryPlan, CompiledRead]:
-        from parallax.snapshot.handle._read import entity_read_lock
-
-        page_plan = delivery.paging
-        meta = model.meta
-        if coordinate is None:
-            planned = deep_fetch.plan(
-                query,
-                meta,
-                projection=deep_fetch.ReadProjectionRequest("all", True),
-            )
-            return planned, compile_read(
-                planned.root,
-                meta,
-                port.dialect,
-                result_form="instance",
-                lock=entity_read_lock(meta, query.root.identity, preference),
-            )
-        pattern = null_pattern(coordinate)
-        template = delivery.root_after.get(pattern)
-        if template is None:
-            markers = tuple(None if missing else object() for missing in pattern)
-            template_query = page_plan.plan.after(
-                ContinuationCoordinate(markers), limit=request.size
-            )
-            planned = deep_fetch.plan(
-                template_query,
-                meta,
-                projection=deep_fetch.ReadProjectionRequest("all", True),
-            )
-            limit_marker = object()
-            compiled = compile_read(
-                replace(planned.root, limit=cast("int", limit_marker)),
-                meta,
-                port.dialect,
-                result_form="instance",
-                lock=entity_read_lock(meta, template_query.root.identity, preference),
-            )
-            positions = tuple(
-                (bind_index, carrier_index)
-                for bind_index, bind_value in enumerate(compiled.statement.binds)
-                for carrier_index, marker in enumerate(markers)
-                if marker is not None and bind_value is marker
-            )
-            expected = {index for index, marker in enumerate(markers) if marker is not None}
-            if {carrier for _bind, carrier in positions} != expected:
-                raise SqlGenError("compiled continuation lost a non-null coordinate bind")
-            limit_positions = tuple(
-                bind_index
-                for bind_index, bind_value in enumerate(compiled.statement.binds)
-                if bind_value is limit_marker
-            )
-            if not limit_positions:  # pragma: no cover - compile_read preserves the query limit
-                raise SqlGenError("compiled continuation lost its page limit bind")
-            template = _RootTemplate(planned, compiled, positions, limit_positions)
-            delivery.root_after[pattern] = template
-        return template.render(coordinate, request.size)
-
     def _build_page(
         self,
         root_read: _RootRead,
@@ -446,23 +365,25 @@ class Materializer:
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope,
-        templates: dict[int, CompiledTemplate] | None = None,
     ) -> FindResult:
         """Convert roots and execute every reachable child level into one Page."""
         from parallax.snapshot.handle import _read
 
         meta = model.meta
         planned = root_read.plan
-        builder = PageBuilder(ViewSchema(_read.slot_table(planned)), root_read.observer)
+        builder = PageBuilder(
+            root_read.delivery.schema,
+            None if root_read.observer is INERT else root_read.observer,
+        )
         observations = ObservedRows()
-        correlations = _read.correlation_table(planned, meta)
+        correlations = root_read.delivery.correlations
 
         root_rows = root_read.take_rows()
         root_refs = _read.convert_rows(
             builder,
             ROOT_LEVEL,
             root_read.prepared,
-            root_rows,
+            _drain_rows(root_rows),
             observations,
             correlations[ROOT_LEVEL],
         )
@@ -479,7 +400,15 @@ class Materializer:
                     isinstance(level.parent, deep_fetch.RootRef) or level.parent.index in completed
                 )
             ]
-            pending: list[tuple[int, deep_fetch.FetchLevel, tuple[int, ...], CompiledRead]] = []
+            pending: list[
+                tuple[
+                    int,
+                    deep_fetch.FetchLevel,
+                    tuple[int, ...],
+                    CompiledRead,
+                    PreparedRead,
+                ]
+            ] = []
             for index in ready:
                 level = planned.levels[index]
                 parents = _read.guarded_parents(
@@ -500,32 +429,22 @@ class Materializer:
                     _read.attach_empty(builder, level, parents)
                     completed.add(index)
                     continue
-                child_query = level.query_template()
-                template = None if templates is None else templates.get(index)
-                if template is None:
-                    template = compile_template(
-                        child_query,
-                        meta,
-                        port.dialect,
-                        result_form="instance",
-                        lock=_read.entity_read_lock(meta, child_query.target, preference),
-                    )
-                    if templates is not None:
-                        templates[index] = template
+                child = root_read.delivery.children[index]
+                if child is None:  # pragma: no cover - back references continue above
+                    raise ValueError("an executable child level requires a prepared template")
                 root_read.observer.statement_rendered(index + 1)
-                pending.append((index, level, parents, template.render(keys)))
+                pending.append((index, level, parents, child.template.render(keys), child.rows))
 
             if len(pending) == 1:
-                for index, level, parents, compiled in pending:
-                    child_refs = _read.convert_level(
+                for index, level, parents, compiled, prepared in pending:
+                    rows = _read.execute_read(port, compiled, calls)
+                    root_read.observer.statement_executed(index + 1, len(rows))
+                    child_refs = _read.convert_rows(
                         builder,
                         index + 1,
-                        model,
-                        port,
-                        compiled,
-                        calls,
+                        prepared,
+                        rows,
                         observations,
-                        root_read.observer,
                         correlations[index + 1],
                     )
                     _read.attach_children(builder, meta, level, parents, child_refs)
@@ -534,7 +453,7 @@ class Materializer:
             elif pending:
                 with ExitStack() as stack:
                     call_contexts: list[DatabaseCallActivity] = []
-                    for _index, _level, _parents, compiled in pending:
+                    for _index, _level, _parents, compiled, _prepared in pending:
                         context = calls.database_call(compiled.statement, "read", compiled.target)
                         call_contexts.append(context.__enter__())
                         stack.push(context.__exit__)
@@ -545,18 +464,19 @@ class Materializer:
                                 compiled.statement.binds,
                                 compiled.document_reads,
                             )
-                            for _index, _level, _parents, compiled in pending
+                            for _index, _level, _parents, compiled, _prepared in pending
                         )
                     )
                     for call, rows in zip(call_contexts, batches, strict=True):
                         call.read_completed(rows)
-                for (index, level, parents, compiled), rows in zip(pending, batches, strict=True):
+                for (index, level, parents, _compiled, prepared), rows in zip(
+                    pending, batches, strict=True
+                ):
                     root_read.observer.statement_executed(index + 1, len(rows))
-                    child_refs = _read.convert_level_rows(
+                    child_refs = _read.convert_rows(
                         builder,
                         index + 1,
-                        model,
-                        compiled,
+                        prepared,
                         rows,
                         observations,
                         correlations[index + 1],
@@ -569,7 +489,7 @@ class Materializer:
         page = builder.finish(root_refs, pin)
         return FindResult(
             page=page,
-            includes=_read.include_tree(planned.levels),
+            includes=root_read.delivery.includes,
             sources=self._retained(
                 meta,
                 root_read.temporal,
@@ -595,33 +515,42 @@ class Materializer:
         from parallax.snapshot.handle._retention import deferred_evidence
 
         rows = page_rows(page)
-        state_rows: dict[object, EntityStateRow] = {}
 
-        def admitted(node: int) -> EntityStateRow | None:
+        def admitted(node: int) -> tuple[EntityLayout, tuple[object, ...]] | None:
             key = rows.keys[node]
-            states = () if key is None else rows.judged_states.get(key, ())
-            state = next(
-                (
-                    value
-                    for witness, value in states
-                    if exact_stored_equal(rows.witnesses[node], rows.witnesses[witness])
-                ),
-                None,
+            logical = rows.logical_ids[node]
+            claim = rows.claims[logical]
+            singleton = rows.judged_states.singleton(logical)
+            states = (
+                () if key is None or isinstance(claim, int) else rows.judged_states.group(logical)
+            )
+            state = (
+                singleton
+                if isinstance(claim, int)
+                else next(
+                    (
+                        value
+                        for witness, value in states
+                        if exact_stored_equal(rows.witnesses[node], rows.witnesses[witness])
+                    ),
+                    None,
+                )
             )
             # Invalid roots suppress their complete origin map before this callback.
             if key is None or state is None or not hydrates(state.findings):  # pragma: no cover
                 return None
-            held = state_rows.get(key)
-            if held is None:
-                held = EntityStateRow.over_state(rows.layouts[node], state, absent=ABSENT)
-                state_rows[key] = held
-            return held
+            return rows.layouts[node], state.member_row
+
+        def primary_key(node: int) -> object | None:
+            key = rows.keys[node]
+            return None if key is None else key.primary_key
 
         return deferred_evidence(
             meta,
             observations,
             admitted,
             lambda node: rows.layouts[node].concrete,
+            primary_key,
             ledger=ledger,
             pin=pin,
         )
@@ -636,23 +565,14 @@ class Materializer:
             if request.at.coordinate is None
             else page_plan.plan.after(request.at.coordinate, limit=page_request.size)
         )
-        planned, compiled = self._compiled_root(
-            delivery,
-            query,
-            request.at.coordinate,
-            page_request,
-            request.model,
-            request.port,
-            request.preference,
-        )
         root_read = self._read_root(
             query,
             request.model,
             request.port,
             preference=request.preference,
             calls=request.calls,
-            plan=planned,
-            compiled=compiled,
+            edition=request.edition,
+            cache=request.cache,
         )
         coordinates = self._coordinates(root_read)
         terms = tuple(term.member.identity for term in query.order_by)
@@ -671,7 +591,6 @@ class Materializer:
             preference=request.preference,
             ledger=request.ledger,
             calls=request.calls,
-            templates=delivery.children,
         )
         return DeliveryPage(
             page=result.page,
@@ -691,22 +610,49 @@ class Materializer:
         atomic: bool = False,
         ordinal_offset: int = 0,
         pins: Sequence[Pin | None] | None = None,
+        prepare: Callable[[RootView], None] | None = None,
     ) -> Iterator[T]:
         """Judge and publish one Page root at a time through one shared seam."""
         if pins is not None and len(pins) != page.root_count:
             raise ValueError("root pin count must match the Page root count")
         if atomic:
-            prepared: list[tuple[int, tuple[T, ...]]] = []
+            rows = page_rows(page)
+            deferred_states = all(
+                rows.layouts[root].temporal_starts
+                or any(attribute.optimistic_locking for attribute in rows.layouts[root].attributes)
+                for root in rows.roots
+            )
+            last_uses = (
+                root_last_uses(page)
+                if deferred_states or any(not isinstance(claim, int) for claim in rows.claims)
+                else None
+            )
+            prepared: list[T] = []
+            published_counts = array("I")
             for position in range(page.root_count):
                 pin = None if pins is None else pins[position]
-                root = RootView(page, position, pin=pin)
-                prepared.append((position, tuple(publish(root, position))))
-            for position, roots in prepared:
-                yield from roots
+                root = RootView(page, position, pin=pin, defer_states=deferred_states)
+                root.complete()
+                if prepare is not None:
+                    prepare(root)
+                if last_uses is None:
+                    root.release_raw_rows()
+                else:
+                    root.release_finished_page_rows(position, last_uses)
+                before = len(prepared)
+                prepared.extend(publish(root, position))
+                published_counts.append(len(prepared) - before)
+            release_page_rows(page)
+            prepared_position = 0
+            for position, count in enumerate(published_counts):
+                for root in prepared[prepared_position : prepared_position + count]:
+                    yield root
+                prepared_position += count
                 self.observer.root_published(ordinal_offset + position)
             return
         for position in range(page.root_count):
             pin = None if pins is None else pins[position]
             root = RootView(page, position, pin=pin)
+            root.release_raw_rows()
             yield from publish(root, position)
             self.observer.root_published(ordinal_offset + position)

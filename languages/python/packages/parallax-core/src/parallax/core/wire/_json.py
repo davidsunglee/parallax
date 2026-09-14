@@ -6,7 +6,7 @@ import decimal
 import json
 import math
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Self, cast
 
 from parallax.core.base._neutral import ManagedValueExclusion
@@ -26,13 +26,14 @@ class _ImmutableAuthoredNumber:
 class _AuthoredInt(int, _ImmutableAuthoredNumber):
     token: str
 
-    def __new__(cls, token: str) -> _AuthoredInt:
+    def __new__(cls, token: str) -> int:
         if exceeds_json_int_space(token):
             return _OutOfSpaceAuthoredInt(token)
-        value = int(decimal.Decimal(token))
-        number = super().__new__(cls, value)
-        number.token = token
-        return number
+        if token == "-0":
+            number = int.__new__(cls, 0)
+            number.token = token
+            return number
+        return int(token)
 
 
 class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
@@ -45,10 +46,12 @@ class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
 class _AuthoredFloat(float, _ImmutableAuthoredNumber):
     token: str
 
-    def __new__(cls, token: str) -> _AuthoredFloat:
+    def __new__(cls, token: str) -> float:
         value = float(token)
         if not math.isfinite(value):
             return _OutOfSpaceAuthoredFloat(token)
+        if decimal.Decimal(token) == decimal.Decimal.from_float(value):
+            return value
         number = super().__new__(cls, value)
         number.token = token
         return number
@@ -88,28 +91,49 @@ def _decoded_source(text: str | bytes) -> str:
     return text.decode(json.detect_encoding(text), errors="surrogatepass")
 
 
-def loads(text: str | bytes) -> WireValue:
-    """Parse any JSON root, rejecting duplicate names and non-JSON constants."""
-    source = _decoded_source(text)
+class _PreparedLoader:
+    __slots__ = ("_decoder", "_name_cache", "_source")
 
-    def reject_constant(token: str) -> object:
-        raise json.JSONDecodeError(f"invalid JSON numeric constant {token!r}", source, 0)
+    def __init__(self, name_cache: dict[str, str] | None) -> None:
+        self._name_cache = name_cache
+        self._source = ""
+        self._decoder = json.JSONDecoder(
+            parse_int=_AuthoredInt,
+            parse_float=_AuthoredFloat,
+            parse_constant=self._reject_constant,
+            object_pairs_hook=self._unique_object,
+        )
 
-    def unique_object(pairs: list[tuple[str, object]]) -> Mapping[str, object]:
+    def __call__(self, text: str | bytes) -> WireValue:
+        self._source = _decoded_source(text)
+        try:
+            return cast("WireValue", self._decoder.decode(self._source))
+        finally:
+            self._source = ""
+
+    def _reject_constant(self, token: str) -> object:
+        raise json.JSONDecodeError(f"invalid JSON numeric constant {token!r}", self._source, 0)
+
+    def _unique_object(self, pairs: list[tuple[str, object]]) -> Mapping[str, object]:
         value: dict[str, object] = {}
         for name, member in pairs:
+            if self._name_cache is not None:
+                name = self._name_cache.setdefault(name, name)
             if name in value:
-                raise json.JSONDecodeError(f"duplicate object member name {name!r}", source, 0)
+                raise json.JSONDecodeError(
+                    f"duplicate object member name {name!r}", self._source, 0
+                )
             value[name] = member
         return value
 
-    return cast(
-        "WireValue",
-        json.loads(
-            text,
-            parse_int=_AuthoredInt,
-            parse_float=_AuthoredFloat,
-            parse_constant=reject_constant,
-            object_pairs_hook=unique_object,
-        ),
-    )
+
+def prepared_loads(
+    *, name_cache: dict[str, str] | None = None
+) -> Callable[[str | bytes], WireValue]:
+    """Prepare strict JSON decoding state for a sequence of independent values."""
+    return _PreparedLoader(name_cache)
+
+
+def loads(text: str | bytes, *, name_cache: dict[str, str] | None = None) -> WireValue:
+    """Parse any JSON root, rejecting duplicate names and non-JSON constants."""
+    return _PreparedLoader(name_cache)(text)

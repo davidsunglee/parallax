@@ -55,7 +55,7 @@ from parallax.snapshot import (
     prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, Transaction, _materialization
+from parallax.snapshot.handle import Database, Transaction, _materialization, _preparation
 from parallax.snapshot.materialize import read_origin_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -407,12 +407,18 @@ def test_a_delivery_compiles_each_structural_statement_once(
     root_compiles = 0
     child_compiles = 0
     compile_root = cast("Callable[..., Any]", vars(_materialization)["compile_read"])
-    compile_child = cast("Callable[..., Any]", vars(_materialization)["compile_template"])
+    prepare_root = cast("Callable[..., Any]", vars(_preparation)["compile_read"])
+    compile_child = cast("Callable[..., Any]", vars(_preparation)["compile_template"])
 
     def counting_root(*args: Any, **kwargs: Any) -> Any:
         nonlocal root_compiles
         root_compiles += 1
         return compile_root(*args, **kwargs)
+
+    def counting_prepared_root(*args: Any, **kwargs: Any) -> Any:
+        nonlocal root_compiles
+        root_compiles += 1
+        return prepare_root(*args, **kwargs)
 
     def counting_child(*args: Any, **kwargs: Any) -> Any:
         nonlocal child_compiles
@@ -420,7 +426,8 @@ def test_a_delivery_compiles_each_structural_statement_once(
         return compile_child(*args, **kwargs)
 
     monkeypatch.setattr(_materialization, "compile_read", counting_root)
-    monkeypatch.setattr(_materialization, "compile_template", counting_child)
+    monkeypatch.setattr(_preparation, "compile_read", counting_prepared_root)
+    monkeypatch.setattr(_preparation, "compile_template", counting_child)
     port = ScriptedAdapter(
         Read(rows=[_order_row(1), _order_row(2), _order_row(3)]),
         Read(rows=[_item_row(10, 1), _item_row(11, 2)]),
