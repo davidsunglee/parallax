@@ -12,10 +12,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 
-from parallax.conformance.budget import BudgetContract
-from parallax.conformance.cost_envelope import Diagnostic, validate
+from jsonschema import ValidationError
 
-REPO: Final = Path(__file__).resolve().parents[3]
+from parallax.conformance.budget import BudgetContract
+from parallax.conformance.cost_envelope import Reading, validate
+from snapshot_delivery_overhead import (
+    comparison as snapshot_comparison,
+)
+from snapshot_delivery_overhead import (
+    expanded_cells,
+    is_memory_cell,
+    is_scaling_cell,
+)
+from snapshot_delivery_overhead import (
+    operator as snapshot_operator,
+)
+from snapshot_delivery_overhead import (
+    unit as snapshot_unit,
+)
+
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
 
@@ -26,7 +41,6 @@ class Member:
     script: str
     subject: str
     required: bool = False
-    envelope: bool = False
 
 
 MEMBERS: Final = (
@@ -35,7 +49,6 @@ MEMBERS: Final = (
         "snapshot_delivery_overhead.py",
         "snapshot-delivery",
         required=True,
-        envelope=True,
     ),
     Member("python-report-lifecycle-overhead", "lifecycle_overhead.py", "lifecycle-overhead"),
     Member("python-report-instance-state", "instance_state_overhead.py", "instance-state"),
@@ -76,40 +89,104 @@ def _decoded(member: Member, output: str) -> Mapping[str, object]:
             f"{member.recipe} emitted subject {document.get('subject')!r}, "
             f"expected {member.subject!r}"
         )
+    if member.subject == "snapshot-delivery":
+        validate_snapshot_matrix(document, BudgetContract.load())
     return document
 
 
-def legacy_envelope(
-    member: Member,
-    provenance: Mapping[str, object],
-    authority: object,
-    output: str,
-) -> Mapping[str, object]:
-    diagnostic = Diagnostic(
-        "legacy-evidence-report",
-        f"{member.recipe} remains text evidence; its successful output is retained separately",
+def _matrix(
+    documents: Sequence[Mapping[str, object]],
+    *,
+    label: str,
+) -> dict[tuple[str, str], Mapping[str, object]]:
+    indexed: dict[tuple[str, str], Mapping[str, object]] = {}
+    for document in documents:
+        address = (str(document["workload"]), str(document["cell"]))
+        if address in indexed:
+            raise ValueError(f"duplicate Snapshot {label} {address[0]}.{address[1]}")
+        indexed[address] = document
+    return indexed
+
+
+def validate_snapshot_matrix(document: Mapping[str, object], contract: BudgetContract) -> None:
+    """Validate the exact contract-derived Snapshot report matrix."""
+    cells = expanded_cells(contract)
+    expected = {(cell.workload, cell.path): cell for cell in cells}
+    readings = _matrix(
+        cast("Sequence[Mapping[str, object]]", document["readings"]), label="reading"
     )
-    document: dict[str, object] = {
-        "schemaVersion": 1,
-        "subject": member.subject,
-        "provenance": dict(provenance),
-        "authority": authority,
-        "readings": [],
-        "comparisons": [],
-        "incomplete": [diagnostic.__dict__]
-        if hasattr(diagnostic, "__dict__")
-        else [{"code": diagnostic.code, "message": diagnostic.message}],
-        "errors": [],
-    }
-    validate(document)
-    return document
+    comparisons = _matrix(
+        cast("Sequence[Mapping[str, object]]", document["comparisons"]),
+        label="comparison",
+    )
+    for label, actual in (("reading", readings), ("comparison", comparisons)):
+        missing = expected.keys() - actual.keys()
+        extra = actual.keys() - expected.keys()
+        if missing or extra:
+            details = [
+                *(f"missing {workload}.{cell}" for workload, cell in sorted(missing)),
+                *(f"unexpected {workload}.{cell}" for workload, cell in sorted(extra)),
+            ]
+            raise ValueError(f"Snapshot {label} matrix is not exact: {', '.join(details)}")
+
+    memory_children = contract.memory_children
+    scaling_arms = contract.memory_scaling_arms
+    for address, cell in expected.items():
+        reading_document = readings[address]
+        expected_unit = snapshot_unit(cell.path)
+        if reading_document["unit"] != expected_unit:
+            raise ValueError(
+                f"{cell.workload}.{cell.path} reading unit {reading_document['unit']!r}, "
+                f"expected {expected_unit!r}"
+            )
+        samples = tuple(
+            _number(value) for value in cast("Sequence[object]", reading_document["samples"])
+        )
+        sample_count = (
+            memory_children * len(scaling_arms)
+            if is_scaling_cell(cell.path)
+            else memory_children
+            if is_memory_cell(cell.path)
+            else contract.timing_measured
+        )
+        if len(samples) != sample_count:
+            raise ValueError(
+                f"{cell.workload}.{cell.path} has {len(samples)} samples, expected {sample_count}"
+            )
+        value_samples = samples[:memory_children] if is_scaling_cell(cell.path) else samples
+        expected_value = statistics.median(value_samples)
+        actual_value = _number(reading_document["value"])
+        if actual_value != expected_value:
+            raise ValueError(
+                f"{cell.workload}.{cell.path} value {actual_value} disagrees with "
+                f"sample median {expected_value}"
+            )
+        reading = Reading(
+            cell.workload,
+            cell.path,
+            actual_value,
+            expected_unit,
+            samples,
+        )
+        expected_comparison = snapshot_comparison(cell, reading, contract, complete=True)
+        comparison_document = comparisons[address]
+        fields = {
+            "operator": snapshot_operator(cell.path),
+            "limit": float(cell.value),
+            "unit": expected_unit,
+            "outcome": expected_comparison.outcome,
+        }
+        for name, expected_value in fields.items():
+            if comparison_document[name] != expected_value:
+                raise ValueError(
+                    f"{cell.workload}.{cell.path} comparison {name} "
+                    f"{comparison_document[name]!r}, expected {expected_value!r}"
+                )
 
 
 def collect(runner: Runner = run_member) -> tuple[list[MemberResult], bool]:
     """Attempt every member and fail only after required envelope validation."""
     results: list[MemberResult] = []
-    provenance: Mapping[str, object] | None = None
-    authority: object = "non-authoritative"
     for member in MEMBERS:
         returncode, stdout, stderr = runner(member)
         if returncode != 0:
@@ -122,16 +199,9 @@ def collect(runner: Runner = run_member) -> tuple[list[MemberResult], bool]:
             )
             continue
         try:
-            if member.envelope:
-                envelope = _decoded(member, stdout)
-                provenance = cast("Mapping[str, object]", envelope["provenance"])
-                authority = envelope["authority"]
-            elif provenance is None:
-                raise ValueError("the required Snapshot delivery envelope supplied no provenance")
-            else:
-                envelope = legacy_envelope(member, provenance, authority, stdout)
+            envelope = _decoded(member, stdout)
             results.append(MemberResult(member, envelope))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as error:
             results.append(MemberResult(member, None, str(error)))
     failed_required = any(result.member.required and result.envelope is None for result in results)
     return results, failed_required
@@ -202,23 +272,30 @@ def write_portfolio(results: Sequence[MemberResult], out: Path) -> None:
             )
 
 
-def _snapshot(document: Mapping[str, object]) -> Mapping[str, object] | None:
+def _snapshots(document: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
     members = cast("Sequence[Mapping[str, object]]", document.get("members", ()))
-    return next(
-        (member for member in members if member.get("subject") == "snapshot-delivery"), None
-    )
+    return tuple(member for member in members if member.get("subject") == "snapshot-delivery")
+
+
+def _snapshot(document: Mapping[str, object]) -> Mapping[str, object] | None:
+    snapshots = _snapshots(document)
+    return snapshots[0] if len(snapshots) == 1 else None
 
 
 def verify(document: Mapping[str, object], contract: BudgetContract | None = None) -> list[str]:
     """Return every reason the required portfolio is not authoritative and within."""
     active = contract or BudgetContract.load()
-    snapshot = _snapshot(document)
-    if snapshot is None:
+    snapshots = _snapshots(document)
+    if not snapshots:
         return ["the portfolio has no required snapshot-delivery envelope"]
+    if len(snapshots) != 1:
+        return ["the portfolio has more than one snapshot-delivery envelope"]
+    snapshot = snapshots[0]
     failures: list[str] = []
     try:
         validate(snapshot)
-    except (KeyError, TypeError, ValueError) as error:
+        validate_snapshot_matrix(snapshot, active)
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
         return [f"the snapshot-delivery envelope is invalid: {error}"]
     if snapshot.get("authority") != "authoritative":
         failures.append("the snapshot-delivery envelope is not authoritative")
@@ -235,13 +312,19 @@ def verify(document: Mapping[str, object], contract: BudgetContract | None = Non
             )
     memory = cast("Mapping[str, object]", active.sampling["memory"])
     arm_limit = _number(memory["armGrowthMaxKiB"])
+    arm_size = active.memory_children
+    arm_count = len(active.memory_scaling_arms)
     readings = cast("Sequence[Mapping[str, object]]", snapshot.get("readings", ()))
     for reading in readings:
         cell = str(reading.get("cell"))
         samples = [_number(value) for value in cast("Sequence[object]", reading.get("samples", ()))]
-        if not cell.startswith("streamedMemory.") or len(samples) != 6:
+        if not cell.startswith("streamedMemory."):
             continue
-        growth = statistics.median(samples[3:]) - statistics.median(samples[:3])
+        arm_medians = [
+            statistics.median(samples[index * arm_size : (index + 1) * arm_size])
+            for index in range(arm_count)
+        ]
+        growth = max(arm_medians[1:]) - arm_medians[0]
         if growth > arm_limit:
             failures.append(
                 f"{reading.get('workload')}.{cell} grows {growth:.3f} KiB between memory arms"

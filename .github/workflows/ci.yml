@@ -275,6 +275,7 @@ jobs:
           name: python-cost-${{ env.BASE_SHA }}
           path: ${{ runner.temp }}/parallax-base/languages/python/reports/
       - name: Measure head
+        if: always() && !cancelled()
         shell: bash
         run: |
           uv sync --project languages/python --frozen

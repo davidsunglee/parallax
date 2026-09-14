@@ -24,6 +24,8 @@ NULL tail is retained by a second continuing-page arm, which is what keeps
 from __future__ import annotations
 
 import datetime as dt
+import gc
+import weakref
 from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -38,11 +40,13 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
+from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.temporal_read import Edge, Pin
+from parallax.core.wire import encode_wire
 from parallax.snapshot import (
     DeferredFeatureError,
     QueryTargetError,
@@ -56,6 +60,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, Transaction, _materialization, _read_plan
+from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize import read_origin_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -380,6 +385,110 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
     assert len(_reads(port)) == 4
+
+
+def test_one_wire_encoder_reuses_equal_expensive_values_across_pages_and_not_deliveries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded: list[object] = []
+    variants: list[object] = []
+    family_variant = wire_materialize._family_variant  # pyright: ignore[reportPrivateUsage]
+
+    def counting_encode(neutral_type: NeutralType, value: ManagedValue) -> object:
+        encoded.append(value)
+        return encode_wire(neutral_type, value)
+
+    def counting_variant(model: object, entity: object) -> str | None:
+        variants.append(entity)
+        return family_variant(model, entity)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(wire_materialize, "encode_managed_wire", counting_encode)
+    monkeypatch.setattr(wire_materialize, "_family_variant", counting_variant)
+    rows = [_order_row(index) for index in range(1, 4)]
+
+    for _ in range(2):
+        port = ScriptedAdapter(*paged_reads(rows, size=1))
+        with _orders(port).wire.stream(_all_orders(), batch_size=1) as stream:
+            assert [root["id"] for root in stream] == [1, 2, 3]
+
+    assert encoded.count(Decimal("10.50")) == 2
+    assert encoded.count(dt.date(2024, 1, 5)) == 2
+    assert len(variants) == 2
+
+
+def _observe_wire_encoders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[weakref.ReferenceType[object]]:
+    created: list[weakref.ReferenceType[object]] = []
+    factory = wire_materialize.shared_wire_encoder
+
+    class ObservedEncoder:
+        def __init__(self) -> None:
+            self.delegate = factory()
+
+        def __call__(self, *args: Any) -> object:
+            return self.delegate(*args)
+
+        def begin_page(self) -> None:
+            self.delegate.begin_page()
+
+        def release(self) -> None:
+            self.delegate.release()
+
+    def observed_encoder() -> ObservedEncoder:
+        encoder = ObservedEncoder()
+        created.append(weakref.ref(encoder))
+        return encoder
+
+    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", observed_encoder)
+    return created
+
+
+def test_an_exhausted_wire_stream_releases_its_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).wire.stream(
+        _all_orders(), batch_size=1
+    ) as stream:
+        assert [root["id"] for root in stream] == [1]
+        gc.collect()
+        assert len(created) == 1
+        assert created[0]() is None
+
+
+def test_a_failed_wire_stream_releases_its_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    failure = DatabaseError(category=None, native_code=None, message="the later page failed")
+    port = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]), Read(raises=failure))
+
+    with (
+        _orders(port).wire.stream(_all_orders(), batch_size=1) as stream,
+        raises_contextualized(DatabaseError),
+    ):
+        list(stream)
+    gc.collect()
+
+    assert len(created) == 1
+    assert created[0]() is None
+
+
+def test_closing_a_wire_stream_early_releases_its_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    stream = _orders(ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))).wire.stream(
+        _all_orders(), batch_size=1
+    )
+    with stream:
+        roots = iter(stream)
+        assert next(roots)["id"] == 1
+    gc.collect()
+
+    assert len(created) == 1
+    assert created[0]() is None
 
 
 def test_a_provider_failure_on_a_later_page_preserves_the_published_prefix() -> None:

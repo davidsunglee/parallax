@@ -125,6 +125,19 @@ def test_provenance_capture_records_the_current_host() -> None:
         Provenance.capture(contract, workload_digest="d" * 64, postgres=_MissingVersionSource())
 
 
+def test_provenance_capture_retains_a_members_own_sampling_protocol() -> None:
+    contract = BudgetContract.load()
+    sampling = {"timing": {"measuredPairs": 2}}
+    captured = Provenance.capture(
+        contract,
+        workload_digest="d" * 64,
+        postgres=_VersionSource(),
+        sampling=sampling,
+    )
+    assert captured.sampling == sampling
+    assert classify_authority(captured, contract) == "non-authoritative"
+
+
 def test_semantic_validation_recomputes_authority_and_requires_a_commit() -> None:
     contract = BudgetContract.load()
     envelope = CostReportEnvelope(

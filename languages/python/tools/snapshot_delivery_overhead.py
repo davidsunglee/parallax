@@ -35,7 +35,6 @@ from parallax.conformance.workloads import catalog, workload_digest
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
 SUBJECT: Final = "snapshot-delivery"
-MEMORY_ROOTS: Final = (200, 2_000)
 HASH_SEED: Final = "0"
 
 
@@ -44,6 +43,8 @@ class ChildRequest:
     workload: str
     cell: str
     roots: int
+    warmups: int
+    measured: int
     connection_info: str | None = None
 
 
@@ -92,6 +93,10 @@ def _child_command(request: ChildRequest) -> list[str]:
         request.cell,
         "--roots",
         str(request.roots),
+        "--warmups",
+        str(request.warmups),
+        "--measured",
+        str(request.measured),
     ]
     if request.connection_info is not None:
         command += ["--connection-info", request.connection_info]
@@ -199,10 +204,12 @@ def comparison(
     )
 
 
-def _reading(cell: BudgetCell, results: Sequence[ChildReading]) -> Reading:
+def _reading(
+    cell: BudgetCell, results: Sequence[ChildReading], scaling_arms: Sequence[int]
+) -> Reading:
     samples = tuple(sample for result in results for sample in (result.samples or (result.value,)))
     if is_scaling_cell(cell.path):
-        split = len(results) // len(MEMORY_ROOTS)
+        split = len(results) // len(scaling_arms)
         value = statistics.median(result.value for result in results[:split])
     else:
         value = statistics.median(samples)
@@ -218,15 +225,15 @@ def build_envelope(
     readings: list[Reading] = []
     diagnostics: list[Diagnostic] = []
     by_cell: dict[tuple[str, str], Reading] = {}
-    memory = cast("Mapping[str, object]", contract.sampling["memory"])
-    memory_children = int(_number(memory["children"]))
+    memory_children = contract.memory_children
+    scaling_arms = contract.memory_scaling_arms
     for cell in expanded_cells(contract):
         outcomes = results.get((cell.workload, cell.path), ())
         failures = [outcome for outcome in outcomes if isinstance(outcome, Diagnostic)]
         successful = [outcome for outcome in outcomes if isinstance(outcome, ChildReading)]
         diagnostics.extend(failures)
         expected = (
-            memory_children * len(MEMORY_ROOTS)
+            memory_children * len(scaling_arms)
             if is_scaling_cell(cell.path)
             else memory_children
             if is_memory_cell(cell.path)
@@ -241,7 +248,7 @@ def build_envelope(
                 )
             )
             continue
-        reading = _reading(cell, successful)
+        reading = _reading(cell, successful, scaling_arms)
         readings.append(reading)
         by_cell[(cell.workload, cell.path)] = reading
     complete = not diagnostics and len(readings) == len(expanded_cells(contract))
@@ -284,7 +291,15 @@ class _CanaryPostgres:
 
 def canary(contract: BudgetContract, runner: ChildRunner) -> CostReportEnvelope:
     cell = expanded_cells(contract)[0]
-    result = runner(ChildRequest(cell.workload, cell.path, 200))
+    result = runner(
+        ChildRequest(
+            cell.workload,
+            cell.path,
+            contract.memory_scaling_arms[0],
+            contract.timing_warmups,
+            contract.timing_measured,
+        )
+    )
     provenance = Provenance.capture(
         contract,
         workload_digest=workload_digest(),
@@ -302,15 +317,15 @@ def measure(
     results: dict[tuple[str, str], list[ChildResult]] = {
         (cell.workload, cell.path): [] for cell in cells
     }
-    memory = cast("Mapping[str, object]", contract.sampling["memory"])
-    memory_children = int(_number(memory["children"]))
+    memory_children = contract.memory_children
+    scaling_arms = contract.memory_scaling_arms
     for workload_id in contract.workload_ids:
         workload = workloads[workload_id]
         live = [
             cell for cell in cells if cell.workload == workload_id and needs_database(cell.path)
         ]
         if live:
-            workload.provision(provisioner, MEMORY_ROOTS[0])
+            workload.provision(provisioner, scaling_arms[0])
         for cell in live:
             repeats = memory_children if is_memory_cell(cell.path) else 1
             for _ in range(repeats):
@@ -319,33 +334,46 @@ def measure(
                         ChildRequest(
                             cell.workload,
                             cell.path,
-                            MEMORY_ROOTS[0],
+                            scaling_arms[0],
+                            contract.timing_warmups,
+                            contract.timing_measured,
                             provisioner.connection_info,
                         )
                     )
                 )
         memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
-        if memory_live:
-            workload.provision(provisioner, MEMORY_ROOTS[1])
-        for cell in memory_live:
-            for _ in range(memory_children):
-                results[(cell.workload, cell.path)].append(
-                    runner(
-                        ChildRequest(
-                            cell.workload,
-                            cell.path,
-                            MEMORY_ROOTS[1],
-                            provisioner.connection_info,
+        for roots in scaling_arms[1:]:
+            if memory_live:
+                workload.provision(provisioner, roots)
+            for cell in memory_live:
+                for _ in range(memory_children):
+                    results[(cell.workload, cell.path)].append(
+                        runner(
+                            ChildRequest(
+                                cell.workload,
+                                cell.path,
+                                roots,
+                                contract.timing_warmups,
+                                contract.timing_measured,
+                                provisioner.connection_info,
+                            )
                         )
                     )
-                )
         for cell in cells:
             if cell.workload != workload_id or needs_database(cell.path):
                 continue
             repeats = memory_children if is_memory_cell(cell.path) else 1
             for _ in range(repeats):
                 results[(cell.workload, cell.path)].append(
-                    runner(ChildRequest(cell.workload, cell.path, MEMORY_ROOTS[0]))
+                    runner(
+                        ChildRequest(
+                            cell.workload,
+                            cell.path,
+                            scaling_arms[0],
+                            contract.timing_warmups,
+                            contract.timing_measured,
+                        )
+                    )
                 )
     server_version = provisioner.port.execute("show server_version", ())[0][0]
     provenance = Provenance.capture(
