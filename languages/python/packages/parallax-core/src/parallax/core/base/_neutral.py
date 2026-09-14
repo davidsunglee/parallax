@@ -434,13 +434,13 @@ def _binary32_bits(magnitude: _Fraction) -> int:
     except OverflowError:  # pragma: no cover - the overflow threshold is checked first
         return _BINARY32_MAX_BITS
     try:
-        return int(cast("int", _struct.unpack("<I", _struct.pack("<f", approximate))[0]))
+        return int(_struct.unpack("<I", _struct.pack("<f", approximate))[0])
     except OverflowError:
         return _BINARY32_MAX_BITS
 
 
 def _binary32_at(bits: int) -> float:
-    return float(cast("float", _struct.unpack("<f", _struct.pack("<I", bits))[0]))
+    return float(_struct.unpack("<f", _struct.pack("<I", bits))[0])
 
 
 def _is_integer(value: object) -> TypeGuard[int]:
