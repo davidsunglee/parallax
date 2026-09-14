@@ -369,7 +369,7 @@ production converter, write every view as its level lands, seal, and merge.
 
 | before | after |
 | --- | --- |
-| `MergeScope(META)` | `GraphBuilder(ViewSchema(slot_table))` |
+| `MergeScope(META)` | the retired graph builder over `ViewSchema(slot_table)` |
 | `LevelContext(identity, documents)` | `LevelContext(layout, documents)` |
 | `convert_row(row, level, scope)` | `convert_row(row, level, builder, source=level)` |
 | `scope.attach(ref, view, value)` | `builder.write_view(projection, view, value)` |

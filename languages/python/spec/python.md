@@ -6498,6 +6498,14 @@ locking unions retain the core refusal.
   comparison never determines report exit status. Pull requests observe merge
   base and head on one assigned runner and main observes head, uploading
   commit-keyed envelopes and advisory summaries from a non-required CI job.
+- **Authoritative evidence.** The clean authoritative Snapshot delivery
+  envelope that closed the current Budget Contract is retained as review
+  evidence under `languages/python/docs/snapshot-delivery-envelope/`
+  (`portfolio.json` and `summary.md`). A database-free check recomputes its
+  Budget Contract, workload-catalog, and `uv.lock` digests from the committed
+  inputs, so the retained envelope and the contract it graded cannot drift
+  apart. Rebaselining replaces it with the clean authoritative envelope taken
+  under the revised contract.
   Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
   clean authoritative envelopes under both the old and proposed contracts plus an
   explicit reviewed contract change and rationale for every relaxed ceiling.
