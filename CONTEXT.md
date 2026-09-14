@@ -638,7 +638,7 @@ A query-backed result collection returned by `find`; it may resolve to zero, one
 _Avoid_: array, result array
 
 **Snapshot Graph**:
-A typed plain value graph returned by a snapshot read: identity-resolved within the graph (one node per row), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
+A typed plain value graph returned by a snapshot read: identity-resolved within its root (one node per logical Entity key that root reaches), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
 **Page**:
@@ -669,6 +669,15 @@ occurrence, together with its resolved concrete Entity. Equal witnesses share
 one judgment; unequal witnesses for one logical key are a Snapshot Projection
 Conflict.
 _Avoid_: decoded Entity State, raw row result, optimistic-lock evidence
+
+**Snapshot Projection Conflict**:
+The fatal verdict when one Root View reaches unequal Payload Witnesses for one
+logical key. No projection wins, the root publishes no node or Entity State
+and retains no write authority, and the verdict does not depend on include-path
+or arrival order. Eager delivery withholds the whole result; streamed delivery
+keeps the prefix already published.
+_Avoid_: invalid stored data, stale read, optimistic-lock conflict, duplicate
+row error
 
 **Snapshot Stream**:
 A scope-bound, single-pass delivery of roots in one Continuation Order: each
@@ -1057,8 +1066,7 @@ Callers cannot construct or attach a Read Origin. Any finding suppresses Read
 Origins for the complete invalid root-local graph, including hydratable
 diagnostic data. A separate valid root reaching the same page-owned Entity State
 publishes a distinct node that may carry its own origin.
-_Avoid_: Source Hint, Observation Hint, Observation Key, capability token,
-metadata field
+_Avoid_: Observation Hint, Observation Key, capability token, metadata field
 
 **Observed State Key**:
 The internal Unit Work address of one exact observed state: either an Object Key

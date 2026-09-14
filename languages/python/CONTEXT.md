@@ -187,6 +187,16 @@ rather than a public extension point, and no result, stream, or view answers it
 to a caller.
 _Avoid_: read session, read context, query executor, find service, read facade
 
+**Read Plan**:
+The immutable planning result one private `ReadPlanner.plan(...)` call answers
+for a validated query: compiled statement templates, row conversion
+preparation, correlations, include structure, and prepared Page schema, with
+no runtime, connection, Page, or result inside it. A `Database` owns one
+planner and a true least-recently-used cache of plans bounded by
+`read_plan_cache_capacity` (default 16; 0 disables reuse), keyed by the exact
+query value rather than its shape.
+_Avoid_: query cache, prepared statement, compiled read, plan cache entry size
+
 **Snapshot**:
 The fully materialized generic container returned by a Typed or Wire `find`,
 with arity accessors plus the result's Pin. Its element is an
@@ -219,6 +229,14 @@ _Avoid_: Checked Snapshot, root wrapper, copied graph
 One occurrence's resolved concrete Entity and exact positional provider payload,
 compared before decoding against every occurrence claiming the same logical key.
 _Avoid_: canonical Wire value, Entity State, observation row
+
+**SnapshotConsistencyError**:
+The `RuntimeError` subclass, exported from `parallax.snapshot` with stable code
+`snapshot-projection-conflict`, that ordinary and checked delivery raise at a
+root whose Root View found a Snapshot Projection Conflict. It names the logical
+Object Key, lowered coordinates, differing declared-member identities, and
+occurrence positions, and carries no raw stored value.
+_Avoid_: InvalidDataError, decoding error, optimistic-lock error, warning
 
 **Checked Snapshot**:
 The read-only `CheckedSnapshot[T]` view returned by `Snapshot.checked()`. It
@@ -615,3 +633,30 @@ The closure passed to `db.transact`, receiving the Parallax Transaction; it
 must be safe to re-execute because the bounded automatic retry loop re-runs it
 against fresh state in a new atomic scope.
 _Avoid_: with-block, context manager, transaction script
+
+### Measurement
+
+**Budget Contract**:
+The machine-readable `spec/budget-contract.yaml`, the sole source of the
+Snapshot delivery workload identifiers, benchmark fixture ownership, authority
+fingerprint, sampling protocol, and every absolute ceiling. `spec/python.md` §10
+defines its semantics; `parallax.conformance.budget` loads it; no report, gate,
+or baseline document transcribes a threshold from it.
+_Avoid_: performance baseline, benchmark config, SLA, CI threshold file
+
+**Cost Report Envelope**:
+The versioned document every quantitative `python-report-*` member emits under
+`spec/cost-report-envelope.schema.json`: subject, readings and units, declared
+comparisons, provenance, authority classification, and explicit incompleteness
+and errors. Only a clean committed run whose fingerprint matches the Budget
+Contract is `authoritative`; the retained authoritative envelope lives under
+`docs/snapshot-delivery-envelope/`.
+_Avoid_: benchmark log, summary table, CI artifact, verdict
+
+**Snapshot Delivery Workload Catalog**:
+`parallax.conformance.workloads`, the one Python reader of the benchmark
+fixtures that carry an `objectQuery` and `delivery.pageSizes`. It owns fixture
+discovery, Object Query lowering, provider-free generated rows, and live
+provisioning input for every measurement consumer; none of them knows a fixture
+path or a generation recipe.
+_Avoid_: benchmark suite, fixture loader, test data factory, workload config

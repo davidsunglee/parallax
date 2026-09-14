@@ -8,7 +8,7 @@ representation, while writes from both representations coalesce and flush
 through the shared transaction machinery. A Wire Entity returned by a Parallax
 Wire read may carry an opaque Read Origin identifying its exact concrete Entity
 and original Object Key and, when the Entity requires write evidence, selecting
-its observed state. The hint is not itself a Write Observation or public
+its observed state. The Read Origin is not itself a Write Observation or public
 authority; it selects the authentic source's privately retained evidence, which
 the writing Unit Work validates and adopts. Observed State Keys remain internal.
 Every existing-object keyed write requires

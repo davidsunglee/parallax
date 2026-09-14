@@ -132,7 +132,7 @@ survivors are the generator.
 real inaccuracy and each left another standing, two of them aimed squarely at
 this class. Nothing in the repository gates that a bucket's stated reason is true
 of its members: the coverage partition
-(`tests/unit/test_api_suite.py::test_registry_classifies_every_active_module_without_stale_entries`)
+(`tests/unit/conformance/test_api_suite.py::test_registry_classifies_every_active_module_without_stale_entries`)
 checks that every active case is claimed by exactly one registry and that no
 entry names nothing, and is indifferent to what the prose asserts. A wrong
 sentence therefore costs nothing until an external reviewer reads it, which is
@@ -162,7 +162,7 @@ a flush, and never by a destructive write after one, since a flushed insert is
 not pending. So the sequence
 `tx.insert(a)`, then a participating read that force-flushes the buffer, then a
 keyed write of that same object, resolves **no** evidence: the insert is no
-longer pending, the value the caller still holds carries no Source Hint, and the
+longer pending, the value the caller still holds carries no Read Origin, and the
 write reaches settlement with nothing to advance from or gate on. A versioned
 target fails at settlement despite the transaction holding a perfectly fresh
 observation of the row the flush just wrote. It reproduces identically through
@@ -171,7 +171,7 @@ door reads that same ledger for the opposite verdict
 (`_write_inputs.refuse_repeated_insert`), so the flush's non-retirement has a
 second face: after the flush the object can be neither written with evidence
 nor inserted again. Both faces are pinned as fixed expectations
-(`tests/unit/test_keyed_write_order.py`'s reread axis), and both move with
+(`tests/unit/snapshot/handle/test_keyed_write_order.py`'s reread axis), and both move with
 whatever answer flush-time retirement gets.
 
 **Why it is deferred rather than fixed.** It is an evidence-**lifetime** question
@@ -233,7 +233,7 @@ the second grader every other claimed observable has.
 ### D-75 — A READLESS predicate write step is refused on the snapshot-scenario lane, though nothing about that shape conflicts with it
 
 *Low — a refusal narrower than it needs to be, on a shape no case authors.*
-Relates to `parallax.conformance.engine._snapshot_write_entries`.
+Relates to `parallax.conformance._lanes.snapshot._snapshot_write_entries`.
 
 **What.** The snapshot-scenario lane now executes `write:` steps, and it admits
 the buffered KEYED instruction list alone: `_snapshot_write_entries` classifies
@@ -257,7 +257,7 @@ permanent.
 ### D-77 — The interleaved-`uow`-group runner refuses a step stating relationship contents, though its own find interpreter already holds what would answer one
 
 *Low — a refusal on a shape no case authors.* Relates to
-`parallax.conformance.engine.run_interleaved_scenario_case`.
+`parallax.conformance._lanes.interleaved.run_interleaved_scenario_case`.
 
 **What.** `expectGraph`'s READ placement is legal on any include-bearing read step
 (`core/spec/m-case-format.md` *Relationship contents at a step*), and three of
@@ -287,8 +287,8 @@ the honest state is the refusal, which names precisely what it lacks.
 ### D-78 — Two conformance write lanes run DML no Handle opened, so their work reaches no Execution Lifecycle
 
 *Medium — it bounds which case shapes may author `then.executionLifecycle`.*
-Relates to `parallax.conformance.engine._execute_framework_write_unit`,
-`parallax.conformance.engine._run_conflict_close`.
+Relates to `parallax.conformance._lanes.scenario._execute_framework_write_unit`,
+`parallax.conformance._lanes.scenario._run_conflict_close`.
 
 **What.** Every other write lane drives its DML through a real `db.transact`, so
 its statements and round trips are read off the delivered lifecycle. Two do not,
@@ -315,7 +315,7 @@ alone puts a test-shaped door in production. Restricting the oracle instead is
 free but states the limit nowhere the corpus can see it. What holds the gap shut
 meanwhile is that neither lane can silently grow a second: every `handle.Database`
 the engine builds installs a Provider, asserted over the source
-(`tests/unit/test_lifecycle_observation.py`), so an unobserved lane is one that
+(`tests/unit/conformance/test_lifecycle_observation.py`), so an unobserved lane is one that
 opens no Handle at all and says so.
 
 ### D-82 — A published dump builds the same presentation twice, and removing the second build needs no bracket
@@ -560,8 +560,10 @@ forbidden, rather than rediscovering all three.
 *Medium — one portable contract still has no cross-language case, and its insert
 and delete rows are graded nowhere at all.* Relates to
 `core/spec/m-case-format.md` *Streamed reads*, `core/spec/m-snapshot-read.md`
-*Stability under concurrent writing*, `tests/unit/test_transaction_streams.py`,
-`tests/unit/test_continuation.py`, `tests/api/test_snapshot_delivery_contract.py`.
+*Stability under concurrent writing*,
+`tests/unit/snapshot/handle/test_transaction_streams.py`,
+`tests/unit/core/continuation/test_continuation.py`,
+`tests/api/test_snapshot_delivery_contract.py`.
 
 **What.** A scenario step now admits `when.stream`, so a streamed READ step
 exists — but nothing places any other step BETWEEN two pages of one delivery:
@@ -572,7 +574,8 @@ real PostgreSQL in `tests/api/test_snapshot_delivery_contract.py`: a committed
 move from ahead to behind between separately leased pages skips the root, while
 a move from behind to ahead delivers it twice. The two insert rows and the
 delete row remain graded by nothing in any language. The primary-key contrast
-remains in `tests/unit/test_continuation.py`, while caller-as-writer and
+remains in `tests/unit/core/continuation/test_continuation.py`, while
+caller-as-writer and
 attempt-local delivery behavior remain language-level transaction tests rather
 than portable cases.
 
@@ -627,7 +630,7 @@ by the settled decision that `when.stream` names no representation, and by no
 corpus model being class-backed — neither of which has a streaming rationale, and
 closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
-`tests/unit/test_transaction_streams.py`.
+`tests/unit/snapshot/handle/test_transaction_streams.py`.
 
 ### D-88 — The read oracle refuses a Continuation Order naming a member a wrapped `union all` resolves per branch
 
@@ -672,7 +675,7 @@ two capture cells, and the second conjoins the ordinary branch tree over
 ### D-89 — `given.corrupt` cannot address one milestone, so a temporal Entity's stored state has no corpus expression
 
 *Medium — a whole Entity class the corruption grammar deliberately refuses.*
-Relates to `parallax.conformance.engine._corrupt_stored_state`,
+Relates to `parallax.conformance._mechanism.given_state._corrupt_stored_state`,
 `reference_harness.data_loader._refuse_temporal_corruptions`,
 `reference_harness.schema_validate._validate_corruptions`,
 `core/spec/m-case-format.md` *Corrupting stored state*.
@@ -701,7 +704,7 @@ with the refusal graded on both sides.
 **When.** With the first case that wants a temporal stored-data verdict. Landing
 it is the prerequisite for such a case, and the refusal's own tests
 (`reference-harness/tests/test_corrupt_addressing.py`,
-`tests/unit/test_engine.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
+`tests/unit/conformance/_mechanism/test_given_state.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
 are what have to change first, since they pin the restriction this entry lifts.
 
 ### D-90 — `instruction_identity`'s authored-instruction arm is unreachable, and so is the fallback inside it
@@ -741,7 +744,7 @@ ALREADY-PREPARED instruction, and prepared-write production judges exactly the
 converse half — a milestone verb aimed at a target deriving no As-Of Axis — so
 no instruction that reaches this seam can still be carrying that mistake. The
 temporal arm is the live one and is covered
-(`tests/unit/test_transaction_predicate_writes.py::test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it`).
+(`tests/unit/snapshot/handle/test_transaction_predicate_writes.py::test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it`).
 
 **Why it is deferred rather than fixed.** The arm is cheap and states the
 seam's own contract, which the surrounding docstring rests on: this entry point
@@ -753,7 +756,7 @@ of its callers, and it is the same question D-90 raises one module over.
 
 **When.** With the deletion sweep that also judges D-90.
 
-### D-92 — ADR 0057 limits Source Hints to Wire-read results, and the node a Wire insert answers is a hinted source too
+### D-92 — ADR 0057 limits Read Origins to Wire-read results, and the node a Wire insert answers carries one too
 
 *Low — a decision record's enumeration lags the second door the code has.*
 Relates to
@@ -762,20 +765,21 @@ Relates to
 by this target, whose spec and glossary already state both doors.
 
 **What.** The ADR says a Wire Entity "returned by a Parallax Wire read may carry
-an opaque Source Hint" and describes the hint as selecting "the authentic
-source's privately retained evidence". `tx.wire.insert` also answers a hinted
-node: its hint names the concrete Entity, the object, and this transaction's
+an opaque Read Origin" and describes it as selecting "the authentic source's
+privately retained evidence". `tx.wire.insert` also answers an origin-bearing
+node: its Read Origin names the concrete Entity, the object, and this transaction's
 participation and carries no observation, because the row it opened had observed
 nothing — the buffered insert licenses the write that follows. That node is a
 keyed write source in every respect the read-published one is, and
-`spec/python.md` §5 (*A keyed source is a hinted node Parallax published*) and
+`spec/python.md` §5 (*A keyed source is a Read-Origin-bearing node Parallax
+published*) and
 `CONTEXT.md` (*Wire Keyed Write Source*) state both doors; the ADR states one.
 
 **Why it is deferred rather than fixed.** A note amending or superseding an ADR
 is a decision record and is authored as one, not as a wording repair made in
 passing. Nothing in the decision itself — two peer interfaces over one
 transaction — is contradicted by the second door; only its account of where a
-hint comes from is incomplete.
+Read Origin comes from is incomplete.
 
 **When.** With the next decision record that touches the write surface, or as a
 note on 0057 when one is authored.
@@ -831,7 +835,7 @@ consumer: it runs class-free against every corpus model, and `class_models.py`
 hand-authors class families for 17 of 168. It therefore derives its own edited
 copy (`_edited_copy`, `_judged_assignments`) and walks its own loaded arms
 (`_navigate_step_view`) — about 90 lines restating rules production states
-elsewhere, with unit tests mirroring `tests/unit/test_edit.py` case for case
+elsewhere, with unit tests mirroring `tests/unit/core/entity/test_edit.py` case for case
 (unknown field, primary key, relationship field, change-free edit, preserved
 views, chaining). What is duplicated is the member resolution and the copy, not
 the verdict: the engine already reaches
@@ -864,38 +868,6 @@ coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
 `temporal_read.milestone_edge_from_members` instead; and `CompiledRead`'s
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
-
-### D-96 — The materialization report reads what a Page retains after its own timed seams, so that cell states a level and not a difference
-
-*Low — one reported cell needs a controlled reading beside it before two
-recordings of it can be compared.* Relates to
-the retired standalone materialization reader,
-`languages/python/docs/snapshot-materialization-baseline.md`,
-the unified Snapshot delivery portfolio. Owner: this target.
-
-**What.** `measure` runs its four timed seams — model preparation, compilation,
-`bind`, and twenty batches — before it starts `tracemalloc` and reads what the
-sealed Page retains, and what those repetitions leave behind the reading then
-charges to the Page. On the current code the retained seam reads about 1.9 kB
-above the same seam read in a process that has done nothing else (170,368 B
-against 168,453 B on 3.13 `Columns`, over 64 projections); on the code the
-baseline document's "before" half measured, the two readings agree inside their
-own spread. Two recorded cells therefore cannot be differenced, which is why the
-"retained Page bytes per projection must not increase" comparison in that
-document is settled by a controlled A/B in fresh child interpreters and says so.
-
-**Why it is deferred rather than fixed.** Both obvious repairs change what the
-recorded matrix means. Taking the memory readings first re-orders every figure in
-a report whose two halves are already recorded against each other, and taking
-them in a child of their own doubles the matrix's child count and its runtime.
-Neither belongs in the claim that publishes the comparison, and nothing gates on
-the cell: the report passes no verdict, and what is gated is the scaling
-regression's structure.
-
-**When.** Alongside the next change to this report's shape. Closing it means
-either reading memory before the timings or giving the memory readings a child of
-their own, re-recording the matrix under the new order, and saying which order
-the conditions table describes.
 
 ### D-97 — Finding a `float32`'s canonical number costs a rounding search per admitted value, and only a rounding change can make it cheaper
 
@@ -936,6 +908,7 @@ would exclude is decidable from the candidate's bits alone.
 
 ## Forwarding pointers
 
+- **D-96** → closed. The Snapshot delivery portfolio takes each materialization-stress memory cell in a child interpreter of its own (`tools/snapshot_delivery_reading.py`), as a collected window delta with no timed batch run before the reading, so the retained and transient cells are differences rather than levels; the retired reader's mixed-order matrix survives only as dated evidence in `docs/snapshot-materialization-baseline.md`.
 - **D-80** → fixed. Duplicate projections are compared before decode by their exact, type-sensitive positional Payload Witness. Equal witnesses share one Page-owned Entity State; unequal witnesses in one Root View raise `SnapshotConsistencyError`, so no first-projection-wins premise remains.
 - **D-81** → fixed. Production conversion consumes positional provider tuples through compiled ordinals, retains raw witnesses for deferred root-local judgment, and allocates no `PositionalRow`, materialized-row wrapper, or member dictionary per judged row. The production materialization and stream-retention instruments now grade the Page/Root View representation rather than the deleted retained-graph suite.
 
@@ -967,7 +940,7 @@ prose.
 - **D-64** → closed by [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout). Both Relational Document Layout milestone refusals it named: the grouped-find one is gone, and the case-state one survives as a settled adapter contract stated at `engine._refuse_unaccounted_document_milestone` rather than as deferred work.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.
 - **D-66** → [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would). A keyed temporal write settling against case state a committed materializing predicate write of the same case moved is refused (`engine._refuse_materialized_case_state`, marked by `temporal_state.TemporalShadow.note_materialized_write`): production resolves and plans that write internally and returns neither, so the adapter would issue a zero-row close where a real caller — who could only reach the step by reading — gets a stale write. COR-99 is the systematic pass over adapter/production divergences of that kind and cites this composition as its motivating example; this refusal is the one hand-placed instance of what that audit generalizes.
-- **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
+- **D-68** → closed by [COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production). `parallax.conformance` reaches a corpus model through the public `domain_model_from_document` door alone and reads the accepted Metamodel's own vocabulary, so no `parallax.descriptor` private import and no `parallax.core._formation_profile` reach survives; `ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at three `parallax.core.entity` entries that `spec/python.md` §7 states as a rebuttal rather than an exemption. One question the accepted model cannot answer survives the conversion, and it is not a model question: the order a document declared its Entities in, which `m-case-format` makes load-bearing for a case naming no target and which `conformance.models.declared_entity_spellings` therefore reads off the decoded document. This target pins that order in a unit assertion of its own (`tests/unit/conformance/test_corpus_models.py`), but no compatibility case distinguishes it from the accepted model's canonical order: exactly one case resolves the convention over a model whose two orders disagree (`m-predicate-048`), and it is refused by the same rule under either root. Which order `m-case-format` means is therefore ungated across targets, and [COR-99](https://linear.app/flimflam/issue/COR-99/audit-the-compatibility-corpus-against-what-production-would) carries it.
 - **D-76** → closed by the decision it asked for. An invalid scenario `mutate` `set` is a **case-authoring failure**: `core/spec/m-case-format.md` states it in the register the bare write row already uses, and the corpus's own model-aware validation (`reference_harness.schema_validate._validate_scenario_edit`, run by `just core-check-schemas`) refuses such a case before either executor sees it. Undeclarability is the design rather than a gap — an edit refusal is deliberately not an `expectError` member — so what the entry called a divergence is now one rule with one enforcement point, and the Python lane's own verdict (`engine._judged_assignments`) is a restatement rather than the portability mechanism.
 - **D-71** → fixed. `document_codec.classify_effective_change` is the one operation every write asks whether an assignment changes anything, and the rule it applies is stated once by `core/spec/m-document-codec.md` *Managed documents and the effective change set*.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.
@@ -988,3 +961,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84, D-86.
 - `.humanlayer/tasks/cor-115-reference-harness-object-query-oracle/08-deferred-ledger.md` — D-55.
 - `.humanlayer/tasks/cor-110-logging-lifecycle-diet/08-deferred-ledger.md` — D-79.
+- `.humanlayer/tasks/cor-155-implement-the-redesigned-snapshot-delivery-contract-and-nrsu2x/10-deferred-ledger.md` — D-96.
