@@ -93,7 +93,6 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._paging import At
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import (
     SelectedReadModel,
     ServingModel,
@@ -109,6 +108,7 @@ from parallax.snapshot.handle._read import (
     typed_publication,
     wire_publication,
 )
+from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._retention import ObservationLedger
 from parallax.snapshot.handle._stream import SnapshotStream, StreamRead, check_batch_size
 
@@ -289,17 +289,17 @@ class ReadScope:
     policy.
     """
 
-    __slots__ = ("_execution", "_lifecycle", "_preparations")
+    __slots__ = ("_execution", "_lifecycle", "_planner")
 
     def __init__(
         self,
         lifecycle: InstalledLifecycle | None,
         execution: _ReadExecution,
-        preparations: PreparationCache | None = None,
+        planner: ReadPlanner,
     ) -> None:
         self._lifecycle = lifecycle
         self._execution = execution
-        self._preparations = preparations if preparations is not None else PreparationCache()
+        self._planner = planner
 
     def find(self, query: ObjectQuery[Any, Any]) -> Snapshot[Any]:
         """One Typed whole-result read, published as Entity Class instances."""
@@ -345,6 +345,7 @@ class ReadScope:
                 edition=selected.edition,
                 preference=inputs.preference,
                 read=activity,
+                planner=self._planner,
             )
 
         return read.eager(node.target, "rows", published)
@@ -406,8 +407,8 @@ class ReadScope:
                     inputs.preference,
                     inputs.ledger,
                     calls,
+                    self._planner,
                     read.selected.edition,
-                    self._preparations,
                 )
             )
 
@@ -452,6 +453,9 @@ class ReadScope:
                         selected.model,
                         inputs.connection,
                         read=activity,
+                        edition=selected.edition,
+                        preference=inputs.preference,
+                        planner=self._planner,
                     )
                 )
             return publication.from_find(
@@ -463,7 +467,7 @@ class ReadScope:
                     ledger=inputs.ledger,
                     calls=activity,
                     edition=selected.edition,
-                    cache=self._preparations,
+                    planner=self._planner,
                 )
             )
 
@@ -674,12 +678,12 @@ def standalone_read_scope(
     lifecycle: InstalledLifecycle | None,
     serving: ServingModel,
     runtime: DatabaseRuntime,
-    preparations: PreparationCache | None = None,
+    planner: ReadPlanner,
 ) -> ReadScope:
     return ReadScope(
         lifecycle,
         _StandaloneExecution(lifecycle, serving, runtime),
-        preparations,
+        planner,
     )
 
 
@@ -690,12 +694,12 @@ def participating_read_scope(
     uow: UnitOfWork,
     conn: DatabaseConnection,
     attempt: TransactionAttemptActivity,
-    preparations: PreparationCache | None = None,
+    planner: ReadPlanner,
 ) -> ReadScope:
     return ReadScope(
         lifecycle,
         _ParticipatingExecution(
             selected, uow, attempt, ReadInputs(conn, uow.settings.concurrency, uow)
         ),
-        preparations,
+        planner,
     )

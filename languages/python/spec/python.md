@@ -2285,7 +2285,8 @@ the database error already carries (§6). The executable form of this order ship
 as the API Conformance Suite's publication story, rendered into the Usage Guide
 (§6) — not as a generic updater callback interface.
 
-**A connected handle owns its runtime.** `Database.connect(adapter, model)`
+**A connected handle owns its runtime.**
+`Database.connect(adapter, model, *, read_plan_cache_capacity=16)`
 takes **configuration**, not a live resource. `PostgresAdapter(connection_string,
 pool=PoolOptions(...) | OnDemandOptions(...), prepare_threshold=...)` is a frozen
 value that opens no connection, pool, or thread, so it is safe to build at import
@@ -2319,9 +2320,48 @@ serialized, so a close concurrent with one already running waits for it rather
 than giving the registration up beside a runtime still being torn down, and the
 registration is closed exactly once however many callers close the handle.
 
+**Read planning and bounded reuse.** Every eager, row, and streamed read crosses
+one private `ReadPlanner.plan(...) -> ReadPlan` seam. A `Database` owns that
+planner for the handle's lifetime and shares it with standalone reads and every
+Transaction Attempt, independently of which physical connection executes the
+resulting statements. A Read Plan contains only immutable model/query planning,
+compiled statement templates, row conversion preparation, correlations, include
+structure, and prepared Page schema; it retains no runtime, connection, lease,
+provider row, Page, Root View, finding, Read Origin, published node, or result.
+
+`read_plan_cache_capacity` is a nonnegative built-in `int`; `bool`, negative
+integers, and values of any other exact type raise `ValueError` before an adapter
+runtime is opened. The default is `16`. Zero disables reuse between read
+deliveries without creating a one-entry cache or bypassing the central planning
+seam. A positive value bounds a true least-recently-used cache by Read Plan entry
+count. Equal concurrent cold keys use one in-flight plan build and receive its
+same success or failure; unrelated cold keys may build concurrently. A failed
+build is not cached and a later call retries it.
+
+Cache identity is deliberately conservative rather than shape-only. It includes
+the exact Model Edition and exact cataloged-model and dialect objects, the
+validated query's authored structure and ordinary predicate bound values, result
+form, and Concurrency Preference. Structural values are type-tagged recursively:
+different exact container or scalar types never alias merely because Python
+compares their values equal. Consequently each distinct ordinary predicate-value
+query, result form, and concurrency mode may occupy an entry. A streamed first
+page and each continuing-page coordinate NULL pattern are separate entries.
+Continuation coordinate values and page limits are execution values rather than
+cache identity: a hit substitutes their current exact values into the cached
+template before execution. This is exact-query reuse with continuation
+templating, not general query-shape reuse.
+
+The cache has the `Database` object's lifetime. `Database.close()` settles the
+owned runtime and pool observation but does not promise to clear immutable Read
+Plans while the closed handle remains referenced; this preserves already-running
+operation semantics and keeps resource closure independent of planning
+retention. Eviction and release of the `Database` make unreferenced plans and the
+query values they retain collectible.
+
 **Static shorthand and the Serving Model at connect.**
-`Database.connect(adapter, model)` keeps its existing positional and keyword
-arguments, and its model argument accepts a Domain Model or a `ServingModel`.
+`Database.connect(adapter, model, *, read_plan_cache_capacity=16)` keeps its two
+positional arguments, and its model argument accepts a Domain Model or a
+`ServingModel`.
 A Domain Model is prepared once, at connect, under a generated opaque edition
 that stays fixed for that connection's life, into a private `ServingModel` of
 the same kind that nothing else can publish to; a `ServingModel` handed in is
@@ -3867,13 +3907,15 @@ of shared edition identity.
 ### Execution lifecycle observability
 
 The canonical public module is `parallax.core.execution_lifecycle`; the Snapshot
-package does not re-export it. `connect` adds one keyword-only composition seam:
+package does not re-export it. `connect` has keyword-only composition seams for
+bounded Read Plan reuse and execution lifecycle observation:
 
 ```python
 connect(
     adapter: DatabaseAdapter,
     model: DomainModel | ServingModel,
     *,
+    read_plan_cache_capacity: int = 16,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
 ) -> Database
 

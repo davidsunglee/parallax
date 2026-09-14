@@ -59,8 +59,8 @@ from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsRe
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._materialization import Materializer, StreamPageRead
-from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle._read_plan import ReadPlanCache, ReadPlanner
 from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope
 from parallax.snapshot.handle._retention import ObservationLedger
 from tests._support import mirrored_models as mm
@@ -233,7 +233,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope = INERT,
         edition: str = "",
-        cache: PreparationCache | None = None,
+        planner: ReadPlanner,
     ) -> FindResult:
         executed.append(_Executed("find", port, preference, ledger))
         return handle_read.find(
@@ -244,7 +244,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
             ledger=ledger,
             calls=calls,
             edition=edition,
-            cache=cache,
+            planner=planner,
         )
 
     def recording_find_history(
@@ -253,9 +253,20 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         port: DatabaseConnection,
         *,
         read: ReadActivity = INERT,
+        edition: str = "",
+        preference: Concurrency | None = None,
+        planner: ReadPlanner,
     ) -> HistoryFindResult:
         executed.append(_Executed("find_history", port, None, None))
-        return handle_read.find_history(query, model, port, read=read)
+        return handle_read.find_history(
+            query,
+            model,
+            port,
+            read=read,
+            edition=edition,
+            preference=preference,
+            planner=planner,
+        )
 
     def recording_find_rows(
         query: ValidatedObjectQuery,
@@ -265,10 +276,17 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         edition: str,
         preference: Concurrency | None = None,
         read: ReadActivity = INERT,
+        planner: ReadPlanner,
     ) -> RowsResult:
         executed.append(_Executed("find_rows", port, preference, None))
         return handle_read.find_rows(
-            query, model, port, edition=edition, preference=preference, read=read
+            query,
+            model,
+            port,
+            edition=edition,
+            preference=preference,
+            read=read,
+            planner=planner,
         )
 
     patch.setattr(read_scope_module, "find", recording_find)
@@ -324,7 +342,7 @@ def _scope(
 ) -> tuple[ReadScope, _Recording]:
     resolved = selected if selected is not None else _selection()
     execution = _Recording(resolved, ReadInputs(port, preference, ledger))
-    return ReadScope(lifecycle, execution), execution
+    return ReadScope(lifecycle, execution, ReadPlanCache(0)), execution
 
 
 # --------------------------------------------------------------------------- #

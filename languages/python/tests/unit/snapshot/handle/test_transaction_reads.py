@@ -45,7 +45,7 @@ from parallax.snapshot.handle import (
 )
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle._preparation import PreparationCache
+from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._retention import ObservationLedger
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
@@ -113,7 +113,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope = INERT,
         edition: str = "",
-        cache: PreparationCache | None = None,
+        planner: ReadPlanner,
     ) -> FindResult:
         result = real(
             query,
@@ -123,7 +123,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
             ledger=ledger,
             calls=calls,
             edition=edition,
-            cache=cache,
+            planner=planner,
         )
         recorded.append(_RecordedFind(None if ledger is None else ledger.participation, result))
         return result

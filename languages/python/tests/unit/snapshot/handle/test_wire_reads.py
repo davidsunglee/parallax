@@ -68,7 +68,7 @@ from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
-    _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is the unit under test
+    _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     shared_wire_encoder,
 )
 from tests._support.db_port import (
@@ -172,6 +172,20 @@ def test_shared_wire_encoding_delegates_unhashable_managed_values() -> None:
     document = {"free": [1, None]}
 
     assert shared_wire_encoder()(JSON, cast("ManagedValue", document)) == document
+
+
+def test_wire_encoding_reuse_is_scoped_to_one_encoder() -> None:
+    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    first_encoder = shared_wire_encoder()
+    second_encoder = shared_wire_encoder()
+
+    first = first_encoder(TIMESTAMP, instant)
+    reused = first_encoder(TIMESTAMP, instant)
+    isolated = second_encoder(TIMESTAMP, instant)
+
+    assert reused is first
+    assert isolated == first
+    assert isolated is not first
 
 
 def test_default_wire_encoding_preserves_temporal_infinity() -> None:

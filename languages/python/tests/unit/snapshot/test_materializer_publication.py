@@ -71,6 +71,7 @@ from parallax.snapshot.materialize._page import (
     PageBuilder,
     exact_stored_equal,
     page_rows,
+    stored_order_key,
 )
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
@@ -1235,6 +1236,12 @@ def test_judged_states_exposes_singletons_through_its_mapping_view() -> None:
 
 def test_exact_stored_equality_descends_into_nested_tuple_carriers() -> None:
     assert not exact_stored_equal(({"value": True},), ({"value": 1},))
+
+
+def test_stored_value_helpers_order_mappings_and_compare_opaque_values() -> None:
+    assert stored_order_key({"right": 2, "left": 1}) == stored_order_key({"left": 1, "right": 2})
+    assert not exact_stored_equal({"left": 1}, {"right": 1})
+    assert not exact_stored_equal(object(), object())
 
 
 def test_root_view_completion_and_raw_row_release_are_idempotent() -> None:

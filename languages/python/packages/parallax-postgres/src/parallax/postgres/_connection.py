@@ -91,7 +91,6 @@ _UNDECODED = object()
 
 def _load_json_preserving_null(
     data: str | bytes,
-    name_cache: dict[str, str] | None = None,
     *,
     decoded: object = _UNDECODED,
 ) -> object:
@@ -101,15 +100,14 @@ def _load_json_preserving_null(
     two states. Strict Wire loading retains number tokens privately until the
     document codec resolves each leaf's declared type.
     """
-    value = loads(data, name_cache=name_cache) if decoded is _UNDECODED else decoded
+    value = loads(data) if decoded is _UNDECODED else decoded
     return _PRESENT_JSON_NULL if value is None else value
 
 
 class _DocumentJsonbLoader(JsonbLoader):
     def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
         super().__init__(oid, context)
-        self._names: dict[str, str] = {}
-        self._decode = prepared_loads(name_cache=self._names)
+        self._decode = prepared_loads()
 
     def load(self, data: Buffer) -> object:
         if not isinstance(data, bytes):
@@ -121,8 +119,7 @@ class _DocumentJsonbLoader(JsonbLoader):
 class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
     def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
         super().__init__(oid, context)
-        self._names: dict[str, str] = {}
-        self._decode = prepared_loads(name_cache=self._names)
+        self._decode = prepared_loads()
 
     def load(self, data: Buffer) -> object:
         if data and data[0] != 1:

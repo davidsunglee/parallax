@@ -81,7 +81,6 @@ from parallax.core.unit_work import Clock, Concurrency, SystemClock
 from parallax.snapshot.handle._demarcation import Demarcation
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
-from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import (
     ModelSelection,
     ServingModel,
@@ -89,6 +88,10 @@ from parallax.snapshot.handle._publication import (
     select_model,
 )
 from parallax.snapshot.handle._read import RowsResult, Snapshot
+from parallax.snapshot.handle._read_plan import (
+    ReadPlanCache,
+    check_read_plan_cache_capacity,
+)
 from parallax.snapshot.handle._read_scope import standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
@@ -189,7 +192,7 @@ class Database:
         "_demarcation",
         "_lifecycle",
         "_observation",
-        "_preparations",
+        "_planner",
         "_reads",
         "_runtime",
         "_shutdown",
@@ -200,6 +203,7 @@ class Database:
         runtime: DatabaseRuntime,
         model: DomainModel | ServingModel,
         *,
+        read_plan_cache_capacity: int = 16,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
@@ -232,7 +236,12 @@ class Database:
         it serves Wire and the write lanes — which name Entities rather than
         classes — and refuses every modeled read where that read reaches its
         selection: an eager ``find`` at the call, a stream at scope entry.
+
+        ``read_plan_cache_capacity`` is a nonnegative built-in ``int``. Its
+        default, 16, bounds exact-query Read Plan reuse for this handle; zero
+        disables cross-delivery reuse without bypassing the shared planner.
         """
+        capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONSTRUCTOR_REFUSAL)
         self._runtime = runtime
         self._clock: Clock = clock if clock is not None else SystemClock()
@@ -245,7 +254,7 @@ class Database:
         # be made inside it for an operation coming back OUT of the Provider to
         # be refusable.
         self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
-        self._preparations = PreparationCache()
+        self._planner = ReadPlanCache(capacity)
         # The one Read Scope this connection's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition") — and the one demarcation its transactions run
@@ -254,10 +263,10 @@ class Database:
             lifecycle=self._lifecycle,
             serving=serving,
             runtime=runtime,
-            preparations=self._preparations,
+            planner=self._planner,
         )
         self._demarcation = Demarcation(
-            runtime, self._clock, self._lifecycle, serving, self._preparations
+            runtime, self._clock, self._lifecycle, serving, self._planner
         )
         # Held across the whole of close, so the ordering below is the ordering
         # every caller sees: a second close waits for the first rather than
@@ -282,6 +291,7 @@ class Database:
         adapter: DatabaseAdapter,
         model: DomainModel | ServingModel,
         *,
+        read_plan_cache_capacity: int = 16,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:
@@ -328,11 +338,22 @@ class Database:
         before the adapter is opened, and :meth:`__init__` refuses the same
         shape one level down. One model connects to any number of Databases, and
         one Entity Class participates in any number of models.
+
+        ``read_plan_cache_capacity`` defaults to 16 entries. Zero disables
+        cross-delivery Read Plan reuse. Values must be nonnegative built-in
+        integers and are refused before ``adapter`` opens a runtime.
         """
+        capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
         runtime = adapter.open()
         try:
-            return cls(runtime, serving, clock=clock, lifecycle_provider=lifecycle_provider)
+            return cls(
+                runtime,
+                serving,
+                read_plan_cache_capacity=capacity,
+                clock=clock,
+                lifecycle_provider=lifecycle_provider,
+            )
         except BaseException:
             runtime.close()
             raise

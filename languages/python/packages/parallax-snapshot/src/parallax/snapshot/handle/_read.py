@@ -133,9 +133,8 @@ from parallax.snapshot.handle._materialization import (
     MaterializationObserver,
     Materializer,
     RowPublication,
-    compile_read,
 )
-from parallax.snapshot.handle._preparation import PreparationCache
+from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
     ObservedRows,
@@ -158,7 +157,7 @@ from parallax.snapshot.materialize import (
     wire_roots,
 )
 from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._prepared import PreparedRead, bind
+from parallax.snapshot.materialize._prepared import PreparedRead
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
@@ -411,7 +410,7 @@ def find(
     calls: DatabaseCallScope = INERT,
     observer: MaterializationObserver = MATERIALIZATION_INERT,
     edition: str = "",
-    cache: PreparationCache | None = None,
+    planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> FindResult:
     """The whole-result read: every root ``query`` matches, with its included values.
 
@@ -457,7 +456,7 @@ def find(
     declined root, and one page of a streamed read do.
     """
     return Materializer(observer).read_page(
-        EagerPageRead(query, model, port, preference, ledger, calls, edition, cache)
+        EagerPageRead(query, model, port, preference, ledger, calls, planner, edition)
     )
 
 
@@ -495,6 +494,7 @@ def find_rows(
     preference: Concurrency | None = None,
     read: ReadActivity = INERT,
     observer: MaterializationObserver = MATERIALIZATION_INERT,
+    planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> RowsResult:
     """The row-form read: one statement and one Page of transformed roots.
 
@@ -518,15 +518,15 @@ def find_rows(
     level to drop.
     """
     meta = model.meta
-    root_entity = query.root
-    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("none", False))
-    compiled = compile_read(
-        plan_.root,
-        meta,
-        port.dialect,
+    plan = planner.plan(
+        edition=edition,
+        model=model,
+        dialect=port.dialect,
+        query=query,
         result_form="row",
-        lock=entity_read_lock(meta, root_entity.identity, preference),
+        preference=preference,
     )
+    compiled, prepared = plan.root_read()
 
     stage = Materializer(observer).read_page(
         FlatPageRead(
@@ -534,6 +534,7 @@ def find_rows(
             compiled,
             lambda: execute_read(port, compiled, read),
             validated_query_pin(query.temporal),
+            prepared,
         )
     )
     return RowsResult(rows=_published_rows(stage, meta), edition=edition)
@@ -588,6 +589,9 @@ def find_history(
     *,
     read: ReadActivity = INERT,
     observer: MaterializationObserver = MATERIALIZATION_INERT,
+    edition: str = "",
+    preference: Concurrency | None = None,
+    planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> HistoryFindResult:
     """The flat milestone-set Snapshot read.
 
@@ -602,8 +606,15 @@ def find_history(
     meta = model.meta
     metadata = query.root
     ordered = continuation.ordered(query, meta)
-    plan_ = deep_fetch.plan(ordered, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
-    if plan_.levels:
+    plan = planner.plan(
+        edition=edition,
+        model=model,
+        dialect=port.dialect,
+        query=ordered,
+        result_form="instance",
+        preference=preference,
+    )
+    if plan.level_count:  # pragma: no cover - validated milestone queries cannot include
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
     # `declaring_metadata` resolves the entity whose as-of axes are this target's
@@ -613,33 +624,13 @@ def find_history(
     # `_edge_sort_key`) MUST resolve through it rather than the queried target's
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
-    compiled = compile_read(plan_.root, meta, port.dialect, result_form="instance")
+    compiled, prepared = plan.root_read()
 
     stage = Materializer(observer).read_page(
-        FlatPageRead(model, compiled, lambda: execute_read(port, compiled, read), Pin())
+        FlatPageRead(model, compiled, lambda: execute_read(port, compiled, read), Pin(), prepared)
     )
 
     return HistoryFindResult(page=stage.page, milestones=entity)
-
-
-def convert_level_rows(
-    builder: PageBuilder,
-    source: SourceLevel,
-    model: CatalogedModel,
-    compiled: CompiledRead,
-    rows: Sequence[Row],
-    observations: ObservedRows,
-    correlation_members: tuple[AttributeIdentity, ...],
-) -> tuple[int, ...]:
-    prepared = bind(model, compiled)
-    return convert_rows(
-        builder,
-        source,
-        prepared,
-        rows,
-        observations,
-        correlation_members,
-    )
 
 
 def convert_rows(

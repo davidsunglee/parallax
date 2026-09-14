@@ -238,9 +238,8 @@ class PredecessorRow:
     returned, retained beside the member state and never as an entry in it, so a
     successor is built by patching what the row actually held rather than by
     re-encoding the members this model happens to declare. The value is the read's
-    own, unchanged; what this row keeps of it is a private portable JSON copy
-    through :func:`~parallax.core.base.detach_json_container`. It is **absent** —
-    not empty — under `Columns`
+    own, unchanged, retained by reference to the immutable provider-normalized
+    carrier. It is **absent** — not empty — under `Columns`
     layout, where the row has no Structured Column, and absent likewise for an
     observation whose source read no row; the member map stays purely logical
     either way, so a consumer iterating members can never surface the document as

@@ -66,7 +66,6 @@ from parallax.core.document_codec import (
     reduce_declared_members_classified,
     shape_of_declaration,
 )
-from parallax.core.document_codec._document import prepared_located_member_classifier
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.metamodel import (
     Multiplicity,
@@ -275,33 +274,6 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
 
     with pytest.raises(KeyError, match="names no member"):
         decode_located_member_classified(shape, SQL_NULL, "unknown")
-
-
-def test_a_prepared_occurrence_classifier_preserves_presence_and_findings() -> None:
-    nested = DocumentShape(members=(Leaf("required", INT32, False),))
-    shape = DocumentShape(members=(Occurrence("one", Multiplicity.ONE, True, nested),))
-    classify = prepared_located_member_classifier(shape, "one")
-
-    assert classify(PresentDocument({"required": 7})) == ({"required": 7}, ())
-    assert classify(SQL_NULL) == (None, ())
-
-
-def test_a_prepared_leaf_classifier_preserves_every_leaf_verdict() -> None:
-    required = prepared_located_member_classifier(
-        DocumentShape(members=(Leaf("leaf", INT32, False),)), "leaf"
-    )
-    nullable = prepared_located_member_classifier(
-        DocumentShape(members=(Leaf("leaf", INT32, True),)), "leaf"
-    )
-
-    assert required(SQL_NULL)[1][0].code == "required-member-absent"
-    assert nullable(SQL_NULL) == (None, ())
-    assert required(PresentDocument(None))[1][0].code == "required-member-null"
-    assert nullable(PresentDocument(None)) == (None, ())
-    assert required(PresentDocument(7)) == (7, ())
-    value, findings = required(PresentDocument("wrong"))
-    assert value is UNAVAILABLE
-    assert findings[0].code == "leaf-undecodable"
 
 
 def test_raw_member_location_preserves_missing_null_and_present_states() -> None:

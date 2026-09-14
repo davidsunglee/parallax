@@ -60,8 +60,8 @@ from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
-from parallax.snapshot.handle import _preparation as preparation_module
 from parallax.snapshot.handle import _read as read_module
+from parallax.snapshot.handle import _read_plan as read_plan_module
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -687,7 +687,7 @@ def _recorded_compilations(monkeypatch: pytest.MonkeyPatch) -> list[CompiledRead
         recorded.append(compiled)
         return compiled
 
-    monkeypatch.setattr(preparation_module, "compile_read", recording)
+    monkeypatch.setattr(read_plan_module, "compile_read", recording)
     return recorded
 
 
