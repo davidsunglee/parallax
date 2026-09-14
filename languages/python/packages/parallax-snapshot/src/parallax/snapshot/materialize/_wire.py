@@ -543,7 +543,7 @@ class _SharedWireEncoder:
 
 
 def shared_wire_encoder() -> _Encoder:
-    """The trusted-state encoder shared by every root publication."""
+    """A trusted encoder whose reuse is bounded to one Page publication."""
     return _SharedWireEncoder()
 
 

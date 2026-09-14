@@ -31,10 +31,7 @@ from parallax.core.temporal_read import Pin, scans_validated_axis, validated_que
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle._paging import At, PagePlan, TieFound, page_decision
-from parallax.snapshot.handle._preparation import (
-    PreparationCache,
-    PreparedDelivery,
-)
+from parallax.snapshot.handle._read_plan import ReadPlan, ReadPlanner
 from parallax.snapshot.handle._retention import ObservationLedger, ObservedRows, ReadSources
 from parallax.snapshot.materialize import (
     Page,
@@ -127,8 +124,8 @@ class EagerPageRead:
     preference: Concurrency | None
     ledger: ObservationLedger | None
     calls: DatabaseCallScope
+    planner: ReadPlanner
     edition: str = ""
-    cache: PreparationCache | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +136,7 @@ class FlatPageRead:
     compiled: CompiledRead
     read: Callable[[], Sequence[Row]]
     pin: Pin
+    prepared: PreparedRead | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,8 +177,7 @@ class DeliveryPage:
 
 @dataclass(slots=True)
 class _RootRead:
-    delivery: PreparedDelivery
-    plan: deep_fetch.ObjectQueryPlan
+    plan: ReadPlan
     prepared: PreparedRead
     rows: list[Row]
     coordinates: tuple[ContinuationCoordinate | None, ...]
@@ -212,8 +209,8 @@ class StreamPageRead:
     preference: Concurrency | None
     ledger: ObservationLedger | None
     calls: DatabaseCallScope
+    planner: ReadPlanner
     edition: str = ""
-    cache: PreparationCache | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +240,7 @@ class Materializer:
                 preference=request.preference,
                 calls=request.calls,
                 edition=request.edition,
-                cache=request.cache,
+                planner=request.planner,
             )
             return self._build_page(
                 roots,
@@ -258,7 +255,7 @@ class Materializer:
             self.observer.statement_rendered(ROOT_LEVEL)
             rows = request.read()
             self.observer.statement_executed(ROOT_LEVEL, len(rows))
-            prepared = bind(request.model, request.compiled)
+            prepared = request.prepared or bind(request.model, request.compiled)
             builder = PageBuilder(ViewSchema.of(), self.observer)
             converted = tuple(
                 prepared.convert_driver(row, builder, source=ROOT_LEVEL) for row in rows
@@ -317,15 +314,14 @@ class Materializer:
         preference: Concurrency | None = None,
         calls: DatabaseCallScope,
         edition: str = "",
-        cache: PreparationCache | None = None,
-        delivery: PreparedDelivery | None = None,
+        planner: ReadPlanner,
+        plan: ReadPlan | None = None,
     ) -> _RootRead:
         """Plan and execute the root statement for one Page."""
         from parallax.snapshot.handle._read import execute_read
 
-        if delivery is None:
-            preparations = cache if cache is not None else PreparationCache(capacity=1)
-            delivery = preparations.prepare(
+        if plan is None:
+            plan = planner.plan(
                 edition=edition,
                 model=model,
                 dialect=port.dialect,
@@ -333,16 +329,14 @@ class Materializer:
                 result_form="instance",
                 preference=preference,
             )
-        planned_read = delivery.plan
-        compiled_read = delivery.root
-        self.observer.prepared(len(planned_read.levels) + 1)
+        compiled_read, prepared_rows = plan.root_read()
+        self.observer.prepared(plan.level_count + 1)
         self.observer.statement_rendered(ROOT_LEVEL)
         driver_rows = execute_read(port, compiled_read, calls)
         self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
         return _RootRead(
-            delivery=delivery,
-            plan=planned_read,
-            prepared=delivery.root_rows,
+            plan=plan,
+            prepared=prepared_rows,
             rows=list(driver_rows),
             coordinates=tuple(compiled_read.row_header(row)[3] for row in driver_rows),
             temporal=query.temporal,
@@ -370,14 +364,9 @@ class Materializer:
         from parallax.snapshot.handle import _read
 
         meta = model.meta
-        planned = root_read.plan
-        builder = PageBuilder(
-            root_read.delivery.schema,
-            None if root_read.observer is INERT else root_read.observer,
-        )
+        plan = root_read.plan
+        builder = plan.page_builder(None if root_read.observer is INERT else root_read.observer)
         observations = ObservedRows()
-        correlations = root_read.delivery.correlations
-
         root_rows = root_read.take_rows()
         root_refs = _read.convert_rows(
             builder,
@@ -385,21 +374,14 @@ class Materializer:
             root_read.prepared,
             _drain_rows(root_rows),
             observations,
-            correlations[ROOT_LEVEL],
+            plan.correlation_members(ROOT_LEVEL),
         )
         del root_rows
 
-        level_refs: list[tuple[int, ...]] = [()] * len(planned.levels)
+        level_refs: list[tuple[int, ...]] = [()] * plan.level_count
         completed: set[int] = set()
-        while len(completed) < len(planned.levels):
-            ready = [
-                index
-                for index, level in enumerate(planned.levels)
-                if index not in completed
-                and (
-                    isinstance(level.parent, deep_fetch.RootRef) or level.parent.index in completed
-                )
-            ]
+        while len(completed) < plan.level_count:
+            ready = plan.ready_levels(completed)
             pending: list[
                 tuple[
                     int,
@@ -410,7 +392,7 @@ class Materializer:
                 ]
             ] = []
             for index in ready:
-                level = planned.levels[index]
+                level = plan.level(index)
                 parents = _read.guarded_parents(
                     builder,
                     level,
@@ -429,11 +411,9 @@ class Materializer:
                     _read.attach_empty(builder, level, parents)
                     completed.add(index)
                     continue
-                child = root_read.delivery.children[index]
-                if child is None:  # pragma: no cover - back references continue above
-                    raise ValueError("an executable child level requires a prepared template")
+                compiled, prepared = plan.child_read(index, keys)
                 root_read.observer.statement_rendered(index + 1)
-                pending.append((index, level, parents, child.template.render(keys), child.rows))
+                pending.append((index, level, parents, compiled, prepared))
 
             if len(pending) == 1:
                 for index, level, parents, compiled, prepared in pending:
@@ -445,7 +425,7 @@ class Materializer:
                         prepared,
                         rows,
                         observations,
-                        correlations[index + 1],
+                        plan.correlation_members(index + 1),
                     )
                     _read.attach_children(builder, meta, level, parents, child_refs)
                     level_refs[index] = child_refs
@@ -479,7 +459,7 @@ class Materializer:
                         prepared,
                         rows,
                         observations,
-                        correlations[index + 1],
+                        plan.correlation_members(index + 1),
                     )
                     _read.attach_children(builder, meta, level, parents, child_refs)
                     level_refs[index] = child_refs
@@ -489,7 +469,7 @@ class Materializer:
         page = builder.finish(root_refs, pin)
         return FindResult(
             page=page,
-            includes=root_read.delivery.includes,
+            includes=plan.include_tree(),
             sources=self._retained(
                 meta,
                 root_read.temporal,
@@ -572,7 +552,7 @@ class Materializer:
             preference=request.preference,
             calls=request.calls,
             edition=request.edition,
-            cache=request.cache,
+            planner=request.planner,
         )
         coordinates = self._coordinates(root_read)
         terms = tuple(term.member.identity for term in query.order_by)

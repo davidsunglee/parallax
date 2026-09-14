@@ -421,6 +421,18 @@ def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> N
     assert missing is MISSING
 
 
+def test_a_missing_shared_document_occurrence_is_classified_as_sql_null() -> None:
+    compiled = _compiled(REGISTER, "Register")
+    identity = target(REGISTER, "Register").identity
+
+    value, findings = compiled.classify_member_of(
+        {"payload": PresentDocument({})}, identity, "marks"
+    )
+
+    assert value == []
+    assert findings == ()
+
+
 def test_a_direct_document_occurrence_can_be_classified_from_its_compiled_read() -> None:
     compiled = _compiled(CRAFT, "Craft")
     tug = target(CRAFT, "Tug").identity
@@ -555,6 +567,29 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
 
     assert claim.key is not None
     assert claim.routing_values == (b"\x0a\x1b", ABSENT)
+
+
+def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
+    identity = target(SCALARS, "ScalarThing").identity
+    layout = LayoutCatalog(SCALARS).entity(identity)
+    contracts = _compiled(SCALARS, "ScalarThing").attribute_reads(identity)
+    level = _convert.LevelContext(layout, attribute_reads=contracts)
+    attributes = {attribute.identity.name: attribute for attribute in layout.attributes}
+    raw_by_name: Mapping[str, object] = {"id": 1, "payload": "0a1b", "f32": 1.5}
+    values = {
+        contract.result_key: raw_by_name.get(contract.attribute.identity.name)
+        for contract in contracts
+    }
+
+    claim = claim_identity(
+        values,
+        level,
+        correlation_members=(attributes["payload"].identity, attributes["f32"].identity),
+    )
+
+    assert claim.key is not None
+    assert claim.routing_values[layout.index_of[attributes["payload"].identity]] == b"\x0a\x1b"
+    assert claim.routing_values[layout.index_of[attributes["f32"].identity]] == 1.5
 
 
 def test_level_context_rejects_misaligned_precomputed_member_metadata() -> None:

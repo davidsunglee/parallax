@@ -6,6 +6,17 @@ Idiomatic public-API usage, generated from the API Conformance Suite's
 examples. Each example mirrors a compatibility-corpus case, so the guide
 cannot drift from graded behavior.
 
+## Read Plan Cache Sizing
+
+`Database.connect(..., read_plan_cache_capacity=16)` uses the production
+default of 16 cached Read Plans. Use `0` to disable cross-delivery reuse,
+or `8` for a small service with a stable query set. Raise the capacity to
+`32` or `64` only after measurements show useful plans being evicted and
+the added retained memory is acceptable. Each distinct predicate-value
+query, result form, concurrency mode, and continuation NULL pattern may
+consume one entry; this is conservative exact-query reuse, not shape-only
+reuse.
+
 ## A predicate-selected delete over an unversioned entity is readless
 
 Corpus case: `m-batch-write-005`

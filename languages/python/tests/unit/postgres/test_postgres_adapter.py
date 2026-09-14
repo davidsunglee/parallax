@@ -362,13 +362,24 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
     assert rows == [(1, SQL_NULL), (2, PresentDocument(None))]
 
 
+def test_fold_document_reads_handles_multiple_document_projections() -> None:
+    rows = fold_document_reads(
+        _DIALECT,
+        ("id", "left_present", "left", "label", "right_present", "right"),
+        ((7, True, {"value": 1}, "kept", False, None),),
+        ((1, 2), (4, 5)),
+    )
+
+    assert rows == [(7, PresentDocument({"value": 1}), "kept", SQL_NULL)]
+
+
 def test_json_loader_preserves_only_present_json_null() -> None:
     load = connection_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage] - the module-private loader is this test's subject
     assert load("null") is connection_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage] - identity with the module-private sentinel is the distinction being proved
     assert load(b'{"answer": 42}') == {"answer": 42}
 
 
-def test_jsonb_loaders_share_names_locally_and_accept_driver_buffers() -> None:
+def test_jsonb_loaders_accept_driver_buffers_without_retaining_member_names() -> None:
     text = connection_module._DocumentJsonbLoader(3802)  # pyright: ignore[reportPrivateUsage]
     binary = connection_module._DocumentJsonbBinaryLoader(3802)  # pyright: ignore[reportPrivateUsage]
 
@@ -377,8 +388,12 @@ def test_jsonb_loaders_share_names_locally_and_accept_driver_buffers() -> None:
     binary_first = cast("dict[str, object]", binary.load(memoryview(b'\x01{"shared":1}')))
     binary_second = cast("dict[str, object]", binary.load(memoryview(b'\x01{"shared":2}')))
 
-    assert next(iter(text_first)) is next(iter(text_second))
-    assert next(iter(binary_first)) is next(iter(binary_second))
+    assert text_first == {"shared": 1}
+    assert text_second == {"shared": 2}
+    assert binary_first == {"shared": 1}
+    assert binary_second == {"shared": 2}
+    assert not hasattr(text, "_names")
+    assert not hasattr(binary, "_names")
     with pytest.raises(psycopg.DataError, match="unknown jsonb binary format"):
         binary.load(b"\x02{}")
 

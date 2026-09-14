@@ -229,58 +229,6 @@ def decode_located_member_classified(
     return _classify_member(member, located.document, (member_name,))
 
 
-def prepared_located_member_classifier(
-    shape: DocumentShape, member_name: str
-) -> Callable[[LocatedMemberInput], tuple[object, tuple[DocumentFinding, ...]]]:
-    """Prepare one direct member's classification independently of row data."""
-    member = shape.member(member_name)
-    if member is None:  # pragma: no cover - compiled callers resolve declared members
-        raise KeyError(f"{member_name!r} names no member of the shape")
-    path = (member_name,)
-    if isinstance(member, Leaf):
-        return _PreparedLocatedLeafClassifier(member, path)
-
-    def classify_occurrence(
-        located: LocatedMemberInput,
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        classified = (
-            _classify_member(member, MISSING, path)
-            if isinstance(located, (SqlNull, Missing))
-            else _classify_member(member, located.document, path)
-        )
-        value = classified.presence.value if isinstance(classified.presence, Present) else None
-        return value, classified.findings
-
-    return classify_occurrence
-
-
-@dataclass(frozen=True, slots=True)
-class _PreparedLocatedLeafClassifier:
-    member: Leaf
-    path: tuple[str]
-
-    def __call__(self, located: LocatedMemberInput) -> tuple[object, tuple[DocumentFinding, ...]]:
-        raw = MISSING if isinstance(located, (SqlNull, Missing)) else located.document
-        if isinstance(raw, Missing):
-            findings = (
-                (DocumentFinding("required-member-absent", self.path, raw),)
-                if not self.member.nullable
-                else ()
-            )
-            return None, findings
-        if raw is None:
-            findings = (
-                (DocumentFinding("required-member-null", self.path, raw),)
-                if not self.member.nullable
-                else ()
-            )
-            return None, findings
-        try:
-            return decode_canonical_wire(self.member.type, cast("WireValue", raw)), ()
-        except WireDecodingError:
-            return UNAVAILABLE, (DocumentFinding("leaf-undecodable", self.path, raw),)
-
-
 @dataclass(frozen=True, slots=True)
 class _PreparedRawLeafClassifier:
     member: Leaf
