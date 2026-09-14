@@ -19,6 +19,9 @@ collection measured 1110.8 KiB and 1163.8 KiB in the two arms; the reviewed
 ceiling provides about 3% headroom above the larger arm. Every other ceiling and
 the arm-growth rule are unchanged.
 
-The current-contract authoritative capture will replace [portfolio.json](portfolio.json)
-and [summary.md](summary.md) after the implementation commit; until then those
-files still contain the preserved old-contract capture.
+The current-contract authoritative evidence is [portfolio.json](portfolio.json)
+and [summary.md](summary.md), captured once from clean commit `47bdda1b`.
+It records 89 comparisons within and one outside; 19 of 20 streamed-memory
+arm-growth comparisons pass. The remaining provider-free eager timing cell and
+document-heavy page-128 growth require owner acceptance. The archived capture
+above remains the authoritative evidence for the old contract.
