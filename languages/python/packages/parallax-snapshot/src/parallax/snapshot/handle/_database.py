@@ -81,6 +81,7 @@ from parallax.core.unit_work import Clock, Concurrency, SystemClock
 from parallax.snapshot.handle._demarcation import Demarcation
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._publication import (
     ModelSelection,
     ServingModel,
@@ -188,6 +189,7 @@ class Database:
         "_demarcation",
         "_lifecycle",
         "_observation",
+        "_preparations",
         "_reads",
         "_runtime",
         "_shutdown",
@@ -243,14 +245,20 @@ class Database:
         # be made inside it for an operation coming back OUT of the Provider to
         # be refusable.
         self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
+        self._preparations = PreparationCache()
         # The one Read Scope this connection's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition") — and the one demarcation its transactions run
         # through. Both adopt from the same Serving Model.
         self._reads = standalone_read_scope(
-            lifecycle=self._lifecycle, serving=serving, runtime=runtime
+            lifecycle=self._lifecycle,
+            serving=serving,
+            runtime=runtime,
+            preparations=self._preparations,
         )
-        self._demarcation = Demarcation(runtime, self._clock, self._lifecycle, serving)
+        self._demarcation = Demarcation(
+            runtime, self._clock, self._lifecycle, serving, self._preparations
+        )
         # Held across the whole of close, so the ordering below is the ordering
         # every caller sees: a second close waits for the first rather than
         # returning while the runtime is still being torn down. Reentrant

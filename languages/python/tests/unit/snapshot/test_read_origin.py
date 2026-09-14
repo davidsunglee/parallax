@@ -35,7 +35,10 @@ from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
 from parallax.core.entity._model import DomainModel
 from parallax.core.unit_work import (
+    ObjectKey,
     OptimisticLockConflictError,
+    ReadOrigin,
+    RetainedObservation,
     VersionedStateKey,
     VersionObservation,
 )
@@ -95,6 +98,30 @@ def test_a_typed_node_carries_the_state_its_row_observed() -> None:
     hint = _typed_hint(node)
     assert hint is not None
     assert cast("Any", hint).observation.key == VersionedStateKey(cast("Any", hint).object_key, 4)
+
+
+def test_a_read_origin_is_an_immutable_value_over_its_complete_claim() -> None:
+    object_key = ObjectKey(mm.Account.identity, (("id", 1),))
+    observation = RetainedObservation(
+        VersionedStateKey(object_key, 4), VersionObservation(observed_version=4), None
+    )
+    origin = ReadOrigin(mm.Account.identity, object_key, None, observation)
+    equal = ReadOrigin(mm.Account.identity, object_key, None, observation)
+
+    assert origin == equal
+    assert origin != object()
+    assert hash(origin) == hash(equal)
+    assert repr(origin).startswith("ReadOrigin(entity=")
+    with pytest.raises(AttributeError, match="immutable"):
+        origin.pin = None  # pyright: ignore[reportAttributeAccessIssue] - the refusal is this test's subject
+
+
+def test_deferred_read_evidence_must_name_the_origins_entity() -> None:
+    class Evidence:
+        entity = mm.Balance.identity
+
+    with pytest.raises(ValueError, match="must name its origin"):
+        ReadOrigin.deferred(mm.Account.identity, cast("Any", Evidence()), pin=None)
 
 
 def test_a_wire_node_and_a_typed_node_of_one_row_carry_the_identical_evidence() -> None:

@@ -105,6 +105,15 @@ def test_a_schema_lays_out_no_row_for_a_source_level_its_plan_never_had() -> Non
         ViewSchema.of(_OWNER).source(1, _layout("Dog"))
 
 
+def test_a_prepared_schema_refuses_layouts_outside_its_frozen_catalog() -> None:
+    schema = ViewSchema.prepared(((ChildSlot(_OWNER),),), (_layout("Dog"),))
+
+    with pytest.raises(ValueError, match="no source layout"):
+        schema.source(ROOT_LEVEL, _layout("Cat"))
+    with pytest.raises(ValueError, match="no root layout"):
+        schema.root_view(_layout("Cat"))
+
+
 # --------------------------------------------------------------------------- #
 # The root_view union and the translation into it.                               #
 # --------------------------------------------------------------------------- #

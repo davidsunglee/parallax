@@ -421,6 +421,15 @@ def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> N
     assert missing is MISSING
 
 
+def test_a_direct_document_occurrence_can_be_classified_from_its_compiled_read() -> None:
+    compiled = _compiled(CRAFT, "Craft")
+    tug = target(CRAFT, "Tug").identity
+
+    assert compiled.classify_member_of(
+        {"berth": _stored_document({"quay": "7"})}, tug, "berth"
+    ) == ({"quay": "7"}, ())
+
+
 def test_a_classified_member_is_carried_as_the_transform_classified_it() -> None:
     # Every member of a document-layout row but its key arrives already decoded
     # and already judged, as the MANAGED value its declared type spells.
@@ -529,6 +538,32 @@ def test_a_classified_unavailable_identity_never_forms_a_logical_key() -> None:
 
     assert claim.key is None
     assert [finding.code for finding in claim.findings] == ["stored-data-primary-key-undecodable"]
+
+
+def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
+    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
+    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
+    contracts = _compiled(ENCODED_IDENTITY, "EncodedIdentity").attribute_reads(identity)
+    level = _convert.LevelContext(layout, attribute_reads=contracts)
+    raw = ("0a1b", ABSENT)
+    claim = claim_identity(
+        {},
+        level,
+        raw_member_values=raw,
+        correlation_members=(level.layout.attributes[1].identity,),
+    )
+
+    assert claim.key is not None
+    assert claim.routing_values == (b"\x0a\x1b", ABSENT)
+
+
+def test_level_context_rejects_misaligned_precomputed_member_metadata() -> None:
+    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
+    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
+    with pytest.raises(ValueError, match="result ordinals must align"):
+        _convert.LevelContext(layout, result_ordinals=(0,))
+    with pytest.raises(ValueError, match="document member names must align"):
+        _convert.LevelContext(layout, document_member_names=(None,))
 
 
 def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:

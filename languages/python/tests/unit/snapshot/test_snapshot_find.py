@@ -249,7 +249,7 @@ class QueuePort(ConnectsAsItself):
         raise NotImplementedError
 
 
-def test_find_collects_the_whole_pages_claims_before_decoding_payloads(
+def test_find_collects_claims_without_decoding_trusted_scalar_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     decoded = 0
@@ -270,9 +270,9 @@ def test_find_collects_the_whole_pages_claims_before_decoding_payloads(
     assert len(page_rows(result.page).keys) == 2
     assert decoded == 0
     RootView(result.page, 0)
-    assert decoded == 1
+    assert decoded == 0
     RootView(result.page, 1)
-    assert decoded == 2
+    assert decoded == 0
 
 
 def test_a_later_root_document_is_not_classified_before_its_root_view(

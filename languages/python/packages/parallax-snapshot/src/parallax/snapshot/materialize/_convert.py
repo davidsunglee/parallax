@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from operator import itemgetter
 from typing import Final, Protocol, cast
 
 from parallax.core.base import (
@@ -53,6 +54,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
+    MemberIdentity,
     Multiplicity,
     NestedValueObjectMetadata,
     PrimaryKey,
@@ -65,6 +67,7 @@ from parallax.snapshot.materialize._evidence import freeze_evidence
 from parallax.snapshot.materialize._identity import claim_identity
 from parallax.snapshot.materialize._page import (
     ABSENT,
+    LogicalKey,
     PageBuilder,
     StoredDataIssueCode,
     StoredDataIssueInput,
@@ -148,8 +151,25 @@ class LevelContext:
     concrete_entity: EntityIdentity = field(init=False)
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[AttributeReadContract, ...] = ()
+    classified_members: frozenset[str] = field(default_factory=frozenset[str])
+    result_ordinals: tuple[int | None, ...] = ()
+    classifiers: tuple[
+        Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...
+    ] = ()
+    document_member_names: tuple[str | None, ...] = ()
+    direct_row: Callable[[tuple[object, ...]], object] | None = field(
+        init=False, compare=False, repr=False
+    )
+    attribute_judgment_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
     projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
     host_checked: tuple[int, ...] = field(init=False, compare=False, repr=False)
+    host_checked_set: frozenset[int] = field(init=False, compare=False, repr=False)
+    identity_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
+    identity_position_set: frozenset[int] = field(init=False, compare=False, repr=False)
+    identity_passthrough: frozenset[int] = field(init=False, compare=False, repr=False)
+    requires_state_reduction: bool = field(init=False, compare=False, repr=False)
+    routing_members: tuple[MemberIdentity, ...] = field(default=(), compare=False, repr=False)
+    prepared_routing_positions: tuple[int, ...] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "concrete_entity", self.layout.concrete)
@@ -159,22 +179,101 @@ class LevelContext:
             "projected_by_position",
             tuple(occurrence.storage.name in projected for occurrence in self.layout.occurrences),
         )
+        host_checked = tuple(
+            position
+            for position, attribute in enumerate(self.layout.attributes)
+            if (
+                self.attribute_reads
+                and (
+                    self.attribute_reads[position].encoded
+                    or self.attribute_reads[position].temporal_end
+                )
+            )
+            or (not self.attribute_reads and attribute.identity in self.layout.temporal_ends)
+        )
+        object.__setattr__(self, "host_checked", host_checked)
+        object.__setattr__(self, "host_checked_set", frozenset(host_checked))
+        identity_positions = tuple(
+            dict.fromkeys((*self.layout.primary_key, *self.layout.temporal_starts))
+        )
+        object.__setattr__(self, "identity_positions", identity_positions)
+        object.__setattr__(self, "identity_position_set", frozenset(identity_positions))
+        correlations = tuple(
+            position
+            for member in self.routing_members
+            if (position := self.layout.index_of.get(member)) is not None
+            and position < self.layout.attribute_count
+        )
         object.__setattr__(
             self,
-            "host_checked",
-            tuple(
+            "prepared_routing_positions",
+            tuple(dict.fromkeys((*identity_positions, *correlations))),
+        )
+        attribute_keys = tuple(
+            attribute.storage.name
+            if not self.attribute_reads
+            else self.attribute_reads[position].result_key
+            for position, attribute in enumerate(self.layout.attributes)
+        )
+        occurrence_keys = tuple(occurrence.storage.name for occurrence in self.layout.occurrences)
+        if self.result_ordinals and len(self.result_ordinals) != len(
+            (*attribute_keys, *occurrence_keys)
+        ):
+            raise ValueError("result ordinals must align with the level's members")
+        if self.document_member_names and len(self.document_member_names) != len(
+            (*attribute_keys, *occurrence_keys)
+        ):
+            raise ValueError("document member names must align with the level's members")
+        direct_ordinals = tuple(ordinal for ordinal in self.result_ordinals if ordinal is not None)
+        object.__setattr__(
+            self,
+            "direct_row",
+            itemgetter(*direct_ordinals)
+            if direct_ordinals and len(direct_ordinals) == len(self.result_ordinals)
+            else None,
+        )
+        object.__setattr__(
+            self,
+            "identity_passthrough",
+            frozenset(
                 position
-                for position, attribute in enumerate(self.layout.attributes)
-                if (
-                    self.attribute_reads
-                    and (
-                        self.attribute_reads[position].encoded
-                        or self.attribute_reads[position].temporal_end
-                    )
-                )
-                or (not self.attribute_reads and attribute.identity in self.layout.temporal_ends)
+                for position in identity_positions
+                if position not in self.host_checked_set
+                and (*attribute_keys, *occurrence_keys)[position] not in self.classified_members
             ),
         )
+        object.__setattr__(
+            self,
+            "attribute_judgment_positions",
+            tuple(
+                position
+                for position in range(self.layout.attribute_count)
+                if position not in self.identity_position_set
+                and (
+                    position in self.host_checked_set
+                    or attribute_keys[position] in self.classified_members
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "requires_state_reduction",
+            bool(self.classified_members)
+            or bool(self.attribute_judgment_positions)
+            or not self.identity_position_set.issubset(self.identity_passthrough)
+            or any(self.projected_by_position),
+        )
+
+    def routing_positions(self, correlation_members: tuple[MemberIdentity, ...]) -> tuple[int, ...]:
+        if correlation_members == self.routing_members:
+            return self.prepared_routing_positions
+        correlations = tuple(
+            position
+            for member in correlation_members
+            if (position := self.layout.index_of.get(member)) is not None
+            and position < self.layout.attribute_count
+        )
+        return tuple(dict.fromkeys((*self.identity_positions, *correlations)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,10 +289,10 @@ class _RowDecoder:
         return _decode_row(
             self.raw_values,
             self.level,
-            identity_values=self.identity_values,
-            findings=self.findings,
-            unknown_family_tag=self.unknown_family_tag,
-            classified_members=self.classified_members,
+            self.identity_values,
+            self.findings,
+            self.unknown_family_tag,
+            self.classified_members,
         )
 
 
@@ -202,18 +301,20 @@ class _DeferredRowDecoder:
     witness: tuple[object, ...]
     level: LevelContext
     identity_values: tuple[object, ...]
-    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]]
+    classifiable: int
     unknown_family_tag: UnknownFamilyTag | None
 
     def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        values, findings, classified = self.load()
+        values, findings, classified = _classify_payload(
+            self.witness, self.level, self.classifiable
+        )
         return _decode_row(
             values,
             self.level,
-            identity_values=self.identity_values,
-            findings=findings,
-            unknown_family_tag=self.unknown_family_tag,
-            classified_members=classified,
+            self.identity_values,
+            findings,
+            self.unknown_family_tag,
+            classified,
         )
 
 
@@ -223,11 +324,32 @@ def convert_deferred(
     builder: PageBuilder,
     *,
     source: SourceLevel,
-    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]],
+    classifiable: int,
     unknown_family_tag: UnknownFamilyTag | None = None,
     correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> int:
     """Register identity and an exact witness while deferring payload stages."""
+    if not level.requires_state_reduction and unknown_family_tag is None:
+        layout = level.layout
+        primary_key = witness[layout.primary_key[0]]
+        key = (
+            None
+            if primary_key is ABSENT
+            else LogicalKey(
+                layout.family,
+                primary_key,
+                tuple(witness[position] for position in layout.temporal_starts),
+            )
+        )
+        return builder.add_claim(
+            source,
+            layout,
+            key,
+            witness,
+            witness,
+            (),
+            witness,
+        )
     claim = claim_identity(
         {},
         level,
@@ -236,14 +358,59 @@ def convert_deferred(
         raw_member_values=witness,
         correlation_members=correlation_members,
     )
+    decoder = _DeferredRowDecoder(
+        witness,
+        level,
+        claim.identity_values,
+        classifiable,
+        unknown_family_tag,
+    )
     return builder.add_claim(
         source,
         level.layout,
         claim.key,
-        claim.witness.values,
+        claim.witness,
         claim.routing_values,
         claim.findings,
-        _DeferredRowDecoder(witness, level, claim.identity_values, load, unknown_family_tag),
+        decoder,
+    )
+
+
+def _classify_payload(
+    witness: tuple[object, ...],
+    level: LevelContext,
+    classifiable: int,
+) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]:
+    if not level.classified_members:
+        return witness, (), frozenset()
+    values = list(witness)
+    findings: list[DocumentFinding] = []
+    full = classifiable == (1 << len(witness)) - 1
+    classified: set[str] | None = None if full else set()
+    for position, optional_classifier in enumerate(level.classifiers):
+        if optional_classifier is None:
+            continue
+        raw = witness[position]
+        if raw is ABSENT or not classifiable & (1 << position):
+            continue
+        value, member_findings = optional_classifier(raw)
+        values[position] = value
+        findings.extend(member_findings)
+        if classified is not None:
+            key = (
+                (
+                    level.layout.attributes[position].storage.name
+                    if not level.attribute_reads
+                    else level.attribute_reads[position].result_key
+                )
+                if position < level.layout.attribute_count
+                else level.layout.occurrences[position - level.layout.attribute_count].storage.name
+            )
+            classified.add(key)
+    return (
+        tuple(values),
+        tuple(findings),
+        level.classified_members if classified is None else frozenset(classified),
     )
 
 
@@ -306,7 +473,7 @@ def convert_row(
         source,
         level.layout,
         claim.key,
-        claim.witness.values,
+        claim.witness,
         claim.routing_values,
         claim.findings,
         _RowDecoder(
@@ -323,12 +490,18 @@ def convert_row(
 def _decode_row(
     raw_values: tuple[object, ...],
     level: LevelContext,
-    *,
     identity_values: tuple[object, ...],
     findings: tuple[DocumentFinding, ...],
     unknown_family_tag: UnknownFamilyTag | None,
     classified_members: frozenset[str],
 ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+    if (
+        not level.requires_state_reduction
+        and unknown_family_tag is None
+        and not findings
+        and not classified_members
+    ):
+        return raw_values, ()
     layout = level.layout
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
@@ -341,33 +514,32 @@ def _decode_row(
                 stored_value=freeze_evidence(unknown_family_tag.stored_value),
             )
         )
-    members: list[object] = []
+    members: list[object] | None = None
     reads = level.attribute_reads
-    host_checked = frozenset(level.host_checked)
-    identity_positions = tuple(dict.fromkeys((*layout.primary_key, *layout.temporal_starts)))
-    identity_by_position = dict(zip(identity_positions, identity_values, strict=True))
-    identity_position_set = frozenset(identity_positions)
-    for position, attribute in enumerate(layout.attributes):
-        if position in identity_position_set:
-            members.append(identity_by_position[position])
-            continue
+    host_checked = level.host_checked_set
+    identity_positions = level.identity_positions
+    for position, value in zip(identity_positions, identity_values, strict=True):
+        if value is not raw_values[position]:
+            if members is None:
+                members = list(raw_values)
+            members[position] = value
+    for position in level.attribute_judgment_positions:
+        attribute = layout.attributes[position]
         contract = reads[position] if reads else None
         result_key = attribute.storage.name if contract is None else contract.result_key
         raw = raw_values[position]
         if raw is ABSENT:
-            members.append(ABSENT)
             continue
         if result_key in classified_members:
-            members.append(
-                ABSENT
-                if raw is UNAVAILABLE
-                else raw
-                if raw is not None or attribute.nullable
-                else ABSENT
+            value = (
+                ABSENT if raw is UNAVAILABLE or (raw is None and not attribute.nullable) else raw
             )
+            if value is not raw_values[position]:
+                if members is None:
+                    members = list(raw_values)
+                members[position] = value
             continue
         if position not in host_checked:
-            members.append(raw)
             continue
         try:
             value = (
@@ -389,17 +561,19 @@ def _decode_row(
         )
         if not admission.admitted:
             issues.append(_attribute_issue(attribute, admission.rejected, level.concrete_entity))
-        members.append(value if admission.admitted else ABSENT)
+        value = value if admission.admitted else ABSENT
+        if value is not raw_values[position]:
+            if members is None:
+                members = list(raw_values)
+            members[position] = value
     for occurrence_position, (occurrence, projected) in enumerate(
         zip(layout.occurrences, level.projected_by_position, strict=True),
         start=layout.attribute_count,
     ):
         if not projected:
-            members.append(ABSENT)
             continue
         raw = raw_values[occurrence_position]
         if raw is ABSENT:
-            members.append(ABSENT)
             continue
         value, occurrence_findings = _occurrence(
             raw,
@@ -410,8 +584,11 @@ def _decode_row(
             _occurrence_issue(finding, occurrence, level.concrete_entity)
             for finding in occurrence_findings
         )
-        members.append(value)
-    return tuple(members), tuple(issues)
+        if value is not raw_values[occurrence_position]:
+            if members is None:
+                members = list(raw_values)
+            members[occurrence_position] = value
+    return raw_values if members is None else tuple(members), tuple(issues)
 
 
 def _attribute_issue(
@@ -551,20 +728,14 @@ def _structure(document: Mapping[str, object], declared: _VoContainer) -> tuple[
     available — reads ``ABSENT`` at its own position, which is how presence
     survives a row that cannot omit. No raw document mapping continues past here.
     """
-    return (
-        *(
-            document[leaf.identity.name]
-            if leaf.identity.name in document and document[leaf.identity.name] is not UNAVAILABLE
-            else ABSENT
-            for leaf in declared.attributes
-        ),
-        *(
-            _structure_occurrence(document[nested.identity.path[-1]], nested)
-            if nested.identity.path[-1] in document
-            else ABSENT
-            for nested in declared.value_objects
-        ),
-    )
+    row: list[object] = []
+    for leaf in declared.attributes:
+        value = document.get(leaf.identity.name, UNAVAILABLE)
+        row.append(ABSENT if value is UNAVAILABLE else value)
+    for nested in declared.value_objects:
+        value = document.get(nested.identity.path[-1], UNAVAILABLE)
+        row.append(ABSENT if value is UNAVAILABLE else _structure_occurrence(value, nested))
+    return tuple(row)
 
 
 def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredDataIssueInput:

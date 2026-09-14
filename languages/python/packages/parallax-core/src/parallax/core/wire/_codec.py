@@ -92,6 +92,18 @@ def decode_wire(neutral_type: NeutralType, value: WireValue) -> ManagedValue:
 
 def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> ManagedValue:
     """Decode one Wire literal only when it is the canonical output spelling."""
+    if isinstance(neutral_type, Boolean) and isinstance(value, bool):
+        return value
+    if isinstance(neutral_type, String) and isinstance(value, str):
+        managed = str.__str__(value)
+        if managed.isascii() or matches_neutral_type(managed, neutral_type):
+            return managed
+        _fail("out-of-space", value, neutral_type)
+    if isinstance(neutral_type, (Int32, Int64)) and type(value) is int:
+        managed_int = int.__int__(value)
+        if matches_neutral_type(managed_int, neutral_type):
+            return managed_int
+        _fail("out-of-space", value, neutral_type)
     decoded = _decode_admitted(neutral_type, value)
     if not _is_canonical_output(neutral_type, value, decoded):
         _fail("noncanonical", value, neutral_type)
@@ -107,6 +119,23 @@ def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
             f"{_diagnostic(neutral_type)}"
         )
     return _canonical_spelling(neutral_type, normalized)
+
+
+def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
+    """Encode a value already admitted at a trusted managed-state boundary."""
+    match neutral_type:
+        case Boolean():
+            return bool(value)
+        case Int32() | Int64():
+            return int(cast("int", value))
+        case String():
+            return str.__str__(cast("str", value))
+        case Float64():
+            float_value = float(cast("float", value))
+            return 0.0 if float_value == 0.0 else float_value
+        case _:
+            pass
+    return _canonical_spelling(neutral_type, _base_managed_carrier(value, neutral_type))
 
 
 def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:

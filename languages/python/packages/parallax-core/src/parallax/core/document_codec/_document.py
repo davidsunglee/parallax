@@ -6,7 +6,7 @@ and a returned document shares no mutable state with one passed in.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import ClassVar, Final, Literal, Self, cast
 
@@ -36,6 +36,7 @@ from parallax.core.document_codec._shape import (
     resolve,
 )
 from parallax.core.metamodel import Multiplicity
+from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
     "UNAVAILABLE",
@@ -45,6 +46,7 @@ __all__ = [
     "DocumentPatch",
     "DocumentPathSegment",
     "LocatedMemberInput",
+    "RawLocatedMemberInput",
     "SetLeaf",
     "SetValue",
     "Unavailable",
@@ -58,6 +60,8 @@ __all__ = [
     "encode_document",
     "encode_many",
     "locate_entity_member",
+    "locate_raw_entity_member",
+    "prepared_raw_member_classifier",
     "reduce_declared_members",
     "reduce_declared_members_classified",
 ]
@@ -138,11 +142,77 @@ type LocatedMemberInput = SqlNull | Missing | PresentDocument
 """A direct member carrier after physical location but before classification."""
 
 
+class _PresentJsonNull:
+    __slots__ = ()
+
+
+_PRESENT_JSON_NULL: Final = _PresentJsonNull()
+type RawLocatedMemberInput = SqlNull | Missing | _PresentJsonNull | DocumentValue
+"""An allocation-free direct-member witness that distinguishes present JSON null."""
+
+
 def locate_entity_member(document: DocumentValue, member: str) -> Missing | PresentDocument:
     """Locate one direct Entity member in a raw Entity document carrier."""
     if isinstance(document, dict) and member in document:
         return PresentDocument(document[member])
     return MISSING
+
+
+def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocatedMemberInput:
+    """Locate one direct member without allocating a presence wrapper."""
+    if not isinstance(document, dict):
+        return MISSING
+    value = document.get(member, MISSING)
+    if isinstance(value, Missing):
+        return MISSING
+    return _PRESENT_JSON_NULL if value is None else value
+
+
+def prepared_raw_member_classifier(
+    shape: DocumentShape, member_name: str
+) -> Callable[[RawLocatedMemberInput], tuple[object, tuple[DocumentFinding, ...]]]:
+    """Prepare classification for an allocation-free direct-member witness."""
+    member = shape.member(member_name)
+    if member is None:  # pragma: no cover - compiled callers resolve declared members
+        raise KeyError(f"{member_name!r} names no member of the shape")
+    path = (member_name,)
+    if isinstance(member, Leaf):
+        return _PreparedRawLeafClassifier(member, path)
+
+    def classify_occurrence(
+        located: RawLocatedMemberInput,
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        raw = (
+            MISSING
+            if isinstance(located, (SqlNull, Missing))
+            else None
+            if located is _PRESENT_JSON_NULL
+            else located
+        )
+        if (
+            member.multiplicity is Multiplicity.MANY
+            and isinstance(raw, list)
+            and all(isinstance(item, dict) for item in cast("list[object]", raw))
+        ):
+            reduced: list[object] = []
+            findings: list[DocumentFinding] = []
+            for index, item in enumerate(cast("list[object]", raw)):
+                value, nested = reduce_declared_members_classified(member.shape, item)
+                reduced.append(value)
+                findings.extend(
+                    replace(finding, path=(member_name, index, *finding.path)) for finding in nested
+                )
+            return reduced, tuple(findings)
+        if member.multiplicity is not Multiplicity.MANY and isinstance(raw, dict):
+            value, nested_findings = reduce_declared_members_classified(member.shape, raw)
+            return value, tuple(
+                replace(finding, path=(member_name, *finding.path)) for finding in nested_findings
+            )
+        classified = _classify_member(member, raw, path)
+        value = classified.presence.value if isinstance(classified.presence, Present) else None
+        return value, classified.findings
+
+    return classify_occurrence
 
 
 def decode_located_member_classified(
@@ -157,6 +227,93 @@ def decode_located_member_classified(
     if isinstance(located, (SqlNull, Missing)):
         return _classify_member(member, MISSING, (member_name,))
     return _classify_member(member, located.document, (member_name,))
+
+
+def prepared_located_member_classifier(
+    shape: DocumentShape, member_name: str
+) -> Callable[[LocatedMemberInput], tuple[object, tuple[DocumentFinding, ...]]]:
+    """Prepare one direct member's classification independently of row data."""
+    member = shape.member(member_name)
+    if member is None:  # pragma: no cover - compiled callers resolve declared members
+        raise KeyError(f"{member_name!r} names no member of the shape")
+    path = (member_name,)
+    if isinstance(member, Leaf):
+        return _PreparedLocatedLeafClassifier(member, path)
+
+    def classify_occurrence(
+        located: LocatedMemberInput,
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        classified = (
+            _classify_member(member, MISSING, path)
+            if isinstance(located, (SqlNull, Missing))
+            else _classify_member(member, located.document, path)
+        )
+        value = classified.presence.value if isinstance(classified.presence, Present) else None
+        return value, classified.findings
+
+    return classify_occurrence
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedLocatedLeafClassifier:
+    member: Leaf
+    path: tuple[str]
+
+    def __call__(self, located: LocatedMemberInput) -> tuple[object, tuple[DocumentFinding, ...]]:
+        raw = MISSING if isinstance(located, (SqlNull, Missing)) else located.document
+        if isinstance(raw, Missing):
+            findings = (
+                (DocumentFinding("required-member-absent", self.path, raw),)
+                if not self.member.nullable
+                else ()
+            )
+            return None, findings
+        if raw is None:
+            findings = (
+                (DocumentFinding("required-member-null", self.path, raw),)
+                if not self.member.nullable
+                else ()
+            )
+            return None, findings
+        try:
+            return decode_canonical_wire(self.member.type, cast("WireValue", raw)), ()
+        except WireDecodingError:
+            return UNAVAILABLE, (DocumentFinding("leaf-undecodable", self.path, raw),)
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedRawLeafClassifier:
+    member: Leaf
+    path: tuple[str]
+
+    def __call__(
+        self, located: RawLocatedMemberInput
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        raw = (
+            MISSING
+            if isinstance(located, (SqlNull, Missing))
+            else None
+            if located is _PRESENT_JSON_NULL
+            else located
+        )
+        if isinstance(raw, Missing):
+            findings = (
+                (DocumentFinding("required-member-absent", self.path, raw),)
+                if not self.member.nullable
+                else ()
+            )
+            return None, findings
+        if raw is None:
+            findings = (
+                (DocumentFinding("required-member-null", self.path, raw),)
+                if not self.member.nullable
+                else ()
+            )
+            return None, findings
+        try:
+            return decode_canonical_wire(self.member.type, cast("WireValue", raw)), ()
+        except WireDecodingError:
+            return UNAVAILABLE, (DocumentFinding("leaf-undecodable", self.path, raw),)
 
 
 def decode_occurrence_classified(
@@ -267,17 +424,29 @@ def reduce_declared_members_classified(
     reduced: dict[str, object] = {}
     findings: list[DocumentFinding] = []
     for member in shape.members:
+        raw = source.get(member.name, MISSING)
+        if isinstance(member, Leaf):
+            path = (member.name,)
+            if isinstance(raw, Missing):
+                if not member.nullable:
+                    findings.append(DocumentFinding("required-member-absent", path, raw))
+                continue
+            if raw is None:
+                if not member.nullable:
+                    findings.append(DocumentFinding("required-member-null", path, raw))
+                reduced[member.name] = None
+                continue
+            try:
+                reduced[member.name] = decode_canonical_wire(member.type, cast("WireValue", raw))
+            except WireDecodingError:
+                reduced[member.name] = UNAVAILABLE
+                findings.append(DocumentFinding("leaf-undecodable", path, raw))
+            continue
         held = member.name in source
-        classified = _classify_member(member, source.get(member.name, MISSING), (member.name,))
+        classified = _classify_member(member, raw, (member.name,))
         findings.extend(classified.findings)
         if isinstance(classified.presence, Unavailable):
             reduced[member.name] = UNAVAILABLE
-            continue
-        if isinstance(member, Leaf):
-            if isinstance(classified.presence, Present):
-                reduced[member.name] = classified.presence.value
-            elif isinstance(classified.presence, ExplicitNull):
-                reduced[member.name] = None
             continue
         if member.multiplicity is Multiplicity.MANY:
             documents = (

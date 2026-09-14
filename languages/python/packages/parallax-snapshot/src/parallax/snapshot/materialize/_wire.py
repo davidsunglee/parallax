@@ -56,6 +56,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.unit_work import ReadOrigin
 from parallax.core.wire import encode_wire
+from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
 from parallax.snapshot.materialize._invalid import InvalidData
 from parallax.snapshot.materialize._page import ABSENT, RelationshipViewKey
@@ -69,6 +70,7 @@ __all__ = [
     "WireValue",
     "opened_wire_entity",
     "read_origin_of",
+    "shared_wire_encoder",
     "unwind_tree",
     "wire_roots",
 ]
@@ -89,6 +91,7 @@ through public frozen list and mapping types, would make every ordinary mapping
 statically unusable as Parallax input."""
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
+type _Encoder = Callable[[NeutralType, ManagedValue], object]
 
 FAMILY_VARIANT_KEY = "familyVariant"
 """The key an inheritance participant's stable variant spelling is published
@@ -344,6 +347,8 @@ def wire_roots(
     *,
     ordinal_offset: int = 0,
     sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
+    encode: _Encoder = encode_managed_wire,
+    variants: dict[EntityIdentity, str | None] | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``root_view``'s roots as Wire values, in result order.
 
@@ -360,9 +365,9 @@ def wire_roots(
     """
     classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
     retained: Mapping[int, ReadOrigin] = (
-        root_view.by_allocation(sources) if classification.conforming else MappingProxyType({})
+        sources if classification.conforming else MappingProxyType({})
     )
-    unwind = _Unwind(root_view, model, retained)
+    unwind = _Unwind(root_view, model, retained, encode, variants)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
@@ -382,45 +387,74 @@ class _Unwind:
     shared. It dies when the pass returns.
     """
 
-    __slots__ = ("_cache", "_model", "_root", "_sources")
+    __slots__ = (
+        "_cache",
+        "_encode",
+        "_leaf_cache",
+        "_model",
+        "_root",
+        "_sources",
+        "_trusted",
+        "_variants",
+    )
 
-    def __init__(self, root: RootView, model: Metamodel, sources: Mapping[int, ReadOrigin]) -> None:
+    def __init__(
+        self,
+        root: RootView,
+        model: Metamodel,
+        sources: Mapping[int, ReadOrigin],
+        encode: _Encoder,
+        variants: dict[EntityIdentity, str | None] | None,
+    ) -> None:
         self._root = root
         self._model = model
         self._sources = sources
+        self._encode = encode
+        self._trusted = encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
         self._cache: dict[tuple[int, int], _WireEntityNode] = {}
+        self._leaf_cache: dict[int, _WireEntityNode] = {}
+        self._variants = {} if variants is None else variants
 
     def node(self, index: int, subtree: UnwindTree) -> _WireEntityNode:
-        key = (index, id(subtree))
-        cached = self._cache.get(key)
+        leaf = subtree is EMPTY_UNWIND
+        key: int | tuple[int, int] = index if leaf else (index, id(subtree))
+        cache: dict[Any, _WireEntityNode] = self._leaf_cache if leaf else self._cache
+        cached = cache.get(key)
         if cached is not None:
             return cached
         entity = self._build(index, subtree)
         # Two positions reaching one Root View node under one subtree answer the
         # identical object and therefore the identical claim, exactly as two
         # positions reaching one Entity instance do in the typed lane.
-        object.__setattr__(entity, "_source", self._sources.get(index))
-        self._cache[key] = entity
+        object.__setattr__(entity, "_source", self._root.projection_value(index, self._sources))
+        cache[key] = entity
         return entity
 
     def _build(self, node: int, subtree: UnwindTree) -> _WireEntityNode:
         layout = self._root.layout(node)
         values = self._root.member_values(node)
         rendered: dict[str, WireValue] = {}
-        for position, attribute in enumerate(layout.attributes):
-            value = values[position]
+        for attribute, value in zip(layout.attributes, values, strict=False):
             if value is not ABSENT:
-                _put(rendered, attribute.identity.name, _leaf(attribute, value))
-        variant = _family_variant(self._model, layout.concrete)
+                rendered[attribute.identity.name] = (
+                    cast("WireValue", value)
+                    if self._trusted and type(value) in (bool, int, str)
+                    else _trusted_wire_scalar(attribute.type, value, self._encode)
+                    if self._trusted
+                    else _wire_scalar(attribute.type, value, self._encode)
+                )
+        variant = self._variants.get(layout.concrete, ABSENT)
+        if variant is ABSENT:
+            variant = _family_variant(self._model, layout.concrete)
+            self._variants[layout.concrete] = variant
         if variant is not None:
-            _put(rendered, FAMILY_VARIANT_KEY, variant)
-        for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
-            value = values[position]
+            rendered[FAMILY_VARIANT_KEY] = cast("str", variant)
+        for occurrence, value in zip(
+            layout.occurrences, values[layout.attribute_count :], strict=True
+        ):
             if value is not ABSENT:
-                _put(
-                    rendered,
-                    occurrence.identity.path[-1],
-                    _occurrence(value, occurrence, _STORED),
+                rendered[occurrence.identity.path[-1]] = _occurrence(
+                    value, occurrence, _STORED, self._encode, trusted=self._trusted
                 )
         view_layout = self._root.view_layout(node)
         for view, child in subtree.children.items():
@@ -440,7 +474,7 @@ class _Unwind:
             if value is ABSENT:  # pragma: no cover - see above: a slot this walk names is written
                 continue
             key = view.narrowed_view or view.relationship.name
-            _put(rendered, key, self._related(value, child))
+            rendered[key] = self._related(value, child)
         return _frozen_mapping(_WireEntityNode, rendered)
 
     def _related(self, value: object, subtree: UnwindTree) -> WireValue:
@@ -450,9 +484,10 @@ class _Unwind:
         ``None`` is loaded-null, and a lone allocation index is loaded-one.
         """
         if isinstance(value, tuple):
-            return _frozen_sequence(
-                self.node(index, subtree) for index in cast("tuple[int, ...]", value)
-            )
+            sequence = list.__new__(_FrozenSequence)
+            for index in cast("tuple[int, ...]", value):
+                list[Any].append(sequence, self.node(index, subtree))
+            return sequence
         if value is None:
             return None
         return self.node(cast("int", value), subtree)
@@ -465,22 +500,51 @@ def _put(rendered: dict[str, WireValue], key: str, value: WireValue) -> None:
     rendered[key] = value
 
 
-def _leaf(attribute: AttributeMetadata, value: object) -> WireValue:
-    """One Attribute value as its canonical Wire Value.
-
-    Null and the open temporal bound are the two positions no value space covers:
-    a null member publishes JSON null, and a temporal end's open bound publishes
-    `m-core`'s own canonical ``infinity`` literal.
-    """
-    return _wire_scalar(attribute.type, value)
-
-
-def _wire_scalar(neutral_type: NeutralType, value: object) -> WireValue:
+def _wire_scalar(
+    neutral_type: NeutralType,
+    value: object,
+    encode: _Encoder = encode_managed_wire,
+) -> WireValue:
     if value is None:
         return None
     if isinstance(value, TemporalBound):
         return INFINITY_LITERAL
-    return cast("WireValue", encode_wire(neutral_type, cast("ManagedValue", value)))
+    if type(value) in (bool, int, str) and (
+        encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
+    ):
+        return cast("WireValue", value)
+    return cast("WireValue", encode(neutral_type, cast("ManagedValue", value)))
+
+
+def _trusted_wire_scalar(neutral_type: NeutralType, value: object, encode: _Encoder) -> WireValue:
+    if value is None:
+        return None
+    if isinstance(value, TemporalBound):
+        return INFINITY_LITERAL
+    return cast("WireValue", encode(neutral_type, cast("ManagedValue", value)))
+
+
+class _SharedWireEncoder:
+    __slots__ = ("_encoded",)
+
+    def __init__(self) -> None:
+        self._encoded: dict[tuple[NeutralType, ManagedValue], object] = {}
+
+    def __call__(self, neutral_type: NeutralType, value: ManagedValue) -> object:
+        try:
+            key = (neutral_type, value)
+            held = self._encoded.get(key, ABSENT)
+        except TypeError:
+            return encode_managed_wire(neutral_type, value)
+        if held is ABSENT:
+            held = encode_managed_wire(neutral_type, value)
+            self._encoded[key] = held
+        return held
+
+
+def shared_wire_encoder() -> _Encoder:
+    """The trusted-state encoder shared by every root publication."""
+    return _SharedWireEncoder()
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,16 +602,30 @@ _STORED: Final = _Carrier(elements=_stored_elements, entries=_stored_entries)
 _AUTHORED: Final = _Carrier(elements=_authored_elements, entries=_authored_entries)
 
 
-def _occurrence(value: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
+def _occurrence(
+    value: object,
+    declared: _VoContainer,
+    carrier: _Carrier,
+    encode: _Encoder = encode_managed_wire,
+    *,
+    trusted: bool = False,
+) -> WireValue:
     """One occurrence entry as the Wire value its carrier holds."""
     if declared.multiplicity is Multiplicity.MANY:
         return _frozen_sequence(
-            _held_members(record, declared, carrier) for record in carrier.elements(value)
+            _held_members(record, declared, carrier, encode, trusted)
+            for record in carrier.elements(value)
         )
-    return None if value is None else _held_members(value, declared, carrier)
+    return None if value is None else _held_members(value, declared, carrier, encode, trusted)
 
 
-def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> WireValue:
+def _held_members(
+    record: object,
+    declared: _VoContainer,
+    carrier: _Carrier,
+    encode: _Encoder,
+    trusted: bool,
+) -> WireValue:
     """One occurrence record as the members its carrier HOLDS, in declared order.
 
     The declared member lists supply the order and the per-position decoding, and
@@ -563,16 +641,36 @@ def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> 
     renders. An insert's carrier is its own opening row, complete by the rule
     :func:`opened_wire_entity` states.
     """
+    if carrier is _STORED and isinstance(record, tuple):
+        row = cast("tuple[object, ...]", record)
+        published: dict[str, WireValue] = {}
+        for leaf, value in zip(declared.attributes, row, strict=False):
+            if value is not ABSENT:
+                published[leaf.identity.name] = (
+                    cast("WireValue", value)
+                    if trusted and type(value) in (bool, int, str)
+                    else _trusted_wire_scalar(leaf.type, value, encode)
+                    if trusted
+                    else _wire_scalar(leaf.type, value, encode)
+                )
+        for occurrence, value in zip(
+            declared.value_objects, row[len(declared.attributes) :], strict=True
+        ):
+            if value is not ABSENT:
+                published[occurrence.identity.path[-1]] = _occurrence(
+                    value, occurrence, carrier, encode, trusted=trusted
+                )
+        return _frozen_mapping(_FrozenMapping, published)
     held = carrier.entries(record, declared)
     published: dict[str, WireValue] = {}
     for leaf in declared.attributes:
         name = leaf.identity.name
         if name in held:
-            published[name] = _wire_scalar(leaf.type, held[name])
+            published[name] = _wire_scalar(leaf.type, held[name], encode)
     for occurrence in declared.value_objects:
         name = occurrence.identity.path[-1]
         if name in held:
-            published[name] = _occurrence(held[name], occurrence, carrier)
+            published[name] = _occurrence(held[name], occurrence, carrier, encode, trusted=trusted)
     return _frozen_mapping(_FrozenMapping, published)
 
 
@@ -612,7 +710,11 @@ def opened_wire_entity(
             continue
         occurrence = declared_occurrences.get(name)
         if occurrence is not None:  # pragma: no branch - the payload names declared members only
-            _put(rendered, name, _occurrence(value, occurrence, _AUTHORED))
+            _put(
+                rendered,
+                name,
+                _occurrence(value, occurrence, _AUTHORED, encode_wire),
+            )
     variant = _family_variant(model, entity)
     if variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, variant)
@@ -668,5 +770,7 @@ def unwind_tree(
     for index in reversed(range(len(levels))):
         view, parent = levels[index]
         target = root if parent is None else children[parent]
-        target[view] = UnwindTree(MappingProxyType(children[index]))
+        target[view] = (
+            UnwindTree(MappingProxyType(children[index])) if children[index] else EMPTY_UNWIND
+        )
     return UnwindTree(MappingProxyType(root))

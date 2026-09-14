@@ -450,6 +450,8 @@ def _is_integer(value: object) -> TypeGuard[int]:
 
 def _is_utf8_encodable(value: str) -> bool:
     """Whether text has a UTF-8 encoding; an unpaired surrogate has none."""
+    if value.isascii():
+        return True
     try:
         str.encode(value, "utf-8")
     except UnicodeEncodeError:

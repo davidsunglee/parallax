@@ -311,6 +311,22 @@ class Dialect:
             )
         return PresentDocument(detached)
 
+    def parse_owned_document_read(self, presence: object, document: object) -> DocumentRead:
+        """Parse a document pair whose plain JSON containers transfer to the result."""
+        if type(presence) is not bool:
+            raise ValueError(
+                "a document-read presence projection must be a SQL boolean, "
+                f"got {type(presence).__name__}"
+            )
+        if not presence:
+            return SQL_NULL
+        if not is_document_value(document):
+            raise ValueError(
+                "a present structured-document result must be a portable JSON value, "
+                f"got {type(document).__name__}"
+            )
+        return PresentDocument(document)
+
     # -- result shaping ---------------------------------------------------- #
     def limit_clause(self) -> str:
         """The row-limit clause (the count rides as a `?` bind)."""

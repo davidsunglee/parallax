@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from parallax.core.base import SQL_NULL, PresentDocument, SqlNull, is_document_value
 from parallax.core.db_port import DocumentReadOrdinals, MappingRow, Row
@@ -49,31 +49,37 @@ def fold_mapping_document_reads(
 
 
 def fold_mapping_rows(
-    rows: Sequence[Mapping[str, object]],
+    rows: Iterable[Mapping[str, object]],
     document_reads: Sequence[DocumentReadOrdinals],
     sql: str | None = None,
 ) -> list[Row]:
     """Fold every logical row returned by a structural database-port fake."""
     projection = _projection(sql) if sql is not None else ()
     nested = _nested_projection(sql) if sql is not None else {}
+    if not document_reads:
+        return [
+            tuple(
+                _projection_value(row, result_key, nested.get(source_key, source_key))
+                for result_key, source_key in projection
+            )
+            if projection
+            else tuple(row.values())
+            for row in rows
+        ]
     presence_ordinals = {presence for presence, _payload in document_reads}
-    return [
-        tuple(
-            fold_mapping_document_reads(
-                {
-                    result_key: _projection_value(
-                        row, result_key, nested.get(source_key, source_key)
-                    )
-                    for ordinal, (result_key, source_key) in enumerate(projection)
-                    if ordinal not in presence_ordinals
-                }
-                if projection
-                else row,
-                document_reads,
-            ).values()
+    folded: list[Row] = []
+    for row in rows:
+        projected = (
+            {
+                result_key: _projection_value(row, result_key, nested.get(source_key, source_key))
+                for ordinal, (result_key, source_key) in enumerate(projection)
+                if ordinal not in presence_ordinals
+            }
+            if projection
+            else row
         )
-        for row in rows
-    ]
+        folded.append(tuple(fold_mapping_document_reads(projected, document_reads).values()))
+    return folded
 
 
 _RESULT_ALIAS = re.compile(r"\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$", re.IGNORECASE)

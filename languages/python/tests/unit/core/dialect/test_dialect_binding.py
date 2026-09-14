@@ -116,6 +116,13 @@ def test_two_connections_over_one_model_execute_in_their_own_ports_dialects() ->
     assert "t0.`id`" in backticked_port.statements[0]
 
 
+def test_owned_document_reads_validate_presence_and_document_carriers() -> None:
+    with pytest.raises(ValueError, match="SQL boolean"):
+        POSTGRES.parse_owned_document_read(1, None)
+    with pytest.raises(ValueError, match="portable JSON value"):
+        POSTGRES.parse_owned_document_read(True, object())
+
+
 def test_connecting_with_an_obsolete_dialect_keyword_is_refused() -> None:
     # No alias and no mismatch check: the pair collapsed, so naming a dialect
     # beside a port is an unrecognized argument like any other.

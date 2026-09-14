@@ -47,7 +47,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
         f"this reading requires {INSTRUMENT_MODULE}, but resolved {memory_instruments.__file__}"
     )
 
-from tests._support.db_port import projected_row  # noqa: E402
+from tests._support.db_port import projected_rows  # noqa: E402
 from tests.unit import _snapshot_materialization_support as stress_support  # noqa: E402
 
 if Path(stress_support.__file__ or "").resolve() != SUPPORT_MODULE:
@@ -155,17 +155,20 @@ class CatalogPort:
         del document_reads
         if "order_item t0" in sql:
             parents = cast("list[int]", binds[0])
-            return [
-                projected_row(sql, _item_row(row))
-                for parent in parents
-                for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
-            ]
+            return projected_rows(
+                sql,
+                (
+                    _item_row(row)
+                    for parent in parents
+                    for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
+                ),
+            )
         limited = " limit " in sql
         size = cast("int", binds[-1]) if limited else len(self._orders)
         taken = min(size, len(self._orders) - self._delivered)
         selected = self._orders[self._delivered : self._delivered + taken]
         self._delivered += taken - 1 if taken == size and limited else taken
-        return [projected_row(sql, _order_row(row)) for row in selected]
+        return projected_rows(sql, (_order_row(row) for row in selected))
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
         return [
@@ -217,7 +220,7 @@ def _timed(work: Callable[[], object]) -> tuple[float, ...]:
 
 
 def _page_size(path: str) -> int:
-    for size in (1, 32, 128):
+    for size in (128, 32, 1):
         if f"page{size}" in path:
             return size
     raise ValueError(f"{path}: no page size")

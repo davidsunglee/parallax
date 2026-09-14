@@ -146,18 +146,37 @@ class ViewSchema:
     source level.
     """
 
-    __slots__ = ("_interned", "_levels", "_root_views", "_source")
+    __slots__ = ("_frozen", "_interned", "_levels", "_root_views", "_source")
 
     def __init__(self, levels: Sequence[tuple[ChildSlot, ...]]) -> None:
         self._levels: tuple[tuple[ChildSlot, ...], ...] = tuple(levels)
         self._interned: dict[tuple[RelationshipViewKey, ...], SourceViewLayout] = {}
         self._source: dict[tuple[SourceLevel, EntityIdentity], SourceViewLayout] = {}
         self._root_views: dict[EntityIdentity, RootViewLayout] = {}
+        self._frozen = False
 
     @classmethod
     def of(cls, *views: RelationshipViewKey) -> ViewSchema:
         """A schema of one unguarded source level carrying ``views``."""
         return cls((tuple(ChildSlot(view) for view in views),))
+
+    @classmethod
+    def prepared(
+        cls,
+        levels: Sequence[tuple[ChildSlot, ...]],
+        layouts: Iterable[EntityLayout],
+    ) -> ViewSchema:
+        schema = cls(levels)
+        held = tuple(layouts)
+        for layout in held:
+            for level in range(len(schema._levels)):
+                schema.source(level, layout)
+            schema.root_view(layout)
+        schema._interned = MappingProxyType(schema._interned)  # pyright: ignore[reportAttributeAccessIssue]
+        schema._source = MappingProxyType(schema._source)  # pyright: ignore[reportAttributeAccessIssue]
+        schema._root_views = MappingProxyType(schema._root_views)  # pyright: ignore[reportAttributeAccessIssue]
+        schema._frozen = True
+        return schema
 
     def source(self, level: SourceLevel, layout: EntityLayout) -> SourceViewLayout:
         """The view row a projection of ``layout``'s Entity produced by ``level``
@@ -172,6 +191,11 @@ class ViewSchema:
         cached = self._source.get(memo)
         if cached is not None:
             return cached
+        if self._frozen:
+            raise ValueError(
+                f"this prepared view schema carries no source layout for "
+                f"{layout.concrete.canonical} at level {level}"
+            )
         if not 0 <= level < len(self._levels):
             raise ValueError(
                 f"this view schema carries {len(self._levels)} source levels, "
@@ -195,6 +219,10 @@ class ViewSchema:
         cached = self._root_views.get(layout.concrete)
         if cached is not None:
             return cached
+        if self._frozen:
+            raise ValueError(
+                f"this prepared view schema carries no root layout for {layout.concrete.canonical}"
+            )
         sources = tuple(self.source(level, layout) for level in range(len(self._levels)))
         slots = layout.ordered(dict.fromkeys(view for source in sources for view in source.slots))
         index_of = _index_of(slots)

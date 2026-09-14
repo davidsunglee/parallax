@@ -135,6 +135,7 @@ from parallax.snapshot.handle._materialization import (
     RowPublication,
     compile_read,
 )
+from parallax.snapshot.handle._preparation import PreparationCache
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
     ObservedRows,
@@ -409,6 +410,8 @@ def find(
     ledger: ObservationLedger | None = None,
     calls: DatabaseCallScope = INERT,
     observer: MaterializationObserver = MATERIALIZATION_INERT,
+    edition: str = "",
+    cache: PreparationCache | None = None,
 ) -> FindResult:
     """The whole-result read: every root ``query`` matches, with its included values.
 
@@ -454,7 +457,7 @@ def find(
     declined root, and one page of a streamed read do.
     """
     return Materializer(observer).read_page(
-        EagerPageRead(query, model, port, preference, ledger, calls)
+        EagerPageRead(query, model, port, preference, ledger, calls, edition, cache)
     )
 
 
@@ -617,38 +620,6 @@ def find_history(
     )
 
     return HistoryFindResult(page=stage.page, milestones=entity)
-
-
-def convert_level(
-    builder: PageBuilder,
-    source: SourceLevel,
-    model: CatalogedModel,
-    port: DatabaseConnection,
-    compiled: CompiledRead,
-    calls: DatabaseCallScope,
-    observations: ObservedRows,
-    observer: MaterializationObserver,
-    correlation_members: tuple[AttributeIdentity, ...],
-) -> tuple[int, ...]:
-    """Bind one level's compiled read, execute it, and convert each of its rows
-    as that row materializes.
-
-    The read is prepared and executed in the same breath, which is what keeps a
-    `find` — holding the root's compiled read and this level's at once — from
-    materializing one statement's rows through the other's transform: crossing
-    them raises deep inside a tag stage in one direction and, in the other,
-    silently leaves the raw tag column standing where `familyVariant` should be.
-
-    A level converts straight out of the lazy materialization rather than out of
-    a retained tuple the way a root read does, so it holds one materialized row
-    at a time: the port's own whole-result `list[Row]` is what a row-returning
-    execute answers by contract, and only the per-row materialization is lazy.
-    """
-    rows = execute_read(port, compiled, calls)
-    observer.statement_executed(source, len(rows))
-    return convert_level_rows(
-        builder, source, model, compiled, rows, observations, correlation_members
-    )
 
 
 def convert_level_rows(
@@ -1133,7 +1104,12 @@ def typed_publication(
             page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
         yield from Materializer(cadence).roots(
-            page, publish, atomic=atomic, ordinal_offset=ordinal_offset, pins=pins
+            page,
+            publish,
+            atomic=atomic,
+            ordinal_offset=ordinal_offset,
+            pins=pins,
+            prepare=lambda root: root.prime(sources),
         )
 
     return ResultPublication("typed", roots_of, edition)
@@ -1156,6 +1132,11 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             None if edge is None else edge_pin(edge) for edge in page_edges(page, milestones)
         )
 
+        from parallax.snapshot.materialize._wire import shared_wire_encoder
+
+        encode = shared_wire_encoder()
+        variants: dict[EntityIdentity, str | None] = {}
+
         def publish(root: RootView, position: int) -> Iterator[object]:
             yield from wire_roots(
                 root,
@@ -1163,6 +1144,8 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
                 includes,
                 ordinal_offset=ordinal_offset + position,
                 sources=sources,
+                encode=encode,
+                variants=variants,
             )
 
         cadence = cast(
@@ -1170,7 +1153,12 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
         yield from Materializer(cadence).roots(
-            page, publish, atomic=atomic, ordinal_offset=ordinal_offset, pins=pins
+            page,
+            publish,
+            atomic=atomic,
+            ordinal_offset=ordinal_offset,
+            pins=pins,
+            prepare=lambda root: root.prime(sources),
         )
 
     return ResultPublication("wire", roots_of, edition)

@@ -33,6 +33,7 @@ import contextlib
 from collections.abc import Callable, Generator, Sequence
 
 import psycopg
+from psycopg.abc import AdaptContext, Buffer
 from psycopg.rows import TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
 from psycopg.types.datetime import TimestamptzLoader
@@ -58,6 +59,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire import loads
+from parallax.core.wire._json import prepared_loads
 from parallax.postgres._isolation import isolation_spelling
 
 __all__ = [
@@ -84,25 +86,54 @@ class _PresentJsonNull:
 
 
 _PRESENT_JSON_NULL = _PresentJsonNull()
+_UNDECODED = object()
 
 
-def _load_json_preserving_null(data: str | bytes) -> object:
+def _load_json_preserving_null(
+    data: str | bytes,
+    name_cache: dict[str, str] | None = None,
+    *,
+    decoded: object = _UNDECODED,
+) -> object:
     """Decode a stored document, retaining what a plain parse would discard.
 
     A present JSON null keeps a distinct sentinel, so absence and a stored null stay
     two states. Strict Wire loading retains number tokens privately until the
     document codec resolves each leaf's declared type.
     """
-    value = loads(data)
+    value = loads(data, name_cache=name_cache) if decoded is _UNDECODED else decoded
     return _PRESENT_JSON_NULL if value is None else value
 
 
 class _DocumentJsonbLoader(JsonbLoader):
-    _loads = staticmethod(_load_json_preserving_null)
+    def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
+        super().__init__(oid, context)
+        self._names: dict[str, str] = {}
+        self._decode = prepared_loads(name_cache=self._names)
+
+    def load(self, data: Buffer) -> object:
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        value = self._decode(data)
+        return value if value is not None else _load_json_preserving_null(data, decoded=value)
 
 
 class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
-    _loads = staticmethod(_load_json_preserving_null)
+    def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
+        super().__init__(oid, context)
+        self._names: dict[str, str] = {}
+        self._decode = prepared_loads(name_cache=self._names)
+
+    def load(self, data: Buffer) -> object:
+        if data and data[0] != 1:
+            return super().load(data)
+        value = data[1:]
+        if not isinstance(value, bytes):
+            value = bytes(value)
+        decoded = self._decode(value)
+        return (
+            decoded if decoded is not None else _load_json_preserving_null(value, decoded=decoded)
+        )
 
 
 class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
@@ -219,6 +250,23 @@ def fold_document_reads(
             raise ValueError("document-read ordinal pairs must not overlap")
         occupied.update((presence, document))
 
+    if len(pairs) == 1:
+        presence, document = pairs[0]
+        parse = dialect.parse_owned_document_read
+        managed: list[Row] = []
+        for raw in rows:
+            if len(raw) != len(names):
+                raise ValueError("a database row does not match its result description")
+            value = raw[document]
+            managed.append(
+                (
+                    *raw[:presence],
+                    parse(raw[presence], None if value is _PRESENT_JSON_NULL else value),
+                    *raw[document + 1 :],
+                )
+            )
+        return managed
+
     by_document = {document: presence for presence, document in pairs}
     omitted = {presence for presence, _document in pairs}
     managed: list[Row] = []
@@ -233,7 +281,9 @@ def fold_document_reads(
             if value is _PRESENT_JSON_NULL:
                 value = None
             row.append(
-                dialect.parse_document_read(raw[presence], value) if presence is not None else value
+                dialect.parse_owned_document_read(raw[presence], value)
+                if presence is not None
+                else value
             )
         managed.append(tuple(row))
     return managed

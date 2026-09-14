@@ -21,11 +21,16 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Mapping
 from decimal import Decimal
+from typing import Any, cast
+
+import pytest
 
 from parallax.conformance import models
 from parallax.core.base import INFINITY
+from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     FixedClock,
     ObservedStateKey,
@@ -46,7 +51,7 @@ from parallax.snapshot.handle._family import entity_layout, members, placed_memb
 from parallax.snapshot.handle._predicate_writes import (
     _predecessor_payload,  # pyright: ignore[reportPrivateUsage] - the predicate lane's own contribution, proved to be one extraction with retention's
 )
-from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
+from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence, retain_evidence
 from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 
@@ -146,6 +151,71 @@ def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
     # hands the retention an empty collector, and every value it publishes
     # carries no hint rather than a hint over nothing.
     assert _standalone(_accepted("account"), ObservedRows()) == {}
+
+
+def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> None:
+    model = _accepted("orders")
+    entity = corpus_entity("Order")
+    observations = ObservedRows()
+    observations.observe_occurrence(0, entity, None)
+    sources = deferred_evidence(
+        model,
+        observations,
+        lambda _node: None,
+        lambda _node: entity,
+        lambda _node: 1,
+        ledger=None,
+        pin=Pin(),
+    )
+
+    assert sources[0].object_key == corpus_object_key("Order", ("id", 1))
+    with pytest.raises(KeyError):
+        sources[1]
+    with pytest.raises(RuntimeError, match="already resolved"):
+        cast("Any", sources)._admitted(0)
+
+
+def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_as_absent() -> None:
+    model = _accepted("orders")
+    unknown = EntityIdentity("parallax.compatibility", "Unknown")
+    observations = ObservedRows()
+    observations.observe_occurrence(0, unknown, None)
+    sources = deferred_evidence(
+        model,
+        observations,
+        lambda _node: None,
+        lambda _node: unknown,
+        lambda _node: 1,
+        ledger=None,
+        pin=Pin(),
+    )
+
+    with pytest.raises(KeyError):
+        sources[0]
+
+
+def test_deferred_standalone_evidence_releases_member_state_after_materialization() -> None:
+    model = _accepted("account")
+    entity = corpus_entity("Account")
+    layout = LayoutCatalog(model).entity(entity)
+    columns = _account_columns()
+    member_row = tuple(columns[attribute.storage.name] for attribute in layout.attributes)
+    observations = ObservedRows()
+    observations.observe_occurrence(0, entity, None)
+    sources = deferred_evidence(
+        model,
+        observations,
+        lambda _node: (layout, member_row),
+        lambda _node: entity,
+        lambda _node: 1,
+        ledger=None,
+        pin=Pin(),
+    )
+
+    origin = sources[0]
+    evidence = cast("Any", origin)._source
+    assert origin.observation is not None
+    assert evidence.entity == entity
 
 
 def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered() -> None:

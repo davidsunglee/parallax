@@ -13,7 +13,7 @@ from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView, _convert
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._page import page_rows
+from parallax.snapshot.materialize._page import page_rows, root_last_uses
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of, layout_of
 
@@ -138,6 +138,33 @@ def test_a_root_view_reaches_only_its_roots_nodes_and_unions_its_views() -> None
     assert [identity.name for identity in first_view.order] == ["Order", "OrderItem"]
     assert [identity.name for identity in second_view.order] == ["Order"]
     assert first_view.view(0, 0) == first_view.view(0, 1) == (1,)
+
+
+def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> None:
+    fixture = PageFixture(ORDERS_MODEL, "Order.items", "OrderItem.order")
+    order = fixture.node("Order", _order(1))
+    item = fixture.node(
+        "OrderItem",
+        {"id": 10, "order_id": 1, "sku": "A-100", "quantity": 1, "shipped_on": None},
+    )
+    fixture.attach(order, "Order.items", (item,))
+    fixture.attach(item, "OrderItem.order", order)
+    page = fixture.page(order)
+    rows = page_rows(page)
+
+    assert len(rows.issues) == 2
+    assert len(rows.decoders) == 2
+    projection_last, logical_last = root_last_uses(page)
+    assert tuple(projection_last) == (0, 0)
+    assert tuple(logical_last) == (0, 0)
+
+
+def test_releasing_a_root_view_twice_is_idempotent() -> None:
+    page, _roots = _page(((ROOT_LEVEL, _order(1)),))
+    root = RootView(cast("Any", page), 0)
+
+    root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
+    root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
 
 
 class RecordingObserver:

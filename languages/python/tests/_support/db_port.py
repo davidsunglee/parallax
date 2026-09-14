@@ -34,7 +34,7 @@ a suite pin behavior no adapter can produce.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Final, Protocol, Self, cast, runtime_checkable
@@ -624,6 +624,15 @@ def projected_row(
     knows the extraction, and is refused rather than silently under-projected.
     """
     return fold_mapping_rows((row,), document_reads, sql)[0]
+
+
+def projected_rows(
+    sql: str,
+    rows: Iterable[Mapping[str, object]],
+    document_reads: Sequence[DocumentReadOrdinals] = (),
+) -> list[Row]:
+    """Project one provider batch after preparing its SQL-derived shape once."""
+    return fold_mapping_rows(rows, document_reads, sql)
 
 
 class RefusingAdapter:
