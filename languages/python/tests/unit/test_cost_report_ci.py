@@ -41,7 +41,7 @@ def test_head_verification_failure_still_exposes_freshness_in_summary(
 ) -> None:
     steps = {step["name"]: step for step in _job()["steps"] if "name" in step}
     step = steps["Verify committed evidence against head lock"]
-    assert "--verify languages/python/docs/snapshot-delivery-envelope/portfolio.json" in step["run"]
+    assert "--verify languages/python/docs/write-lowering-envelope/portfolio.json" in step["run"]
     uv = tmp_path / "uv"
     freshness = "lock freshness matches" if fresh else "stale snapshot-delivery evidence"
     uv.write_text(
@@ -84,9 +84,7 @@ def test_pr_freshness_checks_event_merge_lock_without_moving_measurement_checkou
     script = step["run"]
     assert "event merge lock $MERGE_SHA" in script
     assert 'git show "$MERGE_SHA:languages/python/uv.lock"' in script
-    assert (
-        "--freshness-only languages/python/docs/snapshot-delivery-envelope/portfolio.json" in script
-    )
+    assert "--freshness-only languages/python/docs/write-lowering-envelope/portfolio.json" in script
     assert '--lock-file "$RUNNER_TEMP/event-merge-uv.lock"' in script
     assert 'tee -a "$GITHUB_STEP_SUMMARY"' in script
     assert "git checkout" not in script

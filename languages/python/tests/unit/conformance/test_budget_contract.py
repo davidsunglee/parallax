@@ -37,7 +37,7 @@ def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None
     portfolio = cast(
         "Mapping[str, object]",
         json.loads(
-            (repo / "languages/python/docs/snapshot-delivery-envelope/portfolio.json").read_text(
+            (repo / "languages/python/docs/write-lowering-envelope/portfolio.json").read_text(
                 encoding="utf-8"
             )
         ),
