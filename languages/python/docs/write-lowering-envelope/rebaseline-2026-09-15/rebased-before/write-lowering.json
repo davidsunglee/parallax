@@ -5,7 +5,7 @@
   "incomplete": [],
   "provenance": {
     "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
-    "commit": "db56a19e3f24eba40563d3a28c751e4c30ab8b58",
+    "commit": "58b19229248bb34af34eb08179216ad53d8f1ebc",
     "cores": 10,
     "cpu": "Apple M5",
     "cpython": "3.14.7",
@@ -26,35 +26,35 @@
       "cell": "opening.columns.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 123.875,
+      "value": 127.334,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.columns.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 10451.0,
+      "value": 11490.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.columns.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.columns.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 1.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.columns.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 6.0,
       "workload": "cpython-3.13"
     },
     {
@@ -75,35 +75,35 @@
       "cell": "opening.document.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 118.25,
+      "value": 141.125,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.document.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 10962.0,
+      "value": 12450.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.document.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.document.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 2.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "opening.document.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 9.0,
       "workload": "cpython-3.13"
     },
     {
@@ -124,35 +124,35 @@
       "cell": "successor.columns.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 148.167,
+      "value": 159.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.columns.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 12154.0,
+      "value": 12890.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.columns.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.columns.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 1.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.columns.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 6.0,
       "workload": "cpython-3.13"
     },
     {
@@ -173,35 +173,35 @@
       "cell": "successor.document.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 151.666,
+      "value": 168.208,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.document.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 13058.0,
+      "value": 14386.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.document.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.document.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 2.0,
       "workload": "cpython-3.13"
     },
     {
       "cell": "successor.document.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 9.0,
       "workload": "cpython-3.13"
     },
     {
@@ -222,35 +222,35 @@
       "cell": "opening.columns.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 131.208,
+      "value": 142.791,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.columns.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 10934.0,
+      "value": 11190.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.columns.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.columns.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 1.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.columns.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 6.0,
       "workload": "cpython-3.14"
     },
     {
@@ -271,35 +271,35 @@
       "cell": "opening.document.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 142.75,
+      "value": 151.042,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.document.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 11422.0,
+      "value": 11934.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.document.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.document.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 2.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "opening.document.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 9.0,
       "workload": "cpython-3.14"
     },
     {
@@ -320,35 +320,35 @@
       "cell": "successor.columns.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 169.625,
+      "value": 171.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.columns.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 12479.0,
+      "value": 12663.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.columns.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.columns.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 1.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.columns.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 6.0,
       "workload": "cpython-3.14"
     },
     {
@@ -369,35 +369,35 @@
       "cell": "successor.document.perRow.elapsedUs",
       "samples": [],
       "unit": "us/row",
-      "value": 173.167,
+      "value": 198.167,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.document.perRow.transientBytes",
       "samples": [],
       "unit": "B/row",
-      "value": 13694.0,
+      "value": 14254.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.document.calls.shapeOfDeclaration",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 5.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.document.calls.entityShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 2.0,
       "workload": "cpython-3.14"
     },
     {
       "cell": "successor.document.calls.occurrenceShape",
       "samples": [],
       "unit": "calls/row",
-      "value": 0.0,
+      "value": 9.0,
       "workload": "cpython-3.14"
     },
     {
