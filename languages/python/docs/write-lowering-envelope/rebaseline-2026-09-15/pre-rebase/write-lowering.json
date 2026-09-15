@@ -1,0 +1,420 @@
+{
+  "authority": "non-authoritative",
+  "comparisons": [],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
+    "commit": "d330e2e433e8a208493c24876a63ea4fbdafb47b",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": false,
+    "lockDigest": "bc31fd8f1c540887b91b19dc7c19f56d8c9a620d5bd9c0645ea3b6993bff66d2",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "not-used",
+    "ramGiB": 32,
+    "sampling": {
+      "measured": 9,
+      "warmups": 3
+    },
+    "workloadDigest": "bb6a020fecb84ba0d6c7a423239a5b36f493048f5020c96aa091140d8442ed64"
+  },
+  "readings": [
+    {
+      "cell": "opening.columns.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 105.334,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 10451.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 103.958,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 10962.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 5.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.document.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 125.5,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 12154.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.columns.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 138.791,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 13058.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "successor.document.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "opening.columns.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 116.125,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 10934.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.columns.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 123.709,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 11422.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 5.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "opening.document.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 148.25,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 12479.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.columns.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.perRow.elapsedUs",
+      "samples": [],
+      "unit": "us/row",
+      "value": 158.166,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.perRow.transientBytes",
+      "samples": [],
+      "unit": "B/row",
+      "value": 13694.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.calls.shapeOfDeclaration",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.calls.entityShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.calls.occurrenceShape",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 0.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.calls.encodeDocument",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 4.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "successor.document.calls.encodeMany",
+      "samples": [],
+      "unit": "calls/row",
+      "value": 1.0,
+      "workload": "cpython-3.14"
+    }
+  ],
+  "schemaVersion": 1,
+  "subject": "write-lowering"
+}
