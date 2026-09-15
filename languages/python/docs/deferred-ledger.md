@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-98**.
+Entry numbering is continuous and never reused. The next new number is **D-99**.
 
 ## Entries
 
@@ -905,6 +905,42 @@ carried.
 float share is representative, and that can carry an exactness argument for a
 guarded double-rounding fast path — or a proof that the midpoint case a guard
 would exclude is decidable from the candidate's bits alone.
+
+### D-98 — Write-lowering shape cost needs an attribution method whose observation cannot select the optimization
+
+*Should-fix — the ticket's materiality gate is unresolved, while the report's
+remaining elapsed, transient, and call-count readings are valid.* Relates to
+`tools/write_lowering_reading.py`, `tools/write_lowering_overhead.py`, and
+COR-142's Phase 1 decision gate. Owner: COR-142.
+
+**What.** The original in-situ observer timed intervals from `PY_START` to
+`PY_RETURN`. Those intervals include monitoring dispatch, nested callbacks,
+and callback bookkeeping. The whole-pass observation ratio disclosed the
+inflation but did not remove it. A remediation experiment timed only the three
+shape builders and subtracted the entire median observed-pass inflation; it
+reported a 6.6% row-weighted share on CPython 3.13 and 11.8% on CPython 3.14,
+while two 3.14 observed passes ran faster than their unobserved baselines.
+Ordinary timing variance can therefore hide callback overhead, so that
+subtraction is not a defensible lower bound. The original transient attribution
+was independently invalid because summed return-time current-size deltas are not
+comparable with a whole-window peak.
+
+**Why it is deferred rather than fixed.** A faithful replacement forces a
+measurement-design choice. Instrumenting the production builder bodies can place
+timestamps nearest the work but adds measurement-only machinery to production.
+A paired production pass with prepared shapes measures the removable whole-lane
+cost directly but previews the optimization and must prove the paired path is
+otherwise identical. Replaying captured public-builder inputs keeps production
+unchanged and isolates derivation, but loses in-situ interactions and must prove
+the replay preserves the production call mix. The current report withdraws the
+unsupported attribution and share cells, so no flawed reading can select Phase
+3.
+
+**When.** Before Phase 3, choose and implement one method, recapture both
+supported minors, and resume the Phase 2 review loop. Prefer the paired
+production pass: the gate asks what removing derivation buys, and an otherwise
+identical pass with prepared shapes answers that observable directly without
+charging a monitoring callback to the work it measures.
 
 ## Forwarding pointers
 

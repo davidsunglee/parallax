@@ -59,26 +59,17 @@ CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES)
 @dataclass(frozen=True, slots=True)
 class Observation:
     calls: Mapping[str, int]
-    attributable: int
 
 
 class Observer(AbstractContextManager["Observer"]):
-    """Count selected Python calls and attribute inclusive outermost work."""
+    """Count selected Python calls."""
 
-    def __init__(
-        self,
-        functions: Mapping[str, Callable[..., object]],
-        read: Callable[[], int],
-    ) -> None:
-        self._read = read
+    def __init__(self, functions: Mapping[str, Callable[..., object]]) -> None:
         self._names = {
             cast("CodeType", cast("Any", function).__code__): name
             for name, function in functions.items()
         }
         self._calls = dict.fromkeys(functions, 0)
-        self._attributable = 0
-        self._depth = 0
-        self._started = 0
         self._tool: int | None = None
 
     def __enter__(self) -> Observer:
@@ -91,11 +82,9 @@ class Observer(AbstractContextManager["Observer"]):
         monitoring.use_tool_id(tool, "write lowering observer")
         self._tool = tool
         try:
-            monitoring.register_callback(tool, monitoring.events.PY_START, self._on_start)
             monitoring.register_callback(tool, monitoring.events.PY_RETURN, self._on_return)
-            events = monitoring.events.PY_START | monitoring.events.PY_RETURN
             for code in self._names:
-                monitoring.set_local_events(tool, code, events)
+                monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
         except BaseException:
             monitoring.free_tool_id(tool)
             self._tool = None
@@ -120,21 +109,13 @@ class Observer(AbstractContextManager["Observer"]):
             monitoring.free_tool_id(tool)
             self._tool = None
 
-    def _on_start(self, code: CodeType, _offset: int) -> None:
-        if self._depth == 0:
-            self._started = self._read()
-        self._depth += 1
-
     def _on_return(self, code: CodeType, _offset: int, _value: object) -> None:
         self._calls[self._names[code]] += 1
-        self._depth -= 1
-        if self._depth == 0:
-            self._attributable += max(0, self._read() - self._started)
 
     def observation(self) -> Observation:
-        if self._tool is not None or self._depth != 0:
+        if self._tool is not None:
             raise RuntimeError("an observation is available only after clean observer teardown")
-        return Observation(calls=dict(self._calls), attributable=self._attributable)
+        return Observation(calls=dict(self._calls))
 
 
 def _collaborators() -> tuple[EntityRowCodec, WritePlanner]:
@@ -162,16 +143,12 @@ def _peak(case: lowering_support.Case) -> tuple[int, int]:
     return rows, max(0, high_water - floor)
 
 
-def _observed(case: lowering_support.Case, read: Callable[[], int]) -> tuple[int, Observation]:
+def _observed(case: lowering_support.Case) -> tuple[int, Observation]:
     codec, planner = _collaborators()
-    observer = Observer(OBSERVED_FUNCTIONS, read)
+    observer = Observer(OBSERVED_FUNCTIONS)
     with observer:
         rows = lowering_support.lower(case, codec, planner)
     return rows, observer.observation()
-
-
-def _current_bytes() -> int:
-    return tracemalloc.get_traced_memory()[0]
 
 
 def _per_row(samples: Sequence[int | float], rows: int) -> float:
@@ -179,7 +156,7 @@ def _per_row(samples: Sequence[int | float], rows: int) -> float:
 
 
 def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict[str, object]:
-    """One case's unobserved totals and observed builder attribution."""
+    """One case's unobserved totals and builder call counts."""
     if warmups < 0 or measured <= 0:
         raise ValueError("warmups must be non-negative and measured must be positive")
 
@@ -189,8 +166,6 @@ def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict
             lowering_support.lower(case, codec, planner)
 
         elapsed: list[int] = []
-        observed_elapsed: list[int] = []
-        attributable_elapsed: list[int] = []
         call_samples: dict[str, list[int]] = {name: [] for name in OBSERVED_FUNCTIONS}
         expected_rows: int | None = None
         for _ in range(measured):
@@ -200,21 +175,13 @@ def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict
                 raise RuntimeError("a write-lowering case changed row count between samples")
             elapsed.append(total)
 
-            codec, planner = _collaborators()
-            observer = Observer(OBSERVED_FUNCTIONS, perf_counter_ns)
-            started = perf_counter_ns()
-            with observer:
-                observed_rows = lowering_support.lower(case, codec, planner)
-            observed_elapsed.append(perf_counter_ns() - started)
-            observation = observer.observation()
-            if observed_rows != expected_rows:
-                raise RuntimeError("an observed sample lowered a different row count")
-            attributable_elapsed.append(observation.attributable)
-            for name, count in observation.calls.items():
+            counted_rows, counted = _observed(case)
+            if counted_rows != expected_rows:
+                raise RuntimeError("a counted sample lowered a different row count")
+            for name, count in counted.calls.items():
                 call_samples[name].append(count)
 
     transient: list[int] = []
-    attributable_transient: list[int] = []
     tracemalloc.start()
     try:
         with untraced():
@@ -224,20 +191,11 @@ def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict
                     raise RuntimeError("a memory sample lowered a different row count")
                 transient.append(peak)
 
-                observed_rows, observation = _observed(case, _current_bytes)
-                if observed_rows != expected_rows:
-                    raise RuntimeError("an observed memory sample lowered a different row count")
-                attributable_transient.append(observation.attributable)
-                if observation.calls != {
-                    name: samples[-1] for name, samples in call_samples.items()
-                }:
-                    raise RuntimeError("timed and memory observations saw different call counts")
     finally:
         tracemalloc.stop()
 
     assert expected_rows is not None
     elapsed_median = float(median(elapsed))
-    observed_elapsed_median = float(median(observed_elapsed))
     return {
         "rows": expected_rows,
         "perRow": {
@@ -245,11 +203,6 @@ def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict
             "transientBytes": _per_row(transient, expected_rows),
         },
         "calls": {name: _per_row(samples, expected_rows) for name, samples in call_samples.items()},
-        "attributable": {
-            "elapsedUs": _per_row(attributable_elapsed, expected_rows) / 1_000,
-            "transientBytes": _per_row(attributable_transient, expected_rows),
-        },
-        "observation": {"elapsedRatio": observed_elapsed_median / elapsed_median},
         "warmups": warmups,
         "measured": measured,
     }

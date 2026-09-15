@@ -2,8 +2,8 @@
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process.
-The measured shares are observations: only an incomplete matrix changes this
-command's exit status.
+Measurements are observations: only an incomplete matrix changes this command's
+exit status.
 """
 
 from __future__ import annotations
@@ -66,9 +66,6 @@ class ChildReading:
     elapsed_us: float
     transient_bytes: float
     calls: Mapping[str, float]
-    attributable_elapsed_us: float
-    attributable_transient_bytes: float
-    observation_elapsed_ratio: float
     warmups: int
     measured: int
 
@@ -141,6 +138,26 @@ def _number(value: object) -> float:
     return number
 
 
+def _positive_integer(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, received {value!r}")
+    return value
+
+
+def _nonnegative_number(value: object, name: str) -> float:
+    number = _number(value)
+    if number < 0:
+        raise ValueError(f"{name} must be non-negative, received {value!r}")
+    return number
+
+
+def _positive_number(value: object, name: str) -> float:
+    number = _number(value)
+    if number <= 0:
+        raise ValueError(f"{name} must be positive, received {value!r}")
+    return number
+
+
 def _decoded(output: str, case: str) -> Cell:
     lines = output.strip().splitlines()
     if not lines:
@@ -150,23 +167,23 @@ def _decoded(output: str, case: str) -> Cell:
         calls = cast("Mapping[str, object]", document["calls"])
         if set(calls) != set(CALL_NAMES):
             raise ValueError(f"builder calls were {sorted(calls)}, expected {list(CALL_NAMES)}")
+        expected_fields = {"rows", "perRow", "calls", "warmups", "measured"}
+        if set(document) != expected_fields:
+            raise ValueError(
+                f"reading fields were {sorted(document)}, expected {sorted(expected_fields)}"
+            )
         per_row = cast("Mapping[str, object]", document["perRow"])
-        attributable = cast("Mapping[str, object]", document["attributable"])
-        observation = cast("Mapping[str, object]", document["observation"])
+        if set(per_row) != {"elapsedUs", "transientBytes"}:
+            raise ValueError("perRow must contain elapsedUs and transientBytes")
         reading = ChildReading(
             case=case,
-            rows=cast("int", document["rows"]),
-            elapsed_us=_number(per_row["elapsedUs"]),
-            transient_bytes=_number(per_row["transientBytes"]),
-            calls={name: _number(calls[name]) for name in CALL_NAMES},
-            attributable_elapsed_us=_number(attributable["elapsedUs"]),
-            attributable_transient_bytes=_number(attributable["transientBytes"]),
-            observation_elapsed_ratio=_number(observation["elapsedRatio"]),
-            warmups=cast("int", document["warmups"]),
-            measured=cast("int", document["measured"]),
+            rows=_positive_integer(document["rows"], "rows"),
+            elapsed_us=_positive_number(per_row["elapsedUs"], "perRow.elapsedUs"),
+            transient_bytes=_positive_number(per_row["transientBytes"], "perRow.transientBytes"),
+            calls={name: _nonnegative_number(calls[name], f"calls.{name}") for name in CALL_NAMES},
+            warmups=_positive_integer(document["warmups"], "warmups"),
+            measured=_positive_integer(document["measured"], "measured"),
         )
-        if reading.rows <= 0:
-            raise ValueError("rows must be positive")
         if reading.warmups != WARMUPS or reading.measured != MEASURED:
             raise ValueError(
                 f"sampling was {reading.warmups}/{reading.measured}, expected {WARMUPS}/{MEASURED}"
@@ -212,12 +229,6 @@ def _complete(cells: Mapping[str, Cell]) -> tuple[ChildReading, ...]:
     return cast("tuple[ChildReading, ...]", readings)
 
 
-def _share(attributable: float, total: float) -> float:
-    if total <= 0:
-        raise ValueError("a write-lowering total must be positive")
-    return attributable / total
-
-
 def _case_readings(workload: str, reading: ChildReading) -> tuple[Reading, ...]:
     prefix = reading.case
     return (
@@ -231,56 +242,6 @@ def _case_readings(workload: str, reading: ChildReading) -> tuple[Reading, ...]:
         *(
             Reading(workload, f"{prefix}.calls.{name}", reading.calls[name], "calls/row")
             for name in CALL_NAMES
-        ),
-        Reading(
-            workload,
-            f"{prefix}.attributable.elapsedUs",
-            reading.attributable_elapsed_us,
-            "us/row",
-        ),
-        Reading(
-            workload,
-            f"{prefix}.attributable.transientBytes",
-            reading.attributable_transient_bytes,
-            "B/row",
-        ),
-        Reading(
-            workload,
-            f"{prefix}.share.elapsed",
-            _share(reading.attributable_elapsed_us, reading.elapsed_us),
-            "ratio",
-        ),
-        Reading(
-            workload,
-            f"{prefix}.share.transient",
-            _share(reading.attributable_transient_bytes, reading.transient_bytes),
-            "ratio",
-        ),
-        Reading(
-            workload,
-            f"{prefix}.observation.elapsedRatio",
-            reading.observation_elapsed_ratio,
-            "ratio",
-        ),
-    )
-
-
-def _aggregate_readings(workload: str, readings: Sequence[ChildReading]) -> tuple[Reading, ...]:
-    elapsed = sum(reading.elapsed_us * reading.rows for reading in readings)
-    transient = sum(reading.transient_bytes * reading.rows for reading in readings)
-    attributable_elapsed = sum(
-        reading.attributable_elapsed_us * reading.rows for reading in readings
-    )
-    attributable_transient = sum(
-        reading.attributable_transient_bytes * reading.rows for reading in readings
-    )
-    return (
-        Reading(workload, "all.share.elapsed", _share(attributable_elapsed, elapsed), "ratio"),
-        Reading(
-            workload,
-            "all.share.transient",
-            _share(attributable_transient, transient),
-            "ratio",
         ),
     )
 
@@ -297,7 +258,6 @@ def build_envelope(
         complete = _complete(cells)
         for reading in complete:
             readings.extend(_case_readings(workload, reading))
-        readings.extend(_aggregate_readings(workload, complete))
     envelope = CostReportEnvelope(
         SUBJECT,
         provenance,
@@ -337,9 +297,6 @@ def _canary_reading(case: str) -> ChildReading:
         10.0,
         100.0,
         dict.fromkeys(CALL_NAMES, 1.0),
-        2.0,
-        20.0,
-        1.1,
         WARMUPS,
         MEASURED,
     )
