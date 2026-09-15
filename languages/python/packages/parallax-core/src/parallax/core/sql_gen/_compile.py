@@ -48,6 +48,7 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # above, which is the metamodel module. Each name is aliased down to the
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
+from parallax.core.sql_gen._inheritance import FixedIdentity as _FixedIdentity
 from parallax.core.sql_gen._inheritance import RowStages as _RowStages
 from parallax.core.sql_gen._inheritance import SharedDocument as _SharedDocument
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
@@ -162,7 +163,6 @@ class RowMaterializer:
     """Compiled ordinal access and deferred payload stages for one read."""
 
     stages: _RowStages
-    fallback_entity: EntityIdentity
     resolvable: tuple[EntityIdentity, ...]
     coordinate_reads: tuple[str, ...]
     result_keys: tuple[str, ...]
@@ -206,11 +206,10 @@ class RowMaterializer:
                 f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
             )
         stages = self.stages
-        resolved, variant, unknown_tag = self.fallback_entity, None, None
-        if stages.resolve is not None:
-            resolved, variant, unknown_tag = stages.resolve.resolve_value(
-                self._value(row, stages.resolve.column)
-            )
+        source = stages.resolve
+        resolved, variant, unknown_tag = source.resolve_value(
+            None if source.column is None else self._value(row, source.column)
+        )
         shared = stages.shared_document
         document = (
             None
@@ -278,8 +277,7 @@ class RowMaterializer:
             else {key: row[position] for position, key in enumerate(self.result_keys)}
         )
         stages = self.stages
-        if stages.resolve is not None:
-            stages.resolve.resolve(values)
+        stages.resolve.resolve(values)
         shared = stages.shared_document
         findings = () if shared is None else shared.fan_out(values, resolved)
         classified = stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
@@ -311,24 +309,20 @@ class RowMaterializer:
 def _row_materializer(
     stages: _RowStages,
     position: tuple[EntityIdentity, ...],
-    target: EntityIdentity,
     coordinate_reads: tuple[str, ...],
     result_keys: tuple[str, ...],
 ) -> RowMaterializer:
-    """The materializer for a read of ``position`` under ``target``.
+    """The materializer for a read of ``position``.
 
-    A position resolving to exactly one concrete IS the concrete a row names,
-    however the query spelled its target; any wider position leaves the target
-    itself, which a resolution stage then overrides per row from the tag or
-    literal the row carries. What a row can name is therefore the position, that
-    fallback, and whatever the stages reach past it — closed rather than minimal,
-    since the fallback belongs to the read whether or not a row applies it.
+    The identity source in ``stages`` is the one owner of what a row names, so
+    what a row can name is the position and whatever that source reaches past
+    it: a fixed identity reaches the one concrete the position is, a tag map the
+    whole composed family and its root, and a variant literal every branch of
+    its union.
     """
-    fallback = position[0] if len(position) == 1 else target
     return RowMaterializer(
         stages,
-        fallback,
-        tuple(dict.fromkeys((*position, fallback, *stages.resolvable))),
+        tuple(dict.fromkeys((*position, *stages.resolvable))),
         coordinate_reads,
         result_keys,
     )
@@ -575,7 +569,7 @@ def _projection(
     if document is not None:
         columns = (*columns, document)
     stages = _RowStages(
-        None,
+        _FixedIdentity(entity.identity),
         None
         if document is None or fan_out is None
         else _SharedDocument(document.column, ((entity.identity, fan_out),)),
@@ -794,7 +788,6 @@ def _compile_read_arm(
             _row_materializer(
                 stages,
                 plan_position,
-                target.identity,
                 captured,
                 (*result_keys, *captured),
             ),
@@ -825,9 +818,9 @@ def _compile_read_arm(
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
     statement = _normalize(ctx.finish(" ".join(parts)))
-    # A non-family read projects no tag and no variant literal, so the only
-    # stages it can fill are the document fan-out its own projection decided and
-    # the occurrences that hold their own Column.
+    # A non-family read projects no tag and no variant literal, so its rows'
+    # identity is fixed and the only stages it can fill are the document fan-out
+    # its own projection decided and the occurrences that hold their own Column.
     position = (target.identity,)
     position_documents = _position_documents(facet, storage, position)
     return CompiledRead(
@@ -843,7 +836,6 @@ def _compile_read_arm(
         _row_materializer(
             stages,
             position,
-            target.identity,
             captured,
             (*result_keys, *captured),
         ),

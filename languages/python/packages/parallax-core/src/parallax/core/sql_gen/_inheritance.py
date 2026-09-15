@@ -59,7 +59,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
     JSON,
@@ -169,19 +169,19 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # because the projection it mirrors does.                                       #
 #                                                                              #
 # ONE staged record rather than a union of forms with a `kind` tag: a read      #
-# fills the stages its projection decided and leaves the rest `None`, so every  #
-# point of the stage product is a legal materializer and materialization        #
-# asserts nothing. An absent stage does not run, and a present stage's          #
-# per-entity index answers a `dict.get` whose miss means "this stage does not   #
-# apply to this row". Every fact a row would otherwise re-derive — the tag map, #
-# a branch's renames, each occurrence's document shape, the member keys the     #
-# codec already judged — is compiled once here, so a row allocates its own      #
-# values dict and the few pairs a branch rename moves, and no map, set, scan,   #
-# or shape of its own — save the row that reaches materialization without a     #
-# projected occurrence Column, which narrows the compiled classified-key set to #
-# the keys it held. Stored fields stay tuples of pairs and every index is       #
-# derived in `__post_init__`, so a compiled read still pickles, deep-copies,    #
-# compares, and reprs exactly.                                                  #
+# always names how its rows identify their Entity, fills the document stages    #
+# its projection decided, and leaves the rest `None`, so every point of the     #
+# stage product is a legal materializer and materialization asserts nothing. An #
+# absent stage does not run, and a present stage's per-entity index answers a   #
+# `dict.get` whose miss means "this stage does not apply to this row". Every    #
+# fact a row would otherwise re-derive — the tag map, a branch's renames, each  #
+# occurrence's document shape, the member keys the codec already judged — is    #
+# compiled once here, so a row allocates its own values dict and the few pairs  #
+# a branch rename moves, and no map, set, scan, or shape of its own — save the  #
+# row that reaches materialization without a projected occurrence Column, which #
+# narrows the compiled classified-key set to the keys it held. Stored fields    #
+# stay tuples of pairs and every index is derived in `__post_init__`, so a      #
+# compiled read still pickles, deep-copies, compares, and reprs exactly.        #
 #                                                                              #
 # The stages keep their module's spelling and `_compile` aliases each down, the #
 # package convention `_context` established. `_compile` sequences them because  #
@@ -193,6 +193,68 @@ type ResolvedVariant = tuple[EntityIdentity, str | None, UnknownFamilyTag | None
 """What resolving one row answers: the concrete Entity it names, the
 `familyVariant` spelling it publishes, and the stored discriminator no composed
 concrete subtype claimed."""
+
+
+class RowIdentity(Protocol):
+    """How one read's rows name their Entity.
+
+    ``column`` is the carrier a row is read at, or ``None`` for a source that
+    reads no row at all; it is declared read-only here so an adapter may carry
+    it as a plain field of a narrower type. ``resolvable`` is every Entity this
+    source can answer with. The three payload methods keep a row's values
+    consistent with the answer: ``resolve`` strips or renames the carrier in a
+    decoded payload, ``result_key`` maps one resolved Entity's rendered key to
+    the provider key that carries it, and ``publish`` leaves in ``values`` the
+    keys a published row keeps once its identity is known.
+    """
+
+    @property
+    def column(self) -> str | None: ...
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]: ...
+
+    def resolve_value(self, raw: object) -> ResolvedVariant: ...
+
+    def resolve(self, values: dict[str, object]) -> None: ...
+
+    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str: ...
+
+    def publish(self, values: dict[str, object], variant: str | None) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FixedIdentity:
+    """Every row of this read names one Entity; no carrier is read.
+
+    A non-family read, a table-per-hierarchy read whose queried target is itself
+    concrete, and a table-per-concrete-subtype read resolving to one concrete
+    all project nothing that could name a different Entity, so the answer is
+    fixed when the read is compiled and no row is consulted for it.
+    """
+
+    entity: EntityIdentity
+    column: None = field(default=None, init=False, repr=False, compare=False)
+    answer: ResolvedVariant = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "answer", (self.entity, None, None))
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]:
+        return (self.entity,)
+
+    def resolve_value(self, raw: object) -> ResolvedVariant:
+        return self.answer
+
+    def resolve(self, values: dict[str, object]) -> None:
+        return None
+
+    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
+        return rendered_key
+
+    def publish(self, values: dict[str, object], variant: str | None) -> None:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,8 +304,14 @@ class ByTag:
             return self.root, None, UnknownFamilyTag(raw)
         return resolved
 
-    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
-        return self.resolve_value(values.pop(self.column))
+    def resolve(self, values: dict[str, object]) -> None:
+        values.pop(self.column)
+
+    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
+        return rendered_key
+
+    def publish(self, values: dict[str, object], variant: str | None) -> None:
+        values.pop(self.column)
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,7 +382,7 @@ class ByLiteral:
         """Return the UNION result alias that carries one branch-local key."""
         return self.result_keys.get(entity, {}).get(rendered_key, rendered_key)
 
-    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
+    def resolve(self, values: dict[str, object]) -> None:
         spelling = cast("str", values.pop(self.column))
         moved = tuple(
             (rendered_key, values[alias])
@@ -325,7 +393,12 @@ class ByLiteral:
             values.pop(alias, None)
         for rendered_key, value in moved:
             values[rendered_key] = value
-        return self.by_spelling[spelling]
+
+    def publish(self, values: dict[str, object], variant: str | None) -> None:
+        if variant is None:  # pragma: no cover - a literal resolution always names its branch
+            raise SqlGenError("a union row must name its resolved family variant")
+        values[self.column] = variant
+        self.resolve(values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,16 +666,18 @@ class DirectDocuments:
 class RowStages:
     """The stages one read's projection filled, and the facts they share.
 
+    ``resolve`` is how this read's rows name their Entity, and every read has
+    one: a tag map, a union's variant literal, or an identity fixed when the read
+    was compiled. A plain record — a non-family read, a concrete-target
+    table-per-hierarchy read, or a table-per-concrete-subtype read whose position
+    resolved to a single concrete — is a read whose identity is fixed, with no
+    `familyVariant` to materialize and no document to fan out.
     ``classified_by_entity`` is the union of what both document stages judge for
     one resolved concrete, compiled here because the two stages are the only
-    judges and their keys are fixed by the projection. A read that fills no stage
-    at all is a plain record: a non-family read, a concrete-target
-    table-per-hierarchy read, or a table-per-concrete-subtype read whose position
-    resolved to a single concrete has no `familyVariant` to materialize and no
-    document to fan out.
+    judges and their keys are fixed by the projection.
     """
 
-    resolve: ByTag | ByLiteral | None = None
+    resolve: RowIdentity
     shared_document: SharedDocument | None = None
     direct_documents: DirectDocuments | None = None
     classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
@@ -637,7 +712,7 @@ class RowStages:
 
     @property
     def resolvable(self) -> tuple[EntityIdentity, ...]:
-        """Every Entity these stages can name, beyond the read's own position.
+        """Every Entity the identity source can name.
 
         A homogeneous tag map is the WHOLE family's rather than the read's
         narrow, so a narrowed abstract read still resolves a sibling's row to
@@ -646,13 +721,11 @@ class RowStages:
         preparing one structure per Entity a row can carry therefore cannot read
         the position alone.
         """
-        return () if self.resolve is None else self.resolve.resolvable
+        return self.resolve.resolvable
 
     def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
-        """Return the provider key carrying one resolved Entity.s stored value."""
-        if isinstance(self.resolve, ByLiteral):
-            return self.resolve.result_key(entity, rendered_key)
-        return rendered_key
+        """Return the provider key carrying one resolved Entity's stored value."""
+        return self.resolve.result_key(entity, rendered_key)
 
     def publication_keys(
         self,
@@ -663,13 +736,7 @@ class RowStages:
     ) -> tuple[str, ...]:
         """The logical flat-row keys structural stages leave after decoding."""
         values: dict[str, object] = {key: None for key in result_keys}
-        if isinstance(self.resolve, ByTag):
-            values.pop(self.resolve.column)
-        elif isinstance(self.resolve, ByLiteral):
-            if variant is None:  # pragma: no cover - a literal resolution always names its branch
-                raise SqlGenError("a union row must name its resolved family variant")
-            values[self.resolve.column] = variant
-            self.resolve.resolve(values)
+        self.resolve.publish(values, variant)
         if self.shared_document is not None:
             values.pop(self.result_key(resolved, self.shared_document.column), None)
             entry = self.shared_document.by_entity.get(resolved)
@@ -1543,8 +1610,9 @@ def _plan_tph_read(
         columns = (*columns, document)
     # `familyVariant` rides the SAME condition as the discriminator projection:
     # the tag stage reads the column this read projects, or there is no column to
-    # read and nothing to materialize. A heterogeneous shared document is keyed by
-    # the concretes whose shapes it holds, so the two agree on one pairing.
+    # read and every row names the one concrete the target is. A heterogeneous
+    # shared document is keyed by the concretes whose shapes it holds, so the two
+    # agree on one pairing.
     return TphPlan(
         table=layout.table.name,
         position=tuple(position.concrete_subtypes),
@@ -1560,7 +1628,7 @@ def _plan_tph_read(
                 else family_tag_pairs(facet, view.root),
             )
             if abstract_target
-            else None,
+            else FixedIdentity(position.concrete_subtypes[0]),
             shared,
             direct_documents(
                 tuple(
@@ -1643,9 +1711,9 @@ def _plan_tpcs_read(
             # A single resolved concrete projects neither a tag column nor a
             # variant literal — the settled asymmetry with table-per-hierarchy,
             # whose abstract target keeps its tag however narrow the position
-            # resolves — so it fills no resolution stage.
+            # resolves — so every row of it names that concrete.
             stages=RowStages(
-                None,
+                FixedIdentity(concretes[0]),
                 None
                 if document is None or fan_out is None
                 else SharedDocument(document.column, ((concretes[0], fan_out),)),

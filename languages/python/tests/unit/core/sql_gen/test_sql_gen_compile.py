@@ -413,8 +413,9 @@ def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() 
 def test_compiled_read_repr_is_exact_and_stable() -> None:
     # The default generated dataclass repr, pinned exactly. The materializer is a
     # stored FIELD, not a closure, which is why it reprs at all — a stored
-    # callable would print an address and make this untestable. A read that fills
-    # no stage still names what its rows resolve to, which is the fallback alone.
+    # callable would print an address and make this untestable. A plain record
+    # still names what its rows resolve to: an identity fixed at compile time,
+    # which is all its rows can name.
     compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
     order = "EntityIdentity(namespace='parallax.compatibility', name='Order')"
     assert repr(compiled) == (
@@ -424,8 +425,8 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         f"resolved_position=({order},), "
         "documents=(), projected_documents=(), document_reads=(), "
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
-        "_materializer=RowMaterializer(stages=RowStages(resolve=None, shared_document=None, "
-        f"direct_documents=None), fallback_entity={order}, resolvable=({order},), "
+        f"_materializer=RowMaterializer(stages=RowStages(resolve=FixedIdentity(entity={order}), "
+        f"shared_document=None, direct_documents=None), resolvable=({order},), "
         "coordinate_reads=(), result_keys=('id', 'name', 'sku', 'qty', "
         "'price', 'active', 'ordered_on')))"
     )
