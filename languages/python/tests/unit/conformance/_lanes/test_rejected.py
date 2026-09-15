@@ -289,6 +289,44 @@ def test_run_rejected_case_raises_for_an_inline_model_the_schema_refuses() -> No
         rejected.run_rejected_case(_synthetic_rejected(schema_invalid))
 
 
+def test_run_rejected_case_raises_for_an_inline_model_with_several_formation_issues() -> None:
+    # A rejected case names one rule, and formation reports every defect it
+    # finds, so an inline model with two defects reaches the formation door and
+    # is an authoring failure rather than a graded rule: no one code is the
+    # case's. Two concrete parents in one chain are two issues of the same code,
+    # which the guard counts as issues, never collapses into one rule.
+    def concrete(name: str, parent: str, column: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "inheritance": {"role": "concrete-subtype", "parent": parent, "tagValue": name.lower()},
+            "attributes": [{"name": column, "type": "int32", "column": column, "nullable": True}],
+        }
+
+    two_concrete_parents: dict[str, object] = {
+        "model": {
+            "entities": [
+                {
+                    "name": "Vessel",
+                    "table": "vessel",
+                    "inheritance": {
+                        "strategy": "table-per-hierarchy",
+                        "role": "root",
+                        "tag": {"column": "kind"},
+                    },
+                    "attributes": [
+                        {"name": "id", "type": "int64", "column": "id", "primaryKey": True}
+                    ],
+                },
+                concrete("Tug", "Vessel", "pull"),
+                concrete("Barge", "Tug", "deck"),
+                concrete("Skiff", "Barge", "oars"),
+            ]
+        }
+    }
+    with pytest.raises(EngineError, match="produced 2 formation issues"):
+        rejected.run_rejected_case(_synthetic_rejected(two_concrete_parents))
+
+
 def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -> None:
     with pytest.raises(EngineError, match="EXACTLY ONE"):
         rejected.run_rejected_case(_synthetic_rejected({}))

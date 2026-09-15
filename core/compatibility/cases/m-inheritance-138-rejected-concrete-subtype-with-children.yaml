@@ -7,8 +7,8 @@
 # the shared table and no descendant repeats it, both concretes reach that abstract
 # root, the family has concrete subtypes, every concrete carries a tagValue, the two
 # tagValues are distinct, and the one primary key sits on the root. Only leaves may
-# be concrete: a concrete position's effective concrete-subtype set is itself, so
-# `Tug`'s rows could not be told apart from `Barge`'s by a read of `Tug`. A
+# be concrete: a concrete position's effective concrete-subtype set is itself and a
+# parent's is its concrete descendants, so `Tug` would have to be both. A
 # model-aware validator MUST reject the model at formation, before any SQL. The
 # strategy is incidental — the rule is a question about the tree, not about how it
 # maps to storage — so one case pins it for both strategies.
