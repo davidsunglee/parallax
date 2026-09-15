@@ -25,6 +25,7 @@ from parallax.core.document_codec import (
     canonical_managed_document,
     classify_effective_change,
 )
+from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import Multiplicity
 
 _GEO = DocumentShape(members=(Leaf("lat", STRING, True),))
@@ -228,6 +229,23 @@ def test_canonicalization_keeps_declared_members_and_fills_every_many_zero() -> 
     }
     assert canonical_managed_document(_SHAPE, {"entries": None}) == {"entries": []}
     assert canonical_managed_document(_SHAPE, None) is None
+
+
+def test_named_member_canonicalization_drops_unknowns_without_filling_unnamed_many() -> None:
+    document: dict[str, object] = {
+        "flag": True,
+        "origin": {"city": "Oslo", "extra": 1},
+        "future": 7,
+    }
+    assert canonical_named_members(_SHAPE, document) == {
+        "flag": True,
+        "origin": {"city": "Oslo", "zones": []},
+    }
+    empty: dict[str, object] = {}
+    assert canonical_named_members(_SHAPE, empty) is empty
+    assert canonical_named_members(_SHAPE, None) is None
+    scalar: object = 7
+    assert canonical_named_members(_SHAPE, cast("Mapping[str, object]", scalar)) is scalar
 
 
 def test_an_already_canonical_document_is_answered_as_itself() -> None:

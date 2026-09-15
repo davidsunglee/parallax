@@ -31,6 +31,7 @@ from parallax.core.metamodel import Multiplicity
 __all__ = [
     "EffectiveChangeSet",
     "canonical_managed_document",
+    "canonical_named_members",
     "classify_effective_change",
 ]
 
@@ -83,6 +84,20 @@ def canonical_managed_document(
     return _canonical_document(shape, document)
 
 
+def canonical_named_members(
+    shape: DocumentShape, document: Mapping[str, object] | None
+) -> Mapping[str, object] | None:
+    """Canonicalize only the top-level members ``document`` names.
+
+    Undeclared keys are dropped, but an omitted top-level ``many`` remains
+    omitted. A named occurrence is still canonicalized recursively as the
+    complete value its assignment replaces.
+    """
+    if not _is_document(document):
+        return document
+    return _canonical_document(shape, document, fill_missing_many=False)
+
+
 def classify_effective_change(
     shape: DocumentShape,
     authored: Mapping[str, object],
@@ -121,14 +136,16 @@ def classify_effective_change(
 
 
 def _canonical_document(
-    shape: DocumentShape, document: Mapping[str, object]
+    shape: DocumentShape,
+    document: Mapping[str, object],
+    *,
+    fill_missing_many: bool = True,
 ) -> Mapping[str, object]:
     rebuilt: dict[str, object] = {}
-    declared = {member.name for member in shape.members}
-    changed = any(key not in declared for key in document)
+    changed = any(key not in shape.by_name for key in document)
     for member in shape.members:
         if member.name not in document:
-            if _is_many(member):
+            if fill_missing_many and _is_many(member):
                 rebuilt[member.name] = []
                 changed = True
             continue

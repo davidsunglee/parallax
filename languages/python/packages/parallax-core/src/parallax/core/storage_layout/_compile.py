@@ -15,6 +15,7 @@ from parallax.core.metamodel import (
     CompiledMetadata,
     ConcreteSubtype,
     Document,
+    DocumentShape,
     EntityIdentity,
     EntityMetadata,
     FacetKey,
@@ -370,6 +371,29 @@ def _interned_ordinal_selection(
     return intern.setdefault(bits, SlotOrdinalSelection(bits))
 
 
+def _relational_document_shape(
+    inherited: InheritanceEntityView,
+    layout: TableLayout,
+) -> DocumentShape | None:
+    document_slot = layout.contribution(RelationalDocument(inherited.root))
+    if document_slot is None:
+        return None
+
+    attributes = tuple(
+        attribute
+        for attribute in inherited.applicable_attributes
+        if isinstance((placement := layout.placement(attribute.identity)), DocumentPath)
+        and placement.slot == document_slot
+    )
+    value_objects = tuple(
+        value_object
+        for value_object in inherited.applicable_value_objects
+        if isinstance((placement := layout.placement(value_object.identity)), DocumentPath)
+        and placement.slot == document_slot
+    )
+    return DocumentShape.of(attributes, value_objects)
+
+
 def _effective_nullable(
     draft: _SlotDraft,
     key_set: frozenset[ColumnContributor],
@@ -685,6 +709,7 @@ def compile_facet(
                     root=group.root,
                     layout=layout,
                     discriminator=discriminator,
+                    relational_document_shape=_relational_document_shape(inherited, layout),
                     column_ordinals=_interned_ordinal_selection(
                         layout,
                         concrete,

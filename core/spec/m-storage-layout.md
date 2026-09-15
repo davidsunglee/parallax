@@ -613,6 +613,7 @@ EntityLayoutView
   layout: TableLayout
   columns: immutable sequence<ColumnSlot>
   discriminator: DiscriminatorAssignment | absent
+  relationalDocumentShape: DocumentShape | absent
 
 PositionColumn
   contributor: AttributeIdentity | ValueObjectIdentity
@@ -649,6 +650,15 @@ layout's slots applicable to that Entity, retained in complete table order; the
 shared-table discriminator is included and its derived concrete tag value is
 exposed by `discriminator`. The sequence references layout slots and creates no
 second physical order.
+
+`relationalDocumentShape` is present exactly under `Document`. It contains the
+Attributes and top-level Value Object occurrences applicable to this concrete
+Entity whose placement is a `DocumentPath` over the Table's
+`RelationalDocument` slot, in logical placement order. It is retained once in
+the Entity's compact facet facts and each view references it; distinct concrete
+variants of one shared Table therefore carry their own applicable document
+shape. Under `Columns` it is absent, even though nested Value Object members
+still have Document Paths inside their occurrence-owned Structured Columns.
 
 `position(...)` accepts the canonical effective concrete-Entity sequence
 already resolved by Inheritance. An unknown Entity, a noncanonical sequence, or

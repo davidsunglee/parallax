@@ -28,6 +28,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     ConcreteSubtype,
+    DocumentShape,
     EntityIdentity,
     ExactEntityReference,
     Metamodel,
@@ -212,6 +213,16 @@ def test_applicable_members_are_the_ancestry_chain_in_chain_order() -> None:
         "name",
         "ownerId",
     ]
+
+
+def test_an_entity_view_holds_its_applicable_document_shape() -> None:
+    model = _formed("customer")
+    view = inheritance.view(model).entity(_corpus_entity("Customer"))
+    assert view is not None
+    assert view.applicable_document_shape == DocumentShape.of(
+        view.applicable_attributes,
+        view.applicable_value_objects,
+    )
 
 
 def test_an_applicable_member_is_the_ancestors_own_accepted_value() -> None:
