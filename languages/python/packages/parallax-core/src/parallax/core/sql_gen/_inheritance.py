@@ -668,10 +668,11 @@ class RowStages:
 
     ``resolve`` is how this read's rows name their Entity, and every read has
     one: a tag map, a union's variant literal, or an identity fixed when the read
-    was compiled. A plain record — a non-family read, a concrete-target
+    was compiled. A fixed identity — a non-family read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
-    resolved to a single concrete — is a read whose identity is fixed, with no
-    `familyVariant` to materialize and no document to fan out.
+    resolved to a single concrete — has no `familyVariant` to materialize. The
+    document stages are the projection's decision alone: a read fills them when
+    it projected a document, however its rows are named.
     ``classified_by_entity`` is the union of what both document stages judge for
     one resolved concrete, compiled here because the two stages are the only
     judges and their keys are fixed by the projection.

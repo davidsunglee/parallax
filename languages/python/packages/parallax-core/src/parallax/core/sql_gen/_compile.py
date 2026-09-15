@@ -316,9 +316,10 @@ def _row_materializer(
 
     The identity source in ``stages`` is the one owner of what a row names, so
     what a row can name is the position and whatever that source reaches past
-    it: a fixed identity reaches the one concrete the position is, a tag map the
-    whole composed family and its root, and a variant literal every branch of
-    its union.
+    it: a fixed identity reaches the one Entity the position is, a tag map the
+    family root and every concrete its pairs map — the whole composed family for
+    a homogeneous read, the position alone for a heterogeneous shared document —
+    and a variant literal every branch of its union.
     """
     return RowMaterializer(
         stages,
