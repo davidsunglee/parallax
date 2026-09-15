@@ -367,6 +367,22 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
     assert values == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
 
 
+def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
+    # A concrete target projects no discriminator (m-inheritance-012's switch is
+    # the queried target's role), so its identity is fixed when the read is
+    # compiled: every row names that concrete with no `familyVariant`, a row
+    # without any tag column resolves the same way, and `resolvable` is the
+    # concrete alone rather than the family the tag map would reach.
+    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
+    card = target(PAYMENT, "CardPayment").identity
+    assert "kind" not in compiled.result_keys
+    resolved, variant, unknown, _document = compiled.row_identity(
+        {"id": 1, "amount": 10, "card_network": "visa"}
+    )
+    assert (resolved, variant, unknown) == (card, None, None)
+    assert compiled.resolvable == (card,)
+
+
 def test_tph_document_family_with_no_resident_members_projects_no_document() -> None:
     from parallax.descriptor._records import (
         Attribute,
@@ -1155,7 +1171,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     )
     assert "family_variant" not in compiled.statement.sql
     # Nothing discriminates, so every row of this read names the one concrete and
-    # `resolvable` collapses to it — the read's own fallback and its whole set.
+    # `resolvable` collapses to it — the fixed identity is the whole set.
     assert compiled.resolvable == (target(DOCUMENT, "Invoice").identity,)
 
 
