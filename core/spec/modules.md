@@ -351,8 +351,8 @@ construction it may reference any behavioral module it harnesses.
   `m-document-codec --> m-wire`.** The codec places `m-wire`'s canonical leaf
   spelling into a structured document, decodes stored leaves through its canonical
   seam, and reads each member by the type its accepted Metadata declares. It
-  therefore names the managed value spaces, the document shape's Metadata, and the
-  sole serialized typed-literal owner. It depends on nothing else: it is pure,
+  therefore names the managed value spaces, `m-metamodel`'s retained document
+  shapes, and the sole serialized typed-literal owner. It depends on nothing else: it is pure,
   holds no connection, imports no driver, emits no SQL, and carries no dialect
   seam, so a codec value crosses the database seam already portable.
 - **`m-sql --> m-document-codec`.** A comparison against a document-resident member

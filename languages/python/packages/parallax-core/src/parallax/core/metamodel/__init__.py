@@ -98,6 +98,7 @@ from parallax.core.metamodel._resolve import (
     is_candidate_metamodel,
     resolve,
 )
+from parallax.core.metamodel._shape import DocumentMember, DocumentShape, Leaf, Occurrence
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
     CompiledMetadata,
@@ -224,6 +225,8 @@ __all__ = [
     "DefiningRelationshipDeclaration",
     "DerivedAxis",
     "Document",
+    "DocumentMember",
+    "DocumentShape",
     "EntityDeclaration",
     "EntityIdentity",
     "EntityLocation",
@@ -238,6 +241,7 @@ __all__ = [
     "InheritanceMetadata",
     "InheritanceStrategy",
     "IssueCode",
+    "Leaf",
     "Max",
     "MemberIdentity",
     "Metamodel",
@@ -251,6 +255,7 @@ __all__ = [
     "NestedValueObjectOccurrenceDeclaration",
     "NotPrimaryKey",
     "NullPlacement",
+    "Occurrence",
     "PersistenceMode",
     "PkGeneration",
     "PrimaryKey",

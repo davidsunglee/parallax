@@ -47,7 +47,6 @@ from parallax.core.document_codec import (
     encode_leaf,
     encode_many,
     entity_shape,
-    occurrence_shape,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -836,7 +835,7 @@ def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> obje
     write lane, and it is idempotent over an already-encoded document because
     every decode leg is the encode leg's inverse (`m-document-codec`).
     """
-    shape = occurrence_shape(occurrence)
+    shape = occurrence.document_shape
     if occurrence.multiplicity is Multiplicity.MANY:
         elements = cast("Sequence[object]", value)
         return encode_many(shape, [_element_presences(shape, element) for element in elements])
