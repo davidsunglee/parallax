@@ -69,7 +69,7 @@ def _assert_reading(name: str) -> None:
         "encodeMany",
     }
     assert all(value > 0 for value in per_row.values())
-    removed = {"entityShape", "occurrenceShape"}
+    removed = {"shapeOfDeclaration", "entityShape", "occurrenceShape"}
     assert all(calls[builder] == 0 for builder in removed)
     assert all(value > 0 for builder, value in calls.items() if builder not in removed)
 

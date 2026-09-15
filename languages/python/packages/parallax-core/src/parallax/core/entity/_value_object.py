@@ -27,7 +27,6 @@ from parallax.core.document_codec import (
     Present,
     encode_document,
     encode_many,
-    shape_of_declaration,
 )
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
@@ -352,7 +351,7 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
 
 def _managed_document(value: ValueObject) -> dict[str, object]:
     declared = shape_of(type(value))
-    shape = shape_of_declaration(declared.shape)
+    shape = declared.document_shape
     bits = plan_of(type(value)).bits
     document: dict[str, object] = {}
     for py_name, canonical in declared.py_to_name.items():
@@ -374,7 +373,7 @@ def _managed_document(value: ValueObject) -> dict[str, object]:
 
 
 def _document(value: ValueObject) -> dict[str, object]:
-    shape = shape_of_declaration(shape_of(type(value)).shape)
+    shape = shape_of(type(value)).document_shape
     return encode_document(shape, _presences(value, shape))
 
 

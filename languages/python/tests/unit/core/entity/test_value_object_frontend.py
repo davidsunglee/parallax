@@ -19,12 +19,14 @@ from parallax.conformance import case_format
 from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
+from parallax.core.document_codec import shape_of_declaration
 from parallax.core.entity import ElementAttributeExpr, EntityDefinitionError, Predicate, to_document
 from parallax.core.entity._declaration import shape_of
 from parallax.core.metamodel import (
     Column,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
+    Occurrence,
     ValueObjectAttributeDeclaration,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
@@ -329,6 +331,16 @@ def test_a_many_occurrence_requires_a_tuple() -> None:
 def test_one_shape_is_minted_per_class_and_shared_by_every_occurrence() -> None:
     assert shape_of(vm.Address).shape is vm.Customer.value_objects[0].shape
     assert shape_of(vm.Geo).shape is vm.Customer.value_objects[0].shape.value_objects[0].shape
+
+
+def test_a_value_object_class_retains_its_document_shape_with_nested_identity() -> None:
+    address = shape_of(vm.Address)
+    geo = shape_of(vm.Geo)
+
+    assert address.document_shape == shape_of_declaration(address.shape)
+    nested = address.document_shape.member("geo")
+    assert isinstance(nested, Occurrence)
+    assert nested.shape is geo.document_shape
 
 
 def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> None:
