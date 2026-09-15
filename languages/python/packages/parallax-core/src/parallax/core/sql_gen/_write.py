@@ -46,7 +46,6 @@ from parallax.core.document_codec import (
     encode_document,
     encode_leaf,
     encode_many,
-    entity_shape,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -592,12 +591,23 @@ def _member_cells(
             cells.append((slot.column.name, discriminator.value, None))
         elif isinstance(contributor, RelationalDocument):
             resident = _resident_members(placed, slot.column.name)
+            shape = view.relational_document_shape
+            if shape is None:  # pragma: no cover - a Relational Document slot owns its shape
+                raise SqlGenError(
+                    f"{view.entity.canonical}: Relational Document slot has no document shape"
+                )
             if opening:
                 cells.append(
                     (
                         slot.column.name,
                         JsonDocument(
-                            _successor_document(resident, attributes, value_objects, predecessor)
+                            _successor_document(
+                                shape,
+                                resident,
+                                attributes,
+                                value_objects,
+                                predecessor,
+                            )
                         ),
                         None,
                     )
@@ -665,6 +675,7 @@ def _resident_count(
 
 
 def _row_document(
+    shape: DocumentShape,
     resident: _ResidentMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -677,10 +688,6 @@ def _row_document(
     row sets to ``None`` is JSON null, and a `many` occurrence always contributes
     its array even where the row never mentions it (`m-document-codec`).
     """
-    shape = entity_shape(
-        tuple(attribute for attribute, _path in resident.attributes),
-        tuple(occurrence for occurrence, _path in resident.value_objects),
-    )
     values: dict[str, Presence] = {}
     for attribute, _path in resident.attributes:
         if attribute.identity in attributes:
@@ -701,6 +708,7 @@ def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
 
 
 def _successor_document(
+    shape: DocumentShape,
     resident: _ResidentMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -724,14 +732,10 @@ def _successor_document(
     (:func:`_row_document`).
     """
     if predecessor is None or predecessor.document is None:
-        return _row_document(resident, attributes, value_objects)
+        return _row_document(shape, resident, attributes, value_objects)
     patches = _successor_patches(resident, attributes, value_objects, predecessor)
     if not patches:
         return detach_json_container(predecessor.document)
-    shape = entity_shape(
-        tuple(attribute for attribute, _path in resident.attributes),
-        tuple(occurrence for occurrence, _path in resident.value_objects),
-    )
     return apply_patches(shape, predecessor.document, patches)
 
 

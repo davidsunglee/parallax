@@ -624,6 +624,7 @@ InheritanceEntityView
   applicable_attributes: immutable sequence<AttributeMetadata>
   applicable_relationships: immutable sequence<RelationshipDeclaration>
   applicable_value_objects: immutable sequence<ValueObjectMetadata>
+  applicable_document_shape: DocumentShape
   superset_attributes: immutable sequence<AttributeMetadata>
   superset_value_objects: immutable sequence<ValueObjectMetadata>
   applicable_attribute(local_name) -> AttributeMetadata | absent
@@ -673,6 +674,10 @@ write time.
   subtype's `applicable_attributes` is exactly the accepted-field chain of a
   concrete-subtype write and the declaration chain Storage Layout composes for
   that Entity's Table.
+- `applicable_document_shape` is the document shape of every applicable
+  Attribute and Value Object occurrence, in the same order as the corresponding
+  `applicable_*` sequences. It is composed once with the Entity view and reuses
+  each occurrence metadata value's retained nested shape.
 - `superset_attributes` and `superset_value_objects` are the abstract-read
   projection supersets (`m-sql`) and equal the corresponding
   `position([entity])` members exactly (the ordering rule below).

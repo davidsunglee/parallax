@@ -47,10 +47,9 @@ from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import TIMESTAMP, NeutralType, coerce_neutral_input, matches_neutral_type
 from parallax.core.document_codec import (
-    DocumentShape,
     canonical_managed_document,
-    entity_shape,
 )
+from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -1179,18 +1178,14 @@ def _canonical_write_row(
     model gives no null state to name. Absence and the empty collection are both
     legal there and canonicalize to the same zero.
     """
-    members = _declared_member_map(model, entity)
-    if not opening:
-        members = {name: member for name, member in members.items() if name in row}
-    canonical = canonical_managed_document(_row_shape(members), row)
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
+    if opening:
+        canonical = canonical_managed_document(position.applicable_document_shape, row)
+    else:
+        canonical = canonical_named_members(position.applicable_document_shape, row)
     return cast("Mapping[str, object]", freeze_retained_value(canonical))
-
-
-def _row_shape(members: Mapping[str, _DeclaredMember]) -> DocumentShape:
-    return entity_shape(
-        tuple(member for member in members.values() if isinstance(member, AttributeMetadata)),
-        tuple(member for member in members.values() if not isinstance(member, AttributeMetadata)),
-    )
 
 
 def _transform_row(

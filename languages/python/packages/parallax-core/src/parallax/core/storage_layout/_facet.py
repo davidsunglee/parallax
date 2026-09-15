@@ -11,6 +11,7 @@ from typing import Final, Protocol, TypeGuard
 from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
+    DocumentShape,
     EntityIdentity,
     FacetKey,
     MemberIdentity,
@@ -184,6 +185,8 @@ class EntityLayoutView(Protocol):
     def columns(self) -> Sequence[ColumnSlot]: ...
     @property
     def discriminator(self) -> DiscriminatorAssignment | None: ...
+    @property
+    def relational_document_shape(self) -> DocumentShape | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,6 +301,7 @@ class _EntityLayoutView:
     entity: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
+    relational_document_shape: DocumentShape | None
     _column_ordinals: SlotOrdinalSelection = field(repr=False)
 
     @property
@@ -352,6 +356,7 @@ class StorageLayoutEntityFacts:
     root: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
+    relational_document_shape: DocumentShape | None
     column_ordinals: SlotOrdinalSelection
 
 
@@ -399,6 +404,7 @@ class _StorageLayoutFacet:
             facts.entity,
             facts.layout,
             facts.discriminator,
+            facts.relational_document_shape,
             facts.column_ordinals,
         )
 

@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core import inheritance, opt_lock, storage_layout
-from parallax.core.document_codec import DocumentShape, entity_shape
+from parallax.core.document_codec import DocumentShape
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -222,8 +222,8 @@ def comparison_shape(model: Metamodel, entity: EntityMetadata) -> DocumentShape:
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return entity_shape((), ())
-    return entity_shape(view.applicable_attributes, view.applicable_value_objects)
+        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
+    return view.applicable_document_shape
 
 
 @dataclass(frozen=True, slots=True)

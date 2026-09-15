@@ -722,6 +722,52 @@ def test_document_resident_members_contribute_no_slot_and_are_placed_by_path() -
     ) == storage_layout.DocumentPath(structured, ("payload", "geo", "country"))
 
 
+def test_entity_views_hold_only_their_relational_document_residents_in_order() -> None:
+    metadata, _root, alpha, beta = _document_family()
+    inherited = inheritance.compile_facet(metadata)
+    facet = storage_layout.compile_facet(
+        metadata,
+        inherited,
+        relationship.compile_facet(metadata),
+    )
+
+    shapes: dict[EntityIdentity, tuple[str, ...]] = {}
+    for concrete in (alpha, beta):
+        entity_view = _require_entity(facet, concrete)
+        inherited_view = inherited.entity(concrete)
+        assert inherited_view is not None
+        shape = entity_view.relational_document_shape
+        assert shape is not None
+        assert _require_entity(facet, concrete).relational_document_shape is shape
+        expected = tuple(
+            member.identity.name
+            for member in inherited_view.applicable_attributes
+            if isinstance(
+                entity_view.layout.placement(member.identity),
+                storage_layout.DocumentPath,
+            )
+        ) + tuple(
+            member.identity.path[-1]
+            for member in inherited_view.applicable_value_objects
+            if isinstance(
+                entity_view.layout.placement(member.identity),
+                storage_layout.DocumentPath,
+            )
+        )
+        shapes[concrete] = tuple(member.name for member in shape.members)
+        assert shapes[concrete] == expected
+
+    assert shapes[alpha] == ("rootDomain", "alphaDomain", "payload")
+    assert shapes[beta] == ("rootDomain", "betaDomain")
+
+
+def test_columns_entity_views_have_no_relational_document_shape() -> None:
+    model, _root, alpha, beta = _tiered_tph_model()
+    facet = storage_layout.view(model)
+    assert _require_entity(facet, alpha).relational_document_shape is None
+    assert _require_entity(facet, beta).relational_document_shape is None
+
+
 def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> None:
     # One root declares one layout policy and one Structured Column name that
     # every concrete Table in the family receives, so each concrete Table has its

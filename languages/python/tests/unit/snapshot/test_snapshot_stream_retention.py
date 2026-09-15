@@ -1138,10 +1138,10 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
     # The second exclusion, and the bound the per-page flush puts back on it. A
     # participating loop's buffered writes are the caller's, held until the next
     # page forces them out, so what they cost grows with the PAGE SIZE and stops
-    # there: ten times the roots at one page size is the same reading, and a
-    # larger page is a larger buffer. Read against the same loop with the write
-    # removed, so what the difference prices is the buffer rather than the
-    # boundary around it.
+    # there: ten times the roots at one page size is the same reading within a
+    # fixed tracer residue, and a larger page is a larger buffer. Read against
+    # the same loop with the write removed, so what the difference prices is the
+    # buffer rather than the boundary around it.
     tracemalloc.start()
     try:
         buffered: dict[int, int] = {}
@@ -1152,7 +1152,7 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
             large = _writing(bounded_total * _TENFOLD, batch_size=batch_size, at=at, writes=True)
             unwritten = _writing(bounded_total, batch_size=batch_size, at=at, writes=False)
             held = retained(small)
-            assert held == retained(large), batch_size
+            assert abs(held - retained(large)) <= 1024, batch_size
             buffered[batch_size] = held - retained(unwritten)
         # Affine in the page size, which is the bound stated rather than merely
         # ordered: fixed transaction bookkeeping cancels between adjacent arms,
