@@ -153,6 +153,7 @@ def _canonical_document(
         canonical = _canonical_member(member, value)
         rebuilt[member.name] = canonical
         changed = changed or canonical is not value
+    changed = changed or tuple(rebuilt) != tuple(document)
     return rebuilt if changed else document
 
 

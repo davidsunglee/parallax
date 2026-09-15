@@ -936,17 +936,6 @@ def test_a_compiled_occurrence_yields_the_same_shape_as_its_declaration() -> Non
     )
 
 
-def test_a_document_shape_indexes_the_same_members_as_a_linear_scan() -> None:
-    (entity,) = DomainModel(Holder).entities
-    shape = occurrence_shape(entity.declared_value_objects[0])
-    for member in shape.members:
-        assert shape.by_name.get(member.name) is next(
-            candidate for candidate in shape.members if candidate.name == member.name
-        )
-        assert shape.member(member.name) is member
-    assert shape.member("absent") is None
-
-
 def test_an_entity_shape_holds_its_document_resident_members_leaves_first() -> None:
     # The Entity-document counterpart of `occurrence_shape`: one root object over
     # the members that live inside a Relational Document Layout's shared

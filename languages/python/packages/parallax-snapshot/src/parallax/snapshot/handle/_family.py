@@ -216,9 +216,9 @@ def comparison_shape(model: Metamodel, entity: EntityMetadata) -> DocumentShape:
 
     Every applicable logical member regardless of where its Table puts it: the
     comparison asks what an assignment says about a member's logical value, which
-    a Storage Layout cannot change. That is why this reads the Inheritance view's
-    member sequences directly rather than :func:`placed_members`' layout-paired
-    ones — the only shape both write surfaces can ask for one member set with.
+    a Storage Layout cannot change. The Inheritance view retains the one shape
+    formed from those members, and returning that exact object keeps both write
+    surfaces on one member set without reconstructing it for each comparison.
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
