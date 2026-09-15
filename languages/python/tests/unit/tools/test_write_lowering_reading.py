@@ -15,9 +15,7 @@ from tests.unit.memory_instruments import (
 from write_lowering_reading import CASE_NAMES, Observer
 
 
-def test_observer_counts_nested_calls_without_double_counting_attribution() -> None:
-    readings = iter((10, 25))
-
+def test_observer_counts_nested_calls() -> None:
     def inner() -> None:
         return None
 
@@ -25,13 +23,12 @@ def test_observer_counts_nested_calls_without_double_counting_attribution() -> N
         inner()
         inner()
 
-    observer = Observer({"outer": outer, "inner": inner}, lambda: next(readings))
+    observer = Observer({"outer": outer, "inner": inner})
     with observer:
         outer()
 
     observation = observer.observation()
     assert observation.calls == {"outer": 1, "inner": 2}
-    assert observation.attributable == 15
 
 
 def test_child_case_names_match_the_shared_workload() -> None:
@@ -54,8 +51,6 @@ def _assert_reading(name: str) -> None:
         "rows",
         "perRow",
         "calls",
-        "attributable",
-        "observation",
         "warmups",
         "measured",
     }
@@ -64,12 +59,8 @@ def _assert_reading(name: str) -> None:
     assert reading["measured"] == 1
 
     per_row = cast("dict[str, float]", reading["perRow"])
-    attributable = cast("dict[str, float]", reading["attributable"])
-    observation = cast("dict[str, float]", reading["observation"])
     calls = cast("dict[str, float]", reading["calls"])
     assert set(per_row) == {"elapsedUs", "transientBytes"}
-    assert set(attributable) == {"elapsedUs", "transientBytes"}
-    assert set(observation) == {"elapsedRatio"}
     assert set(calls) == {
         "shapeOfDeclaration",
         "entityShape",
@@ -78,8 +69,6 @@ def _assert_reading(name: str) -> None:
         "encodeMany",
     }
     assert all(value > 0 for value in per_row.values())
-    assert all(value > 0 for value in attributable.values())
-    assert observation["elapsedRatio"] > 0
     assert all(value > 0 for value in calls.values())
 
 

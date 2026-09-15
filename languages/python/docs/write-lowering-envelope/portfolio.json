@@ -7377,7 +7377,7 @@
       "incomplete": [],
       "provenance": {
         "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
-        "commit": "6b1fad2229e262c5d6c12695737b20cc576a4d63",
+        "commit": "1ceb331851fe06d23ba1d754450972ac532eb5ca",
         "cores": 10,
         "cpu": "Apple M5",
         "cpython": "3.14.7",
@@ -7398,7 +7398,7 @@
           "cell": "opening.columns.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 126.958,
+          "value": 123.875,
           "workload": "cpython-3.13"
         },
         {
@@ -7444,45 +7444,10 @@
           "workload": "cpython-3.13"
         },
         {
-          "cell": "opening.columns.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 25.165,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.columns.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 2928.0,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.columns.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.1982151577687109,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.columns.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.2548302872062663,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.columns.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.1076497739409883,
-          "workload": "cpython-3.13"
-        },
-        {
           "cell": "opening.document.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 130.958,
+          "value": 128.583,
           "workload": "cpython-3.13"
         },
         {
@@ -7528,45 +7493,10 @@
           "workload": "cpython-3.13"
         },
         {
-          "cell": "opening.document.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 33.626,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.document.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 3864.0,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.document.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.25676934589715783,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.document.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.3103614457831325,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "opening.document.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.1199468531895722,
-          "workload": "cpython-3.13"
-        },
-        {
           "cell": "successor.columns.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 138.625,
+          "value": 144.625,
           "workload": "cpython-3.13"
         },
         {
@@ -7612,45 +7542,10 @@
           "workload": "cpython-3.13"
         },
         {
-          "cell": "successor.columns.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 23.374,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.columns.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 2800.0,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.columns.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.1686131650135257,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.columns.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.21722265321955003,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.columns.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.0934824165915238,
-          "workload": "cpython-3.13"
-        },
-        {
           "cell": "successor.document.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 164.833,
+          "value": 162.041,
           "workload": "cpython-3.13"
         },
         {
@@ -7696,59 +7591,10 @@
           "workload": "cpython-3.13"
         },
         {
-          "cell": "successor.document.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 29.667,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.document.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 3792.0,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.document.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.1799821637657508,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.document.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.2635896010009732,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "successor.document.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.0649687865900639,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "all.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.19921122103980587,
-          "workload": "cpython-3.13"
-        },
-        {
-          "cell": "all.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.2613245860668541,
-          "workload": "cpython-3.13"
-        },
-        {
           "cell": "opening.columns.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 138.875,
+          "value": 136.708,
           "workload": "cpython-3.14"
         },
         {
@@ -7794,45 +7640,10 @@
           "workload": "cpython-3.14"
         },
         {
-          "cell": "opening.columns.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 23.75,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.columns.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 1704.0,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.columns.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.171017101710171,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.columns.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.15227882037533513,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.columns.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.0095985598559856,
-          "workload": "cpython-3.14"
-        },
-        {
           "cell": "opening.document.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 176.5,
+          "value": 143.5,
           "workload": "cpython-3.14"
         },
         {
@@ -7878,45 +7689,10 @@
           "workload": "cpython-3.14"
         },
         {
-          "cell": "opening.document.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 38.584,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.document.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 2312.0,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.document.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.2186062322946176,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.document.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.19373219373219372,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "opening.document.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.0276203966005666,
-          "workload": "cpython-3.14"
-        },
-        {
           "cell": "successor.columns.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 199.209,
+          "value": 164.666,
           "workload": "cpython-3.14"
         },
         {
@@ -7962,45 +7738,10 @@
           "workload": "cpython-3.14"
         },
         {
-          "cell": "successor.columns.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 28.71,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.columns.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 1592.0,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.columns.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.1441199945785582,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.columns.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.12572060333254362,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.columns.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.001249943526648,
-          "workload": "cpython-3.14"
-        },
-        {
           "cell": "successor.document.perRow.elapsedUs",
           "samples": [],
           "unit": "us/row",
-          "value": 204.041,
+          "value": 180.916,
           "workload": "cpython-3.14"
         },
         {
@@ -8043,55 +7784,6 @@
           "samples": [],
           "unit": "calls/row",
           "value": 1.0,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.document.attributable.elapsedUs",
-          "samples": [],
-          "unit": "us/row",
-          "value": 32.67,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.document.attributable.transientBytes",
-          "samples": [],
-          "unit": "B/row",
-          "value": 2168.0,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.document.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.16011487887238351,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.document.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.15209765679809176,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "successor.document.observation.elapsedRatio",
-          "samples": [],
-          "unit": "ratio",
-          "value": 1.0059252797231928,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "all.share.elapsed",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.17215376587232561,
-          "workload": "cpython-3.14"
-        },
-        {
-          "cell": "all.share.transient",
-          "samples": [],
-          "unit": "ratio",
-          "value": 0.1553925780859695,
           "workload": "cpython-3.14"
         }
       ],

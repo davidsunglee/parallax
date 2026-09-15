@@ -1,36 +1,33 @@
-# Write-lowering baseline — 2026-09-14
+# Write-lowering baseline — 2026-09-15
 
-The baseline portfolio was produced from the Phase 1 production tree at
-`6b1fad2229e262c5d6c12695737b20cc576a4d63`. The Phase 2 report tooling and
-evidence files were present but uncommitted during capture, so provenance
-correctly records `dirty: true`; no production runtime code differs from that
-commit.
+The baseline portfolio was recaptured during Phase 2 round 1 remediation from
+the production tree at `1ceb331851fe06d23ba1d754450972ac532eb5ca`. The
+measurement repairs and evidence files were uncommitted during capture, so
+provenance records `dirty: true`; no production runtime code differs from the
+Phase 1 tree.
 
 Each supported CPython minor ran the four opening/successor and
 Columns/Relational Document cases in a fresh child process per case. Every child
-took three warmups and nine measured samples. Timings and transient-memory
-windows were separate. The observer counted the five public document-codec
-builders in situ and attributed inclusive outermost elapsed and current-size
-deltas without retaining per-call or per-row state.
+took three warmups and nine measured samples. Elapsed and transient-memory totals
+use separate unobserved windows. A separate `sys.monitoring` return-event pass
+counts the five public document-codec functions without timing them.
 
 The committed [portfolio](portfolio.json), [summary](summary.md), and
-[write-lowering envelope](write-lowering.json) retain the full capture. Builder
-shares are evidence only; the envelope declares no comparison and no timing or
-memory value controls its exit status.
+[write-lowering envelope](write-lowering.json) retain the full 56-reading
+capture. The portfolio preserves its other dated members and replaces only the
+write-lowering member. The envelope declares no comparison, and no timing,
+memory, or call count controls its exit status.
 
-| Runtime | Case | Elapsed share | Transient share |
-|---|---|---:|---:|
-| CPython 3.13 | opening.columns | 19.82% | 25.48% |
-| CPython 3.13 | opening.document | 25.68% | 31.04% |
-| CPython 3.13 | successor.columns | 16.86% | 21.72% |
-| CPython 3.13 | successor.document | 18.00% | 26.36% |
-| CPython 3.13 | all cases, row-weighted | 19.92% | 26.13% |
-| CPython 3.14 | opening.columns | 17.10% | 15.23% |
-| CPython 3.14 | opening.document | 21.86% | 19.37% |
-| CPython 3.14 | successor.columns | 14.41% | 12.57% |
-| CPython 3.14 | successor.document | 16.01% | 15.21% |
-| CPython 3.14 | all cases, row-weighted | 17.22% | 15.54% |
+| Case | shapeOfDeclaration | entityShape | occurrenceShape | encodeDocument | encodeMany |
+|---|---:|---:|---:|---:|---:|
+| opening.columns | 5 | 1 | 6 | 4 | 1 |
+| opening.document | 5 | 2 | 9 | 5 | 1 |
+| successor.columns | 5 | 1 | 6 | 4 | 1 |
+| successor.document | 5 | 2 | 9 | 4 | 1 |
 
-The decision rule proceeds when either row-weighted share is at least 10% on any
-supported minor. Both shares exceed 10% on both minors, so the evidence selects
-the optimization phases.
+The former elapsed and transient attribution shares are withdrawn. The elapsed
+intervals included monitoring overhead, the accumulator also included the two
+encoders, and summed return-time current-size deltas were not comparable with a
+whole-window peak. The report now retains only supported totals and counts.
+COR-142's materiality gate is deferred until D-98's replacement attribution
+method is selected and the baseline is recaptured again.
