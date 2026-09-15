@@ -31,13 +31,19 @@ collection measured 1110.8 KiB and 1163.8 KiB in the two arms; the reviewed
 ceiling provides about 3% headroom above the larger arm. Every other ceiling and
 the arm-growth rule are unchanged.
 
-The current-contract authoritative evidence is [portfolio.json](portfolio.json)
-and [summary.md](summary.md), captured once from clean rebased commit
+The schema-authoritative Snapshot delivery evidence that closed this contract is
+retained in [portfolio.json](portfolio.json) and [summary.md](summary.md),
+captured once from clean rebased commit
 `5fb9a934f1fb1aedc5b43334d2dc092fff74116b`.
 Its lock digest matches the capture checkout's `languages/python/uv.lock`.
 It records 89 comparisons within and one outside, with no incomplete cells or
 errors. Nineteen of 20 streamed-memory arm-growth comparisons pass over 40 arms;
 every arm meets its absolute ceiling.
+
+The repository's canonical current cost portfolio and CI input is the later
+[`db56a19e` portfolio](../write-lowering-envelope/portfolio.json), which retains
+a schema-authoritative Snapshot delivery member and adds the current
+write-lowering member.
 
 The outside comparison is `document-heavy.live.eager.minRootsPerSecond`:
 9007.065178422185 roots/s against 9091 roots/s. The document-heavy page-128

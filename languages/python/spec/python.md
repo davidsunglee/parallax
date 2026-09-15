@@ -6515,29 +6515,35 @@ locking unions retain the core refusal.
   comparison never determines report exit status. Pull requests observe merge
   base and head on one assigned runner and main observes head, uploading
   commit-keyed envelopes and advisory summaries from a non-required CI job.
-- **Authoritative evidence.** The clean authoritative Snapshot delivery
-  envelope that closed the current Budget Contract is retained as review
-  evidence under `languages/python/docs/snapshot-delivery-envelope/`
-  (`portfolio.json` and `summary.md`). A database-free check recomputes its
-  Budget Contract and workload-catalog digests from the committed inputs, so
-  changing either requires recapture. The `uv.lock` digest records the producing
-  run's dependencies for reproducibility; subsequent dependency updates do not
-  invalidate that historical provenance. `cost_report.py --verify` separately
-  compares this digest with the inspected checkout's `languages/python/uv.lock`
-  and fails with a distinct stale-evidence diagnostic naming both digests when
-  they differ, alongside authority, completeness, comparison, and scaling checks.
-  The non-required cost-report CI job verifies the committed portfolio against
-  its checked-out head lock and reports freshness explicitly in the job summary,
-  including a match even when another verification check fails. Pull requests
-  also check the event merge commit's lock without moving the head or merge-base
-  measurements. Verification failure preserves collection and artifact upload.
-  Lock freshness is advisory and relative to the inspected checkout; required
-  database-free gates retain Budget Contract and workload-catalog equality.
-  Rebaselining replaces the evidence with the clean authoritative envelope taken
-  under the revised contract.
+- **Retained and current evidence.** The clean schema-authoritative Snapshot
+  delivery envelope that closed the current Budget Contract remains as historical
+  review evidence under `languages/python/docs/snapshot-delivery-envelope/`
+  (`portfolio.json` and `summary.md`). The repository's canonical current cost
+  portfolio and summary are retained under
+  `languages/python/docs/write-lowering-envelope/`; that repository role is
+  independent of each member's schema-level `authority`. A database-free check
+  recomputes the current portfolio's Snapshot delivery member's Budget Contract
+  and workload-catalog digests from the committed inputs, so changing either
+  requires recapture. The `uv.lock` digest records the producing run's
+  dependencies for reproducibility; subsequent dependency updates do not
+  invalidate historical provenance. `cost_report.py --verify` separately
+  compares the current portfolio's Snapshot delivery digest with the inspected
+  checkout's `languages/python/uv.lock` and fails with a distinct stale-evidence
+  diagnostic naming both digests when they differ, alongside authority,
+  completeness, comparison, and scaling checks. The non-required cost-report CI
+  job verifies the canonical current portfolio against its checked-out head lock
+  and reports freshness explicitly in the job summary, including a match even
+  when another verification check fails. Pull requests also check the event merge
+  commit's lock without moving the head or merge-base measurements. Verification
+  failure preserves collection and artifact upload. Lock freshness is advisory
+  and relative to the inspected checkout; required database-free gates retain
+  Budget Contract and workload-catalog equality. Rebaselining replaces the
+  canonical portfolio with a clean capture whose Snapshot delivery member is
+  schema-authoritative under the revised contract.
   Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
-  clean authoritative envelopes under both the old and proposed contracts plus an
-  explicit reviewed contract change and rationale for every relaxed ceiling.
+  clean schema-authoritative Snapshot delivery envelopes under both the old and
+  proposed contracts plus an explicit reviewed contract change and rationale for
+  every relaxed ceiling.
 - **Complete verification command.** `just python-check` — all three class
   aggregates, ending with a summary block listing every check as run, failed, or
   skipped-with-reason.
