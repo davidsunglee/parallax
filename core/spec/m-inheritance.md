@@ -510,10 +510,12 @@ owns the complete code-set declaration; this module owns each code's meaning.
   root ancestor (`inheritance-concrete-without-abstract-root`).
 - **Concrete subtypes are leaves** — a concrete subtype is the parent of no
   position (`inheritance-concrete-subtype-with-children`). A concrete position's
-  effective concrete-subtype set is itself, so a concrete subtype with a
-  descendant would own rows it cannot tell apart from its descendant's. The
-  issue is located at the concrete parent and relates its children in canonical
-  order, so one such parent is reported once however many children it names.
+  effective concrete-subtype set is itself, and a position with descendants is
+  polymorphic over them, so a concrete subtype with a descendant would have to
+  be both; the rule is a question about the tree and holds under every
+  strategy. The issue is located at the concrete parent and relates its
+  children in canonical order, so one such parent is reported once however many
+  children it names.
 - **At least one concrete subtype** — a family contains at least one concrete
   subtype (`inheritance-missing-concrete-subtype`). Only concrete subtypes own
   rows, so a family of a root and abstract subtypes alone resolves **every** one

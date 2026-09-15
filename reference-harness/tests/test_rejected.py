@@ -350,11 +350,13 @@ def test_a_rooted_family_with_no_concrete_is_rejected_beside_a_complete_one() ->
 
 
 def test_a_concrete_subtype_with_a_child_is_rejected() -> None:
-    # Every other family rule passes — both parents resolve, there is exactly one
-    # root owning the shared table, both concretes reach it, and their tagValues
-    # are distinct. Only leaves may be concrete, so the concrete parent is the
-    # defect; the descendant's missing tagValue is never reached, which pins this
-    # check ahead of the strategy-scoped ones.
+    # Every check before 7b passes — both parents resolve, there is exactly one
+    # root owning the shared table, both concretes reach it, and the family has
+    # a concrete. The descriptor carries a second, LATER defect on purpose: `Puppy`
+    # declares no tagValue, which the strategy-scoped tag check would report as
+    # `inheritance-missing-tag-value`. The concrete parent is reported instead,
+    # which pins 7b ahead of the strategy-scoped checks; giving `Puppy` a tagValue
+    # would silence that ordering proof.
     descriptor = {
         "entities": [
             _tph_root(),

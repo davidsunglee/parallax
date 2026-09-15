@@ -94,9 +94,10 @@ undetermined."""
 
 CONCRETE_SUBTYPE_WITH_CHILDREN: Final[IssueCode] = "inheritance-concrete-subtype-with-children"
 """A concrete subtype is the parent of other positions. Only leaves may be
-concrete: a concrete position's effective set is itself, so a row it owns can be
-told apart from a descendant's only if it has no descendants. The defect belongs
-to the parent, which is reported once with every child it names."""
+concrete: a concrete position's effective set is itself, and a position with
+descendants is polymorphic over them, so a concrete parent would have to be
+both. The tree rules this out whichever strategy maps it. The defect belongs to
+the parent, which is reported once with every child it names."""
 
 MISSING_CONCRETE_SUBTYPE: Final[IssueCode] = "inheritance-missing-concrete-subtype"
 """A family contains no concrete subtype. Only concrete subtypes own rows, so

@@ -87,8 +87,8 @@ INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT = "inheritance-concrete-without-abstr
 # Only concrete subtypes own rows, so a family of a root and abstract subtypes
 # alone resolves every one of its positions to the EMPTY effective concrete set.
 INHERITANCE_MISSING_CONCRETE_SUBTYPE = "inheritance-missing-concrete-subtype"
-# Only leaves may be concrete: a concrete subtype's effective set is itself, so
-# a concrete subtype that is the parent of any position is rejected.
+# Only leaves may be concrete: a concrete subtype's effective set is itself and
+# a parent's is its concrete descendants, so a concrete parent would be both.
 INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN = "inheritance-concrete-subtype-with-children"
 INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
 INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
@@ -928,10 +928,11 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
         )
 
     # 7b. Every concrete subtype is a leaf. A concrete position's effective set
-    #     is itself, so a concrete subtype with a child would own rows it cannot
-    #     tell apart from its descendant's. Asked after 7a (a family with no
-    #     concrete has no concrete to ask) and before the strategy-scoped checks
-    #     (this is a question about the tree, not about how it maps to storage).
+    #     is itself and a parent's is its concrete descendants, so a concrete
+    #     subtype with a child would have to be both. Asked after 7a (a family
+    #     with no concrete has no concrete to ask) and before the strategy-scoped
+    #     checks (this is a question about the tree, not about how it maps to
+    #     storage).
     for definition in participants:
         if role_of(definition) != ROLE_CONCRETE:
             continue

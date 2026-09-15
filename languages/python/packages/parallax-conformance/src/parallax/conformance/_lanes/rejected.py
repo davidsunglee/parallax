@@ -177,7 +177,7 @@ def run_rejected_case(case: case_format.Case) -> str:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         except MetamodelValidationError as exc:
             codes = tuple(issue.code for issue in exc.issues)
-            if len(codes) != 1:  # pragma: no cover - a corpus case isolates one rule
+            if len(codes) != 1:
                 raise EngineError(
                     f"{case.path.name}: inline model produced {len(codes)} formation issues "
                     f"{codes!r}; a rejected case must isolate exactly one rule"
