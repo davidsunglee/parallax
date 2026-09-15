@@ -35,9 +35,6 @@ kinds cannot drift apart and no consumer needs to know which kind it holds.
 ```text
 Document                                  # a portable JSON value
 
-DocumentShape
-  members: immutable sequence<DocumentMember>
-
 LogicalJudgingRoot
   position: EntityIdentity | top-level ValueObjectIdentity
   members: immutable sequence<DocumentMember>
@@ -46,15 +43,6 @@ LogicalJudgingCursor
   root: LogicalJudgingRoot
   prefix: sequence<MemberName>
   members: immutable sequence<DocumentMember>
-
-DocumentMember =
-    Leaf(name: MemberName,
-         type: NeutralType,
-         nullable: boolean)
-  | Occurrence(name: MemberName,
-               multiplicity: Multiplicity,
-               nullable: boolean,
-               shape: DocumentShape)
 
 Presence =
     Present(value: MemberValue)
@@ -67,11 +55,10 @@ MemberValue =
                      # `One`, an ordered array of objects for `Many`
 ```
 
-A `DocumentShape` is derived from accepted Metadata and names only members
-applicable to the document being encoded or decoded. It carries canonical member
-names, declared Neutral Types, multiplicity, and nullability, and nothing
-physical: no Column, no dialect, no path string. `MemberName` is the canonical
-declared name, the same spelling a materialized result uses.
+A `DocumentShape` is the `m-metamodel` value naming only members applicable to
+the document being encoded or decoded. It carries no physical fact: no Column,
+dialect, or path string. `MemberName` is the canonical declared name, the same
+spelling a materialized result uses.
 
 A `LogicalJudgingRoot` is also derived from accepted Metadata, but it defines a
 read-validity boundary rather than a physical document shape. Every Entity

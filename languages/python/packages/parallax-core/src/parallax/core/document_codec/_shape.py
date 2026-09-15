@@ -1,11 +1,4 @@
-"""Document shapes and presence (m-document-codec, "Shapes, documents, and values").
-
-A :class:`DocumentShape` is the codec's own reading of accepted Metadata: canonical
-member names, declared Neutral Types, multiplicity, and nullability, and nothing
-physical. Two kinds of document reach it — a Value Object occurrence's own shape and
-the applicable document shape of one Entity — and both are the same structure here,
-which is what stops the two representations from drifting.
-"""
+"""Document shape construction and presence (m-document-codec)."""
 
 from __future__ import annotations
 
@@ -13,12 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self
 
-from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
     AttributeMetadata,
-    Multiplicity,
+    DocumentMember,
+    DocumentShape,
+    Leaf,
     NestedValueObjectMetadata,
     NestedValueObjectOccurrenceDeclaration,
+    Occurrence,
     ValueObjectMetadata,
     ValueObjectShapeDeclaration,
 )
@@ -39,48 +34,6 @@ __all__ = [
     "resolve",
     "shape_of_declaration",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class Leaf:
-    """One scalar member of a document, spelled by its declared Neutral Type."""
-
-    name: str
-    type: NeutralType
-    nullable: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Occurrence:
-    """One nested Value Object member: an object for ``ONE``, an array for ``MANY``."""
-
-    name: str
-    multiplicity: Multiplicity
-    nullable: bool
-    shape: DocumentShape
-
-
-type DocumentMember = Leaf | Occurrence
-"""A document member is a scalar :class:`Leaf` or a nested :class:`Occurrence`; the
-union is closed, so every path this module resolves ends at one of the two."""
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentShape:
-    """The applicable members of one document, in canonical order.
-
-    Emission order is the member order held here, so one set of logical values always
-    produces one document.
-    """
-
-    members: tuple[DocumentMember, ...]
-
-    def member(self, name: str) -> DocumentMember | None:
-        """The member ``name`` names, or absent when the shape does not declare it."""
-        for member in self.members:
-            if member.name == name:
-                return member
-        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,17 +139,8 @@ def _declared_occurrence(nested: NestedValueObjectOccurrenceDeclaration) -> Occu
 
 
 def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata) -> DocumentShape:
-    """The document shape of one accepted Value Object occurrence's own composite.
-
-    The Metadata counterpart of :func:`shape_of_declaration`: a compiled occurrence
-    names its leaves and nested occurrences through identities rather than plain
-    names, and this is the one place that difference is unwound.
-    """
-    leaves: tuple[DocumentMember, ...] = tuple(
-        Leaf(name=attribute.identity.name, type=attribute.type, nullable=attribute.nullable)
-        for attribute in container.attributes
-    )
-    return DocumentShape(members=leaves + tuple(map(_compiled_occurrence, container.value_objects)))
+    """The document shape held by one accepted Value Object occurrence."""
+    return container.document_shape
 
 
 def entity_shape(
@@ -216,29 +160,7 @@ def entity_shape(
     stating a layout-neutral rule over a whole row — the effective-change
     comparison, which a placement cannot change — passes every applicable member.
     """
-    leaves: tuple[DocumentMember, ...] = tuple(
-        Leaf(name=attribute.identity.name, type=attribute.type, nullable=attribute.nullable)
-        for attribute in attributes
-    )
-    occurrences = tuple(
-        Occurrence(
-            name=value_object.identity.path[-1],
-            multiplicity=value_object.multiplicity,
-            nullable=value_object.nullable,
-            shape=occurrence_shape(value_object),
-        )
-        for value_object in value_objects
-    )
-    return DocumentShape(members=leaves + occurrences)
-
-
-def _compiled_occurrence(nested: NestedValueObjectMetadata) -> Occurrence:
-    return Occurrence(
-        name=nested.identity.path[-1],
-        multiplicity=nested.multiplicity,
-        nullable=nested.nullable,
-        shape=occurrence_shape(nested),
-    )
+    return DocumentShape.of(attributes, value_objects)
 
 
 def resolve(shape: DocumentShape, path: Sequence[str]) -> DocumentMember:
