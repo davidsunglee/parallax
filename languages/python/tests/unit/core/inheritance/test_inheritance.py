@@ -405,6 +405,9 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-031-rejected-tph-missing-tag-value": inheritance.MISSING_TAG_VALUE,
     "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
     "m-inheritance-121-rejected-missing-concrete-subtype": inheritance.MISSING_CONCRETE_SUBTYPE,
+    "m-inheritance-138-rejected-concrete-subtype-with-children": (
+        inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN
+    ),
     "m-inheritance-098-rejected-temporality-declared-on-abstract-subtype": (
         inheritance.TEMPORALITY_NOT_ROOT_OWNED
     ),
@@ -493,6 +496,7 @@ def _relationship(
 
 def test_the_owned_issue_code_set_is_closed() -> None:
     assert sorted(inheritance.ISSUE_CODES) == [
+        "inheritance-concrete-subtype-with-children",
         "inheritance-concrete-without-abstract-root",
         "inheritance-cycle",
         "inheritance-duplicate-tag-value",
@@ -742,6 +746,33 @@ def test_each_family_answers_the_concrete_membership_rule_for_itself() -> None:
     )
     assert [issue.code for issue in issues] == [inheritance.MISSING_CONCRETE_SUBTYPE]
     assert issues[0].location == EntityLocation(other_root)
+
+
+def test_a_concrete_parent_relates_its_children_in_canonical_order() -> None:
+    # Every other family rule passes — one root owning the shared container and
+    # the one key, every parent resolving to a participant, every concrete
+    # reaching the abstract root, and three distinct tag values. The defect
+    # belongs to the concrete parent, so it is reported once at that position
+    # with its children related in canonical order, whichever order they were
+    # declared in.
+    vessel = identity("Vessel")
+    tug = identity("Tug")
+    ferry = identity("Ferry")
+    barge = identity("Barge")
+    issues = _rule_issues(
+        Declaration(
+            identity=vessel,
+            container=Table("vessel"),
+            attributes=(key(vessel),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        _concrete(tug, parent=vessel, tag_value="tug"),
+        _concrete(ferry, parent=tug, tag_value="ferry"),
+        _concrete(barge, parent=tug, tag_value="barge"),
+    )
+    assert [issue.code for issue in issues] == [inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN]
+    assert issues[0].location == EntityLocation(tug)
+    assert issues[0].related == (EntityLocation(barge), EntityLocation(ferry))
 
 
 def test_a_family_without_a_primary_key_is_unidentifiable_at_every_position() -> None:

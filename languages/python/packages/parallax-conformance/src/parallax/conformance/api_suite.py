@@ -1177,6 +1177,21 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "rather than a missing story"
 )
 
+# The leaves-only family rule is the one `when.model` inheritance reject the class
+# grammar CAN spell: the role is authored per class and Python subclassing
+# supplies the parent, so a concrete class with a concrete subclass reaches
+# `DomainModel` construction and is refused there as the shared formation-time
+# issue (`test_inheritance_frontend.py`). The observable is a rejected model.
+_INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON: Final[str] = (
+    "a `when.model` family invariant Model Formation classifies at model construction "
+    "(a `MetamodelValidationError` issue), not a query or write the Usage Guide's "
+    "statement- and verb-level examples could spell. The class frontend reaches the "
+    "SAME issue — a concrete class with a concrete subclass forms into "
+    "`inheritance-concrete-subtype-with-children` at `DomainModel` construction "
+    "(`test_inheritance_frontend.py` exercises it at that seam) — but the observable "
+    "is a rejected model, not a developer verb an idiomatic story can narrate"
+)
+
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
 # IDENTICAL correlated-EXISTS lowering the exercised `.exists()`/`.not_exists()` examples
 # already prove (m-navigate-002/003/004/006/008/009/010) — m-predicate's own
@@ -1782,6 +1797,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    # -- m-inheritance: `when.model` formation reject (unreachable) ---------- #
+    "m-inheritance-138": _INHERITANCE_CONCRETE_LEAF_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #

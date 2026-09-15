@@ -40,6 +40,7 @@ from parallax.core.inheritance._facet import (
     view,
 )
 from parallax.core.inheritance._rules import (
+    CONCRETE_SUBTYPE_WITH_CHILDREN,
     CONCRETE_WITHOUT_ABSTRACT_ROOT,
     CYCLE,
     DUPLICATE_TAG_VALUE,
@@ -88,6 +89,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 
 __all__ = [
+    "CONCRETE_SUBTYPE_WITH_CHILDREN",
     "CONCRETE_WITHOUT_ABSTRACT_ROOT",
     "CYCLE",
     "DUPLICATE_TAG_VALUE",

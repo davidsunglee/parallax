@@ -1,11 +1,12 @@
 """The inheritance Model Formation Rule Set (m-inheritance).
 
 This module rejects family invariants: whether parent links form a closed tree
-under exactly one abstract root, whether the strategy's physical mapping is
-declared where that strategy puts it, whether facts a family owns as a whole
-stay on its root, whether a descendant's own members leave the inherited
-namespace unambiguous, and whether rendered materialization keys remain
-distinct. Physical Table and Column collisions belong to ``m-storage-layout``.
+under exactly one abstract root with every concrete subtype at a leaf, whether
+the strategy's physical mapping is declared where that strategy puts it,
+whether facts a family owns as a whole stay on its root, whether a descendant's
+own members leave the inherited namespace unambiguous, and whether rendered
+materialization keys remain distinct. Physical Table and Column collisions
+belong to ``m-storage-layout``.
 A family is a position's own ancestry, never the model: one model carries as
 many independent families as it declares roots, and each is judged alone.
 Parent resolution is not here — foundational resolution owns it, so a
@@ -52,6 +53,7 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import ModuleIdentity
 
 __all__ = [
+    "CONCRETE_SUBTYPE_WITH_CHILDREN",
     "CONCRETE_WITHOUT_ABSTRACT_ROOT",
     "CYCLE",
     "DUPLICATE_TAG_VALUE",
@@ -89,6 +91,12 @@ CONCRETE_WITHOUT_ABSTRACT_ROOT: Final[IssueCode] = "inheritance-concrete-without
 """A concrete subtype's ancestry reaches no abstract root. Only an abstract root
 names a family and declares its strategy, so this subtype's physical mapping is
 undetermined."""
+
+CONCRETE_SUBTYPE_WITH_CHILDREN: Final[IssueCode] = "inheritance-concrete-subtype-with-children"
+"""A concrete subtype is the parent of other positions. Only leaves may be
+concrete: a concrete position's effective set is itself, so a row it owns can be
+told apart from a descendant's only if it has no descendants. The defect belongs
+to the parent, which is reported once with every child it names."""
 
 MISSING_CONCRETE_SUBTYPE: Final[IssueCode] = "inheritance-missing-concrete-subtype"
 """A family contains no concrete subtype. Only concrete subtypes own rows, so
@@ -178,6 +186,7 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         CYCLE,
         MISSING_ROOT,
         CONCRETE_WITHOUT_ABSTRACT_ROOT,
+        CONCRETE_SUBTYPE_WITH_CHILDREN,
         MISSING_CONCRETE_SUBTYPE,
         STRATEGY_REDECLARED,
         MISSING_TAG_VALUE,
@@ -248,6 +257,26 @@ def _unrooted_issue(participant: InheritanceParticipant) -> MetamodelIssue:
         MISSING_ROOT,
         location,
         message="the ancestry of this abstract position reaches no abstract root",
+    )
+
+
+def _leaf_issue(
+    participant: InheritanceParticipant,
+    children: Mapping[EntityIdentity, tuple[EntityIdentity, ...]],
+) -> MetamodelIssue | None:
+    """The defect of a concrete subtype that is the parent of other positions."""
+    if not isinstance(participant.inheritance, ConcreteSubtype):
+        return None
+    below = children.get(participant.declaration.identity, ())
+    if not below:
+        return None
+    return MetamodelIssue(
+        CONCRETE_SUBTYPE_WITH_CHILDREN,
+        EntityLocation(participant.declaration.identity),
+        tuple(EntityLocation(child) for child in below),
+        message=(
+            "this concrete subtype is the parent of other positions; only leaves may be concrete"
+        ),
     )
 
 
@@ -604,6 +633,9 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
         issues.extend(_root_owned_issues(participant.declaration, chain[0]))
         issues.extend(_primary_key_issues(participant.declaration, chain, participants))
         issues.extend(_shadowing_issues(participant.declaration, chain, participants))
+        leaf = _leaf_issue(participant, topology.children)
+        if leaf is not None:
+            issues.append(leaf)
         if isinstance(participant.inheritance, ConcreteSubtype):
             declarations = tuple(participants[identity].declaration for identity in chain)
             for issue in _materialization_key_issues(declarations, family_root=chain[0]):

@@ -175,11 +175,9 @@ def run_rejected_case(case: case_format.Case) -> str:
             domain_model_from_document(inline_model)
         except DescriptorError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        except (
-            MetamodelValidationError
-        ) as exc:  # pragma: no cover - formation tests own diagnostics
+        except MetamodelValidationError as exc:
             codes = tuple(issue.code for issue in exc.issues)
-            if len(codes) != 1:
+            if len(codes) != 1:  # pragma: no cover - a corpus case isolates one rule
                 raise EngineError(
                     f"{case.path.name}: inline model produced {len(codes)} formation issues "
                     f"{codes!r}; a rejected case must isolate exactly one rule"

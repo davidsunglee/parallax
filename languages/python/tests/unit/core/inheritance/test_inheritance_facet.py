@@ -404,59 +404,6 @@ def test_a_position_with_no_concrete_subtype_projects_empty_sequences() -> None:
 
 
 # --------------------------------------------------------------------------
-# A concrete position nested under another concrete position: a table-per-
-# concrete-subtype family may place a concrete subtype under a concrete parent.
-# Parent owns `parent_tbl` and is itself Child's parent; Child owns `child_tbl`.
-# The two members answer different questions and are deliberately not derivable
-# from each other: `container` is the ONE container a read or write of the
-# position's own rows targets, while `concrete_subtypes` is every concrete node
-# at or below it. For Parent those disagree — its own `parent_tbl` against
-# {Child, Parent} — and that is the contract, not an unsettled answer: a read of
-# a polymorphic position derives its branch tables by mapping each effective
-# concrete through THAT concrete's own `container`, never by reaching for the
-# position's own.
-# --------------------------------------------------------------------------
-
-
-def test_a_concrete_positions_own_container_is_not_its_effective_set() -> None:
-    root = identity("Root")
-    parent = identity("Parent")
-    child = identity("Child")
-    model = form_metamodel(
-        source(
-            Declaration(
-                identity=root,
-                attributes=(key(root),),
-                inheritance=AbstractRoot(TablePerConcreteSubtype()),
-            ),
-            Declaration(
-                identity=parent,
-                container=Table("parent_tbl"),
-                inheritance=ConcreteSubtype(ExactEntityReference(root)),
-            ),
-            Declaration(
-                identity=child,
-                container=Table("child_tbl"),
-                inheritance=ConcreteSubtype(ExactEntityReference(parent)),
-            ),
-        )
-    )
-    facet = inheritance.view(model)
-    root_view = facet.entity(root)
-    parent_view = facet.entity(parent)
-    child_view = facet.entity(child)
-    assert root_view is not None
-    assert parent_view is not None
-    assert child_view is not None
-    assert root_view.container is None
-    assert _names(root_view.concrete_subtypes) == ["Child", "Parent"]
-    assert parent_view.container == Table("parent_tbl")
-    assert _names(parent_view.concrete_subtypes) == ["Child", "Parent"]
-    assert child_view.container == Table("child_tbl")
-    assert _names(child_view.concrete_subtypes) == ["Child"]
-
-
-# --------------------------------------------------------------------------
 # Value Object supersets.
 # --------------------------------------------------------------------------
 

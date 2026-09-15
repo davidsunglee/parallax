@@ -44,10 +44,16 @@ def _descriptor_rejection_cases() -> list[tuple[str, dict[str, Any], str]]:
 
 
 _REJECTIONS = _descriptor_rejection_cases()
+_FORMATION_OWNED_RULES: Final[frozenset[str]] = frozenset(
+    {
+        "inheritance-materialization-key-collision",
+        "inheritance-concrete-subtype-with-children",
+    }
+)
+"""The family rules whose defects survive adaptation into the accepted algebra,
+so formation reports them and this walk never has to."""
 _RAW_ONLY_REJECTIONS = [
-    rejection
-    for rejection in _REJECTIONS
-    if rejection[2] != "inheritance-materialization-key-collision"
+    rejection for rejection in _REJECTIONS if rejection[2] not in _FORMATION_OWNED_RULES
 ]
 
 _INDEPENDENT_FAMILIES: Final[dict[str, Any]] = {

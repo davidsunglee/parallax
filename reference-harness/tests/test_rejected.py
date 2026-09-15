@@ -33,6 +33,7 @@ from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import ALL_REJECTED_RULES, run_case
 from reference_harness.inheritance import (
     ABSTRACT_WRITE_TARGET,
+    INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN,
     INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
     INHERITANCE_MISSING_CONCRETE_SUBTYPE,
     INHERITANCE_MISSING_ROOT,
@@ -346,6 +347,32 @@ def test_a_rooted_family_with_no_concrete_is_rejected_beside_a_complete_one() ->
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
     assert exc.value.rule == INHERITANCE_MISSING_CONCRETE_SUBTYPE
+
+
+def test_a_concrete_subtype_with_a_child_is_rejected() -> None:
+    # Every other family rule passes — both parents resolve, there is exactly one
+    # root owning the shared table, both concretes reach it, and their tagValues
+    # are distinct. Only leaves may be concrete, so the concrete parent is the
+    # defect; the descendant's missing tagValue is never reached, which pins this
+    # check ahead of the strategy-scoped ones.
+    descriptor = {
+        "entities": [
+            _tph_root(),
+            {
+                "name": "Dog",
+                "inheritance": {"role": "concrete-subtype", "parent": "Animal", "tagValue": "dog"},
+                "attributes": [{"name": "barkVolume", "type": "int32", "column": "bark_volume"}],
+            },
+            {
+                "name": "Puppy",
+                "inheritance": {"role": "concrete-subtype", "parent": "Dog"},
+                "attributes": [{"name": "litter", "type": "int32", "column": "litter"}],
+            },
+        ]
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_family(descriptor)
+    assert exc.value.rule == INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN
 
 
 def test_concrete_without_abstract_root_is_not_reclassified_as_missing_root() -> None:

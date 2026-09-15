@@ -33,6 +33,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectLocation,
     ValueObjectOccurrenceDeclaration,
+    inheritance_parent,
 )
 
 __all__ = [
@@ -95,10 +96,17 @@ class InheritanceFamily:
 
 @dataclass(frozen=True, slots=True)
 class InheritanceTopology:
-    """The shared total result of walking every inheritance participant."""
+    """The shared total result of walking every inheritance participant.
+
+    ``children`` is the declared parent links read downward: each participant
+    that names a parent is listed under it, in canonical order. A key records
+    what was declared, so it may name a non-participant; the map is not limited
+    to positions whose ancestry resolves.
+    """
 
     participants: Mapping[EntityIdentity, InheritanceParticipant]
     resolutions: Mapping[EntityIdentity, AncestryResolution]
+    children: Mapping[EntityIdentity, tuple[EntityIdentity, ...]]
     families: tuple[InheritanceFamily, ...]
 
 
@@ -222,6 +230,15 @@ def project_topology(candidate: CandidateMetamodel) -> InheritanceTopology:
         for declaration in candidate.entities
         if declaration.inheritance is not None
     }
+    declared_children: dict[EntityIdentity, list[EntityIdentity]] = {}
+    for identity, participant in participant_index.items():
+        parent = inheritance_parent(participant.inheritance)
+        if parent is not None:
+            declared_children.setdefault(parent, []).append(identity)
+    children = {
+        parent: tuple(sorted(below, key=lambda identity: identity.sort_key))
+        for parent, below in declared_children.items()
+    }
     resolutions = {
         identity: _resolution(participant, participant_index)
         for identity, participant in participant_index.items()
@@ -245,6 +262,7 @@ def project_topology(candidate: CandidateMetamodel) -> InheritanceTopology:
     return InheritanceTopology(
         participants=MappingProxyType(participant_index),
         resolutions=MappingProxyType(resolutions),
+        children=MappingProxyType(children),
         families=families,
     )
 
