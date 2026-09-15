@@ -173,3 +173,35 @@ def test_provenance_capture_has_portable_memory_fallbacks(
     monkeypatch.setattr(os, "sysconf", one_mib)
     measured = Provenance.capture(contract, workload_digest="d" * 64, postgres=_VersionSource())
     assert measured.ram_gib == 1024
+
+
+def test_provenance_capture_reads_the_darwin_fingerprint_through_sysctl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    answers = {
+        "hw.memsize": str(48 * 1024**3),
+        "hw.physicalcpu": "10",
+        "hw.model": "Mac17,4",
+        "machdep.cpu.brand_string": "Apple M5",
+    }
+
+    def sysctl(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert command[:2] == ["sysctl", "-n"]
+        return subprocess.CompletedProcess(list(command), 0, answers.get(command[2], ""), "")
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    captured_git = {"rev-parse": "a" * 40, "status": ""}
+
+    def git(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[0] == "git":
+            return subprocess.CompletedProcess(list(command), 0, captured_git[command[1]], "")
+        return sysctl(command)
+
+    monkeypatch.setattr(subprocess, "run", git)
+    provenance = Provenance.capture(contract, workload_digest="d" * 64, postgres=_VersionSource())
+
+    assert provenance.ram_gib == 48
+    assert provenance.cores == 10
+    assert provenance.machine == "Mac17,4"
+    assert provenance.cpu == "Apple M5"
