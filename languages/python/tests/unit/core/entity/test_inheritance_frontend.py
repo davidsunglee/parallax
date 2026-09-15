@@ -191,6 +191,32 @@ def test_a_tpcs_root_declaring_a_table_is_a_formation_issue() -> None:
     assert _issue_codes(caught.value) == [inheritance.TPCS_ABSTRACT_TABLE_FORBIDDEN]
 
 
+def test_a_concrete_subtype_subclassed_by_another_concrete_is_a_formation_issue() -> None:
+    # Python subclassing supplies the parent and the role is authored per class,
+    # so a concrete class with a concrete subclass is spellable; only leaves may
+    # be concrete, and formation reports the concrete parent.
+    class Vessel(
+        Entity,
+        table="vessel",
+        namespace=_NS,
+        inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+    ):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Tug(Vessel, namespace=_NS, inheritance=ConcreteSubtype(tag_value="tug")):
+        bollard_pull: Attr[int | None] = attr(type=Int32)
+
+    class Barge(Tug, namespace=_NS, inheritance=ConcreteSubtype(tag_value="barge")):
+        deck_area: Attr[int | None] = attr(type=Int32)
+
+    with pytest.raises(MetamodelValidationError) as caught:
+        DomainModel(Vessel, Tug, Barge)
+    assert _issue_codes(caught.value) == [inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN]
+    (issue,) = caught.value.issues
+    assert issue.location == EntityLocation(_identity("Tug"))
+    assert issue.related == (EntityLocation(_identity("Barge")),)
+
+
 def test_a_descendant_declaring_its_own_version_attribute_is_a_formation_issue() -> None:
     # Optimistic locking is root-owned and family-uniform (ADR 0027).
     class OvenRoot(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):

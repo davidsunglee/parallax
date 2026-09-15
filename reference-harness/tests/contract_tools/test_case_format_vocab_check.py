@@ -53,12 +53,12 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_evolution_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_fifty_two_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_fifty_three_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 52
+    assert len(prose) == 53
     assert {
         "neutral-literal-type-mismatch",
         "neutral-literal-noncanonical",
@@ -78,6 +78,7 @@ def test_real_prose_vocabulary_is_the_full_fifty_two_rule_set() -> None:
     assert "temporal-keyed-write-multi-row" in prose  # the Instruction-rule bullet
     assert "inheritance-missing-root" in prose  # a Model-rules paragraph entry
     assert "inheritance-missing-concrete-subtype" in prose  # the family-membership rule
+    assert "inheritance-concrete-subtype-with-children" in prose  # the leaves-only rule
     assert "attribute-outside-active-position" in prose  # the non-family positional rule
     assert "reference-ambiguous-entity-name" in prose  # the reference-resolution rule
     assert "subtype-selection-duplicate-alternative" in prose
@@ -92,9 +93,9 @@ def test_real_prose_vocabulary_is_the_full_fifty_two_rule_set() -> None:
     assert "storage-layout-index-over-document-member" in prose
 
 
-def test_real_schema_enum_is_the_full_fifty_two_rule_set() -> None:
+def test_real_schema_enum_is_the_full_fifty_three_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 52
+    assert len(rules) == 53
     assert {
         "neutral-literal-type-mismatch",
         "neutral-literal-noncanonical",
@@ -115,6 +116,7 @@ def test_real_schema_enum_is_the_full_fifty_two_rule_set() -> None:
     assert "subtype-selection-overlapping-alternatives" in rules
     assert "temporal-keyed-write-multi-row" in rules
     assert "inheritance-missing-concrete-subtype" in rules
+    assert "inheritance-concrete-subtype-with-children" in rules
     assert "inheritance-layout-not-root-owned" in rules
     assert "storage-layout-document-member-column-override" in rules
     assert "storage-layout-index-over-document-member" in rules

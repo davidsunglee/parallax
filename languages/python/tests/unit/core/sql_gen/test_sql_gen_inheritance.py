@@ -952,9 +952,10 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
 def _own_column_occurrences() -> Any:
     """A table-per-hierarchy family whose concretes each own a Value Object Column.
 
-    ``Barge`` is a concrete subtype OF the concrete ``Tug``, and sorts ahead of it,
-    so a read targeting `Tug` resolves a position of two concretes whose first
-    member is not the one its rows name.
+    ``Barge`` and ``Tug`` are sibling concretes under the root ``Vessel``, and
+    ``Barge`` sorts ahead of ``Tug``, so a read targeting the root resolves a
+    position of two concretes whose first member is not the one a ``tug`` row
+    names.
     """
     from parallax.descriptor._records import (
         Attribute,
@@ -995,7 +996,7 @@ def _own_column_occurrences() -> Any:
                 Entity(
                     name="Barge",
                     inheritance=Inheritance(
-                        role="concrete-subtype", parent="Tug", tag_value="barge"
+                        role="concrete-subtype", parent="Vessel", tag_value="barge"
                     ),
                     value_objects=(
                         ValueObject(
@@ -1014,19 +1015,21 @@ def _own_column_occurrences() -> Any:
 
 
 def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() -> None:
-    # A concrete target with concrete descendants projects the position's whole
+    # An abstract target over several concretes projects the position's whole
     # superset, so a row carries its siblings' occurrence Columns as null. What is
-    # classified is the RESOLVED concrete's own occurrences — the read materializes
-    # `Tug` rows, so `Tug`'s `berth` is decoded and `Barge`'s `deck` is left as the
+    # classified is the RESOLVED concrete's own occurrences — the tag names a
+    # `Tug` row, so `Tug`'s `berth` is decoded and `Barge`'s `deck` is left as the
     # carrier the port returned, for the level that owns it to judge.
     meta = _own_column_occurrences()
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Tug"), result_form="instance")
+    compiled = compile_read(
+        oa.All(), meta, POSTGRES, target(meta, "Vessel"), result_form="instance"
+    )
     assert compiled.resolved_position == (
         target(meta, "Barge").identity,
         target(meta, "Tug").identity,
     )
     deck = PresentDocument({"area": "9"})
-    row = {"id": 1, "berth": PresentDocument({"code": "A1"}), "deck": deck}
+    row = {"id": 1, "kind": "tug", "berth": PresentDocument({"code": "A1"}), "deck": deck}
     resolved, _variant, _unknown, _document = compiled.row_identity(row)
     values, _findings, classified = compiled.decode_payload(row)
     assert resolved == target(meta, "Tug").identity
@@ -1211,50 +1214,6 @@ def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
         )
     )
     assert compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal")).narrow_to is None
-
-
-# --------------------------------------------------------------------------- #
-# A concrete position that itself has concrete descendants. Every branch table  #
-# is that branch's OWN concrete's container, never the queried position's — the #
-# two are different facts, and for this shape they disagree.                    #
-# --------------------------------------------------------------------------- #
-def test_a_concrete_position_with_a_concrete_descendant_unions_both_own_tables() -> None:
-    from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
-
-    root = Entity(
-        name="Doc",
-        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-    )
-    parent = Entity(
-        name="Parent",
-        table="parent_tbl",
-        inheritance=Inheritance(role="concrete-subtype", parent="Doc"),
-        attributes=(Attribute(name="note", type="int32", column="note"),),
-    )
-    child = Entity(
-        name="Child",
-        table="child_tbl",
-        inheritance=Inheritance(role="concrete-subtype", parent="Parent"),
-        attributes=(Attribute(name="extra", type="int32", column="extra"),),
-    )
-    meta = formed(Metamodel(entities=(root, parent, child)))
-
-    # Reading Parent spans {Child, Parent}: two branches over two OWN tables,
-    # each NULL-casting the columns it does not declare. Parent is in its own
-    # effective set, so its columns contribute in the member block (canonical
-    # order Child, Parent) rather than in the inherited prefix, which carries
-    # only the abstract root's own.
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Parent"))
-    assert compiled.statement.sql == (
-        "select t0.id, t0.extra, t0.note, 'Child' family_variant from child_tbl t0 "
-        "union all "
-        "select t0.id, cast(null as integer) extra, t0.note, 'Parent' family_variant "
-        "from parent_tbl t0"
-    )
-    # Reading the leaf resolves to one concrete and reads that concrete's table.
-    leaf = compile_read(oa.All(), meta, POSTGRES, target(meta, "Child"))
-    assert leaf.statement.sql == "select t0.id, t0.note, t0.extra from child_tbl t0"
 
 
 def test_family_attribute_resolution_spans_the_roots_projection_superset() -> None:

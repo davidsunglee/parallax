@@ -2344,6 +2344,7 @@ counting the derived primary-key Index a frontend hands over
 `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,
+`inheritance-concrete-subtype-with-children`,
 `inheritance-missing-concrete-subtype`,
 `inheritance-tph-root-table-required`,
 `inheritance-tph-descendant-table-forbidden`,

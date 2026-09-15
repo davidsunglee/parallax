@@ -87,6 +87,9 @@ INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT = "inheritance-concrete-without-abstr
 # Only concrete subtypes own rows, so a family of a root and abstract subtypes
 # alone resolves every one of its positions to the EMPTY effective concrete set.
 INHERITANCE_MISSING_CONCRETE_SUBTYPE = "inheritance-missing-concrete-subtype"
+# Only leaves may be concrete: a concrete subtype's effective set is itself, so
+# a concrete subtype that is the parent of any position is rejected.
+INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN = "inheritance-concrete-subtype-with-children"
 INHERITANCE_TPH_ROOT_TABLE_REQUIRED = "inheritance-tph-root-table-required"
 INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN = "inheritance-tph-descendant-table-forbidden"
 INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN = "inheritance-tpcs-abstract-table-forbidden"
@@ -121,6 +124,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_MISSING_ROOT,
         INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT,
         INHERITANCE_MISSING_CONCRETE_SUBTYPE,
+        INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN,
         INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
         INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
         INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
@@ -922,6 +926,23 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             f"the family rooted at {family.defs[top]['name']!r} declares no concrete "
             f"subtype, so every position in it owns no rows",
         )
+
+    # 7b. Every concrete subtype is a leaf. A concrete position's effective set
+    #     is itself, so a concrete subtype with a child would own rows it cannot
+    #     tell apart from its descendant's. Asked after 7a (a family with no
+    #     concrete has no concrete to ask) and before the strategy-scoped checks
+    #     (this is a question about the tree, not about how it maps to storage).
+    for definition in participants:
+        if role_of(definition) != ROLE_CONCRETE:
+            continue
+        below = family.children_of(family.key_of(definition))
+        if below:
+            raise RejectionError(
+                INHERITANCE_CONCRETE_SUBTYPE_WITH_CHILDREN,
+                f"concrete subtype {definition['name']!r} is the parent of "
+                f"{sorted(family.defs[child]['name'] for child in below)!r}; only leaves "
+                f"may be concrete",
+            )
 
     # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
     for top, members in families:
