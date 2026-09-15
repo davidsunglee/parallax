@@ -29,5 +29,11 @@ The former elapsed and transient attribution shares are withdrawn. The elapsed
 intervals included monitoring overhead, the accumulator also included the two
 encoders, and summed return-time current-size deltas were not comparable with a
 whole-window peak. The report now retains only supported totals and counts.
-COR-142's materiality gate is deferred until D-98's replacement attribution
-method is selected and the baseline is recaptured again.
+
+The owner withdrew COR-142's unsupported pre-optimization 10% attribution gate
+rather than replacing it. This capture's totals and counts are the before
+evidence for Phases 3-5. Phase 6 runs the same permanent report once against the
+clean production checkout after those changes and compares the captures;
+elapsed and transient differences are whole-lane deltas, not builder-exclusive
+attribution. The measurement adds no paired adapter, production probe or flag,
+monkey-patch, or permanent alternate implementation.
