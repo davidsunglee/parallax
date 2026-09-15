@@ -5,12 +5,12 @@ may declare. Its formation contribution consumes `m-metamodel` through
 `m-model-formation`; `m-descriptor` is only an authoring/serde adapter.
 
 Inheritance is a **closed tree** of entities: one abstract **root**, zero or more
-abstract intermediate nodes, and the concrete, instantiable leaves (or any
-concrete node). The family behaves conceptually like a **discriminated union** —
-every returned row has exactly one concrete variant — even when the physical
-strategy uses no discriminator column. An entity that participates declares an
-`inheritance` element naming its **role** and, for the root, the family
-**strategy**.
+abstract intermediate nodes, and the concrete, instantiable **leaves**; a
+concrete subtype has no children. The family behaves conceptually like a
+**discriminated union** — every returned row has exactly one concrete variant —
+even when the physical strategy uses no discriminator column. An entity that
+participates declares an `inheritance` element naming its **role** and, for the
+root, the family **strategy**.
 
 ## Roles
 
@@ -18,7 +18,7 @@ strategy uses no discriminator column. An entity that participates declares an
 |---|---|---|
 | `root` | the abstract hierarchy root; declares the family strategy and (for table-per-hierarchy) the shared table plus `tag` column | **rowless and non-instantiable** — a polymorphic position naming the whole family |
 | `abstract-subtype` | an abstract interior node between the root and its concrete descendants | **tableless, rowless** — a polymorphic position naming its concrete descendants |
-| `concrete-subtype` | an instantiable participant, the only one that owns rows | uses the root table under TPH; owns its table under TPCS |
+| `concrete-subtype` | an instantiable participant, always a leaf, the only one that owns rows | uses the root table under TPH; owns its table under TPCS |
 
 The `root` and every `abstract-subtype` are **abstract**, rowless, and
 addressable only as polymorphic Entity positions. A TPH root nevertheless owns
@@ -461,8 +461,8 @@ entity name. This order is a pure function of the Entity Identities and is
 reordering the subtype entries in a model file, or splitting them across files,
 never changes it. The **effective concrete-subtype set** of any polymorphic
 position (root, abstract subtype, concrete subtype, or a resolved Subtype
-Selection) is
-presented in this order.
+Selection) is presented in this order; the set of a concrete position is the
+position itself.
 
 This canonical sibling-set order is the one every downstream module uses to
 enumerate a family's concretes:
@@ -647,8 +647,8 @@ write time.
 - `root` names the family's root (the family identity); `ancestry` is the
   parent chain `root -> … -> entity` in that order.
 - `concrete_subtypes` is the position's **effective concrete-subtype set** in
-  the canonical alphabetical order above: every concrete node at or below the
-  position.
+  the canonical alphabetical order above: the position itself when it is
+  concrete, otherwise every concrete leaf below it.
 - `strategy` is the root-declared family strategy, present on every
   participant's view.
 - `container` is the one physical Storage Container a read or write of the

@@ -2,8 +2,8 @@
 
 Compilation runs only after the Rule Set accepted the candidate, so it decides
 no validity and emits no issue: every family is a closed tree under exactly one
-abstract root, and the compiler walks each Entity's ancestry once, collects the
-concrete nodes at or below it, and reads the physical facts the root's strategy
+abstract root, and the compiler walks each Entity's ancestry once, names the
+concrete leaves it resolves to, and reads the physical facts the root's strategy
 fixes. Reaching a state validation ruled out raises, so the formation runner
 reports a compiler contract failure rather than publishing a facet.
 
@@ -123,16 +123,20 @@ def _concrete_subtypes(
     by_identity: Mapping[EntityIdentity, EntityMetadata],
     children: Mapping[EntityIdentity, list[EntityIdentity]],
 ) -> tuple[EntityIdentity, ...]:
-    """Every concrete node at or below ``entity``, in canonical order.
+    """``entity`` itself when it is concrete, otherwise every concrete leaf below
+    it, in canonical order.
 
     A standalone Entity is its own trivial set: a read of it returns rows of
-    exactly one shape, which is what an effective concrete-subtype set names.
-    The set is empty exactly for an abstract position with no concrete descendant
-    — an abstract subtype whose own branch composes none, whether or not it has
-    abstract children of its own. A family ROOT always reaches one, because
-    validation rejects a family that contains no concrete subtype at all.
+    exactly one shape, which is what an effective concrete-subtype set names. A
+    concrete subtype is likewise its own set without a walk: validation rejects
+    a concrete subtype that is the parent of any position, so nothing is below
+    it. The set is empty exactly for an abstract position with no concrete
+    descendant — an abstract subtype whose own branch composes none, whether or
+    not it has abstract children of its own. A family ROOT always reaches one,
+    because validation rejects a family that contains no concrete subtype at
+    all.
     """
-    if entity.inheritance is None:
+    if entity.inheritance is None or isinstance(entity.inheritance, ConcreteSubtype):
         return (entity.identity,)
     collected: list[EntityIdentity] = []
     pending = [entity.identity]
