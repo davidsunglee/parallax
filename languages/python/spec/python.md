@@ -6440,9 +6440,12 @@ locking unions retain the core refusal.
   python-report-snapshot-delivery`; `languages/python/docs/stream-baseline.md`,
   `languages/python/docs/snapshot-graph-baseline.md`, and
   `languages/python/docs/snapshot-materialization-baseline.md` are its dated
-  historical evidence. Write-lowering builder shares are reported by `just
+  historical evidence. Write-lowering per-row elapsed and transient totals and
+  the five builder call counts are reported by `just
   python-report-write-lowering`, with captures retained under
-  `languages/python/docs/write-lowering-envelope/`. There is deliberately **no timing gate anywhere in
+  `languages/python/docs/write-lowering-envelope/`. The Phase 2 and Phase 6
+  captures support a whole-lane before/after comparison, not builder-exclusive
+  attribution. There is deliberately **no timing gate anywhere in
   this target**: a total in bytes and an elapsed time are machine- and
   interpreter-relative, and every CI job runs a floating runner label, so a
   threshold over either would fail for reasons unrelated to the change under it.
