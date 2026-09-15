@@ -53,6 +53,7 @@ MEMBERS: Final = (
     ),
     Member("python-report-lifecycle-overhead", "lifecycle_overhead.py", "lifecycle-overhead"),
     Member("python-report-instance-state", "instance_state_overhead.py", "instance-state"),
+    Member("python-report-write-lowering", "write_lowering_overhead.py", "write-lowering"),
 )
 
 
