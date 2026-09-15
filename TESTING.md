@@ -94,6 +94,7 @@ check-all` resolve exactly what each run contains.
 | The execution lifecycle's dispatch and overhead baseline | `just python-report-lifecycle-overhead` |
 | The complete Snapshot delivery Budget Contract portfolio | `just python-report-snapshot-delivery` |
 | The published instance-state three-arm retained and timing matrix | `just python-report-instance-state` |
+| Write-lowering builder cost shares on every supported CPython minor | `just python-report-write-lowering` |
 | Every quantitative Python report, collected fail-late | `just python-report-cost` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 

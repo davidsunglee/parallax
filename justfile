@@ -378,6 +378,11 @@ python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
 [metadata("runtime:medium")]
+[doc("Write-lowering builder cost shares on every supported CPython minor.")]
+python-report-write-lowering:
+    cd {{python}} && uv run python tools/write_lowering_overhead.py
+
+[metadata("runtime:medium")]
 [doc("Fail-late collection of every quantitative Python cost report.")]
 python-report-cost:
     cd {{python}} && uv run python tools/cost_report.py --out reports/
