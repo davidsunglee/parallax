@@ -35,6 +35,8 @@ __all__ = [
     "classify_effective_change",
 ]
 
+_EXHAUSTED = object()
+
 
 @dataclass(frozen=True, slots=True)
 class EffectiveChangeSet:
@@ -142,18 +144,22 @@ def _canonical_document(
     fill_missing_many: bool = True,
 ) -> Mapping[str, object]:
     rebuilt: dict[str, object] = {}
-    changed = any(key not in shape.by_name for key in document)
+    document_names = iter(document)
+    document_name: object = next(document_names, _EXHAUSTED)
+    changed = False
     for member in shape.members:
         if member.name not in document:
             if fill_missing_many and _is_many(member):
                 rebuilt[member.name] = []
                 changed = True
             continue
+        changed = changed or document_name != member.name
+        document_name = next(document_names, _EXHAUSTED)
         value = document[member.name]
         canonical = _canonical_member(member, value)
         rebuilt[member.name] = canonical
         changed = changed or canonical is not value
-    changed = changed or tuple(rebuilt) != tuple(document)
+    changed = changed or document_name is not _EXHAUSTED
     return rebuilt if changed else document
 
 
