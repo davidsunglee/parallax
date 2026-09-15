@@ -74,10 +74,13 @@ class DocumentShape:
     by_name: Mapping[str, DocumentMember] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        by_name: dict[str, DocumentMember] = {}
+        for member in self.members:
+            by_name.setdefault(member.name, member)
         object.__setattr__(
             self,
             "by_name",
-            MappingProxyType({member.name: member for member in self.members}),
+            MappingProxyType(by_name),
         )
 
     @classmethod

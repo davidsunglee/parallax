@@ -248,6 +248,13 @@ def test_named_member_canonicalization_drops_unknowns_without_filling_unnamed_ma
     assert canonical_named_members(_SHAPE, cast("Mapping[str, object]", scalar)) is scalar
 
 
+def test_named_member_canonicalization_rebuilds_canonical_shape_order() -> None:
+    document: dict[str, object] = {"origin": None, "flag": True}
+    canonical = canonical_named_members(_SHAPE, document)
+    assert canonical is not None
+    assert tuple(canonical) == ("flag", "origin")
+
+
 def test_an_already_canonical_document_is_answered_as_itself() -> None:
     # Every producer feeding the comparison already emits canonical documents, so
     # the common path must allocate nothing: the answer is the input object, and a
