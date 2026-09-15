@@ -51,13 +51,18 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
     """Validate ``document``'s inheritance-family invariants before formation.
 
     The public door onto the walk below. It parses ``document`` into records and
-    checks every family invariant that must hold for the model to form at all,
-    raising :class:`~parallax.core.inheritance.InheritanceError` naming the
-    violated rule, or :class:`~parallax.descriptor.DescriptorError` for a
-    document whose shape is not a descriptor at all. It returns ``None`` for a
-    document whose families are well formed — including one declaring no
-    inheritance at all — and says nothing about any other model rule: every
-    non-family defect is Model Formation's to report.
+    checks the family invariants the walk classifies on the raw record graph:
+    parent resolution, acyclicity, the root-only declaration of strategy,
+    temporality, optimistic locking, and layout, each family's root and
+    concrete membership, and the strategy's table and tag rules. It raises
+    :class:`~parallax.core.inheritance.InheritanceError` naming the violated
+    rule, or :class:`~parallax.descriptor.DescriptorError` for a document whose
+    shape is not a descriptor at all, and returns ``None`` for a document that
+    passes — including one declaring no inheritance at all. It says nothing
+    about any other model rule: a family defect that survives adaptation into
+    the accepted algebra, such as a concrete subtype with children or a
+    materialized-key collision, is Model Formation's to report, as is every
+    non-family defect.
 
     Parsing here is deliberately shape-only, without the canonical-schema and
     value phases the ``domain_model_from_*`` doors run first. A caller reaches this door
@@ -154,7 +159,8 @@ def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]
 
 
 def validate_families(metamodel: Metamodel) -> None:
-    """Validate every inheritance family invariant, raising :class:`InheritanceError`.
+    """Validate the raw-walk inheritance family invariants, raising
+    :class:`InheritanceError`.
 
     The check order pins each corpus ``rejectedRule``: parent resolution,
     acyclicity, strategy and family-owned-fact locality, ancestry-reaches-a-root,

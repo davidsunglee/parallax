@@ -1614,8 +1614,8 @@ def _plan_tpcs_read(
     concrete at a time. The position's own container is a different fact — the
     single container a read or write of the position itself targets (absent for
     an abstract table-per-concrete-subtype position) — and is deliberately never
-    reached for here, because a concrete position may itself have concrete
-    descendants, in which case its own table is one branch of several.
+    reached for here: only an abstract position resolves to several concretes,
+    and it has no container of its own to reach for.
     """
     concretes = tuple(position.concrete_subtypes)
 
