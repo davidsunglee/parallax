@@ -94,20 +94,23 @@ the `tests/unit/` root —
 `_pool_source_support.py`, `_second_dialect.py`,
 `_snapshot_materialization_support.py`, `_source_inventory_support.py`,
 `_stream_page_support.py`,
-`_transact_support.py`, and `memory_instruments.py`.
+`_transact_support.py`, `_write_lowering_support.py`, and `memory_instruments.py`.
 
-Four of those serve the cost suites and split by subject:
+Five of those serve the cost suites and split by subject:
 `memory_instruments.py` is what every cost suite measures WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with, and `_instance_state_support.py` and
 `_snapshot_materialization_support.py` are the two a `report` also drives: the
 baseline or scaling regression and `just python-report-instance-state` or the
 Snapshot member of `just python-report-cost` measure one workload through one
-set of functions. The `report` tools under `tools/` reach them as
+set of functions. `_write_lowering_support.py` is the workload the isolated
+write-lowering reading child drives through row serialization, preparation,
+settlement, and SQL lowering. The `report` tools under `tools/` reach them as
 `tests.unit.memory_instruments`, `tests.unit._instance_state_support`, and
-`tests.unit._snapshot_materialization_support` by putting the workspace root on
-`sys.path` themselves, and each refuses any module that did not resolve to the
-file it named.
+`tests.unit._snapshot_materialization_support`, and the write-lowering child
+reaches `tests.unit._write_lowering_support`, by putting the workspace root on
+`sys.path` themselves. Each refuses any module that did not resolve to the file
+it named.
 
 ## Fixtures
 
