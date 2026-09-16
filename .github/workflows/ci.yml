@@ -260,7 +260,7 @@ jobs:
         shell: bash
         run: |
           echo "## Committed evidence: head lock $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
-          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/write-lowering-envelope/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/structural-metadata-envelope/before/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check committed evidence against event merge lock
         if: github.event_name == 'pull_request' && !cancelled()
         shell: bash
@@ -270,15 +270,15 @@ jobs:
           echo "## Committed evidence: event merge lock $MERGE_SHA" >> "$GITHUB_STEP_SUMMARY"
           git fetch --no-tags origin "$MERGE_SHA"
           git show "$MERGE_SHA:languages/python/uv.lock" > "$RUNNER_TEMP/event-merge-uv.lock"
-          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/write-lowering-envelope/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/structural-metadata-envelope/before/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Measure merge-base
         if: github.event_name == 'pull_request' && !cancelled()
         shell: bash
         run: |
           git worktree add --detach "$RUNNER_TEMP/parallax-base" "$BASE_SHA"
-          if just --working-directory "$RUNNER_TEMP/parallax-base" --summary | tr ' ' '\n' | grep -qx python-report-cost; then
+          if just --justfile "$RUNNER_TEMP/parallax-base/justfile" --working-directory "$RUNNER_TEMP/parallax-base" --summary | tr ' ' '\n' | grep -qx python-report-cost; then
             (cd "$RUNNER_TEMP/parallax-base" && uv sync --project languages/python --frozen)
-            just --working-directory "$RUNNER_TEMP/parallax-base" python-report-cost
+            just --justfile "$RUNNER_TEMP/parallax-base/justfile" --working-directory "$RUNNER_TEMP/parallax-base" python-report-cost
           else
             mkdir -p "$RUNNER_TEMP/parallax-base/languages/python/reports"
             python -c 'import json,os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"parallax-base/languages/python/reports"; d={"schemaVersion":1,"members":[],"failures":[{"recipe":"python-report-cost","required":True,"message":"merge-base predates the cost portfolio"}]}; (p/"portfolio.json").write_text(json.dumps(d,indent=2)+"\n"); (p/"summary.md").write_text("# Python cost report\n\nMerge-base predates the cost portfolio.\n")'

@@ -1,4 +1,5 @@
-"""Take one isolated Snapshot delivery Budget Contract cell reading.
+"""Take one isolated Snapshot delivery reading: a Budget Contract cell, or one
+provider-free geometry read family address.
 
 This script is imported by nothing. It is the sole report-side reader of the
 whole-interpreter memory instruments and answers its parent with one JSON line.
@@ -20,7 +21,13 @@ from typing import Any, Final, cast
 
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL
-from parallax.conformance.workloads import Workload, catalog
+from parallax.conformance.workloads import (
+    READ_GEOMETRY_ROOTS,
+    STRUCTURAL_LAYOUTS,
+    GeometryLevel,
+    Workload,
+    catalog,
+)
 from parallax.core.db_port import (
     CleanupResult,
     DatabaseConnection,
@@ -38,6 +45,7 @@ from parallax.snapshot.handle import Database
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materialization_support.py"
+GEOMETRY_MODULE: Final = WORKSPACE / "tests" / "unit" / "_structural_geometry_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
 from tests.unit import memory_instruments  # noqa: E402
@@ -49,15 +57,22 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
 
 from tests._support.db_port import projected_rows  # noqa: E402
 from tests.unit import _snapshot_materialization_support as stress_support  # noqa: E402
+from tests.unit import _structural_geometry_support as geometry_support  # noqa: E402
 
 if Path(stress_support.__file__ or "").resolve() != SUPPORT_MODULE:
     raise ImportError(
         f"this reading requires {SUPPORT_MODULE}, but resolved {stress_support.__file__}"
     )
+if Path(geometry_support.__file__ or "").resolve() != GEOMETRY_MODULE:
+    raise ImportError(
+        f"this reading requires {GEOMETRY_MODULE}, but resolved {geometry_support.__file__}"
+    )
 
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
 
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})
+GEOMETRY_PREFIX: Final = "read-"
+GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -432,6 +447,74 @@ def _stress_memory(prepared: _PreparedStress, path: str) -> tuple[float, str, tu
     return value, reading_unit, (value,)
 
 
+def geometry_address(workload: str, path: str) -> tuple[GeometryLevel, str, str] | None:
+    """The level, layout, and metric a geometry read address names, or absence
+    for a Budget Contract address."""
+    if not workload.startswith(GEOMETRY_PREFIX):
+        return None
+    level = geometry_support.level_named(workload.removeprefix(GEOMETRY_PREFIX))
+    layout, _separator, metric = path.partition(".")
+    if layout not in STRUCTURAL_LAYOUTS or metric not in GEOMETRY_METRICS:
+        raise ValueError(f"{workload}.{path} is not a geometry read address")
+    return level, layout, metric
+
+
+def _geometry(
+    level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """One geometry level's provider-free Wire find under ``layout``.
+
+    The handle and its port are composed outside the window; every find inside
+    it plans, materializes, and publishes ``READ_GEOMETRY_ROOTS`` freshly
+    composed rows.
+    """
+    selected = cast("geometry_support.Layout", layout)
+    roots = READ_GEOMETRY_ROOTS
+    port = geometry_support.GeometryPort(level, selected, roots)
+    database = Database(port.open(), geometry_support.MODEL)
+    query = geometry_support.read_query(level, selected)
+    try:
+        if metric == "elapsedUsPerRoot":
+
+            def work() -> int:
+                return len(database.wire.find(query).results())
+
+            milliseconds = _timed(work, warmups=warmups, measured=measured)
+            samples = tuple(elapsed * 1_000 / roots for elapsed in milliseconds)
+            return float(sorted(samples)[len(samples) // 2]), "us/root", samples
+        if metric == "retainedKiB":
+
+            def materialized(sample: Callable[[], None]) -> None:
+                held = database.wire.find(query)
+                sample()
+                assert held is not None
+
+            tracemalloc.start()
+            try:
+                value = retained(materialized) / 1_024
+            finally:
+                tracemalloc.stop()
+            return value, "KiB", (value,)
+        with untraced():
+            for _ in range(warmups):
+                database.wire.find(query)
+        gc.collect()
+        gc.collect()
+        tracemalloc.start()
+        try:
+            before, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            held = database.wire.find(query)
+            _, peak = tracemalloc.get_traced_memory()
+            assert held is not None
+        finally:
+            tracemalloc.stop()
+        value = max(0, peak - before) / 1_024
+        return value, "KiB", (value,)
+    finally:
+        database.close()
+
+
 def measure(
     workload: Workload,
     path: str,
@@ -493,18 +576,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         contract.timing_measured,
     ):
         parser.error("timing sampling counts do not match the Budget Contract")
-    workload = catalog(contract)[args.workload]
-    if args.cell not in {cell.path for cell in contract.cells(args.workload)}:
-        parser.error(f"{args.workload}.{args.cell} is not a Budget Contract cell")
-    value, reading_unit, samples = measure(
-        workload,
-        args.cell,
-        args.roots,
-        args.connection_info,
-        warmups=args.warmups,
-        measured=args.measured,
-        collect_at_page_boundary=contract.memory_collect_at_page_boundary,
-    )
+    try:
+        geometry = geometry_address(args.workload, args.cell)
+    except (KeyError, ValueError) as error:
+        parser.error(str(error))
+    if geometry is not None:
+        level, layout, metric = geometry
+        value, reading_unit, samples = _geometry(
+            level, layout, metric, warmups=args.warmups, measured=args.measured
+        )
+    else:
+        if args.workload not in catalog(contract):
+            parser.error(f"{args.workload} is not a Budget Contract workload")
+        workload = catalog(contract)[args.workload]
+        if args.cell not in {cell.path for cell in contract.cells(args.workload)}:
+            parser.error(f"{args.workload}.{args.cell} is not a Budget Contract cell")
+        value, reading_unit, samples = measure(
+            workload,
+            args.cell,
+            args.roots,
+            args.connection_info,
+            warmups=args.warmups,
+            measured=args.measured,
+            collect_at_page_boundary=contract.memory_collect_at_page_boundary,
+        )
     print(json.dumps({"value": value, "unit": reading_unit, "samples": samples}))
     return 0
 

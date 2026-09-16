@@ -1,25 +1,32 @@
-"""Emit write-lowering builder cost evidence on every supported CPython minor.
+"""Emit the structural write evidence on every supported CPython minor.
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
-reading is taken by ``write_lowering_reading.py`` in an isolated child process.
-Measurements are observations: only an incomplete matrix changes this command's
-exit status.
+reading is taken by ``write_lowering_reading.py`` in an isolated child process:
+the twenty categorical keyed-write cases and the geometry inserts through actual
+driver serialization, the predicate-acquisition families to their buffered
+group, and the model-preparation checkpoint. Measurements are observations:
+only an incomplete matrix changes this command's exit status.
 """
 
 from __future__ import annotations
 
 import json
 import math
-import os
 import subprocess
 import sys
-import tempfile
-import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from statistics import median
 from typing import Any, Final, cast
 
+from interpreter_matrix import (
+    CURRENT_MINOR,
+    HASH_SEED,
+    child_command,
+    child_environment,
+    supported_minors,
+)
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     CostReportEnvelope,
@@ -32,22 +39,40 @@ from parallax.conformance.cost_envelope import (
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
-CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
-SUPPORTED_MINORS: Final = 2
 SUBJECT: Final = "write-lowering"
 WARMUPS: Final = 3
 MEASURED: Final = 9
-HASH_SEED: Final = "0"
+ENVIRONMENT_NAMESPACE: Final = "write-lowering"
 CALL_NAMES: Final = (
     "shapeOfDeclaration",
     "entityShape",
     "occurrenceShape",
     "encodeDocument",
     "encodeMany",
+    "applyPatches",
+    "detachJsonContainer",
 )
+METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
+KEYED_WINDOW: Final = "keyed-write"
+ACQUISITION_WINDOW: Final = "predicate-acquisition"
+MODEL_WINDOW: Final = "model-preparation"
+MODEL_CASE: Final = "model.prepared"
+WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
+    KEYED_WINDOW: (
+        "Typed or Wire input through preparation, settlement, SQL lowering, production "
+        "bind adaptation, and psycopg's document serialization; no database execution"
+    ),
+    ACQUISITION_WINDOW: (
+        "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows "
+        "through production acquisition to a buffered Materialized Write Group; no "
+        "ingress preparation, JSON parsing, flush, or serialization"
+    ),
+    MODEL_WINDOW: "one complete model preparation from the declared Entity Classes",
+}
 
 sys.path.insert(0, str(WORKSPACE))
 
+from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 
 if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
@@ -56,77 +81,36 @@ if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
         f"'_write_lowering_support' resolved to {lowering_support.__file__}"
     )
 
-CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES)
+WINDOWS: Final[Mapping[str, str]] = {
+    **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
+    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    MODEL_CASE: MODEL_WINDOW,
+}
+"""Every case the child can be asked for, and the window it reads."""
+
+CASE_NAMES: Final = tuple(WINDOWS)
 
 
 @dataclass(frozen=True, slots=True)
 class ChildReading:
     case: str
-    rows: int
-    elapsed_us: float
-    transient_bytes: float
+    window: str
+    units: int
+    samples: Mapping[str, tuple[float, ...]]
     calls: Mapping[str, float]
     warmups: int
     measured: int
+    retained_warmups: int
 
 
 type Cell = ChildReading | str
 type Matrix = dict[str, dict[str, Cell]]
 
 
-def supported_minors() -> tuple[str, ...]:
-    """Every CPython minor declared by the workspace, oldest first."""
-    declared = cast(
-        "str",
-        tomllib.loads((WORKSPACE / "pyproject.toml").read_text())["project"]["requires-python"],
-    )
-    floor = declared.removeprefix(">=").strip()
-    parts = floor.split(".")
-    if not (
-        declared.startswith(">=") and len(parts) == 2 and all(part.isdigit() for part in parts)
-    ):
-        raise SystemExit(
-            f"requires-python {declared!r} is not the bare '>=<major>.<minor>' "
-            "floor this report requires"
-        )
-    major, minor = (int(part) for part in parts)
-    return tuple(f"{major}.{minor + above}" for above in range(SUPPORTED_MINORS))
-
-
-def _child_environment(runtime: str) -> dict[str, str]:
-    excluded = {
-        "COV_CORE_SOURCE",
-        "COV_CORE_CONFIG",
-        "COV_CORE_DATAFILE",
-        "COVERAGE_PROCESS_START",
-    }
-    environment = {name: value for name, value in os.environ.items() if name not in excluded}
-    environment["PYTHONHASHSEED"] = HASH_SEED
-    if runtime == CURRENT_MINOR:
-        environment["PYTHONPATH"] = os.pathsep.join(entry for entry in sys.path if entry)
-        return environment
-    for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
-        environment.pop(name, None)
-    environment["UV_PROJECT_ENVIRONMENT"] = str(
-        Path(tempfile.gettempdir()) / f"parallax-write-lowering-{runtime}"
-    )
-    return environment
-
-
-def _child_command(runtime: str, case: str) -> list[str]:
-    arguments = [case, "--warmups", str(WARMUPS), "--measured", str(MEASURED)]
-    if runtime == CURRENT_MINOR:
-        return [sys.executable, str(READING_SCRIPT), *arguments]
-    return [
-        "uv",
-        "run",
-        "--frozen",
-        "--python",
-        runtime,
-        "python",
-        str(READING_SCRIPT),
-        *arguments,
-    ]
+def unit_of(window: str, metric: str) -> str:
+    """The unit one metric is reported in over one window."""
+    scale = "" if window == MODEL_WINDOW else "/row"
+    return f"{'us' if metric == 'elapsedUs' else 'B'}{scale}"
 
 
 def _number(value: object) -> float:
@@ -144,18 +128,13 @@ def _positive_integer(value: object, name: str) -> int:
     return value
 
 
-def _nonnegative_number(value: object, name: str) -> float:
-    number = _number(value)
-    if number < 0:
-        raise ValueError(f"{name} must be non-negative, received {value!r}")
-    return number
-
-
-def _positive_number(value: object, name: str) -> float:
-    number = _number(value)
-    if number <= 0:
-        raise ValueError(f"{name} must be positive, received {value!r}")
-    return number
+def _samples(value: object, name: str, *, positive: bool) -> tuple[float, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{name} must be a non-empty list of samples")
+    samples = tuple(_number(sample) for sample in cast("list[object]", value))
+    if any(sample < 0 or (positive and sample == 0) for sample in samples):
+        raise ValueError(f"{name} samples must be {'positive' if positive else 'non-negative'}")
+    return samples
 
 
 def _decoded(output: str, case: str) -> Cell:
@@ -164,26 +143,51 @@ def _decoded(output: str, case: str) -> Cell:
         return "the child printed nothing"
     try:
         document = cast("Mapping[str, Any]", json.loads(lines[-1]))
-        calls = cast("Mapping[str, object]", document["calls"])
-        if set(calls) != set(CALL_NAMES):
-            raise ValueError(f"builder calls were {sorted(calls)}, expected {list(CALL_NAMES)}")
-        expected_fields = {"rows", "perRow", "calls", "warmups", "measured"}
+        expected_fields = {
+            "case",
+            "window",
+            "units",
+            "samples",
+            "calls",
+            "warmups",
+            "measured",
+            "retainedWarmups",
+        }
         if set(document) != expected_fields:
             raise ValueError(
                 f"reading fields were {sorted(document)}, expected {sorted(expected_fields)}"
             )
-        per_row = cast("Mapping[str, object]", document["perRow"])
-        if set(per_row) != {"elapsedUs", "transientBytes"}:
-            raise ValueError("perRow must contain elapsedUs and transientBytes")
+        if document["case"] != case:
+            raise ValueError(f"the child answered for {document['case']!r}, expected {case!r}")
+        window = WINDOWS[case]
+        if document["window"] != window:
+            raise ValueError(f"the child read window {document['window']!r}, expected {window!r}")
+        samples = cast("Mapping[str, object]", document["samples"])
+        if set(samples) != set(METRICS):
+            raise ValueError(f"sampled metrics were {sorted(samples)}, expected {list(METRICS)}")
+        calls = cast("Mapping[str, object]", document["calls"])
+        expected_calls = set(CALL_NAMES) if window == KEYED_WINDOW else set[str]()
+        if set(calls) != expected_calls:
+            raise ValueError(
+                f"observed calls were {sorted(calls)}, expected {sorted(expected_calls)}"
+            )
         reading = ChildReading(
             case=case,
-            rows=_positive_integer(document["rows"], "rows"),
-            elapsed_us=_positive_number(per_row["elapsedUs"], "perRow.elapsedUs"),
-            transient_bytes=_positive_number(per_row["transientBytes"], "perRow.transientBytes"),
-            calls={name: _nonnegative_number(calls[name], f"calls.{name}") for name in CALL_NAMES},
+            window=window,
+            units=_positive_integer(document["units"], "units"),
+            samples={
+                metric: _samples(
+                    samples[metric], f"samples.{metric}", positive=metric == "elapsedUs"
+                )
+                for metric in METRICS
+            },
+            calls={name: _number(calls[name]) for name in expected_calls},
             warmups=_positive_integer(document["warmups"], "warmups"),
             measured=_positive_integer(document["measured"], "measured"),
+            retained_warmups=_positive_integer(document["retainedWarmups"], "retainedWarmups"),
         )
+        if any(count < 0 for count in reading.calls.values()):
+            raise ValueError("call counts must be non-negative")
         if reading.warmups != WARMUPS or reading.measured != MEASURED:
             raise ValueError(
                 f"sampling was {reading.warmups}/{reading.measured}, expected {WARMUPS}/{MEASURED}"
@@ -195,11 +199,12 @@ def _decoded(output: str, case: str) -> Cell:
 
 def in_a_child(runtime: str, case: str) -> Cell:
     """Take one case reading on one runtime, or return why it is unavailable."""
+    arguments = [case, "--warmups", str(WARMUPS), "--measured", str(MEASURED)]
     try:
         completed = subprocess.run(
-            _child_command(runtime, case),
+            child_command(runtime, READING_SCRIPT, arguments),
             cwd=WORKSPACE,
-            env=_child_environment(runtime),
+            env=child_environment(runtime, ENVIRONMENT_NAMESPACE),
             capture_output=True,
             text=True,
             check=False,
@@ -229,21 +234,59 @@ def _complete(cells: Mapping[str, Cell]) -> tuple[ChildReading, ...]:
     return cast("tuple[ChildReading, ...]", readings)
 
 
-def _case_readings(workload: str, reading: ChildReading) -> tuple[Reading, ...]:
-    prefix = reading.case
+def retained_warmups(matrix: Matrix) -> int:
+    """The one retained-checkpoint warm-up count every child in ``matrix`` ran."""
+    counts = {
+        cell.retained_warmups
+        for cells in matrix.values()
+        for cell in cells.values()
+        if isinstance(cell, ChildReading)
+    }
+    if len(counts) != 1:
+        raise ValueError(f"children disagree on the retained warm-up count: {sorted(counts)}")
+    return counts.pop()
+
+
+def case_readings(runtime: str, reading: ChildReading) -> tuple[Reading, ...]:
+    """Every envelope reading one child answer contributes."""
     return (
-        Reading(workload, f"{prefix}.perRow.elapsedUs", reading.elapsed_us, "us/row"),
-        Reading(
-            workload,
-            f"{prefix}.perRow.transientBytes",
-            reading.transient_bytes,
-            "B/row",
+        *(
+            Reading(
+                reading.case,
+                metric,
+                float(median(reading.samples[metric])),
+                unit_of(reading.window, metric),
+                reading.samples[metric],
+                window=reading.window,
+                runtime=runtime,
+            )
+            for metric in METRICS
         ),
         *(
-            Reading(workload, f"{prefix}.calls.{name}", reading.calls[name], "calls/row")
+            Reading(
+                reading.case,
+                f"calls.{name}",
+                reading.calls[name],
+                "calls/row",
+                (reading.calls[name],),
+                window=reading.window,
+                runtime=runtime,
+            )
             for name in CALL_NAMES
+            if name in reading.calls
         ),
     )
+
+
+def expected_addresses(runtimes: Sequence[str]) -> frozenset[tuple[str, str, str]]:
+    """Every (runtime, case, cell) address a complete envelope carries."""
+    addresses: set[tuple[str, str, str]] = set()
+    for runtime in runtimes:
+        for case, window in WINDOWS.items():
+            addresses.update((runtime, case, metric) for metric in METRICS)
+            if window == KEYED_WINDOW:
+                addresses.update((runtime, case, f"calls.{name}") for name in CALL_NAMES)
+    return frozenset(addresses)
 
 
 def build_envelope(
@@ -254,10 +297,8 @@ def build_envelope(
     """Build and validate the complete runtime-by-case evidence envelope."""
     readings: list[Reading] = []
     for runtime, cells in matrix.items():
-        workload = f"cpython-{runtime}"
-        complete = _complete(cells)
-        for reading in complete:
-            readings.extend(_case_readings(workload, reading))
+        for reading in _complete(cells):
+            readings.extend(case_readings(runtime, reading))
     envelope = CostReportEnvelope(
         SUBJECT,
         provenance,
@@ -281,31 +322,44 @@ class _VersionSource:
         return [{"server_version": "not-used"}]
 
 
-def _provenance(contract: BudgetContract) -> Provenance:
+def sampling(retained_warmups: int) -> dict[str, object]:
+    """The protocol every reading in this envelope was taken under."""
+    return {
+        "warmups": WARMUPS,
+        "measured": MEASURED,
+        "retainedWarmups": retained_warmups,
+        "hashSeed": HASH_SEED,
+        "windows": dict(WINDOW_DESCRIPTIONS),
+    }
+
+
+def _provenance(contract: BudgetContract, matrix: Matrix) -> Provenance:
     return Provenance.capture(
         contract,
         workload_digest=lowering_support.write_lowering_digest(),
         postgres=_VersionSource(),
-        sampling={"warmups": WARMUPS, "measured": MEASURED},
+        sampling=sampling(retained_warmups(matrix)),
     )
 
 
 def _canary_reading(case: str) -> ChildReading:
+    window = WINDOWS[case]
     return ChildReading(
         case,
+        window,
         1,
-        10.0,
-        100.0,
-        dict.fromkeys(CALL_NAMES, 1.0),
+        {metric: (10.0,) for metric in METRICS},
+        dict.fromkeys(CALL_NAMES, 1.0) if window == KEYED_WINDOW else {},
         WARMUPS,
         MEASURED,
+        1,
     )
 
 
 def canary(contract: BudgetContract) -> CostReportEnvelope:
     """Build one schema-valid complete envelope without running a child."""
     matrix: Matrix = {CURRENT_MINOR: {case: _canary_reading(case) for case in CASE_NAMES}}
-    provenance = replace(_provenance(contract), dirty=True)
+    provenance = replace(_provenance(contract, matrix), dirty=True)
     return build_envelope(contract, provenance, matrix)
 
 
@@ -326,7 +380,7 @@ def main(argv: list[str]) -> int:
         )
         return 3
     contract = BudgetContract.load()
-    envelope = build_envelope(contract, _provenance(contract), matrix)
+    envelope = build_envelope(contract, _provenance(contract, matrix), matrix)
     print(json.dumps(envelope.document(), indent=2, sort_keys=True))
     return 0
 

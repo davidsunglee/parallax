@@ -1,8 +1,20 @@
-"""Take one isolated write-lowering case reading.
+"""Take one isolated structural write reading.
 
 This script is imported only by its gated suite. Report execution starts it in a
-child interpreter, where it drives one case through the production lowering
-seams and answers with one JSON line.
+child interpreter, where it drives one case through the production seams of its
+window and answers with one JSON line.
+
+Three windows are read. A keyed-write case runs from Typed or Wire input
+through preparation, settlement, SQL lowering, production bind adaptation, and
+psycopg's own document serialization. A predicate-acquisition case runs from a
+prepared Bitemporal predicate and freshly composed resolving rows through
+production acquisition to a buffered Materialized Write Group, and stops before
+any flush. The model-preparation case runs one complete model preparation.
+
+Elapsed time and the high-water mark are read over uninterrupted runs of the
+whole window. The retained checkpoint is read separately, at the production
+stage each window names — the write prepared and settled, the group buffered,
+the model prepared — so sampling never prolongs a lifetime inside a timed run.
 """
 
 from __future__ import annotations
@@ -19,31 +31,44 @@ from pathlib import Path
 from statistics import median
 from time import perf_counter_ns
 from types import CodeType, TracebackType
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from parallax.core import document_codec
-from parallax.core.entity import EntityRowCodec
+from parallax.core.base import detach_json_container
+from parallax.core.entity import DomainModel, EntityRowCodec
 from parallax.core.unit_work import WritePlanner
-from parallax.snapshot.handle import build_write_planner
+from parallax.snapshot import prepare_model
+from parallax.snapshot.handle import Database, build_write_planner
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
+ACQUISITION_MODULE: Final = WORKSPACE / "tests" / "unit" / "_predicate_acquisition_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
+from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 from tests.unit import memory_instruments  # noqa: E402
 
-if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
-    raise ImportError(
-        f"this reading requires {INSTRUMENT_MODULE}, but resolved {memory_instruments.__file__}"
-    )
-if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
-    raise ImportError(
-        f"this reading requires {SUPPORT_MODULE}, but resolved {lowering_support.__file__}"
-    )
+for module, expected in (
+    (memory_instruments, INSTRUMENT_MODULE),
+    (lowering_support, SUPPORT_MODULE),
+    (acquisition_support, ACQUISITION_MODULE),
+):
+    if Path(module.__file__ or "").resolve() != expected:
+        raise ImportError(f"this reading requires {expected}, but resolved {module.__file__}")
 
-from tests.unit.memory_instruments import untraced  # noqa: E402
+from tests.unit.memory_instruments import WARMUP, retained, untraced  # noqa: E402
+
+type Window = Literal["keyed-write", "predicate-acquisition", "model-preparation"]
+
+KEYED_WINDOW: Final[Window] = "keyed-write"
+ACQUISITION_WINDOW: Final[Window] = "predicate-acquisition"
+MODEL_WINDOW: Final[Window] = "model-preparation"
+MODEL_CASE: Final = "model.prepared"
+MODEL_EDITION: Final = "write-lowering-report"
+METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
+RETAINED_WARMUPS: Final = WARMUP
 
 _MONITORING_TOOL_IDS: Final = range(6)
 OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
@@ -52,8 +77,18 @@ OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
     "occurrenceShape": document_codec.occurrence_shape,
     "encodeDocument": document_codec.encode_document,
     "encodeMany": document_codec.encode_many,
+    "applyPatches": document_codec.apply_patches,
+    "detachJsonContainer": detach_json_container,
 }
-CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES)
+"""Pass observations over the keyed-write window: diagnostics that distinguish
+roots, nested values, and repeated calls, and gate nothing."""
+
+WINDOWS: Final[Mapping[str, Window]] = {
+    **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
+    **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    MODEL_CASE: MODEL_WINDOW,
+}
+CASE_NAMES: Final = tuple(WINDOWS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,93 +153,175 @@ class Observer(AbstractContextManager["Observer"]):
         return Observation(calls=dict(self._calls))
 
 
-def _collaborators() -> tuple[EntityRowCodec, WritePlanner]:
-    return (
-        EntityRowCodec(lowering_support.CATALOG),
-        build_write_planner(lowering_support.CATALOG.meta),
-    )
+type Sampler = Callable[[], None]
 
 
-def _timed(case: lowering_support.Case) -> tuple[int, int]:
-    codec, planner = _collaborators()
-    started = perf_counter_ns()
-    rows = lowering_support.lower(case, codec, planner)
-    return rows, perf_counter_ns() - started
+@dataclass(frozen=True, slots=True)
+class Driver:
+    """One window's runs: an uninterrupted run, a run that marks the window's
+    two ends, and a run that samples at the retained checkpoint."""
+
+    units: int
+    run: Callable[[], None]
+    marked: Callable[[Sampler, Sampler], None]
+    checkpoint: Callable[[Sampler], None]
 
 
-def _peak(case: lowering_support.Case) -> tuple[int, int]:
-    codec, planner = _collaborators()
-    gc.collect()
-    gc.collect()
-    floor, _ = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
-    rows = lowering_support.lower(case, codec, planner)
-    _, high_water = tracemalloc.get_traced_memory()
-    return rows, max(0, high_water - floor)
+def _keyed_driver(case: lowering_support.Case) -> Driver:
+    codec = EntityRowCodec(lowering_support.CATALOG)
+    planner: WritePlanner = build_write_planner(lowering_support.CATALOG.meta)
+    units = len(case.values) if case.ingress == "typed" else len(case.wire_rows)
+
+    def run() -> None:
+        lowering_support.lower(case, codec, planner)
+
+    def marked(opened: Sampler, closed: Sampler) -> None:
+        opened()
+        lowering_support.lower(case, codec, planner)
+        closed()
+
+    def checkpoint(sample: Sampler) -> None:
+        settled = lowering_support.settle(case, codec, planner)
+        sample()
+        assert settled.plan is not None
+
+    return Driver(units, run, marked, checkpoint)
 
 
-def _observed(case: lowering_support.Case) -> tuple[int, Observation]:
-    codec, planner = _collaborators()
+def _acquisition_driver(case: acquisition_support.Case) -> Driver:
+    handle: Database = acquisition_support.database(case)
+
+    def run() -> None:
+        acquisition_support.acquire(handle, case)
+
+    def marked(opened: Sampler, closed: Sampler) -> None:
+        acquisition_support.acquire(handle, case, opened=opened, closed=closed)
+
+    def checkpoint(sample: Sampler) -> None:
+        acquisition_support.acquire(handle, case, closed=sample)
+
+    return Driver(case.rows, run, marked, checkpoint)
+
+
+def _model_driver() -> Driver:
+    def prepare() -> object:
+        return prepare_model(DomainModel(*lowering_support.ENTITY_CLASSES), edition=MODEL_EDITION)
+
+    def run() -> None:
+        prepare()
+
+    def marked(opened: Sampler, closed: Sampler) -> None:
+        opened()
+        selection = prepare()
+        closed()
+        assert selection is not None
+
+    def checkpoint(sample: Sampler) -> None:
+        selection = prepare()
+        sample()
+        assert selection is not None
+
+    return Driver(1, run, marked, checkpoint)
+
+
+def driver_for(name: str) -> Driver:
+    window = WINDOWS[name]
+    if window == KEYED_WINDOW:
+        return _keyed_driver(lowering_support.case_named(name))
+    if window == ACQUISITION_WINDOW:
+        return _acquisition_driver(acquisition_support.case_named(name))
+    return _model_driver()
+
+
+def _timed(driver: Driver) -> int:
+    marks: list[int] = []
+
+    def opened() -> None:
+        marks.append(perf_counter_ns())
+
+    def closed() -> None:
+        marks.append(perf_counter_ns())
+
+    driver.marked(opened, closed)
+    return marks[1] - marks[0]
+
+
+def _peak(driver: Driver) -> int:
+    marks: list[int] = []
+
+    def opened() -> None:
+        gc.collect()
+        gc.collect()
+        floor, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        marks.append(floor)
+
+    def closed() -> None:
+        _, high_water = tracemalloc.get_traced_memory()
+        marks.append(high_water)
+
+    driver.marked(opened, closed)
+    return max(0, marks[1] - marks[0])
+
+
+def _observed(driver: Driver) -> Observation:
     observer = Observer(OBSERVED_FUNCTIONS)
     with observer:
-        rows = lowering_support.lower(case, codec, planner)
-    return rows, observer.observation()
+        driver.run()
+    return observer.observation()
 
 
-def _per_row(samples: Sequence[int | float], rows: int) -> float:
-    return float(median(samples)) / rows
+def _per_unit(samples: Sequence[int | float], units: int) -> list[float]:
+    return [float(sample) / units for sample in samples]
 
 
-def measure(case: lowering_support.Case, *, warmups: int, measured: int) -> dict[str, object]:
-    """One case's unobserved totals and builder call counts."""
+def measure(name: str, *, warmups: int, measured: int) -> dict[str, object]:
+    """One case's per-unit samples over its window, and its pass observations."""
     if warmups < 0 or measured <= 0:
         raise ValueError("warmups must be non-negative and measured must be positive")
+    window = WINDOWS[name]
+    driver = driver_for(name)
+    observe = window == KEYED_WINDOW
 
     with untraced():
         for _ in range(warmups):
-            codec, planner = _collaborators()
-            lowering_support.lower(case, codec, planner)
-
+            driver.run()
         elapsed: list[int] = []
         call_samples: dict[str, list[int]] = {name: [] for name in OBSERVED_FUNCTIONS}
-        expected_rows: int | None = None
         for _ in range(measured):
-            rows, total = _timed(case)
-            expected_rows = rows if expected_rows is None else expected_rows
-            if rows != expected_rows:
-                raise RuntimeError("a write-lowering case changed row count between samples")
-            elapsed.append(total)
-
-            counted_rows, counted = _observed(case)
-            if counted_rows != expected_rows:
-                raise RuntimeError("a counted sample lowered a different row count")
-            for name, count in counted.calls.items():
-                call_samples[name].append(count)
+            elapsed.append(_timed(driver))
+            if observe:
+                for called, count in _observed(driver).calls.items():
+                    call_samples[called].append(count)
 
     transient: list[int] = []
     tracemalloc.start()
     try:
         with untraced():
             for _ in range(measured):
-                rows, peak = _peak(case)
-                if rows != expected_rows:
-                    raise RuntimeError("a memory sample lowered a different row count")
-                transient.append(peak)
-
+                transient.append(_peak(driver))
+        kept = retained(driver.checkpoint)
     finally:
         tracemalloc.stop()
 
-    assert expected_rows is not None
-    elapsed_median = float(median(elapsed))
+    units = driver.units
     return {
-        "rows": expected_rows,
-        "perRow": {
-            "elapsedUs": elapsed_median / (expected_rows * 1_000),
-            "transientBytes": _per_row(transient, expected_rows),
+        "case": name,
+        "window": window,
+        "units": units,
+        "samples": {
+            "elapsedUs": _per_unit([total / 1_000 for total in elapsed], units),
+            "transientBytes": _per_unit(transient, units),
+            "retainedBytes": _per_unit([kept], units),
         },
-        "calls": {name: _per_row(samples, expected_rows) for name, samples in call_samples.items()},
+        "calls": {
+            called: float(median(samples)) / units
+            for called, samples in call_samples.items()
+            if observe
+        },
         "warmups": warmups,
         "measured": measured,
+        "retainedWarmups": RETAINED_WARMUPS,
     }
 
 
@@ -215,11 +332,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--measured", required=True, type=int)
     args = parser.parse_args(argv)
     try:
-        reading = measure(
-            lowering_support.case_named(args.case),
-            warmups=args.warmups,
-            measured=args.measured,
-        )
+        reading = measure(args.case, warmups=args.warmups, measured=args.measured)
     except ValueError as error:
         parser.error(str(error))
     print(json.dumps(reading, sort_keys=True))

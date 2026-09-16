@@ -91,24 +91,32 @@ the `tests/unit/` root —
 `_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_document_layout_support.py`, `_inheritance_family_support.py`,
 `_instance_state_support.py`, `_metamodel_support.py`,
-`_pool_source_support.py`, `_second_dialect.py`,
-`_snapshot_materialization_support.py`, `_source_inventory_support.py`,
-`_stream_page_support.py`,
-`_transact_support.py`, `_write_lowering_support.py`, and `memory_instruments.py`.
+`_pool_source_support.py`, `_predicate_acquisition_support.py`,
+`_second_dialect.py`, `_snapshot_materialization_support.py`,
+`_source_inventory_support.py`, `_stream_page_support.py`,
+`_structural_geometry_support.py`, `_transact_support.py`,
+`_write_lowering_support.py`, and `memory_instruments.py`.
 
-Five of those serve the cost suites and split by subject:
+Seven of those serve the cost suites and split by subject:
 `memory_instruments.py` is what every cost suite measures WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with, and `_instance_state_support.py` and
 `_snapshot_materialization_support.py` are the two a `report` also drives: the
 baseline or scaling regression and `just python-report-instance-state` or the
 Snapshot member of `just python-report-cost` measure one workload through one
-set of functions. `_write_lowering_support.py` is the workload the isolated
-write-lowering reading child drives through row serialization, preparation,
-settlement, and SQL lowering. The `report` tools under `tools/` reach them as
-`tests.unit.memory_instruments`, `tests.unit._instance_state_support`, and
-`tests.unit._snapshot_materialization_support`, and the write-lowering child
-reaches `tests.unit._write_lowering_support`, by putting the workspace root on
+set of functions. `_write_lowering_support.py` is the keyed-write workload the
+isolated write-lowering reading child drives through row serialization,
+preparation, settlement, SQL lowering, and the driver's own bind serialization;
+`_predicate_acquisition_support.py` is the predicate-acquisition companion that
+same child drives to a buffered Materialized Write Group; and
+`_structural_geometry_support.py` declares the geometry levels both the
+write-lowering child inserts and the Snapshot reading child reads. The `report`
+tools under `tools/` reach them as `tests.unit.memory_instruments`,
+`tests.unit._instance_state_support`,
+`tests.unit._snapshot_materialization_support`, and
+`tests.unit._structural_geometry_support`, and the write-lowering child reaches
+`tests.unit._write_lowering_support` and
+`tests.unit._predicate_acquisition_support`, by putting the workspace root on
 `sys.path` themselves. Each refuses any module that did not resolve to the file
 it named.
 

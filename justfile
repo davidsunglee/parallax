@@ -354,7 +354,7 @@ python-report-lifecycle-overhead:
     cd {{python}} && uv run python tools/lifecycle_overhead.py
 
 [metadata("runtime:medium")]
-[doc("Complete Snapshot delivery Budget Contract portfolio as one Cost Report Envelope.")]
+[doc("Complete Snapshot delivery Budget Contract portfolio and geometry read families on every supported CPython minor, as one Cost Report Envelope.")]
 python-report-snapshot-delivery:
     cd {{python}} && uv run python tools/snapshot_delivery_overhead.py
 
@@ -378,7 +378,7 @@ python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
 [metadata("runtime:medium")]
-[doc("Write-lowering totals and builder call counts on every supported CPython minor.")]
+[doc("Structural write evidence: keyed writes through driver serialization, predicate acquisition, and model preparation, on every supported CPython minor.")]
 python-report-write-lowering:
     cd {{python}} && uv run python tools/write_lowering_overhead.py
 

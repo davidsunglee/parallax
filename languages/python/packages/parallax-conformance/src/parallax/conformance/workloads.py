@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from decimal import Decimal
 from functools import cache
 from pathlib import Path
@@ -19,12 +20,99 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 
-__all__ = ["ScriptedRows", "Workload", "catalog", "workload_digest"]
+__all__ = [
+    "ACQUISITION_LEVELS",
+    "GEOMETRY_LEVELS",
+    "READ_GEOMETRY_ROOTS",
+    "STRUCTURAL_LAYOUTS",
+    "AcquisitionLevel",
+    "GeometryLevel",
+    "ScriptedRows",
+    "Workload",
+    "catalog",
+    "structural_digest",
+    "workload_digest",
+]
 
 type RowDocument = Mapping[str, object]
 type FixtureRows = Mapping[str, Sequence[RowDocument]]
 
 _GENERATED_KEY_OFFSET: Final = 256
+
+STRUCTURAL_LAYOUTS: Final = ("columns", "document")
+"""The storage layouts every structural family is measured under, in report order."""
+
+READ_GEOMETRY_ROOTS: Final = 32
+"""Root rows one provider-free geometry read materializes."""
+
+
+@dataclass(frozen=True, slots=True)
+class GeometryLevel:
+    """One frozen Value Object geometry the structural read and write families share.
+
+    ``depth`` is the number of nested One occurrences chained under the root
+    occurrence, ``many`` the element count of the Many occurrence, ``width`` the
+    leaves every occurrence declares, and ``populated`` how many of those leaves
+    each authored occurrence carries; the rest are omitted nullable leaves.
+    """
+
+    id: str
+    family: str
+    depth: int
+    many: int
+    width: int
+    populated: int
+
+    def __post_init__(self) -> None:
+        if self.depth < 1 or self.many < 0 or self.width < 1:
+            raise ValueError(f"{self.id}: depth and width are positive and many is non-negative")
+        if not 0 <= self.populated <= self.width:
+            raise ValueError(f"{self.id}: populated leaves cannot exceed the declared width")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionLevel:
+    """One frozen row count a predicate-acquisition family resolves."""
+
+    id: str
+    rows: int
+
+    def __post_init__(self) -> None:
+        if self.rows < 1:
+            raise ValueError(f"{self.id}: an acquisition level resolves at least one row")
+
+
+GEOMETRY_LEVELS: Final[tuple[GeometryLevel, ...]] = (
+    GeometryLevel("depth-1", "depth", depth=1, many=2, width=4, populated=4),
+    GeometryLevel("depth-4", "depth", depth=4, many=2, width=4, populated=4),
+    GeometryLevel("depth-8", "depth", depth=8, many=2, width=4, populated=4),
+    GeometryLevel("many-0", "many", depth=1, many=0, width=4, populated=4),
+    GeometryLevel("many-8", "many", depth=1, many=8, width=4, populated=4),
+    GeometryLevel("many-32", "many", depth=1, many=32, width=4, populated=4),
+    GeometryLevel("width-16", "width", depth=1, many=2, width=16, populated=16),
+    GeometryLevel("width-64", "width", depth=1, many=2, width=64, populated=64),
+    GeometryLevel("sparse-64", "sparsity", depth=1, many=2, width=64, populated=1),
+)
+"""Every geometry level, varying one dimension at a time from the shallow
+``depth-1`` baseline: depth 1, two Many elements, four leaves, all populated."""
+
+ACQUISITION_LEVELS: Final[tuple[AcquisitionLevel, ...]] = (
+    AcquisitionLevel("rows-8", 8),
+    AcquisitionLevel("rows-32", 32),
+    AcquisitionLevel("rows-128", 128),
+)
+"""Every row count the two predicate-acquisition families resolve."""
+
+
+def structural_digest() -> str:
+    """The SHA-256 digest of every structural family's frozen identity and geometry."""
+    manifest = {
+        "layouts": list(STRUCTURAL_LAYOUTS),
+        "readGeometryRoots": READ_GEOMETRY_ROOTS,
+        "geometry": [asdict(level) for level in GEOMETRY_LEVELS],
+        "acquisition": [asdict(level) for level in ACQUISITION_LEVELS],
+    }
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 class Provisioning(Protocol):
@@ -278,6 +366,7 @@ def workload_digest(workloads: Mapping[str, Workload] | None = None) -> str:
         digest.update(b"\0")
         digest.update(workload.model_path.read_bytes())
         digest.update(b"\0")
+    digest.update(structural_digest().encode("utf-8"))
     return digest.hexdigest()
 
 

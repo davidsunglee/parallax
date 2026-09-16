@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 from typing import cast
 
 import write_lowering_reading
+from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
@@ -31,67 +32,87 @@ def test_observer_counts_nested_calls() -> None:
     assert observation.calls == {"outer": 1, "inner": 2}
 
 
-def test_child_case_names_match_the_shared_workload() -> None:
-    assert tuple(case.name for case in lowering_support.CASES) == CASE_NAMES
+def test_child_case_names_match_the_shared_workloads() -> None:
+    assert (
+        *(case.name for case in lowering_support.CASES),
+        *(case.name for case in acquisition_support.CASES),
+        write_lowering_reading.MODEL_CASE,
+    ) == CASE_NAMES
 
 
 def _reading(name: str) -> dict[str, object]:
     output = io.StringIO()
     with redirect_stdout(output):
-        assert write_lowering_reading.main([name, "--warmups", "1", "--measured", "1"]) == 0
+        assert write_lowering_reading.main([name, "--warmups", "1", "--measured", "2"]) == 0
     lines = output.getvalue().splitlines()
     assert len(lines) == 1
     return cast("dict[str, object]", json.loads(lines[0]))
 
 
-def _assert_reading(name: str) -> None:
-    case = lowering_support.case_named(name)
+def _assert_reading(name: str, *, units: int) -> None:
     reading = _reading(name)
+    window = write_lowering_reading.WINDOWS[name]
     assert set(reading) == {
-        "rows",
-        "perRow",
+        "case",
+        "window",
+        "units",
+        "samples",
         "calls",
         "warmups",
         "measured",
+        "retainedWarmups",
     }
-    assert reading["rows"] == len(case.values)
+    assert reading["case"] == name
+    assert reading["window"] == window
+    assert reading["units"] == units
     assert reading["warmups"] == 1
-    assert reading["measured"] == 1
-
-    per_row = cast("dict[str, float]", reading["perRow"])
+    assert reading["measured"] == 2
+    assert reading["retainedWarmups"] == write_lowering_reading.RETAINED_WARMUPS
+    samples = cast("dict[str, list[float]]", reading["samples"])
+    assert set(samples) == set(write_lowering_reading.METRICS)
+    assert len(samples["elapsedUs"]) == 2
+    assert len(samples["transientBytes"]) == 2
+    assert len(samples["retainedBytes"]) == 1
+    assert all(value > 0 for value in samples["elapsedUs"])
+    assert all(value > 0 for value in samples["transientBytes"])
+    assert samples["retainedBytes"][0] > 0
     calls = cast("dict[str, float]", reading["calls"])
-    assert set(per_row) == {"elapsedUs", "transientBytes"}
-    assert set(calls) == {
-        "shapeOfDeclaration",
-        "entityShape",
-        "occurrenceShape",
-        "encodeDocument",
-        "encodeMany",
-    }
-    assert all(value > 0 for value in per_row.values())
-    removed = {"shapeOfDeclaration", "entityShape", "occurrenceShape"}
-    assert all(calls[builder] == 0 for builder in removed)
-    assert all(value > 0 for builder, value in calls.items() if builder not in removed)
+    if window == write_lowering_reading.KEYED_WINDOW:
+        assert set(calls) == set(write_lowering_reading.OBSERVED_FUNCTIONS)
+        assert all(value >= 0 for value in calls.values())
+    else:
+        assert calls == {}
 
 
 @in_a_child_interpreter
-def test_opening_columns_reading() -> None:
-    _assert_reading("opening.columns")
+def test_a_typed_opening_insert_reads_its_keyed_window() -> None:
+    _assert_reading("txtime.opening.columns.typed", units=1)
 
 
 @in_a_child_interpreter
-def test_opening_document_reading() -> None:
-    _assert_reading("opening.document")
+def test_a_wire_changed_document_successor_reads_its_keyed_window() -> None:
+    _assert_reading("txtime.changed.document.wire", units=1)
 
 
 @in_a_child_interpreter
-def test_successor_columns_reading() -> None:
-    _assert_reading("successor.columns")
+def test_a_bitemporal_interior_update_reads_its_keyed_window() -> None:
+    _assert_reading("bitemporal.interior.columns.typed", units=1)
 
 
 @in_a_child_interpreter
-def test_successor_document_reading() -> None:
-    _assert_reading("successor.document")
+def test_a_geometry_insert_reads_its_keyed_window() -> None:
+    _assert_reading("geometry.many-8.document.typed", units=1)
+
+
+@in_a_child_interpreter
+def test_an_acquisition_family_reads_its_window_per_resolved_row() -> None:
+    case = acquisition_support.CASES[0]
+    _assert_reading(case.name, units=case.rows)
+
+
+@in_a_child_interpreter
+def test_the_model_preparation_checkpoint_reads_one_preparation() -> None:
+    _assert_reading(write_lowering_reading.MODEL_CASE, units=1)
 
 
 if __name__ == "__main__":
