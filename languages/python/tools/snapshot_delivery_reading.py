@@ -48,6 +48,8 @@ SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materializatio
 GEOMETRY_MODULE: Final = WORKSPACE / "tests" / "unit" / "_structural_geometry_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
+# `sys.path` gains the workspace above, so these imports cannot precede it; that is
+# what the E402 suppression each one carries records.
 from tests.unit import memory_instruments  # noqa: E402
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
@@ -68,6 +70,7 @@ if Path(geometry_support.__file__ or "").resolve() != GEOMETRY_MODULE:
         f"this reading requires {GEOMETRY_MODULE}, but resolved {geometry_support.__file__}"
     )
 
+# E402 again, and imported below the guard proving each module is this workspace's own.
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
 
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})

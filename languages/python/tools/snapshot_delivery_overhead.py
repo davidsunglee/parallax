@@ -13,6 +13,7 @@ readings are explicit incompleteness and errors.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import subprocess
@@ -42,12 +43,14 @@ from parallax.conformance.provision import Provisioner
 from parallax.conformance.workloads import (
     GEOMETRY_LEVELS,
     STRUCTURAL_LAYOUTS,
+    Workload,
     catalog,
     workload_digest,
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
+INSTRUMENTS: Final = (READING_SCRIPT, Path(__file__).resolve())
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
@@ -361,6 +364,21 @@ class _CanaryPostgres:
         return [{"server_version": self._version}]
 
 
+def evidence_digest(workloads: Mapping[str, Workload] | None = None) -> str:
+    """The digest of every input this member's comparability depends on: the
+    workloads it measured and the instruments that measured them.
+
+    A capture is comparable with another only when both were taken by the same
+    instruments over the same workloads, so an instrument edit has to leave an
+    already-committed capture detectably stale.
+    """
+    digest = hashlib.sha256(workload_digest(workloads).encode("utf-8"))
+    for instrument in INSTRUMENTS:
+        digest.update(instrument.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def canary(contract: BudgetContract, runner: ChildRunner) -> CostReportEnvelope:
     cell = expanded_cells(contract)[0]
     result = runner(
@@ -374,7 +392,7 @@ def canary(contract: BudgetContract, runner: ChildRunner) -> CostReportEnvelope:
     )
     provenance = Provenance.capture(
         contract,
-        workload_digest=workload_digest(),
+        workload_digest=evidence_digest(),
         postgres=_CanaryPostgres(str(contract.authority["postgres"])),
     )
     provenance = replace(provenance, dirty=True)
@@ -483,7 +501,7 @@ def measure(
     server_version = provisioner.port.execute("show server_version", ())[0][0]
     provenance = Provenance.capture(
         contract,
-        workload_digest=workload_digest(catalog(contract)),
+        workload_digest=evidence_digest(catalog(contract)),
         postgres=_CanaryPostgres(str(server_version)),
     )
     return build_envelope(contract, provenance, results, selected)

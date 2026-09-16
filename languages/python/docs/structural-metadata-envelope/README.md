@@ -82,9 +82,14 @@ statement.
 
 Every identity and numeric level below is frozen in
 `parallax.conformance.workloads` (`GEOMETRY_LEVELS`, `ACQUISITION_LEVELS`,
-`READ_GEOMETRY_ROOTS`, `STRUCTURAL_LAYOUTS`) and enters the write member's
-`workloadDigest` through `structural_digest()` together with the bytes of the
-three fixture modules, and the Snapshot member's through `workload_digest()`.
+`ANCESTOR_LEVEL_IDS`, `READ_GEOMETRY_ROOTS`, `STRUCTURAL_LAYOUTS`) and enters the
+write member's `workloadDigest` through `structural_digest()` together with the
+bytes of the three fixture modules, and the Snapshot member's through
+`workload_digest()`. Each member's recorded `workloadDigest` is the
+`evidence_digest()` of its own report tool, which folds in the bytes of the
+reading child and the report that drove it: an instrument edit therefore leaves
+an already-committed capture stale, because Review Cadence requires a fresh
+capture whenever an instrument changes.
 The levels were chosen from diagnostic trial runs on the capture runner and then
 frozen; the trials are not part of the baseline.
 
@@ -138,6 +143,21 @@ Json leaf: no class annotation denotes one, so Json-leaf payload size is not a
 dimension of these families. Every stored row conforms, so malformed-read
 evidence volume is not measured here either; both are limits stated below.
 
+### Changed-ancestor widths — 4 levels, both layouts
+
+The geometry levels above open a lineage. `depth-1`, `width-16`, `width-64`, and
+`sparse-64` (`workloads.ANCESTOR_LEVEL_IDS`) are measured a second time as a
+changed successor: a Transaction-Time-Only twin of the same geometry, written as
+an `update` that restates every member and changes the first leaf of the root
+occurrence (`ancestor.<level>.<layout>.typed`, two statements, `keyed-write`
+window, Typed ingress). What the successor's Structured Column costs is then
+read against the root occurrence's declared width rather than inferred from
+depth and Many cardinality: the three widths are 4, 16, and 64, and `sparse-64`
+holds the declared width at 64 while the change carries one populated leaf, so
+the width of the replaced ancestor is separated from the payload that replaced
+it. The predecessor and successor carry the same fixed-width leaves, so the two
+differ in one value and in nothing a measurement reads as size.
+
 ### Predicate-acquisition families — 3 levels per layout
 
 A Bitemporal Entity with the categorical Value Object shape, under each layout.
@@ -160,8 +180,8 @@ without comparisons.
 ### Model and declaration retention
 
 `model.prepared` prices one preparation of the complete structural write model:
-the six categorical Entities, the ten geometry Entities, and the two acquisition
-Entities. The Entity Class declarations and their Value Object classes are
+the six categorical Entities, the ten geometry Entities and their six
+changed-ancestor twins, and the two acquisition Entities. The Entity Class declarations and their Value Object classes are
 retained by the fixture modules and are outside every window.
 
 ## Limits
@@ -180,6 +200,14 @@ retained by the fixture modules and are outside every window.
   cost of the flush that would follow is measured only by the keyed-write cases.
 
 ## Baseline capture — `before/`
+
+> **Superseded pending recapture.** The capture below predates the
+> changed-ancestor family and the instrument coverage now folded into each
+> member's recorded `workloadDigest`. Its measured values remain the readings
+> that commit produced and are not rewritten; they are no longer a complete
+> capture of the manifest above, and `--verify` reports both members' digests as
+> stale until a fresh capture replaces this directory. Nothing here is a
+> comparison base until then.
 
 Produced from clean commit `572fa9441765` (`feat(cost): measure structural read
 and write windows on every minor`) by `uv run --project languages/python python
@@ -206,9 +234,8 @@ KiB historically), and the timing ceilings of
 `duplicate-include.providerFreeCpu.eager` (`maxMs`, `minRootsPerSecond`),
 `document-heavy.live.eager` (both), `versioned-document.live.page32` (both),
 and `versioned-document.live.page128.minRootsPerSecond` are exceeded on the
-authority runtime by 1–9%. The memory-growth limit is not relaxed here; Phase 4
-owns permanent memory-gate ownership and Phase 5 reads this capture as the
-comparison base.
+authority runtime by 1–9%. No limit was relaxed to obtain this capture: the
+growth failure is recorded as an outcome.
 
 ### Keyed writes per row (`keyed-write` window)
 

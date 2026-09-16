@@ -5,9 +5,12 @@ document serialization.
 One class-backed model carries the categorical matrix — Transaction-Time-Only,
 non-temporal, and Bitemporal Entities under both storage layouts, each with a
 One Value Object nesting another One and a Many — beside the geometry Entities
-:mod:`tests.unit._structural_geometry_support` declares. Every case names its
-ingress, layout, mutation, authored values, and predecessor evidence; the
-window a reading opens is :func:`lower` alone.
+:mod:`tests.unit._structural_geometry_support` declares. The geometry levels
+open a lineage; the changed-ancestor levels succeed one, changing a single leaf
+of a wide root occurrence so the cost of replacing that occurrence is read
+against its declared width. Every case names its ingress, layout, mutation,
+authored values, and predecessor evidence; the window a reading opens is
+:func:`lower` alone.
 
 The window ends where the driver would hand bytes to the socket: each lowered
 statement's binds cross the production PostgreSQL bind adaptation and are then
@@ -71,6 +74,7 @@ from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
+    "ANCESTOR_KEY",
     "CASES",
     "CATALOG",
     "ENTITY_CLASSES",
@@ -196,6 +200,8 @@ MODEL: Final = DomainModel(*ENTITY_CLASSES)
 CATALOG: Final = CatalogedModel(model_of(MODEL))
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 INGRESSES: Final[tuple[Ingress, ...]] = ("typed", "wire")
+ANCESTOR_KEY: Final = 1
+_CATEGORICAL_DOCUMENT_MEMBERS: Final[tuple[str, ...]] = ("title", "address", "tags")
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,14 +252,17 @@ def _value(cls: type[Entity], key: int, label: str) -> Entity:
     )
 
 
-def _observation(cls: type[Entity], value: Entity, *, layout: Layout) -> TemporalObservation:
+def _observation(
+    value: Entity,
+    *,
+    layout: Layout,
+    document_members: Sequence[str] = _CATEGORICAL_DOCUMENT_MEMBERS,
+) -> TemporalObservation:
     row = _CODEC.full_row(value)
     members: dict[str, object] = {**row, "txStart": TX_START, "txEnd": OPEN_BOUND}
-    if issubclass(cls, Bitemporal):
+    if isinstance(value, Bitemporal):
         members.update(validStart=VALID_START, validEnd=OPEN_BOUND)
-    document = (
-        {name: row[name] for name in ("title", "address", "tags")} if layout == "document" else None
-    )
+    document = {name: row[name] for name in document_members} if layout == "document" else None
     return TemporalObservation(predecessor=PredecessorRow(members, document=document))
 
 
@@ -277,9 +286,7 @@ def _case(
     cls = _CATEGORICAL[(family, layout)]
     value = _value(cls, key, label)
     observation = (
-        None
-        if predecessor is None
-        else _observation(cls, _value(cls, key, predecessor), layout=layout)
+        None if predecessor is None else _observation(_value(cls, key, predecessor), layout=layout)
     )
     valid_from: dt.datetime | str | None = None
     until: dt.datetime | str | None = None
@@ -394,7 +401,41 @@ def _geometry_cases() -> tuple[Case, ...]:
     )
 
 
-CASES: Final[tuple[Case, ...]] = (*_categorical_cases(), *_geometry_cases())
+def _ancestor_cases() -> tuple[Case, ...]:
+    """One changed successor per ancestor level and layout.
+
+    The successor restates every member and changes one leaf of the root
+    occurrence, so the write closes its milestone and opens a row whose
+    Structured Column production composes from the retained predecessor
+    document.
+    """
+    return tuple(
+        Case(
+            f"ancestor.{level.id}.{layout}.typed",
+            f"ancestor-{level.family}",
+            geometry_support.successor_class(level, layout),
+            "typed",
+            layout,
+            "update",
+            (geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=True),),
+            (),
+            _observation(
+                geometry_support.successor_instance(level, layout, ANCESTOR_KEY, changed=False),
+                layout=layout,
+                document_members=geometry_support.DOCUMENT_MEMBERS,
+            ),
+            2,
+        )
+        for level in geometry_support.ANCESTOR_LEVELS
+        for layout in geometry_support.LAYOUTS
+    )
+
+
+CASES: Final[tuple[Case, ...]] = (
+    *_categorical_cases(),
+    *_geometry_cases(),
+    *_ancestor_cases(),
+)
 
 
 def case_named(name: str) -> Case:

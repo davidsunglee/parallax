@@ -105,6 +105,11 @@ def test_a_geometry_insert_reads_its_keyed_window() -> None:
 
 
 @in_a_child_interpreter
+def test_a_changed_ancestor_successor_reads_its_keyed_window() -> None:
+    _assert_reading("ancestor.width-64.document.typed", units=1)
+
+
+@in_a_child_interpreter
 def test_an_acquisition_family_reads_its_window_per_resolved_row() -> None:
     case = acquisition_support.CASES[0]
     _assert_reading(case.name, units=case.rows)

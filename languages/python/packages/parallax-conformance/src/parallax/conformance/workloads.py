@@ -22,6 +22,7 @@ from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 
 __all__ = [
     "ACQUISITION_LEVELS",
+    "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
     "READ_GEOMETRY_ROOTS",
     "STRUCTURAL_LAYOUTS",
@@ -29,6 +30,7 @@ __all__ = [
     "GeometryLevel",
     "ScriptedRows",
     "Workload",
+    "ancestor_levels",
     "catalog",
     "structural_digest",
     "workload_digest",
@@ -103,6 +105,18 @@ ACQUISITION_LEVELS: Final[tuple[AcquisitionLevel, ...]] = (
 )
 """Every row count the two predicate-acquisition families resolve."""
 
+ANCESTOR_LEVEL_IDS: Final[tuple[str, ...]] = ("depth-1", "width-16", "width-64", "sparse-64")
+"""The geometry levels a changed-successor write is measured at as well as an
+insert, so the cost of replacing one leaf of a wide occurrence is read against
+the occurrence's declared width rather than inferred from depth and cardinality.
+``sparse-64`` separates that width from the payload the change carries."""
+
+
+def ancestor_levels() -> tuple[GeometryLevel, ...]:
+    """Every geometry level the changed-ancestor write family measures."""
+    by_id = {level.id: level for level in GEOMETRY_LEVELS}
+    return tuple(by_id[level_id] for level_id in ANCESTOR_LEVEL_IDS)
+
 
 def structural_digest() -> str:
     """The SHA-256 digest of every structural family's frozen identity and geometry."""
@@ -110,6 +124,7 @@ def structural_digest() -> str:
         "layouts": list(STRUCTURAL_LAYOUTS),
         "readGeometryRoots": READ_GEOMETRY_ROOTS,
         "geometry": [asdict(level) for level in GEOMETRY_LEVELS],
+        "ancestor": list(ANCESTOR_LEVEL_IDS),
         "acquisition": [asdict(level) for level in ACQUISITION_LEVELS],
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()

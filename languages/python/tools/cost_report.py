@@ -29,12 +29,14 @@ import write_lowering_overhead as write_report
 from interpreter_matrix import authority_minor, supported_minors
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Reading, validate
-from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     addresses as snapshot_addresses,
 )
 from snapshot_delivery_overhead import (
     comparison as snapshot_comparison,
+)
+from snapshot_delivery_overhead import (
+    evidence_digest as snapshot_evidence_digest,
 )
 from snapshot_delivery_overhead import (
     expanded_cells,
@@ -277,8 +279,11 @@ def validate_write_lowering_matrix(document: Document) -> None:
                 f"expected {expected_unit!r}"
             )
         samples = _samples(reading_document)
-        if not samples:
-            raise ValueError(f"{_spelled(address)} carries no samples")
+        sample_count = write_report.samples_expected(cell)
+        if len(samples) != sample_count:
+            raise ValueError(
+                f"{_spelled(address)} has {len(samples)} samples, expected {sample_count}"
+            )
         if _number(reading_document["value"]) != statistics.median(samples):
             raise ValueError(f"{_spelled(address)} value disagrees with its sample median")
 
@@ -494,7 +499,7 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         failures.append("the snapshot-delivery envelope is incomplete")
     if snapshot.get("errors"):
         failures.append("the snapshot-delivery envelope contains errors")
-    failures += _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest())
+    failures += _provenance_failures(snapshot, SNAPSHOT_SUBJECT, snapshot_evidence_digest())
     for comparison in cast("Sequence[Document]", snapshot.get("comparisons", ())):
         if comparison.get("outcome") == "within" or comparison.get("unit") in TIMING_UNITS:
             continue
@@ -513,9 +518,7 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         return [*failures, f"the write-lowering envelope is invalid: {error}"]
     if write.get("incomplete") or write.get("errors"):
         failures.append("the write-lowering envelope is incomplete")
-    failures += _provenance_failures(
-        write, WRITE_SUBJECT, write_report.lowering_support.write_lowering_digest()
-    )
+    failures += _provenance_failures(write, WRITE_SUBJECT, write_report.evidence_digest())
     commits = {
         str(cast("Document", member["provenance"])["commit"]) for member in (snapshot, write)
     }

@@ -330,7 +330,7 @@ def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
         (_duplicate_reading, "duplicate write-lowering reading"),
         (_wrong_reading_unit, "reading unit"),
         (_wrong_window, "reading window is not"),
-        (_remove_samples, "carries no samples"),
+        (_remove_samples, "has 0 samples, expected"),
         (_forge_value, "disagrees with its sample median"),
         (_drop_a_runtime, "reading matrix is not exact: missing CPython"),
         (_add_comparison, "declares no comparisons"),
@@ -707,3 +707,21 @@ def test_compare_reads_throughput_deltas_in_their_own_direction() -> None:
     assert "| larger |" in rendered
     assert "| exact |" in rendered
     assert "| incomparable |" in rendered
+
+
+# Every capture is compared under the frozen protocol the evidence README publishes.
+# Changing an allowance or the write sampling makes already-committed captures
+# incomparable, so each value is pinned here as a reviewed diff line.
+def test_the_frozen_allowances_and_write_sampling_match_the_published_protocol() -> None:
+    assert cost_report.TIMING_NOISE_ALLOWANCE == 0.05
+    assert cost_report.MEMORY_NOISE_ALLOWANCE == 0.03
+    assert (write_report.WARMUPS, write_report.MEASURED) == (3, 9)
+    assert write_report.samples_expected("elapsedUs") == 9
+    assert write_report.samples_expected("retainedBytes") == 1
+    assert write_report.samples_expected("calls.encodeMany") == 1
+    readme = (
+        cost_report.WORKSPACE / "docs" / "structural-metadata-envelope" / "README.md"
+    ).read_text(encoding="utf-8")
+    assert "three warm-ups and nine measured samples" in readme
+    assert "**5%**" in readme
+    assert "**3%**" in readme

@@ -9,10 +9,11 @@ from typing import cast
 
 import pytest
 
+import write_lowering_overhead as write_report
 from cost_report import CANONICAL_PORTFOLIO
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
-from parallax.conformance.workloads import workload_digest
+from snapshot_delivery_overhead import evidence_digest
 
 
 def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
@@ -31,9 +32,10 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert contract.memory_scaling_arms == (200, 2_000)
 
 
-# Authored contract and workload changes require recapture; the lock digest records
-# the capture's dependencies and remains valid across later dependency updates.
-def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None:
+# Authored contract, workload, and instrument changes require recapture; the lock
+# digest records the capture's dependencies and remains valid across later dependency
+# updates.
+def test_committed_envelope_digests_match_their_inputs() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
         "Mapping[str, object]",
@@ -41,10 +43,13 @@ def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None
     )
     members = cast("Sequence[Mapping[str, object]]", portfolio["members"])
     snapshot = next(member for member in members if member["subject"] == "snapshot-delivery")
+    write = next(member for member in members if member["subject"] == "write-lowering")
     provenance = cast("Mapping[str, object]", snapshot["provenance"])
+    write_provenance = cast("Mapping[str, object]", write["provenance"])
 
     assert provenance["budgetContractDigest"] == BudgetContract.load().digest
-    assert provenance["workloadDigest"] == workload_digest()
+    assert provenance["workloadDigest"] == evidence_digest()
+    assert write_provenance["workloadDigest"] == write_report.evidence_digest()
     assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
 
 

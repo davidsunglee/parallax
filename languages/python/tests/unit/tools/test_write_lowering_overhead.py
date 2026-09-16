@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -32,8 +33,8 @@ def _child_document(case: str, overrides: Mapping[str, object] | None = None) ->
         "window": window,
         "units": 2,
         "samples": {
-            "elapsedUs": [10.0, 12.0, 11.0],
-            "transientBytes": [100.0, 100.0, 100.0],
+            "elapsedUs": [10.0, 12.0, 11.0] * 3,
+            "transientBytes": [100.0] * report.MEASURED,
             "retainedBytes": [50.0],
         },
         "calls": dict.fromkeys(report.CALL_NAMES, 1.0) if window == report.KEYED_WINDOW else {},
@@ -100,6 +101,41 @@ def test_geometry_cases_cover_every_level_under_both_layouts_through_typed_inser
     assert all(case.mutation == "insert" and case.observation is None for case in geometry)
 
 
+def test_changed_ancestor_cases_succeed_a_milestone_at_every_manifest_width() -> None:
+    ancestors = [case for case in lowering_support.CASES if case.family.startswith("ancestor-")]
+    assert {case.name for case in ancestors} == {
+        f"ancestor.{level_id}.{layout}.typed"
+        for level_id in workloads.ANCESTOR_LEVEL_IDS
+        for layout in workloads.STRUCTURAL_LAYOUTS
+    }
+    assert {level.width for level in workloads.ancestor_levels()} == {4, 16, 64}
+    assert all(
+        case.mutation == "update"
+        and case.statements == 2
+        and isinstance(case.observation, TemporalObservation)
+        for case in ancestors
+    )
+    assert all(report.WINDOWS[case.name] == report.KEYED_WINDOW for case in ancestors)
+
+
+def test_a_changed_ancestor_patches_one_root_leaf_and_carries_every_other_member() -> None:
+    codec, planner = _collaborators()
+    for level_id in workloads.ANCESTOR_LEVEL_IDS:
+        case = lowering_support.case_named(f"ancestor.{level_id}.document.typed")
+        observation = case.observation
+        assert isinstance(observation, TemporalObservation)
+        predecessor = cast("Mapping[str, object]", observation.predecessor.document)
+        (_close, _), (insert, _) = lowering_support.lowered(case, codec, planner)
+        (successor,) = _documents(insert.binds)
+        root = cast("Mapping[str, object]", cast("Mapping[str, object]", successor)["body"])
+        before = cast("Mapping[str, object]", predecessor["body"])
+        assert root["f0"] != before["f0"]
+        assert {name: root[name] for name in before if name != "f0"} == {
+            name: before[name] for name in before if name != "f0"
+        }
+        assert cast("Mapping[str, object]", successor)["items"] == predecessor["items"]
+
+
 def test_acquisition_cases_cover_every_row_level_under_both_layouts() -> None:
     assert {case.name for case in acquisition_support.CASES} == {
         f"acquisition.{level.id}.{layout}"
@@ -137,7 +173,7 @@ def test_typed_and_wire_ingress_lower_to_the_same_statements() -> None:
     codec, planner = _collaborators()
     by_name = {case.name: case for case in lowering_support.CASES}
     for case in lowering_support.CASES:
-        if case.ingress != "typed" or case.family.startswith("geometry-"):
+        if case.ingress != "typed" or case.family.startswith(("geometry-", "ancestor-")):
             continue
         twin = by_name[case.name.removesuffix(".typed") + ".wire"]
         typed = lowering_support.lowered(case, codec, planner)
@@ -251,7 +287,7 @@ def test_child_output_decodes_from_its_final_line() -> None:
     )
     assert isinstance(decoded, report.ChildReading)
     assert decoded.units == 2
-    assert decoded.samples["elapsedUs"] == (10.0, 12.0, 11.0)
+    assert decoded.samples["elapsedUs"] == (10.0, 12.0, 11.0) * 3
     assert decoded.retained_warmups == 200
 
 
@@ -315,7 +351,7 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
     validate(envelope)
     assert envelope.subject == report.SUBJECT
     assert envelope.comparisons == () and envelope.incomplete == () and envelope.errors == ()
-    assert envelope.provenance.workload_digest == lowering_support.write_lowering_digest()
+    assert envelope.provenance.workload_digest == report.evidence_digest()
     assert envelope.provenance.sampling["retainedWarmups"] == 200
     assert set(cast("Mapping[str, str]", envelope.provenance.sampling["windows"])) == {
         report.KEYED_WINDOW,
@@ -399,6 +435,20 @@ def test_missing_cells_and_envelope_refuse_an_incomplete_matrix() -> None:
     with pytest.raises(ValueError, match="matrix is incomplete"):
         report.build_envelope(
             contract,
-            report._provenance(contract, _matrix("3.14")),  # pyright: ignore[reportPrivateUsage]
+            report._provenance(contract, _matrix("3.14")),  # pyright: ignore[reportPrivateUsage] - entrypoint seam
             {"3.14": {}},
         )
+
+
+# Review Cadence requires a fresh capture whenever an instrument changes, so the
+# digest a capture records has to move when one does.
+def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instrument = tmp_path / "write_lowering_reading.py"
+    instrument.write_text("# an instrument\n", encoding="utf-8")
+    monkeypatch.setattr(report, "INSTRUMENTS", (instrument,))
+    original = report.evidence_digest()
+    instrument.write_text("# an edited instrument\n", encoding="utf-8")
+    assert report.evidence_digest() != original
+    assert report.evidence_digest() != lowering_support.write_lowering_digest()

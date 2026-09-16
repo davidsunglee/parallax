@@ -110,7 +110,8 @@ preparation, settlement, SQL lowering, and the driver's own bind serialization;
 `_predicate_acquisition_support.py` is the predicate-acquisition companion that
 same child drives to a buffered Materialized Write Group; and
 `_structural_geometry_support.py` declares the geometry levels both the
-write-lowering child inserts and the Snapshot reading child reads. The `report`
+write-lowering child inserts and the Snapshot reading child reads, and the
+Transaction-Time-Only twins its changed-ancestor successors write. The `report`
 tools under `tools/` reach them as `tests.unit.memory_instruments`,
 `tests.unit._instance_state_support`,
 `tests.unit._snapshot_materialization_support`, and
