@@ -110,7 +110,8 @@ preparation, settlement, SQL lowering, and the driver's own bind serialization;
 `_predicate_acquisition_support.py` is the predicate-acquisition companion that
 same child drives to a buffered Materialized Write Group; and
 `_structural_geometry_support.py` declares the geometry levels both the
-write-lowering child inserts and the Snapshot reading child reads, and the
+write-lowering child inserts, the Snapshot reading child reads and, on a cold
+read plan cache, plans, and the
 Transaction-Time-Only twins its changed-ancestor successors write. The `report`
 tools under `tools/` reach them as `tests.unit.memory_instruments`,
 `tests.unit._instance_state_support`,
@@ -228,6 +229,7 @@ Run from the repository root through `just`, or from `languages/python` through
 | Iterate on one surface | `just python-test-<surface>` |
 | Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py`, or `tests/unit/<pkg>/<sub>/test_<module>.py` for a unit test |
 | The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
+| A diagnostic subset of the cost reports, never evidence | `cd languages/python && uv run python tools/cost_report.py --diagnostic --member <subject> --select <pattern> --runtime <minor>` |
 
 The six `python-test-<surface>` recipes are for iteration and are deliberately no
 aggregate's dependency: a surface cuts across both scheduling classes, so a gate

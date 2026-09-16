@@ -11,13 +11,15 @@ only an incomplete matrix changes this command's exit status.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
@@ -402,11 +404,73 @@ def canary(contract: BudgetContract) -> CostReportEnvelope:
     return build_envelope(contract, provenance, matrix)
 
 
+def diagnostic(
+    runtimes: Sequence[str],
+    cases: Sequence[str],
+    child: Callable[[str, str], Cell] | None = None,
+) -> dict[str, object]:
+    """Readings for chosen cases on chosen runtimes, as a diagnostic document.
+
+    A diagnostic run answers a question about some cases; it is not evidence. It
+    carries no provenance and is not an envelope, so nothing downstream can
+    validate, verify, or retain it as a capture.
+    """
+    take = in_a_child if child is None else child
+    matrix: Matrix = {
+        runtime: {case: take(runtime, case) for case in cases} for runtime in runtimes
+    }
+    readings = [
+        reading.document()
+        for runtime, cells in matrix.items()
+        for cell in cells.values()
+        if isinstance(cell, ChildReading)
+        for reading in case_readings(runtime, cell)
+    ]
+    return {
+        "diagnostic": True,
+        "subject": SUBJECT,
+        "runtimes": list(runtimes),
+        "readings": readings,
+        "unavailable": missing_cells(matrix, runtimes, cases),
+    }
+
+
+def selected_cases(patterns: Sequence[str]) -> tuple[str, ...]:
+    """Every case name matching any of ``patterns`` as a shell-style pattern."""
+    return tuple(
+        case for case in CASE_NAMES if any(fnmatchcase(case, pattern) for pattern in patterns)
+    )
+
+
 def main(argv: list[str]) -> int:
-    """Spawn all children and emit one envelope; judge only completeness."""
-    if argv:
-        print("usage: python tools/write_lowering_overhead.py", file=sys.stderr)
+    """Spawn all children and emit one envelope; judge only completeness.
+
+    ``--diagnostic`` instead takes readings for the cases and runtimes named,
+    and prints them as a diagnostic document that is not an envelope.
+    """
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
+    parser.add_argument("--diagnostic", action="store_true")
+    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--runtime", action="append", default=[])
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        args = None
+    if args is None or ((args.case or args.runtime) and not args.diagnostic):
+        print(
+            "usage: python tools/write_lowering_overhead.py "
+            "[--diagnostic [--case PATTERN]... [--runtime MINOR]...]",
+            file=sys.stderr,
+        )
         return 2
+    if args.diagnostic:
+        cases = selected_cases(args.case) if args.case else CASE_NAMES
+        if not cases:
+            print(f"no case matches {args.case}", file=sys.stderr)
+            return 2
+        document = diagnostic(tuple(args.runtime) or supported_minors(), cases)
+        print(json.dumps(document, indent=2, sort_keys=True))
+        return 0
     runtimes = supported_minors()
     matrix: Matrix = {
         runtime: {case: in_a_child(runtime, case) for case in CASE_NAMES} for runtime in runtimes

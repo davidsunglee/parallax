@@ -452,3 +452,42 @@ def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
     instrument.write_text("# an edited instrument\n", encoding="utf-8")
     assert report.evidence_digest() != original
     assert report.evidence_digest() != lowering_support.write_lowering_digest()
+
+
+def test_a_diagnostic_run_answers_the_chosen_cases_and_is_no_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    matrix = _matrix("3.14")
+
+    def child(runtime: str, case: str) -> report.Cell:
+        return matrix[runtime][case] if case.startswith("plain.") else f"{case} refused"
+
+    monkeypatch.setattr(report, "in_a_child", child)
+    assert (
+        report.main(["--diagnostic", "--case", "plain.*", "--case", "model.*", "--runtime", "3.14"])
+        == 0
+    )
+    document = cast("dict[str, object]", json.loads(capsys.readouterr().out))
+    assert document["diagnostic"] is True
+    assert document["subject"] == report.SUBJECT
+    assert document["runtimes"] == ["3.14"]
+    readings = cast("list[dict[str, object]]", document["readings"])
+    assert {r["workload"] for r in readings} == set(report.selected_cases(["plain.*"]))
+    assert document["unavailable"] == ["CPython 3.14, model.prepared: model.prepared refused"]
+    assert "provenance" not in document
+    with pytest.raises(Exception):  # noqa: B017 - any schema or semantic refusal proves it is no envelope
+        validate(document)
+
+
+def test_diagnostic_options_are_refused_outside_diagnostic_mode(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert report.main(["--case", "plain.*"]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert report.main(["--diagnostic", "--case", "nothing-matches"]) == 2
+    assert "no case matches" in capsys.readouterr().err
+    assert report.selected_cases(["acquisition.rows-8.*"]) == (
+        "acquisition.rows-8.columns",
+        "acquisition.rows-8.document",
+    )

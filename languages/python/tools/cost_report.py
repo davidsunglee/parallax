@@ -215,8 +215,9 @@ def validate_snapshot_matrix(document: Document, contract: BudgetContract) -> No
                 f"{_spelled(address)} reading unit {reading_document['unit']!r}, "
                 f"expected {expected_unit!r}"
             )
-        if reading_document.get("window") != window_of(path):
-            raise ValueError(f"{_spelled(address)} reading window is not {window_of(path)!r}")
+        window = window_of(path, workload)
+        if reading_document.get("window") != window:
+            raise ValueError(f"{_spelled(address)} reading window is not {window!r}")
         samples = _samples(reading_document)
         sample_count = (
             expected_readings(contract, path)
@@ -475,12 +476,23 @@ def _scaling_failures(snapshot: Document, contract: BudgetContract) -> list[str]
     return failures
 
 
+def is_diagnostic(document: Document) -> bool:
+    """Whether ``document`` is a diagnostic reading set, or carries one as a member."""
+    members = cast("Sequence[object]", document.get("members", ()))
+    return bool(document.get("diagnostic")) or any(
+        isinstance(member, Mapping) and bool(cast("Document", member).get("diagnostic"))
+        for member in members
+    )
+
+
 def verify(document: Document, contract: BudgetContract | None = None) -> list[str]:
     """Every reason the required portfolio is not fresh, authoritative, complete,
     published, and within its memory limits.
 
     A timing ceiling exceeded is not among them: see :func:`advisories`.
     """
+    if is_diagnostic(document):
+        return ["a diagnostic reading set is not evidence and cannot be verified"]
     active = contract or BudgetContract.load()
     snapshot, failures = _required_member(document, SNAPSHOT_SUBJECT)
     if snapshot is None:
@@ -642,6 +654,77 @@ def _load(path: Path) -> Document:
     return cast("Document", json.loads(path.read_text(encoding="utf-8")))
 
 
+DIAGNOSTIC_PREFIX: Final = "diagnostic-"
+"""What a diagnostic reading file is named with, beside the subject it reads."""
+
+
+def diagnostic_arguments(
+    member: Member, selections: Sequence[str], runtimes: Sequence[str]
+) -> list[str]:
+    """The diagnostic invocation of one member script for the chosen subset."""
+    option = "--case" if member.subject == WRITE_SUBJECT else "--select"
+    arguments = ["--diagnostic"]
+    for pattern in selections:
+        arguments += [option, pattern]
+    for runtime in runtimes:
+        arguments += ["--runtime", runtime]
+    return arguments
+
+
+def run_member_diagnostic(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+    completed = subprocess.run(
+        [sys.executable, str(WORKSPACE / "tools" / member.script), *arguments],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def diagnose(
+    subjects: Sequence[str],
+    selections: Sequence[str],
+    runtimes: Sequence[str],
+    out: Path | None,
+    runner: Callable[[Member, Sequence[str]], tuple[int, str, str]] = run_member_diagnostic,
+) -> int:
+    """Take diagnostic readings from the chosen required members and write or
+    print each member's diagnostic document; never a portfolio."""
+    members = [member for member in MEMBERS if member.required and member.subject in subjects]
+    unknown = set(subjects) - {member.subject for member in members}
+    if unknown or not members:
+        print(
+            f"diagnostic members are {[m.subject for m in MEMBERS if m.required]}", file=sys.stderr
+        )
+        return 2
+    status = 0
+    for member in members:
+        returncode, stdout, stderr = runner(
+            member, diagnostic_arguments(member, selections, runtimes)
+        )
+        if returncode != 0:
+            print(
+                f"{member.recipe} diagnostic exited {returncode}: {stderr.strip()}", file=sys.stderr
+            )
+            status = 1
+            continue
+        document = cast("Document", json.loads(stdout))
+        if not document.get("diagnostic"):
+            print(f"{member.recipe} did not answer a diagnostic document", file=sys.stderr)
+            status = 1
+            continue
+        rendered = json.dumps(document, indent=2, sort_keys=True) + "\n"
+        if out is None:
+            print(rendered, end="")
+        else:
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"{DIAGNOSTIC_PREFIX}{member.subject}.json").write_text(
+                rendered, encoding="utf-8"
+            )
+    return status
+
+
 def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"expected a number, received {value!r}")
@@ -655,9 +738,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--freshness-only", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="take readings for a subset of members, workloads, and runtimes; not evidence",
+    )
+    parser.add_argument("--member", action="append", default=[], help="a required member subject")
+    parser.add_argument("--select", action="append", default=[], help="workload or case pattern")
+    parser.add_argument("--runtime", action="append", default=[], help="CPython minor")
     args = parser.parse_args(argv)
     if args.lock_file is not None and args.freshness_only is None:
         parser.error("--lock-file requires --freshness-only")
+    if (args.member or args.select or args.runtime) and not args.diagnostic:
+        parser.error("--member, --select, and --runtime are diagnostic options")
+    if args.diagnostic:
+        if args.verify is not None or args.compare is not None or args.freshness_only is not None:
+            parser.error("--diagnostic takes readings and neither verifies nor compares")
+        subjects = args.member or [member.subject for member in MEMBERS if member.required]
+        return diagnose(subjects, args.select, args.runtime, args.out)
     if args.freshness_only is not None:
         fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
         print(freshness)

@@ -18,6 +18,7 @@ from parallax.conformance.workloads import (
     Workload,
     ancestor_levels,
     catalog,
+    plan_levels,
     structural_digest,
     workload_digest,
 )
@@ -292,3 +293,16 @@ def test_catalog_rejects_duplicate_fixture_ownership(tmp_path: Path) -> None:
         match="workloads 'first' and 'second' both own",
     ):
         catalog(contract)
+
+
+def test_the_plan_levels_are_a_frozen_structural_selection_in_the_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    levels = plan_levels()
+    assert [level.id for level in levels] == list(workloads.PLAN_LEVEL_IDS)
+    assert all(level in GEOMETRY_LEVELS for level in levels)
+    assert {level.family for level in levels} == {"depth", "width"}
+    original = structural_digest()
+    monkeypatch.setattr(workloads, "PLAN_LEVEL_IDS", ("depth-1",))
+    assert structural_digest() != original
+    assert [level.id for level in plan_levels()] == ["depth-1"]

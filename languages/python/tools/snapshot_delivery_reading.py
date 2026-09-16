@@ -1,5 +1,6 @@
-"""Take one isolated Snapshot delivery reading: a Budget Contract cell, or one
-provider-free geometry read family address.
+"""Take one isolated Snapshot delivery reading: a Budget Contract cell, one
+provider-free geometry read family address, or one read-plan compilation
+address.
 
 This script is imported by nothing. It is the sole report-side reader of the
 whole-interpreter memory instruments and answers its parent with one JSON line.
@@ -22,6 +23,7 @@ from typing import Any, Final, cast
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.workloads import (
+    PLAN_LEVEL_IDS,
     READ_GEOMETRY_ROOTS,
     STRUCTURAL_LAYOUTS,
     GeometryLevel,
@@ -39,8 +41,13 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.object_query._fluent import object_query_node
 from parallax.postgres import PostgresAdapter
+from parallax.snapshot import prepare_model
 from parallax.snapshot.handle import Database
+from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._publication import read_projection
+from parallax.snapshot.handle._read_plan import ReadPlanCache
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -76,6 +83,12 @@ from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
 PROVIDER_FREE_IDS: Final = frozenset({"conventional-fanout", "duplicate-include"})
 GEOMETRY_PREFIX: Final = "read-"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
+PLAN_PREFIX: Final = "plan-"
+PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
+PLAN_EDITION: Final = "snapshot-delivery-report"
+PLAN_CACHE_CAPACITY: Final = 16
+"""The production default read plan cache capacity, so a cold cache here is
+the cache a freshly connected handle starts with."""
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -462,6 +475,112 @@ def geometry_address(workload: str, path: str) -> tuple[GeometryLevel, str, str]
     return level, layout, metric
 
 
+def plan_address(workload: str, path: str) -> tuple[GeometryLevel, str, str] | None:
+    """The level, layout, and metric a read-plan compilation address names, or
+    absence for any other address."""
+    if not workload.startswith(PLAN_PREFIX):
+        return None
+    level = geometry_support.level_named(workload.removeprefix(PLAN_PREFIX))
+    if level.id not in PLAN_LEVEL_IDS:
+        raise ValueError(f"{workload} is not a read-plan compilation level")
+    layout, _separator, metric = path.partition(".")
+    if layout not in STRUCTURAL_LAYOUTS or metric not in PLAN_METRICS:
+        raise ValueError(f"{workload}.{path} is not a read-plan compilation address")
+    return level, layout, metric
+
+
+class ColdPlan:
+    """One query's read plan compiled on a cold cache of production capacity.
+
+    The prepared model and the validated query are composed once, outside every
+    window: model preparation is priced by the write member, and preflight is
+    query validation rather than planning. :meth:`compile` is the window — one
+    ``ReadPlanCache.plan`` on a fresh cache — and what the cache then holds is
+    the compiled plan production retains for the next delivery of that query.
+    """
+
+    __slots__ = ("cache", "model", "query")
+
+    def __init__(self, level: GeometryLevel, layout: str) -> None:
+        selected = cast("geometry_support.Layout", layout)
+        self.model = read_projection(
+            prepare_model(geometry_support.MODEL, edition=PLAN_EDITION)
+        ).model
+        self.query = preflight(
+            object_query_node(geometry_support.read_query(level, selected)),
+            model=self.model.meta,
+            form="graph",
+        )
+        self.cache: ReadPlanCache | None = None
+
+    def compile(self) -> ReadPlanCache:
+        cache = ReadPlanCache(PLAN_CACHE_CAPACITY)
+        cache.plan(
+            edition=PLAN_EDITION,
+            model=self.model,
+            dialect=POSTGRES,
+            query=self.query,
+            result_form="instance",
+            preference=None,
+        )
+        return cache
+
+    def again(self, cache: ReadPlanCache) -> None:
+        cache.plan(
+            edition=PLAN_EDITION,
+            model=self.model,
+            dialect=POSTGRES,
+            query=self.query,
+            result_form="instance",
+            preference=None,
+        )
+
+    def cold(self, sample: Callable[[], None]) -> None:
+        self.cache = self.compile()
+        sample()
+        self.cache = None
+
+    def warm(self, sample: Callable[[], None]) -> None:
+        cache = self.cache
+        assert cache is not None
+        self.again(cache)
+        sample()
+
+
+def _plan(
+    level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """One geometry level's whole-table instance read compiled on a cold cache."""
+    prepared = ColdPlan(level, layout)
+    if metric == "elapsedUs":
+        milliseconds = _timed(prepared.compile, warmups=warmups, measured=measured)
+        samples = tuple(elapsed * 1_000 for elapsed in milliseconds)
+        return float(sorted(samples)[len(samples) // 2]), "us", samples
+    if metric == "retainedKiB":
+        tracemalloc.start()
+        try:
+            value = retained(prepared.cold) / 1_024
+        finally:
+            tracemalloc.stop()
+        return value, "KiB", (value,)
+    with untraced():
+        for _ in range(warmups):
+            prepared.compile()
+    gc.collect()
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        held = prepared.compile()
+        _, peak = tracemalloc.get_traced_memory()
+        assert held is not None
+    finally:
+        tracemalloc.stop()
+    value = max(0, peak - before) / 1_024
+    return value, "KiB", (value,)
+
+
 def _geometry(
     level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
@@ -581,11 +700,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("timing sampling counts do not match the Budget Contract")
     try:
         geometry = geometry_address(args.workload, args.cell)
+        plan = plan_address(args.workload, args.cell)
     except (KeyError, ValueError) as error:
         parser.error(str(error))
     if geometry is not None:
         level, layout, metric = geometry
         value, reading_unit, samples = _geometry(
+            level, layout, metric, warmups=args.warmups, measured=args.measured
+        )
+    elif plan is not None:
+        level, layout, metric = plan
+        value, reading_unit, samples = _plan(
             level, layout, metric, warmups=args.warmups, measured=args.measured
         )
     else:

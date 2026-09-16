@@ -6518,10 +6518,12 @@ locking unions retain the core refusal.
 - **Portfolio and observation posture.** The Snapshot delivery portfolio is one
   atomic report over every required live, provider-free, eager, streamed,
   first-result, memory-scaling, and materialization-stress cell, taken on every
-  supported CPython minor, beside the provider-free geometry read families. Its
+  supported CPython minor, beside the provider-free geometry read families and
+  the read-plan compilation cells, which price one query's compiled plan on a
+  cold read plan cache of production capacity. Its
   Budget Contract comparisons are made on the runtime the authority fingerprint
   names; every other runtime's readings are evidence without comparisons, and
-  the geometry cells are compared against nothing. It withholds an overall
+  the geometry and read-plan cells are compared against nothing. It withholds an overall
   comparison if any required cell on any runtime is absent. Every reading names
   its runtime and its measured window, and `cost_report.py --compare` pairs two
   readings only when subject, runtime, window, workload, cell, and unit agree,
@@ -6529,7 +6531,13 @@ locking unions retain the core refusal.
   one explicit noise allowance. The cost collector attempts every quantitative
   member, preserves every valid envelope, and fails only after collection when a
   required envelope — Snapshot delivery or write-lowering — is missing or
-  invalid; an unfavorable comparison never determines report exit status. Pull
+  invalid; an unfavorable comparison never determines report exit status. A
+  diagnostic run (`cost_report.py --diagnostic`, or a member script's own
+  `--diagnostic`) takes readings for a chosen subset of members, workloads, and
+  runtimes through the same children and windows, and answers a document that
+  is readings alone — marked `diagnostic`, carrying no provenance, and no
+  envelope — so it can be neither validated, verified, nor retained as a
+  capture; the capture path is unchanged by its presence. Pull
   requests observe merge base and head on one assigned runner and main observes
   head, uploading commit-keyed envelopes and advisory summaries from a
   non-required CI job.

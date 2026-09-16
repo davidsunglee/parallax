@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
@@ -725,3 +725,63 @@ def test_the_frozen_allowances_and_write_sampling_match_the_published_protocol()
     assert "three warm-ups and nine measured samples" in readme
     assert "**5%**" in readme
     assert "**3%**" in readme
+
+
+def test_a_diagnostic_reading_set_is_never_verifiable_evidence(tmp_path: Path) -> None:
+    diagnostic: dict[str, Any] = {"diagnostic": True, "subject": "write-lowering", "readings": []}
+    assert verify(diagnostic) == ["a diagnostic reading set is not evidence and cannot be verified"]
+    portfolio = _verifiable(BudgetContract.load())
+    cast("list[dict[str, Any]]", portfolio["members"]).append(diagnostic)
+    assert verify(portfolio) == ["a diagnostic reading set is not evidence and cannot be verified"]
+    path = tmp_path / "diagnostic.json"
+    path.write_text(json.dumps(diagnostic), encoding="utf-8")
+    assert cost_report.main(["--verify", str(path)]) == 1
+
+
+def test_diagnose_writes_only_diagnostic_documents_and_never_a_portfolio(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    invoked: list[tuple[str, list[str]]] = []
+
+    def runner(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        invoked.append((member.subject, list(arguments)))
+        document: dict[str, Any] = {"diagnostic": True, "subject": member.subject, "readings": []}
+        return (0, json.dumps(document), "")
+
+    assert (
+        cost_report.diagnose(
+            ["write-lowering", "snapshot-delivery"], ["plan-*"], ["3.14"], tmp_path, runner
+        )
+        == 0
+    )
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "diagnostic-snapshot-delivery.json",
+        "diagnostic-write-lowering.json",
+    ]
+    assert invoked == [
+        ("snapshot-delivery", ["--diagnostic", "--select", "plan-*", "--runtime", "3.14"]),
+        ("write-lowering", ["--diagnostic", "--case", "plan-*", "--runtime", "3.14"]),
+    ]
+    assert cost_report.diagnose(["unknown"], [], [], None, runner) == 2
+    assert cost_report.diagnose(["write-lowering"], [], [], None, lambda m, a: (3, "", "boom")) == 1
+    assert "boom" in capsys.readouterr().err
+    assert (
+        cost_report.diagnose(
+            ["write-lowering"], [], [], None, lambda m, a: (0, json.dumps({"subject": "x"}), "")
+        )
+        == 1
+    )
+
+
+def test_diagnostic_options_are_fenced_from_verification_and_collection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for arguments in (
+        ["--select", "x"],
+        ["--diagnostic", "--verify", "portfolio.json"],
+        ["--diagnostic", "--compare", "a.json", "b.json"],
+    ):
+        with pytest.raises(SystemExit) as error:
+            cost_report.main(arguments)
+        assert error.value.code == 2
+    assert "diagnostic" in capsys.readouterr().err
