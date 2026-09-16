@@ -9,7 +9,16 @@ import pytest
 from parallax.conformance import case_format, workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
-from parallax.conformance.workloads import Workload, catalog, workload_digest
+from parallax.conformance.workloads import (
+    ACQUISITION_LEVELS,
+    GEOMETRY_LEVELS,
+    AcquisitionLevel,
+    GeometryLevel,
+    Workload,
+    catalog,
+    structural_digest,
+    workload_digest,
+)
 from parallax.core import deep_fetch, inheritance
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -79,6 +88,44 @@ def test_workload_digest_changes_with_the_generated_key_offset(
 ) -> None:
     original = workload_digest()
     monkeypatch.setattr(workloads, "_GENERATED_KEY_OFFSET", 512)
+    assert workload_digest() != original
+
+
+def test_structural_families_vary_one_dimension_from_a_shallow_baseline() -> None:
+    baseline = GEOMETRY_LEVELS[0]
+    assert (baseline.depth, baseline.many, baseline.width, baseline.populated) == (1, 2, 4, 4)
+    assert len({level.id for level in GEOMETRY_LEVELS}) == len(GEOMETRY_LEVELS)
+    for level in GEOMETRY_LEVELS[1:]:
+        varied = {
+            name
+            for name in ("depth", "many", "width")
+            if getattr(level, name) != getattr(baseline, name)
+        }
+        assert len(varied) <= 1, level
+        assert level.populated == level.width or level.family == "sparsity", level
+    assert [level.rows for level in ACQUISITION_LEVELS] == sorted(
+        {level.rows for level in ACQUISITION_LEVELS}
+    )
+    assert {level.family for level in GEOMETRY_LEVELS} == {"depth", "many", "width", "sparsity"}
+
+
+def test_structural_levels_refuse_impossible_geometry() -> None:
+    with pytest.raises(ValueError, match="depth and width are positive"):
+        GeometryLevel("bad", "depth", depth=0, many=0, width=1, populated=1)
+    with pytest.raises(ValueError, match="cannot exceed the declared width"):
+        GeometryLevel("bad", "width", depth=1, many=0, width=2, populated=3)
+    with pytest.raises(ValueError, match="at least one row"):
+        AcquisitionLevel("bad", 0)
+
+
+def test_the_workload_digest_covers_the_structural_families(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = workload_digest()
+    structural = structural_digest()
+    assert len(structural) == 64
+    monkeypatch.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
+    assert structural_digest() != structural
     assert workload_digest() != original
 
 

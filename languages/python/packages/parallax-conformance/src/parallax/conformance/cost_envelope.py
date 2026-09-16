@@ -168,11 +168,34 @@ def _postgres_version(source: PostgresVersionSource) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Reading:
+    """One measured value at one address.
+
+    ``window`` names the measured span and ``runtime`` the CPython minor that
+    took the reading; a comparison between two readings is meaningful only when
+    both agree, so a report states them rather than leaving them implied.
+    """
+
     workload: str
     cell: str
     value: float
     unit: str
     samples: tuple[float, ...] = ()
+    window: str | None = None
+    runtime: str | None = None
+
+    def document(self) -> dict[str, object]:
+        rendered: dict[str, object] = {
+            "workload": self.workload,
+            "cell": self.cell,
+            "value": self.value,
+            "unit": self.unit,
+            "samples": list(self.samples),
+        }
+        if self.window is not None:
+            rendered["window"] = self.window
+        if self.runtime is not None:
+            rendered["runtime"] = self.runtime
+        return rendered
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,9 +231,7 @@ class CostReportEnvelope:
             "subject": self.subject,
             "provenance": self.provenance.document(),
             "authority": self.authority,
-            "readings": [
-                {**asdict(reading), "samples": list(reading.samples)} for reading in self.readings
-            ],
+            "readings": [reading.document() for reading in self.readings],
             "comparisons": [asdict(comparison) for comparison in self.comparisons],
             "incomplete": [asdict(diagnostic) for diagnostic in self.incomplete],
             "errors": [asdict(diagnostic) for diagnostic in self.errors],

@@ -92,9 +92,9 @@ check-all` resolve exactly what each run contains.
 | One language spec, drafted or complete | `just core-show-language-spec languages/python/spec/python.md` |
 | The compatibility-matrix report | `just report-matrix` |
 | The execution lifecycle's dispatch and overhead baseline | `just python-report-lifecycle-overhead` |
-| The complete Snapshot delivery Budget Contract portfolio | `just python-report-snapshot-delivery` |
+| The complete Snapshot delivery Budget Contract portfolio and geometry read families, on every supported CPython minor | `just python-report-snapshot-delivery` |
 | The published instance-state three-arm retained and timing matrix | `just python-report-instance-state` |
-| Write-lowering totals and builder call counts on every supported CPython minor | `just python-report-write-lowering` |
+| Structural write evidence — keyed writes through driver serialization, predicate acquisition, and model preparation — on every supported CPython minor | `just python-report-write-lowering` |
 | Every quantitative Python report, collected fail-late | `just python-report-cost` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 

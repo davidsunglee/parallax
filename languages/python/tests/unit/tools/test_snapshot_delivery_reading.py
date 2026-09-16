@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import snapshot_delivery_reading
-from parallax.conformance.workloads import catalog
+from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog
 from snapshot_delivery_reading import (
+    GEOMETRY_METRICS,
     CatalogPort,
+    _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
+    geometry_address,
 )
+from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
 
 
 class _Stream:
@@ -115,3 +120,28 @@ def test_catalog_port_preserves_child_fanout_for_offset_parent_keys() -> None:
     expected = rows.entity("parallax.compatibility.OrderItem")
     assert returned == [(row["id"], row["orderId"]) for row in expected]
     assert len(returned) == 2 * rows.fanout
+
+
+def test_geometry_addresses_name_a_level_layout_and_metric() -> None:
+    level, layout, metric = geometry_address("read-depth-4", "document.peakKiB") or (None,) * 3
+    assert level is GEOMETRY_LEVELS[1]
+    assert (layout, metric) == ("document", "peakKiB")
+    assert geometry_address("conventional-fanout", "live.eager.maxMs") is None
+    with pytest.raises(KeyError):
+        geometry_address("read-unknown", "columns.peakKiB")
+    with pytest.raises(ValueError, match="not a geometry read address"):
+        geometry_address("read-depth-4", "columns.unknown")
+
+
+@in_a_child_interpreter
+def test_a_geometry_level_reads_every_metric_over_a_provider_free_find() -> None:
+    level = GEOMETRY_LEVELS[0]
+    for metric in GEOMETRY_METRICS:
+        value, reading_unit, samples = _geometry(level, "columns", metric, warmups=1, measured=2)
+        assert value > 0
+        assert reading_unit == ("us/root" if metric == "elapsedUsPerRoot" else "KiB")
+        assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)
+
+
+if __name__ == "__main__":
+    serve_one_measurement(sys.argv[1])

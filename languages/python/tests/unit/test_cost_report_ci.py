@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
+from cost_report import CANONICAL_PORTFOLIO
 from tests._support.repo import REPO_ROOT
 
 
@@ -30,7 +31,16 @@ def test_advisory_verification_preserves_collection_and_upload_after_failure() -
     assert steps["Upload head reports"]["if"] == "always()"
     assert steps["Render combined summary"]["if"] == "always()"
     assert "just python-report-cost" in steps["Measure head"]["run"]
-    assert "python-report-cost" in steps["Measure merge-base"]["run"]
+    base = steps["Measure merge-base"]["run"]
+    assert base.count('--justfile "$RUNNER_TEMP/parallax-base/justfile"') == 2
+    assert (
+        'just --justfile "$RUNNER_TEMP/parallax-base/justfile" '
+        '--working-directory "$RUNNER_TEMP/parallax-base" --summary' in base
+    )
+    assert (
+        'just --justfile "$RUNNER_TEMP/parallax-base/justfile" '
+        '--working-directory "$RUNNER_TEMP/parallax-base" python-report-cost' in base
+    )
     for name in ("Upload merge-base reports", "Upload head reports"):
         assert steps[name]["uses"].startswith("actions/upload-artifact@")
 
@@ -41,7 +51,7 @@ def test_head_verification_failure_still_exposes_freshness_in_summary(
 ) -> None:
     steps = {step["name"]: step for step in _job()["steps"] if "name" in step}
     step = steps["Verify committed evidence against head lock"]
-    assert "--verify languages/python/docs/write-lowering-envelope/portfolio.json" in step["run"]
+    assert f"--verify {CANONICAL_PORTFOLIO.as_posix()}" in step["run"]
     uv = tmp_path / "uv"
     freshness = "lock freshness matches" if fresh else "stale snapshot-delivery evidence"
     uv.write_text(
@@ -84,7 +94,7 @@ def test_pr_freshness_checks_event_merge_lock_without_moving_measurement_checkou
     script = step["run"]
     assert "event merge lock $MERGE_SHA" in script
     assert 'git show "$MERGE_SHA:languages/python/uv.lock"' in script
-    assert "--freshness-only languages/python/docs/write-lowering-envelope/portfolio.json" in script
+    assert f"--freshness-only {CANONICAL_PORTFOLIO.as_posix()}" in script
     assert '--lock-file "$RUNNER_TEMP/event-merge-uv.lock"' in script
     assert 'tee -a "$GITHUB_STEP_SUMMARY"' in script
     assert "git checkout" not in script

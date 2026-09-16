@@ -6440,12 +6440,18 @@ locking unions retain the core refusal.
   python-report-snapshot-delivery`; `languages/python/docs/stream-baseline.md`,
   `languages/python/docs/snapshot-graph-baseline.md`, and
   `languages/python/docs/snapshot-materialization-baseline.md` are its dated
-  historical evidence. Write-lowering per-row elapsed and transient totals and
-  the five builder call counts are reported by `just
-  python-report-write-lowering`, with captures retained under
-  `languages/python/docs/write-lowering-envelope/`. The Phase 2 and Phase 6
-  captures support a whole-lane before/after comparison, not builder-exclusive
-  attribution. There is deliberately **no timing gate anywhere in
+  historical evidence. The structural write evidence — the twenty categorical
+  keyed-write cases and the geometry inserts from Typed or Wire input through
+  actual psycopg document serialization, the predicate-acquisition families to
+  their buffered Materialized Write Group, and the model-preparation
+  checkpoint, each with elapsed, high-water, and separately sampled retained
+  readings and diagnostic pass observations, on every supported CPython minor —
+  is reported by `just python-report-write-lowering`. Captures are retained under
+  `languages/python/docs/structural-metadata-envelope/`, whose README fixes the
+  protocol and workload manifest; `languages/python/docs/write-lowering-envelope/`
+  keeps the earlier captures whose window stopped at `LoweredStatement`. Pass
+  observations are diagnostics and never a gate. There is deliberately **no
+  timing gate anywhere in
   this target**: a total in bytes and an elapsed time are machine- and
   interpreter-relative, and every CI job runs a floating runner label, so a
   threshold over either would fail for reasons unrelated to the change under it.
@@ -6493,8 +6499,10 @@ locking unions retain the core refusal.
 - **Cost Report Envelope.**
   [`cost-report-envelope.schema.json`](cost-report-envelope.schema.json) is the
   versioned schema every quantitative Python report emits. Each envelope carries
-  its subject, readings and units, declared comparisons, explicit incomplete
-  cells and errors, and provenance: commit and dirty state; Budget Contract,
+  its subject, readings and units — each optionally naming the CPython minor
+  that took it and the window it was read over — declared comparisons,
+  explicit incomplete cells and errors, and provenance: commit and dirty state;
+  Budget Contract,
   workload-catalog, and `uv.lock` digests; hardware and OS identity; CPython and
   PostgreSQL versions; and the sampling protocol. A declared comparison names
   its workload and cell, an `at-most` or `at-least` operator, numeric limit,
@@ -6508,19 +6516,29 @@ locking unions retain the core refusal.
   reading is `non-authoritative`.
 - **Portfolio and observation posture.** The Snapshot delivery portfolio is one
   atomic report over every required live, provider-free, eager, streamed,
-  first-result, memory-scaling, and materialization-stress cell. It withholds an
-  overall comparison if any required cell is absent. The cost collector attempts
-  every quantitative member, preserves every valid envelope, and fails only after
-  collection when a required envelope is missing or invalid; an unfavorable
-  comparison never determines report exit status. Pull requests observe merge
-  base and head on one assigned runner and main observes head, uploading
-  commit-keyed envelopes and advisory summaries from a non-required CI job.
+  first-result, memory-scaling, and materialization-stress cell, taken on every
+  supported CPython minor, beside the provider-free geometry read families. Its
+  Budget Contract comparisons are made on the runtime the authority fingerprint
+  names; every other runtime's readings are evidence without comparisons, and
+  the geometry cells are compared against nothing. It withholds an overall
+  comparison if any required cell on any runtime is absent. Every reading names
+  its runtime and its measured window, and `cost_report.py --compare` pairs two
+  readings only when subject, runtime, window, workload, cell, and unit agree,
+  names every cell present on one side alone, and judges a timing delta against
+  one explicit noise allowance. The cost collector attempts every quantitative
+  member, preserves every valid envelope, and fails only after collection when a
+  required envelope — Snapshot delivery or write-lowering — is missing or
+  invalid; an unfavorable comparison never determines report exit status. Pull
+  requests observe merge base and head on one assigned runner and main observes
+  head, uploading commit-keyed envelopes and advisory summaries from a
+  non-required CI job.
 - **Retained and current evidence.** The clean schema-authoritative Snapshot
   delivery envelope that closed the current Budget Contract remains as historical
   review evidence under `languages/python/docs/snapshot-delivery-envelope/`
   (`portfolio.json` and `summary.md`). The repository's canonical current cost
-  portfolio and summary are retained under
-  `languages/python/docs/write-lowering-envelope/`; that repository role is
+  portfolio and summary are the structural-metadata baseline under
+  `languages/python/docs/structural-metadata-envelope/before/`, named once by
+  `cost_report.CANONICAL_PORTFOLIO`; that repository role is
   independent of each member's schema-level `authority`. A database-free check
   recomputes the current portfolio's Snapshot delivery member's Budget Contract
   and workload-catalog digests from the committed inputs, so changing either
@@ -6530,7 +6548,13 @@ locking unions retain the core refusal.
   compares the current portfolio's Snapshot delivery digest with the inspected
   checkout's `languages/python/uv.lock` and fails with a distinct stale-evidence
   diagnostic naming both digests when they differ, alongside authority,
-  completeness, comparison, and scaling checks. The non-required cost-report CI
+  completeness, memory-comparison, and scaling checks. It also requires the
+  write-lowering envelope to be present, complete over every supported runtime,
+  produced from a clean tree at the same commit as the Snapshot delivery member,
+  and current against the checkout's workload digests, and requires each
+  producing commit to be an ancestor of the inspected head so every checkout of
+  that head can resolve it. A timing ceiling exceeded is reported as an advisory
+  line and never fails verification. The non-required cost-report CI
   job verifies the canonical current portfolio against its checked-out head lock
   and reports freshness explicitly in the job summary, including a match even
   when another verification check fails. Pull requests also check the event merge

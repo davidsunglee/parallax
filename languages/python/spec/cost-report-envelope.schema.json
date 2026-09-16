@@ -87,7 +87,9 @@
         "samples": {
           "type": "array",
           "items": { "type": "number" }
-        }
+        },
+        "window": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string", "minLength": 1 }
       }
     },
     "comparison": {

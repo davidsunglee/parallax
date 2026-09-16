@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from cost_report import CANONICAL_PORTFOLIO
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import workload_digest
@@ -36,11 +37,7 @@ def test_committed_snapshot_delivery_envelope_digests_match_its_inputs() -> None
     repo = case_format.find_repo_root()
     portfolio = cast(
         "Mapping[str, object]",
-        json.loads(
-            (repo / "languages/python/docs/write-lowering-envelope/portfolio.json").read_text(
-                encoding="utf-8"
-            )
-        ),
+        json.loads((repo / CANONICAL_PORTFOLIO).read_text(encoding="utf-8")),
     )
     members = cast("Sequence[Mapping[str, object]]", portfolio["members"])
     snapshot = next(member for member in members if member["subject"] == "snapshot-delivery")

@@ -205,3 +205,26 @@ def test_provenance_capture_reads_the_darwin_fingerprint_through_sysctl(
     assert provenance.cores == 10
     assert provenance.machine == "Mac17,4"
     assert provenance.cpu == "Apple M5"
+
+
+def test_a_reading_states_its_window_and_runtime_only_when_it_has_them() -> None:
+    bare = Reading("w", "c", 1.0, "ms", (1.0,))
+    labeled = Reading("w", "c", 1.0, "ms", (1.0,), window="live-delivery", runtime="3.14")
+    assert bare.document() == {
+        "workload": "w",
+        "cell": "c",
+        "value": 1.0,
+        "unit": "ms",
+        "samples": [1.0],
+    }
+    assert labeled.document() == {**bare.document(), "window": "live-delivery", "runtime": "3.14"}
+    contract = BudgetContract.load()
+    provenance = _provenance(contract)
+    envelope = CostReportEnvelope(
+        "snapshot-delivery",
+        provenance,
+        classify_authority(provenance, contract),
+        readings=(bare, labeled),
+    )
+    validate(envelope)
+    assert envelope.document()["readings"] == [bare.document(), labeled.document()]
