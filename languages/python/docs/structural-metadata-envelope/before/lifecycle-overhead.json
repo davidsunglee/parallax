@@ -1,0 +1,761 @@
+{
+  "authority": "non-authoritative",
+  "comparisons": [
+    {
+      "cell": "dispatchPerEvent.p95",
+      "limit": 5.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/event",
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "limit": 0.05,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "limit": 0.1,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "limit": 5.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/event",
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "limit": 0.05,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "limit": 0.1,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "limit": 5.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "us/event",
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "limit": 0.05,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "limit": 0.1,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "limit": 5.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "us/event",
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "limit": 0.05,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "limit": 0.1,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "limit": 5.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "us/event",
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "limit": 0.05,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "limit": 0.1,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "fan-out of three, tracing every root"
+    }
+  ],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
+    "commit": "572fa94417656b27fd9e9a285970b3aa99615b15",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": false,
+    "lockDigest": "bc31fd8f1c540887b91b19dc7c19f56d8c9a620d5bd9c0645ea3b6993bff66d2",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "not-used",
+    "ramGiB": 32,
+    "sampling": {
+      "timing": {
+        "interleaved": true,
+        "measuredPairs": 3000,
+        "warmupPairs": 200
+      }
+    },
+    "workloadDigest": "275e30ba6d717a6773cf9253c3b3dca9c3092f68bba79458e7577b1e6423ce3d"
+  },
+  "readings": [
+    {
+      "cell": "events",
+      "samples": [],
+      "unit": "count",
+      "value": 28.0,
+      "workload": "workload"
+    },
+    {
+      "cell": "statements",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "workload"
+    },
+    {
+      "cell": "plain.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 436.042,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "plain.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 496.541,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "observed.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 486.083,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "observed.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 556.417,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "pairedDelta.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 48.917,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "pairedDelta.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 82.292,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "dispatchPerEvent.p50",
+      "samples": [],
+      "unit": "us/event",
+      "value": 1.7470357142857142,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "samples": [],
+      "unit": "us/event",
+      "value": 2.939,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.11476188073625959,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.12058621543840298,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "pairedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.11151044425335543,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "pairedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.18493937968054652,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "latencyProjection.0us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.1121841473986451,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "latencyProjection.50us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.07690844315312512,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "latencyProjection.250us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.03406376693717872,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "latencyProjection.1000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.01102717242082018,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "latencyProjection.5000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.00239366311734924,
+      "workload": "one Handler that keeps nothing"
+    },
+    {
+      "cell": "plain.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 473.792,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "plain.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 615.417,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "observed.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 555.583,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "observed.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 713.083,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "pairedDelta.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 84.833,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "pairedDelta.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 126.708,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "dispatchPerEvent.p50",
+      "samples": [],
+      "unit": "us/event",
+      "value": 3.02975,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "samples": [],
+      "unit": "us/event",
+      "value": 4.525285714285714,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.17263060583547207,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.1586988984704678,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "pairedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.17372615962764204,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "pairedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.24650109490439753,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "latencyProjection.0us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.17905114480615966,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "latencyProjection.50us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.12590383976063832,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "latencyProjection.250us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.05756103982108737,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "latencyProjection.1000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.018962213710427306,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "latencyProjection.5000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.0041434923242357835,
+      "workload": "Safe logging alone, discarding every record"
+    },
+    {
+      "cell": "plain.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 530.167,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "plain.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 584.708,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "observed.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 660.166,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "observed.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 759.625,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "pairedDelta.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 127.708,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "pairedDelta.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 200.0,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "dispatchPerEvent.p50",
+      "samples": [],
+      "unit": "us/event",
+      "value": 4.561,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "samples": [],
+      "unit": "us/event",
+      "value": 7.142857142857143,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.24520386972406816,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.29915273948706034,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "pairedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.24629141919127862,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "pairedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.36950122166818233,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "latencyProjection.0us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.24088258982547006,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "latencyProjection.50us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.1749024538222078,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "latencyProjection.250us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.08346017134077523,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "latencyProjection.1000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.02819057222393788,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "latencyProjection.5000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.006220504684642848,
+      "workload": "Safe logging alone, at INFO"
+    },
+    {
+      "cell": "plain.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 525.334,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "plain.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 553.458,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "observed.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 675.167,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "observed.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 742.0,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "pairedDelta.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 145.374,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "pairedDelta.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 198.124,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "dispatchPerEvent.p50",
+      "samples": [],
+      "unit": "us/event",
+      "value": 5.191928571428571,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "samples": [],
+      "unit": "us/event",
+      "value": 7.075857142857143,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.2852147395752038,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.34066180270228275,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "pairedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.28421315932572044,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "pairedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.3798171468778755,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "latencyProjection.0us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.27672680618425616,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "latencyProjection.50us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.20042352902249172,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "latencyProjection.250us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.09530633946401249,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "latencyProjection.1000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.0321244796516677,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "latencyProjection.5000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.007082661846087377,
+      "workload": "fan-out of three, tracing one root in 10"
+    },
+    {
+      "cell": "plain.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 494.666,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "plain.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 590.917,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "observed.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 641.125,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "observed.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 764.416,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "pairedDelta.p50",
+      "samples": [],
+      "unit": "us",
+      "value": 142.708,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "pairedDelta.p95",
+      "samples": [],
+      "unit": "us",
+      "value": 194.792,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "dispatchPerEvent.p50",
+      "samples": [],
+      "unit": "us/event",
+      "value": 5.0967142857142855,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "dispatchPerEvent.p95",
+      "samples": [],
+      "unit": "us/event",
+      "value": 6.956857142857143,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "rankedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.2960765445775533,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "rankedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.29360976245394865,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "pairedOverhead.p50",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.2964616280269421,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "pairedOverhead.p95",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.37476028339596246,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "latencyProjection.0us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.28849365026098417,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "latencyProjection.50us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.2054339783435493,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "latencyProjection.250us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.09547818709999426,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "latencyProjection.1000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.03175052384315097,
+      "workload": "fan-out of three, tracing every root"
+    },
+    {
+      "cell": "latencyProjection.5000us",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.006963177638513357,
+      "workload": "fan-out of three, tracing every root"
+    }
+  ],
+  "schemaVersion": 1,
+  "subject": "lifecycle-overhead"
+}

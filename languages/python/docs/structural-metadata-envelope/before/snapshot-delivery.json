@@ -1,0 +1,5468 @@
+{
+  "authority": "authoritative",
+  "comparisons": [
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 12.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 16000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 20.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 10000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 15.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 12903.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 2.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "limit": 10.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "limit": 19048.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "limit": 13.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "limit": 15385.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 800.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1350.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 256.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 768.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 18.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 11111.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 24.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 8333.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 22.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 9091.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 3.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "limit": 14.5,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "limit": 13793.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "limit": 17.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "limit": 11765.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 820.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1500.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 320.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 1200.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 22.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 9091.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 28.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 7143.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 27.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 7407.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 2.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 3.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 975.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 1900.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 96.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 400.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 1280.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 5.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 36364.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 6.75,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 29630.0,
+      "operator": "at-least",
+      "outcome": "outside",
+      "unit": "roots/s",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 0.6,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 275.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 475.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 336.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "limit": 6.5,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "limit": 30769.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "limit": 10.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "limit": 20000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "limit": 8.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "limit": 25000.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "roots/s",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "limit": 1.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "limit": 1.25,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ms",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "limit": 330.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "limit": 425.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "limit": 144.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "limit": 352.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "limit": 175.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "limit": 5714.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "projections/s",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "limit": 2800.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "limit": 3328.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "limit": 400.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "limit": 64.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "limit": 210.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "us/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "limit": 4762.0,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "projections/s",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "limit": 3200.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "limit": 3328.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "B/projection",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "limit": 425.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "limit": 80.0,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "KiB",
+      "workload": "stress-document"
+    }
+  ],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
+    "commit": "572fa94417656b27fd9e9a285970b3aa99615b15",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": false,
+    "lockDigest": "bc31fd8f1c540887b91b19dc7c19f56d8c9a620d5bd9c0645ea3b6993bff66d2",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "18.6",
+    "ramGiB": 32,
+    "sampling": {
+      "memory": {
+        "armGrowthMaxKiB": 16,
+        "children": 3,
+        "collectAtPageBoundary": true,
+        "individualMax": 1.1,
+        "medianMeetsCeiling": true,
+        "scalingArms": [
+          200,
+          2000
+        ]
+      },
+      "timing": {
+        "measured": 9,
+        "medianMeetsCeiling": true,
+        "secondSlowestMax": 1.25,
+        "warmups": 3
+      }
+    },
+    "workloadDigest": "275e30ba6d717a6773cf9253c3b3dca9c3092f68bba79458e7577b1e6423ce3d"
+  },
+  "readings": [
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        8.527541998773813,
+        8.6455830023624,
+        8.750124950893223,
+        8.430958027020097,
+        8.461542020086199,
+        8.419124991632998,
+        8.422458020504564,
+        8.294541970826685,
+        8.290000027045608
+      ],
+      "unit": "ms",
+      "value": 8.430958027020097,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        23594.87492341221,
+        23427.661184729484,
+        22860.62560055341,
+        23909.265322803563,
+        23566.26098621534,
+        23782.038619763858,
+        23875.72789681927,
+        23819.210406018447,
+        23583.28439764559
+      ],
+      "unit": "roots/s",
+      "value": 23594.87492341221,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        12.766875035595149,
+        12.324624985922128,
+        12.566875026095659,
+        13.112000015098602,
+        12.334916973486543,
+        12.38045800710097,
+        12.477500014938414,
+        12.487375002820045,
+        12.317957996856421
+      ],
+      "unit": "ms",
+      "value": 12.477500014938414,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        15812.82929737169,
+        15898.146319398413,
+        15406.737085616822,
+        15682.226653615875,
+        15446.352047583974,
+        15839.23177555162,
+        15975.238363088178,
+        15923.725316241986,
+        16528.641533992763
+      ],
+      "unit": "roots/s",
+      "value": 15839.23177555162,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        9.650959051214159,
+        9.550125047098845,
+        9.726041986141354,
+        9.332833986263722,
+        9.34770901221782,
+        9.403083007782698,
+        9.263375017326325,
+        9.155667037703097,
+        9.135374973993748
+      ],
+      "unit": "ms",
+      "value": 9.34770901221782,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        20790.91982216609,
+        20468.558031827124,
+        20871.19939034252,
+        21216.877047662663,
+        21666.028893622493,
+        21696.581509587904,
+        21857.7252198256,
+        21895.912392028626,
+        22377.6223531381
+      ],
+      "unit": "roots/s",
+      "value": 21666.028893622493,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        0.7415839936584234,
+        0.7712089573033154,
+        1.0084580280818045,
+        0.7080829818733037,
+        0.7009579567238688,
+        0.6981249898672104,
+        0.6819170084781945,
+        0.7531659794040024,
+        0.7214169600047171
+      ],
+      "unit": "ms",
+      "value": 0.7214169600047171,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        1.3301660073921084,
+        1.2636250467039645,
+        1.6897500026971102,
+        1.3107919949106872,
+        1.2504589976742864,
+        1.2112910044379532,
+        1.2509580119512975,
+        1.2040419969707727,
+        1.1851249728351831
+      ],
+      "unit": "ms",
+      "value": 1.2509580119512975,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        8.206124999560416,
+        8.3390410291031,
+        8.197749964892864,
+        8.458167023491114,
+        8.337249979376793,
+        8.518624992575496,
+        8.137875003740191,
+        8.191749977413565,
+        8.179500000551343
+      ],
+      "unit": "ms",
+      "value": 8.206124999560416,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        24715.130323816997,
+        23639.614042246816,
+        24510.42871969578,
+        23949.465607099668,
+        23980.33801660478,
+        23777.441376552164,
+        24559.46455099135,
+        24240.8346445366,
+        24314.75538225114
+      ],
+      "unit": "roots/s",
+      "value": 24240.8346445366,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        9.403457981534302,
+        9.291791007854044,
+        9.209790965542197,
+        9.676875022705644,
+        9.252083022147417,
+        9.612875001039356,
+        9.192540950607508,
+        9.156249987427145,
+        9.266708977520466
+      ],
+      "unit": "ms",
+      "value": 9.266708977520466,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        21202.537982868107,
+        21677.573137587817,
+        21665.05020453325,
+        21407.64230612729,
+        21891.81633648202,
+        21473.627648973536,
+        21981.241981359715,
+        21760.813279983216,
+        19523.703671605894
+      ],
+      "unit": "roots/s",
+      "value": 21665.05020453325,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        521.95703125,
+        521.95703125,
+        521.95703125
+      ],
+      "unit": "KiB",
+      "value": 521.95703125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        1324.1357421875,
+        1324.1357421875,
+        1324.1357421875
+      ],
+      "unit": "KiB",
+      "value": 1324.1357421875,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        3.7724609375,
+        3.7724609375,
+        3.7724609375,
+        3.7724609375,
+        3.7724609375,
+        3.7724609375
+      ],
+      "unit": "KiB",
+      "value": 3.7724609375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        34.9970703125,
+        34.9970703125,
+        34.9970703125,
+        35.087890625,
+        35.087890625,
+        35.087890625
+      ],
+      "unit": "KiB",
+      "value": 34.9970703125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        206.7138671875,
+        206.7138671875,
+        206.7138671875,
+        206.8037109375,
+        206.8037109375,
+        206.8037109375
+      ],
+      "unit": "KiB",
+      "value": 206.7138671875,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        730.1474609375,
+        730.1474609375,
+        730.1474609375,
+        729.8193359375,
+        729.8193359375,
+        729.8193359375
+      ],
+      "unit": "KiB",
+      "value": 730.1474609375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        14.027290977537632,
+        14.116082980763167,
+        14.448207977693528,
+        14.197000011336058,
+        13.939708995167166,
+        14.25449998350814,
+        14.11204197211191,
+        13.844583998434246,
+        13.783707981929183
+      ],
+      "unit": "ms",
+      "value": 14.11204197211191,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        14252.45823198411,
+        14176.312632883571,
+        14003.927270726484,
+        14096.212820104312,
+        14358.102703856084,
+        14402.909758682397,
+        14320.790998492414,
+        14405.503232584322,
+        14545.49902001494
+      ],
+      "unit": "roots/s",
+      "value": 14320.790998492414,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        17.32020900817588,
+        17.210833029821515,
+        17.450999992433935,
+        17.011750023812056,
+        16.941749956458807,
+        17.267084040213376,
+        17.12683297228068,
+        16.957499959971756,
+        16.980125044938177
+      ],
+      "unit": "ms",
+      "value": 17.12683297228068,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        11552.040287906068,
+        11688.50168704872,
+        11584.633006213982,
+        11865.328056389939,
+        11979.395675817332,
+        11779.632084868412,
+        11783.015976848817,
+        11712.173346284859,
+        11779.545339822107
+      ],
+      "unit": "roots/s",
+      "value": 11779.545339822107,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        14.365040988195688,
+        14.294082997366786,
+        14.763957995455712,
+        13.989374972879887,
+        14.6545420284383,
+        14.05970798805356,
+        14.167291054036468,
+        14.207625004928559,
+        13.80758301820606
+      ],
+      "unit": "ms",
+      "value": 14.207625004928559,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        13689.488228490358,
+        14013.084743286672,
+        13806.076368884904,
+        14143.896449950871,
+        13957.708174800666,
+        14090.626551041834,
+        13902.042705077964,
+        14311.953199823258,
+        14487.460429030434
+      ],
+      "unit": "roots/s",
+      "value": 14013.084743286672,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        1.0051249992102385,
+        0.9026250336319208,
+        1.0033330181613564,
+        0.8295410079881549,
+        0.8463750127702951,
+        0.8825829718261957,
+        0.808625016361475,
+        0.989624997600913,
+        0.8449580054730177
+      ],
+      "unit": "ms",
+      "value": 0.8825829718261957,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        1.7264579655602574,
+        1.7358750337734818,
+        1.8310419982299209,
+        1.9326659967191517,
+        1.7361249774694443,
+        1.6636670334264636,
+        1.736750011332333,
+        1.7729169921949506,
+        1.7097920062951744
+      ],
+      "unit": "ms",
+      "value": 1.7361249774694443,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        14.207458007149398,
+        14.237041992601007,
+        14.286375022493303,
+        14.374374994076788,
+        14.214749971870333,
+        14.227999956347048,
+        14.24179197056219,
+        14.232457964681089,
+        14.220707991626114
+      ],
+      "unit": "ms",
+      "value": 14.232457964681089,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        14037.83818930544,
+        13999.026199788526,
+        14265.122554755768,
+        14207.27793531947,
+        14283.801325942615,
+        14230.35920909861,
+        14188.505797324737,
+        14123.712308920924,
+        14337.730538462745
+      ],
+      "unit": "roots/s",
+      "value": 14207.27793531947,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        14.992208045441657,
+        15.039500023704022,
+        15.000667015556246,
+        14.8807080113329,
+        14.972707955166698,
+        14.76120896404609,
+        14.974875026382506,
+        14.945250004529953,
+        14.835165988188237
+      ],
+      "unit": "ms",
+      "value": 14.972707955166698,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        13559.743989610537,
+        13403.665076778074,
+        13546.999303597715,
+        13509.026334624119,
+        13603.089818896957,
+        13462.913887153922,
+        13078.592026776634,
+        13105.58704851171,
+        13103.76325136253
+      ],
+      "unit": "roots/s",
+      "value": 13462.913887153922,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        544.98828125,
+        544.98828125,
+        544.98828125
+      ],
+      "unit": "KiB",
+      "value": 544.98828125,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        1324.7998046875,
+        1324.7998046875,
+        1324.7998046875
+      ],
+      "unit": "KiB",
+      "value": 1324.7998046875,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        4.0927734375,
+        4.0927734375,
+        4.0927734375,
+        4.0927734375,
+        4.0927734375,
+        4.0927734375
+      ],
+      "unit": "KiB",
+      "value": 4.0927734375,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        44.8095703125,
+        44.8095703125,
+        44.8095703125,
+        44.9013671875,
+        44.9013671875,
+        44.9013671875
+      ],
+      "unit": "KiB",
+      "value": 44.8095703125,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        320.1513671875,
+        320.1513671875,
+        320.1513671875,
+        320.4912109375,
+        320.4912109375,
+        320.4912109375
+      ],
+      "unit": "KiB",
+      "value": 320.1513671875,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        1159.9169921875,
+        1159.9169921875,
+        1159.9169921875,
+        1197.8779296875,
+        1197.8779296875,
+        1197.8779296875
+      ],
+      "unit": "KiB",
+      "value": 1159.9169921875,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        21.572416997514665,
+        21.536665968596935,
+        22.674540989100933,
+        22.13199995458126,
+        22.391167003661394,
+        21.554166974965483,
+        32.33287500916049,
+        22.046416997909546,
+        22.190207964740694
+      ],
+      "unit": "ms",
+      "value": 22.13199995458126,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        8571.260451139555,
+        8738.903667905011,
+        8696.928357436474,
+        8765.938619731378,
+        8705.887656758796,
+        8808.923437656247,
+        6042.212471208137,
+        8715.340520065627,
+        8800.767404073966
+      ],
+      "unit": "roots/s",
+      "value": 8715.340520065627,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        26.52020798996091,
+        26.49608300998807,
+        26.37333399616182,
+        26.28500002902001,
+        27.223458979278803,
+        26.529959053732455,
+        26.197749946732074,
+        26.2645420152694,
+        26.69791702646762
+      ],
+      "unit": "ms",
+      "value": 26.49608300998807,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        7786.456421919542,
+        7781.091739688632,
+        7624.457353352604,
+        7818.595455315766,
+        7801.059881044238,
+        7808.44570736587,
+        7911.157696733904,
+        7844.919135277478,
+        7798.056232533943
+      ],
+      "unit": "roots/s",
+      "value": 7801.059881044238,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        23.25433399528265,
+        23.055333993397653,
+        24.06595798674971,
+        23.648165981285274,
+        22.68233400536701,
+        22.666458040475845,
+        22.463417029939592,
+        22.80645800055936,
+        24.404166964814067
+      ],
+      "unit": "ms",
+      "value": 23.055333993397653,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        8341.16777121465,
+        8443.212601690037,
+        8317.405848173315,
+        8493.680929638182,
+        8602.289285895296,
+        8718.601423170274,
+        8815.572724142447,
+        8725.162947785228,
+        8500.058437851967
+      ],
+      "unit": "roots/s",
+      "value": 8500.058437851967,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        0.9394589578732848,
+        0.8727919775992632,
+        1.2294170446693897,
+        0.7791250245645642,
+        0.848041963763535,
+        0.7922080112621188,
+        0.9373750071972609,
+        0.9027909836731851,
+        0.7979160291142762
+      ],
+      "unit": "ms",
+      "value": 0.8727919775992632,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        2.399416989646852,
+        2.4269160348922014,
+        2.5139579665847123,
+        2.3369999835267663,
+        2.4017500109039247,
+        2.547500014770776,
+        2.3545840522274375,
+        2.380582969635725,
+        2.3066250141710043
+      ],
+      "unit": "ms",
+      "value": 2.399416989646852,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        869.564453125,
+        869.7255859375,
+        869.7255859375
+      ],
+      "unit": "KiB",
+      "value": 869.7255859375,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        1745.826171875,
+        1745.826171875,
+        1745.76953125
+      ],
+      "unit": "KiB",
+      "value": 1745.826171875,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        14.5087890625,
+        13.994140625,
+        12.9755859375,
+        16.697265625,
+        14.68359375,
+        16.521484375
+      ],
+      "unit": "KiB",
+      "value": 13.994140625,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        49.3486328125,
+        52.0166015625,
+        53.2587890625,
+        58.6904296875,
+        51.7099609375,
+        49.158203125
+      ],
+      "unit": "KiB",
+      "value": 52.0166015625,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        314.298828125,
+        314.2138671875,
+        314.208984375,
+        327.7490234375,
+        328.4306640625,
+        328.875
+      ],
+      "unit": "KiB",
+      "value": 314.2138671875,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        1164.8759765625,
+        1164.8759765625,
+        1164.8759765625,
+        1202.2421875,
+        1202.37109375,
+        1200.9443359375
+      ],
+      "unit": "KiB",
+      "value": 1164.8759765625,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        5.849707988090813,
+        5.894667003303766,
+        6.034582969732583,
+        6.4062909805215895,
+        5.9422499616630375,
+        5.821790953632444,
+        5.765291978605092,
+        5.8792500058189034,
+        5.8426669565960765
+      ],
+      "unit": "ms",
+      "value": 5.8792500058189034,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        31970.587252611975,
+        32698.213940675625,
+        30904.93196190544,
+        31469.217424301325,
+        32062.411440911044,
+        32348.065241460565,
+        32797.18691155101,
+        31971.011458475426,
+        31476.443571215863
+      ],
+      "unit": "roots/s",
+      "value": 31971.011458475426,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        9.290166955906898,
+        9.163459006231278,
+        9.239167033229023,
+        9.523707965854555,
+        9.680874994955957,
+        9.62545903166756,
+        9.314834023825824,
+        9.083667013328522,
+        9.081958967726678
+      ],
+      "unit": "ms",
+      "value": 9.290166955906898,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        20975.444190156963,
+        21372.469563996932,
+        20649.247432266664,
+        19880.87974002462,
+        21180.36258948671,
+        21407.355944998228,
+        21059.836346663775,
+        21018.80011283927,
+        21276.690912866656
+      ],
+      "unit": "roots/s",
+      "value": 21059.836346663775,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        7.042084005661309,
+        7.079209026414901,
+        7.311667024623603,
+        6.804417003877461,
+        6.762666977010667,
+        6.779916002415121,
+        6.8080840283073485,
+        7.055041962303221,
+        7.074165972881019
+      ],
+      "unit": "ms",
+      "value": 7.042084005661309,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        27915.739653262262,
+        28138.960917224424,
+        26708.955832938344,
+        28187.705400598745,
+        28733.22113075569,
+        29762.090868287807,
+        29462.131820120656,
+        29709.77117024515,
+        30110.845445628525
+      ],
+      "unit": "roots/s",
+      "value": 28733.22113075569,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        0.6382080027833581,
+        0.5555000388994813,
+        0.6544579518958926,
+        0.6055409903638065,
+        0.6024579633958638,
+        0.5349169950932264,
+        0.5225829663686454,
+        0.5307920509949327,
+        0.524875009432435
+      ],
+      "unit": "ms",
+      "value": 0.5555000388994813,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        0.9286249987781048,
+        0.8629579679109156,
+        0.9621249628253281,
+        0.8592079975642264,
+        0.9042499586939812,
+        0.8585830219089985,
+        0.8341249777004123,
+        0.8370419964194298,
+        0.7937919581308961
+      ],
+      "unit": "ms",
+      "value": 0.8592079975642264,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        171.9296875,
+        171.9296875,
+        171.880859375
+      ],
+      "unit": "KiB",
+      "value": 171.9296875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        310.599609375,
+        310.7607421875,
+        310.7607421875
+      ],
+      "unit": "KiB",
+      "value": 310.7607421875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        4.1787109375,
+        4.728515625,
+        5.6220703125,
+        3.306640625,
+        7.8349609375,
+        4.376953125
+      ],
+      "unit": "KiB",
+      "value": 4.728515625,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        29.033203125,
+        31.4140625,
+        29.2255859375,
+        26.4345703125,
+        27.06640625,
+        28.0380859375
+      ],
+      "unit": "KiB",
+      "value": 29.2255859375,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        70.1787109375,
+        70.349609375,
+        70.3388671875,
+        77.0556640625,
+        77.529296875,
+        78.388671875
+      ],
+      "unit": "KiB",
+      "value": 70.3388671875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        197.6142578125,
+        197.6142578125,
+        197.6142578125,
+        204.38671875,
+        204.4892578125,
+        204.23828125
+      ],
+      "unit": "KiB",
+      "value": 197.6142578125,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        4.827374999877065,
+        4.7090419684536755,
+        4.998415999580175,
+        4.699292010627687,
+        4.74775000475347,
+        4.585041024256498,
+        4.610790987499058,
+        4.61208401247859,
+        4.722666984889656
+      ],
+      "unit": "ms",
+      "value": 4.7090419684536755,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        40854.53786554864,
+        42830.37697563007,
+        40462.616965350804,
+        41566.36159233137,
+        40912.696781776336,
+        41472.626907898695,
+        41686.20726717205,
+        42113.393096157706,
+        43115.06288014653
+      ],
+      "unit": "roots/s",
+      "value": 41566.36159233137,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        8.012291975319386,
+        8.862917020451277,
+        8.072624972555786,
+        7.857708027586341,
+        7.889708038419485,
+        7.807582966051996,
+        7.876291987486184,
+        8.134290983434767,
+        7.979999994859099
+      ],
+      "unit": "ms",
+      "value": 7.979999994859099,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        26174.868902597467,
+        24354.852080253706,
+        25939.358141397923,
+        26237.680456538506,
+        27050.93774293429,
+        26746.757234969242,
+        26912.014390110915,
+        26947.822303702796,
+        27095.98641588052
+      ],
+      "unit": "roots/s",
+      "value": 26746.757234969242,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        6.897749961353838,
+        6.312332989182323,
+        6.990916968788952,
+        6.1728330329060555,
+        5.934958986472338,
+        5.9585830313153565,
+        6.185250007547438,
+        6.139833014458418,
+        5.974624946247786
+      ],
+      "unit": "ms",
+      "value": 6.1728330329060555,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        27201.169576865643,
+        32519.00312293646,
+        31764.939257134076,
+        33962.82300659939,
+        33571.83329097251,
+        34240.22559976208,
+        34248.77439389026,
+        33713.31025458482,
+        34229.72429082066
+      ],
+      "unit": "roots/s",
+      "value": 33713.31025458482,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        0.7319169817492366,
+        0.6612910074181855,
+        0.8062910055741668,
+        0.6593339494429529,
+        0.610249990131706,
+        0.5911249900236726,
+        0.683666963595897,
+        0.6397499819286168,
+        0.5774159799329937
+      ],
+      "unit": "ms",
+      "value": 0.6593339494429529,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.13",
+      "samples": [
+        1.03779201162979,
+        1.2117919977754354,
+        1.2190829729661345,
+        0.985291029792279,
+        0.9811669588088989,
+        0.9857089607976377,
+        0.9835829841904342,
+        0.9923749603331089,
+        0.9600829798728228
+      ],
+      "unit": "ms",
+      "value": 0.9857089607976377,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        292.4189453125,
+        299.404296875,
+        290.6123046875
+      ],
+      "unit": "KiB",
+      "value": 292.4189453125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        427.61328125,
+        418.236328125,
+        423.9443359375
+      ],
+      "unit": "KiB",
+      "value": 423.9443359375,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        16.390625,
+        15.0751953125,
+        14.20703125,
+        18.78125,
+        15.0869140625,
+        15.802734375
+      ],
+      "unit": "KiB",
+      "value": 15.0751953125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        40.6591796875,
+        38.6689453125,
+        40.1953125,
+        39.685546875,
+        38.748046875,
+        39.3623046875
+      ],
+      "unit": "KiB",
+      "value": 40.1953125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        94.0029296875,
+        95.107421875,
+        93.8564453125,
+        101.791015625,
+        104.2548828125,
+        103.9365234375
+      ],
+      "unit": "KiB",
+      "value": 94.0029296875,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.13",
+      "samples": [
+        251.94921875,
+        247.1640625,
+        249.8984375,
+        278.5439453125,
+        276.5859375,
+        273.3271484375
+      ],
+      "unit": "KiB",
+      "value": 249.8984375,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        6.231124643818475,
+        6.457687959482428,
+        6.196609319886193,
+        6.246093107620254,
+        6.493484761449508,
+        6.303390364337247,
+        6.203124939929694,
+        6.295562343439087,
+        6.332031261990778
+      ],
+      "unit": "us/projection",
+      "value": 6.295562343439087,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        165214.58100943462,
+        162008.08746664468,
+        163962.56231868497,
+        147309.97385506728,
+        148534.96063642268,
+        153892.39763863396,
+        156272.12805224877,
+        152033.82011886028,
+        155970.48972740563
+      ],
+      "unit": "projections/s",
+      "value": 155970.48972740563,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        579.0625,
+        579.0625,
+        579.0625
+      ],
+      "unit": "B/projection",
+      "value": 579.0625,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        117.375,
+        117.375,
+        117.375
+      ],
+      "unit": "B/projection",
+      "value": 117.375,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "runtime": "3.13",
+      "samples": [
+        43.52734375,
+        43.52734375,
+        43.52734375
+      ],
+      "unit": "KiB",
+      "value": 43.52734375,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "runtime": "3.13",
+      "samples": [
+        37.43359375,
+        37.43359375,
+        37.43359375
+      ],
+      "unit": "KiB",
+      "value": 37.43359375,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        6.649093847954646,
+        6.779297109460458,
+        6.54231189400889,
+        6.6530001276987605,
+        6.717453288729303,
+        6.681641025352292,
+        6.5846252255141735,
+        6.692046554235276,
+        6.673171810689382
+      ],
+      "unit": "us/projection",
+      "value": 6.673171810689382,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "runtime": "3.13",
+      "samples": [
+        147507.9176872935,
+        150588.24360989415,
+        149547.3744309745,
+        151703.71023421452,
+        148176.62841643245,
+        151314.90890594767,
+        151584.0577135548,
+        151255.54223279707,
+        146035.36153776068
+      ],
+      "unit": "projections/s",
+      "value": 150588.24360989415,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        594.0625,
+        594.0625,
+        594.0625
+      ],
+      "unit": "B/projection",
+      "value": 594.0625,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "runtime": "3.13",
+      "samples": [
+        181.375,
+        181.375,
+        181.375
+      ],
+      "unit": "B/projection",
+      "value": 181.375,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "runtime": "3.13",
+      "samples": [
+        48.46484375,
+        48.46484375,
+        48.46484375
+      ],
+      "unit": "KiB",
+      "value": 48.46484375,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "runtime": "3.13",
+      "samples": [
+        60.4482421875,
+        60.4482421875,
+        60.4482421875
+      ],
+      "unit": "KiB",
+      "value": 60.4482421875,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        30.960936783230864,
+        30.881499696988612,
+        30.919281925889663,
+        30.735687687410973,
+        30.8919061353663,
+        31.532563298242167,
+        30.490875360555947,
+        30.73828156630043,
+        30.697938200319186
+      ],
+      "unit": "us/root",
+      "value": 30.881499696988612,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        108.69921875,
+        108.69921875,
+        108.69921875
+      ],
+      "unit": "KiB",
+      "value": 108.69921875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        50.8359375,
+        50.8359375,
+        50.8359375
+      ],
+      "unit": "KiB",
+      "value": 50.8359375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        35.44140599842649,
+        35.019531424040906,
+        35.44790524756536,
+        35.505219784681685,
+        35.38281271175947,
+        35.75518712750636,
+        35.460938306641765,
+        36.70831210911274,
+        37.6028438040521
+      ],
+      "unit": "us/root",
+      "value": 35.460938306641765,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        108.69921875,
+        108.69921875,
+        108.69921875
+      ],
+      "unit": "KiB",
+      "value": 108.69921875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        50.8359375,
+        50.8359375,
+        50.8359375
+      ],
+      "unit": "KiB",
+      "value": 50.8359375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        62.40234506549314,
+        60.85028144298121,
+        59.25390723859891,
+        59.272124417475425,
+        60.23437526891939,
+        58.86068720428739,
+        58.75649912923109,
+        58.6002497584559,
+        58.536470532999374
+      ],
+      "unit": "us/root",
+      "value": 59.25390723859891,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        154.32421875,
+        154.32421875,
+        154.32421875
+      ],
+      "unit": "KiB",
+      "value": 154.32421875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        87.9609375,
+        87.9609375,
+        87.9609375
+      ],
+      "unit": "KiB",
+      "value": 87.9609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        52.13802978687454,
+        55.403656006092206,
+        54.55990685732104,
+        52.06771857046988,
+        54.394531616708264,
+        52.45053216640372,
+        51.609375077532604,
+        52.32681178313214,
+        51.97784230404068
+      ],
+      "unit": "us/root",
+      "value": 52.32681178313214,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        153.71875,
+        153.71875,
+        153.71875
+      ],
+      "unit": "KiB",
+      "value": 153.71875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        87.9609375,
+        87.9609375,
+        87.9609375
+      ],
+      "unit": "KiB",
+      "value": 87.9609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        91.87371870211791,
+        91.54297003988177,
+        89.92056245915592,
+        90.0208433449734,
+        89.5820321602514,
+        90.6705936358776,
+        91.18359412241261,
+        92.49481263395865,
+        90.56118688022252
+      ],
+      "unit": "us/root",
+      "value": 90.6705936358776,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        222.8359375,
+        222.8359375,
+        222.8359375
+      ],
+      "unit": "KiB",
+      "value": 222.8359375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        137.4609375,
+        137.4609375,
+        137.4609375
+      ],
+      "unit": "KiB",
+      "value": 137.4609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        94.16796820005402,
+        93.70312363898847,
+        97.77081140782684,
+        97.49871969688684,
+        96.10024972062092,
+        96.09765766072087,
+        98.52603034232743,
+        97.36328138387762,
+        95.5455925577553
+      ],
+      "unit": "us/root",
+      "value": 96.10024972062092,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        220.78125,
+        220.78125,
+        220.78125
+      ],
+      "unit": "KiB",
+      "value": 220.78125,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        137.4609375,
+        137.4609375,
+        137.4609375
+      ],
+      "unit": "KiB",
+      "value": 137.4609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        21.73306347685866,
+        21.71874984924216,
+        21.259123968775384,
+        22.23175033577718,
+        21.48046769434586,
+        21.320312953321263,
+        21.575531718553975,
+        21.25518767570611,
+        22.462250854005106
+      ],
+      "unit": "us/root",
+      "value": 21.575531718553975,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        67.20703125,
+        67.20703125,
+        67.20703125
+      ],
+      "unit": "KiB",
+      "value": 67.20703125,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        24.0859375,
+        24.0859375,
+        24.0859375
+      ],
+      "unit": "KiB",
+      "value": 24.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        21.61718839488458,
+        21.13281334459316,
+        20.878906070720404,
+        21.31249857484363,
+        21.195312001509592,
+        21.19921919074841,
+        21.026062313467264,
+        21.231749997241423,
+        22.124999304651283
+      ],
+      "unit": "us/root",
+      "value": 21.19921919074841,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        72.95703125,
+        72.95703125,
+        72.95703125
+      ],
+      "unit": "KiB",
+      "value": 72.95703125,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        24.0859375,
+        24.0859375,
+        24.0859375
+      ],
+      "unit": "KiB",
+      "value": 24.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        54.153657401911914,
+        54.76171827467624,
+        57.842467867885716,
+        58.92968692933209,
+        55.93621790467296,
+        56.165374189731665,
+        55.638030971749686,
+        55.4049365746323,
+        58.29556357639376
+      ],
+      "unit": "us/root",
+      "value": 55.93621790467296,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        204.9921875,
+        204.9921875,
+        204.9921875
+      ],
+      "unit": "KiB",
+      "value": 204.9921875,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        125.0859375,
+        125.0859375,
+        125.0859375
+      ],
+      "unit": "KiB",
+      "value": 125.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        66.99737605231348,
+        66.85024891339708,
+        66.73046846117359,
+        68.77081250422634,
+        67.31771827617195,
+        67.49218846380245,
+        66.62368650722783,
+        66.62499981757719,
+        66.90493682981469
+      ],
+      "unit": "us/root",
+      "value": 66.90493682981469,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        203.54296875,
+        203.54296875,
+        203.54296875
+      ],
+      "unit": "KiB",
+      "value": 203.54296875,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        125.0859375,
+        125.0859375,
+        125.0859375
+      ],
+      "unit": "KiB",
+      "value": 125.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        150.1627812103834,
+        151.21353135327809,
+        151.68100071605295,
+        149.41537483537104,
+        147.16275109094568,
+        148.0364371673204,
+        150.29428141133394,
+        150.61328122101258,
+        148.61850104352925
+      ],
+      "unit": "us/root",
+      "value": 150.1627812103834,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        636.22265625,
+        636.22265625,
+        636.22265625
+      ],
+      "unit": "KiB",
+      "value": 636.22265625,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        428.0859375,
+        428.0859375,
+        428.0859375
+      ],
+      "unit": "KiB",
+      "value": 428.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        152.76562407962047,
+        151.43487507884856,
+        148.6888122599339,
+        152.1601552667562,
+        156.3684691063827,
+        155.08462456637062,
+        153.1080615677638,
+        151.89712576102465,
+        151.0013116785558
+      ],
+      "unit": "us/root",
+      "value": 152.1601552667562,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        633.83203125,
+        633.83203125,
+        633.83203125
+      ],
+      "unit": "KiB",
+      "value": 633.83203125,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        428.0859375,
+        428.0859375,
+        428.0859375
+      ],
+      "unit": "KiB",
+      "value": 428.0859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        52.62759259494487,
+        51.89712464925833,
+        51.78906394576188,
+        55.37890683626756,
+        53.68487472878769,
+        53.31509419193026,
+        51.8737178936135,
+        52.63671846478246,
+        53.990876040188596
+      ],
+      "unit": "us/root",
+      "value": 52.63671846478246,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        220.513671875,
+        220.513671875,
+        220.513671875
+      ],
+      "unit": "KiB",
+      "value": 220.513671875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        136.7109375,
+        136.7109375,
+        136.7109375
+      ],
+      "unit": "KiB",
+      "value": 136.7109375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        53.6184998054523,
+        53.28906263457611,
+        53.02603130985517,
+        53.08465733833145,
+        53.85415715863928,
+        54.45181159302592,
+        53.57552981877234,
+        53.46612488210667,
+        53.404937716550194
+      ],
+      "unit": "us/root",
+      "value": 53.46612488210667,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        223.921875,
+        223.921875,
+        223.921875
+      ],
+      "unit": "KiB",
+      "value": 223.921875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        136.7109375,
+        136.7109375,
+        136.7109375
+      ],
+      "unit": "KiB",
+      "value": 136.7109375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        150.01434439909644,
+        148.94009473209735,
+        150.10546849225648,
+        150.3281237091869,
+        148.58853137411643,
+        149.86587484600022,
+        148.27081213297788,
+        149.0742179157678,
+        148.31640692136716
+      ],
+      "unit": "us/root",
+      "value": 149.0742179157678,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        766.9375,
+        766.9375,
+        766.9375
+      ],
+      "unit": "KiB",
+      "value": 766.9375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        480.2109375,
+        480.2109375,
+        480.2109375
+      ],
+      "unit": "KiB",
+      "value": 480.2109375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        157.30337509012315,
+        155.86981135129463,
+        154.532532178564,
+        154.38153059221804,
+        154.1328128951136,
+        157.9817799211014,
+        155.04687507927883,
+        157.52862418594304,
+        154.8619693494402
+      ],
+      "unit": "us/root",
+      "value": 155.04687507927883,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        770.3671875,
+        770.3671875,
+        770.3671875
+      ],
+      "unit": "KiB",
+      "value": 770.3671875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        480.2109375,
+        480.2109375,
+        480.2109375
+      ],
+      "unit": "KiB",
+      "value": 480.2109375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        47.0833110739477,
+        47.46484410134144,
+        47.03124977822881,
+        46.91015601565596,
+        47.67837526742369,
+        48.50000004807953,
+        47.83075019076932,
+        46.83593761001248,
+        47.12109330284875
+      ],
+      "unit": "us/root",
+      "value": 47.12109330284875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        138.9541015625,
+        138.9541015625,
+        138.9541015625
+      ],
+      "unit": "KiB",
+      "value": 138.9541015625,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        35.9296875,
+        35.9296875,
+        35.9296875
+      ],
+      "unit": "KiB",
+      "value": 35.9296875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.13",
+      "samples": [
+        44.91796971706208,
+        45.12890700425487,
+        44.078125938540325,
+        44.464843085734174,
+        44.60025047592353,
+        48.509124098927714,
+        45.760405555483885,
+        45.02603042055853,
+        45.12759369390551
+      ],
+      "unit": "us/root",
+      "value": 45.02603042055853,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.13",
+      "samples": [
+        138.9541015625,
+        138.9541015625,
+        138.9541015625
+      ],
+      "unit": "KiB",
+      "value": 138.9541015625,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.13",
+      "samples": [
+        35.9296875,
+        35.9296875,
+        35.9296875
+      ],
+      "unit": "KiB",
+      "value": 35.9296875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        8.763040998019278,
+        8.81120900157839,
+        9.198957995977253,
+        8.64279200322926,
+        8.570667007006705,
+        8.643625013064593,
+        8.579834015108645,
+        8.62558395601809,
+        8.61770799383521
+      ],
+      "unit": "ms",
+      "value": 8.64279200322926,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        22880.132806997484,
+        23085.24886850345,
+        22276.160223837956,
+        23258.066764481257,
+        23431.781230604785,
+        23523.763322520535,
+        22156.061708635356,
+        23526.41146208921,
+        23590.81734860771
+      ],
+      "unit": "roots/s",
+      "value": 23258.066764481257,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        12.568167003337294,
+        12.128332979045808,
+        12.490792025346309,
+        12.269917002413422,
+        12.540917028672993,
+        12.228792009409517,
+        12.08775001578033,
+        12.081207998562604,
+        12.342625006567687
+      ],
+      "unit": "ms",
+      "value": 12.269917002413422,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        15354.644339354201,
+        15489.866645929202,
+        15474.087761803878,
+        15824.715334530743,
+        15587.452538658265,
+        15801.480300936426,
+        15619.966187425392,
+        15867.610863202433,
+        15610.416486811582
+      ],
+      "unit": "roots/s",
+      "value": 15610.416486811582,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        10.489458043593913,
+        10.845665994565934,
+        11.428750003688037,
+        10.375457990448922,
+        10.455582989379764,
+        10.385041998233646,
+        10.337375046219677,
+        10.194500035140663,
+        10.2033750154078
+      ],
+      "unit": "ms",
+      "value": 10.385041998233646,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        18578.15263445212,
+        19050.870407407852,
+        16416.76790481,
+        18718.631068847313,
+        18852.95600606721,
+        18795.07940199291,
+        19436.582013239862,
+        18639.763313130537,
+        19228.53574038678
+      ],
+      "unit": "roots/s",
+      "value": 18795.07940199291,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.8992499788291752,
+        0.8565000025555491,
+        1.1247089714743197,
+        0.783291005063802,
+        0.8376250043511391,
+        0.722082972060889,
+        0.7260830025188625,
+        0.8537920075468719,
+        0.7573749753646553
+      ],
+      "unit": "ms",
+      "value": 0.8376250043511391,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        1.374709012452513,
+        1.288916973862797,
+        1.5999170136637986,
+        1.2725420529022813,
+        1.2678340426646173,
+        1.2281249510124326,
+        1.234666968230158,
+        1.2432080111466348,
+        1.2491669622249901
+      ],
+      "unit": "ms",
+      "value": 1.2678340426646173,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        9.654624969698489,
+        9.680874994955957,
+        9.622709010727704,
+        9.625291975680739,
+        9.59287496516481,
+        9.582042053807527,
+        9.602042031474411,
+        9.58600000012666,
+        9.451124991755933
+      ],
+      "unit": "ms",
+      "value": 9.602042031474411,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        20431.008468045573,
+        21031.599979643997,
+        20758.37391870009,
+        20817.61172699169,
+        20880.36860135268,
+        20755.948245192634,
+        20789.83934002915,
+        20823.030214065107,
+        20866.661333360054
+      ],
+      "unit": "roots/s",
+      "value": 20817.61172699169,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        11.048250016756356,
+        11.110082967206836,
+        10.947750008199364,
+        10.869416990317404,
+        10.878667002543807,
+        10.84412500495091,
+        10.886250005569309,
+        10.873249964788556,
+        10.884582996368408
+      ],
+      "unit": "ms",
+      "value": 10.884582996368408,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        18062.699613078363,
+        18206.438297057684,
+        18152.32067854948,
+        18369.61917719871,
+        18340.700344868645,
+        18372.010283720163,
+        18470.063716399494,
+        18402.155536513546,
+        18588.656324597458
+      ],
+      "unit": "roots/s",
+      "value": 18369.61917719871,
+      "window": "provider-free-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        531.36328125,
+        531.36328125,
+        531.36328125
+      ],
+      "unit": "KiB",
+      "value": 531.36328125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        1259.474609375,
+        1259.474609375,
+        1259.474609375
+      ],
+      "unit": "KiB",
+      "value": 1259.474609375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        3.8974609375,
+        3.8974609375,
+        3.8974609375,
+        3.9248046875,
+        3.9248046875,
+        3.9248046875
+      ],
+      "unit": "KiB",
+      "value": 3.8974609375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        37.1484375,
+        37.1484375,
+        37.1484375,
+        37.2119140625,
+        37.2119140625,
+        37.2119140625
+      ],
+      "unit": "KiB",
+      "value": 37.1484375,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        198.666015625,
+        198.666015625,
+        198.666015625,
+        198.724609375,
+        198.724609375,
+        198.724609375
+      ],
+      "unit": "KiB",
+      "value": 198.666015625,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        693.095703125,
+        693.095703125,
+        693.095703125,
+        697.419921875,
+        697.419921875,
+        697.419921875
+      ],
+      "unit": "KiB",
+      "value": 693.095703125,
+      "window": "live-delivery",
+      "workload": "conventional-fanout"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        13.899207988288254,
+        13.666249986272305,
+        13.741458009462804,
+        13.544040964916348,
+        13.87412496842444,
+        13.597583980299532,
+        13.740000023972243,
+        13.850709015969187,
+        13.90962500590831
+      ],
+      "unit": "ms",
+      "value": 13.741458009462804,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        14453.172836946016,
+        14516.465901273838,
+        14374.312442869412,
+        14521.253170869308,
+        14613.518475149565,
+        14363.12950228075,
+        14110.674388801608,
+        13786.804293940115,
+        14365.579715258997
+      ],
+      "unit": "roots/s",
+      "value": 14374.312442869412,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        17.591416952200234,
+        18.9863329869695,
+        19.482499978039414,
+        18.310667015612125,
+        18.178250000346452,
+        17.48762500938028,
+        18.379540997557342,
+        18.070291029289365,
+        18.25633301632479
+      ],
+      "unit": "ms",
+      "value": 18.25633301632479,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        11211.41716247084,
+        11303.133799286094,
+        11329.037725178374,
+        11488.20111903554,
+        11446.3951118004,
+        11734.650673336206,
+        11570.446959599793,
+        11694.880560068419,
+        11265.727598606334
+      ],
+      "unit": "roots/s",
+      "value": 11446.3951118004,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        14.67766601126641,
+        14.718208054546267,
+        14.77295794757083,
+        14.212584006600082,
+        14.09449998755008,
+        14.025250042323023,
+        14.11416701739654,
+        14.050791971385479,
+        13.993499975185841
+      ],
+      "unit": "ms",
+      "value": 14.11416701739654,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        13614.781742906227,
+        13855.053722754868,
+        13538.708316064387,
+        14036.77117406985,
+        13706.805389742016,
+        13429.954685127352,
+        13909.777736940547,
+        13947.447803623343,
+        14202.192192844224
+      ],
+      "unit": "roots/s",
+      "value": 13855.053722754868,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.9127500234171748,
+        0.9635420283302665,
+        1.3319160207174718,
+        0.997958006337285,
+        0.8310839766636491,
+        0.8717080345377326,
+        0.9167499956674874,
+        1.0422079940326512,
+        0.9510830277577043
+      ],
+      "unit": "ms",
+      "value": 0.9510830277577043,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        1.889707986265421,
+        1.7988330218940973,
+        2.006416965741664,
+        1.8995419959537685,
+        1.8347500008530915,
+        1.7891660099849105,
+        1.7511670012027025,
+        1.744000008329749,
+        1.730541989672929
+      ],
+      "unit": "ms",
+      "value": 1.7988330218940973,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        15.068041975609958,
+        14.947332965675741,
+        14.97579098213464,
+        15.657874988391995,
+        15.121000004000962,
+        14.971832977607846,
+        14.95487499050796,
+        15.090166998561472,
+        15.081042016390711
+      ],
+      "unit": "ms",
+      "value": 15.068041975609958,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        13407.409274851236,
+        13408.49509011395,
+        13243.20626940317,
+        12869.702335189688,
+        12961.657795678499,
+        13002.24588943316,
+        12907.70184278494,
+        12763.920392813458,
+        12659.529894946656
+      ],
+      "unit": "roots/s",
+      "value": 12961.657795678499,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        15.8752910210751,
+        16.265165992081165,
+        16.272749984636903,
+        16.35208399966359,
+        16.507750027813017,
+        16.492250026203692,
+        16.302999982144684,
+        16.287958016619086,
+        16.254625050351024
+      ],
+      "unit": "ms",
+      "value": 16.287958016619086,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "providerFreeCpu.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        12168.750651206654,
+        12269.593900774138,
+        12315.396806253506,
+        12341.33061885208,
+        12280.925964420936,
+        12292.689156885148,
+        12340.346757764692,
+        12348.760093103747,
+        12860.805850007411
+      ],
+      "unit": "roots/s",
+      "value": 12315.396806253506,
+      "window": "provider-free-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        554.3984375,
+        554.3984375,
+        554.3984375
+      ],
+      "unit": "KiB",
+      "value": 554.3984375,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        1393.275390625,
+        1393.275390625,
+        1393.275390625
+      ],
+      "unit": "KiB",
+      "value": 1393.275390625,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        4.2177734375,
+        4.2177734375,
+        4.2177734375,
+        4.2490234375,
+        4.2490234375,
+        4.2490234375
+      ],
+      "unit": "KiB",
+      "value": 4.2177734375,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        47.30859375,
+        47.30859375,
+        47.30859375,
+        47.376953125,
+        47.376953125,
+        47.376953125
+      ],
+      "unit": "KiB",
+      "value": 47.30859375,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        314.291015625,
+        314.291015625,
+        314.291015625,
+        314.634765625,
+        314.634765625,
+        314.634765625
+      ],
+      "unit": "KiB",
+      "value": 314.291015625,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        1166.908203125,
+        1166.908203125,
+        1166.908203125,
+        1166.275390625,
+        1166.275390625,
+        1166.275390625
+      ],
+      "unit": "KiB",
+      "value": 1166.908203125,
+      "window": "live-delivery",
+      "workload": "duplicate-include"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        22.392208978999406,
+        22.163000016007572,
+        22.43687497684732,
+        22.369790996890515,
+        21.89416700275615,
+        22.099957976024598,
+        34.48212501825765,
+        22.725249989889562,
+        22.283125028479844
+      ],
+      "unit": "ms",
+      "value": 22.369790996890515,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        8537.856612225953,
+        8804.479755460325,
+        8791.723932096333,
+        8760.51502603327,
+        8917.72286309846,
+        8735.516117467756,
+        5965.207925129348,
+        8878.859333868584,
+        9049.82495395557
+      ],
+      "unit": "roots/s",
+      "value": 8791.723932096333,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        26.980833965353668,
+        27.249625010881573,
+        27.514540997799486,
+        27.169167005922645,
+        26.939709030557424,
+        27.168500004336238,
+        27.82841701991856,
+        26.904208993073553,
+        27.238374983426183
+      ],
+      "unit": "ms",
+      "value": 27.169167005922645,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        7400.303948046128,
+        7469.212657472842,
+        7327.14800359265,
+        7304.424224801447,
+        7379.324984594415,
+        7507.495943932999,
+        7377.260921281678,
+        7594.107688745807,
+        7526.330384583275
+      ],
+      "unit": "roots/s",
+      "value": 7400.303948046128,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        24.089208047371358,
+        23.911125026643276,
+        24.129124998580664,
+        23.84683396667242,
+        23.776457994244993,
+        40.7108329818584,
+        24.445417046081275,
+        23.779082985129207,
+        23.751874978188425
+      ],
+      "unit": "ms",
+      "value": 23.911125026643276,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        8292.26073671742,
+        8277.588940750531,
+        8146.280150896242,
+        8221.641652813418,
+        8321.097509777575,
+        8392.356777259263,
+        8063.689600671528,
+        8196.301417539416,
+        8032.612404075564
+      ],
+      "unit": "roots/s",
+      "value": 8221.641652813418,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.8837920031510293,
+        0.9543750202283263,
+        1.1838329955935478,
+        0.9288750006817281,
+        0.8329169941134751,
+        1.0785000049509108,
+        0.9091250249184668,
+        0.8880830137059093,
+        0.8960000122897327
+      ],
+      "unit": "ms",
+      "value": 0.9091250249184668,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        2.400833007413894,
+        2.387374988757074,
+        2.568916999734938,
+        2.3244579788297415,
+        2.33795796521008,
+        2.3093330091796815,
+        2.303083019796759,
+        2.2831670357845724,
+        2.396083960775286
+      ],
+      "unit": "ms",
+      "value": 2.33795796521008,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        883.7919921875,
+        883.7919921875,
+        883.6845703125
+      ],
+      "unit": "KiB",
+      "value": 883.7919921875,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        1799.1826171875,
+        1799.2314453125,
+        1798.9677734375
+      ],
+      "unit": "KiB",
+      "value": 1799.1826171875,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        13.841796875,
+        15.58984375,
+        14.953125,
+        14.759765625,
+        16.8984375,
+        14.5908203125
+      ],
+      "unit": "KiB",
+      "value": 14.953125,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        51.642578125,
+        49.92578125,
+        50.2763671875,
+        53.900390625,
+        52.64453125,
+        52.0703125
+      ],
+      "unit": "KiB",
+      "value": 50.2763671875,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        322.69140625,
+        322.931640625,
+        322.982421875,
+        338.1748046875,
+        336.41796875,
+        335.48046875
+      ],
+      "unit": "KiB",
+      "value": 322.931640625,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        1199.369140625,
+        1199.42578125,
+        1199.4794921875,
+        1237.1162109375,
+        1237.169921875,
+        1236.4609375
+      ],
+      "unit": "KiB",
+      "value": 1199.42578125,
+      "window": "live-delivery",
+      "workload": "document-heavy"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        5.567666958086193,
+        5.36866596667096,
+        5.483874992933124,
+        5.372082989197224,
+        5.323124991264194,
+        5.189125018659979,
+        5.35279099131003,
+        5.239458987489343,
+        5.204833985771984
+      ],
+      "unit": "ms",
+      "value": 5.35279099131003,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        35102.59779590786,
+        36313.84712597333,
+        35206.6187963667,
+        36957.18902770564,
+        37966.26849036823,
+        36328.9586540843,
+        37554.57394749199,
+        37295.167937859784,
+        36972.560768648604
+      ],
+      "unit": "roots/s",
+      "value": 36957.18902770564,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        8.652166987303644,
+        8.602832967881113,
+        8.71658296091482,
+        8.292958955280483,
+        8.413709001615644,
+        9.125375014264137,
+        8.588249969761819,
+        8.82824999280274,
+        8.655417012050748
+      ],
+      "unit": "ms",
+      "value": 8.652166987303644,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        22048.793728325592,
+        22838.981282481443,
+        21269.146946640598,
+        23075.5909449644,
+        23210.15738801924,
+        23270.13322096943,
+        23410.52203327083,
+        23256.26554893875,
+        23254.013241461143
+      ],
+      "unit": "roots/s",
+      "value": 23210.15738801924,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        7.076959009282291,
+        6.517625006381422,
+        6.424791994504631,
+        6.308832962531596,
+        6.255416024941951,
+        6.152541027404368,
+        6.083582993596792,
+        6.232124986127019,
+        6.033250014297664
+      ],
+      "unit": "ms",
+      "value": 6.255416024941951,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        26656.743265174122,
+        26029.80410112686,
+        25537.350616602762,
+        26841.58427704888,
+        26922.429791609797,
+        26796.630352666696,
+        26816.240382234544,
+        26557.483533442584,
+        27583.1934579424
+      ],
+      "unit": "roots/s",
+      "value": 26796.630352666696,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.5882499972358346,
+        0.6982089835219085,
+        0.9029170032590628,
+        0.6197920301929116,
+        0.5794999888166785,
+        0.5677079898305237,
+        0.5630420055240393,
+        0.5715410225093365,
+        0.5420829984359443
+      ],
+      "unit": "ms",
+      "value": 0.5794999888166785,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.8679580059833825,
+        0.8361669606529176,
+        1.024707977194339,
+        0.9022089652717113,
+        0.7907919934950769,
+        0.8367499685846269,
+        0.7869590190239251,
+        0.805708987172693,
+        0.8066660375334322
+      ],
+      "unit": "ms",
+      "value": 0.8361669606529176,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        175.1875,
+        175.1875,
+        175.0908203125
+      ],
+      "unit": "KiB",
+      "value": 175.1875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        298.8857421875,
+        298.8857421875,
+        298.8857421875
+      ],
+      "unit": "KiB",
+      "value": 298.8857421875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        11.8046875,
+        11.4169921875,
+        6.9677734375,
+        15.0498046875,
+        5.19140625,
+        8.126953125
+      ],
+      "unit": "KiB",
+      "value": 11.4169921875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        33.1220703125,
+        28.4033203125,
+        32.2763671875,
+        39.3740234375,
+        26.974609375,
+        34.5234375
+      ],
+      "unit": "KiB",
+      "value": 32.2763671875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        69.6904296875,
+        69.48046875,
+        69.6875,
+        74.6611328125,
+        74.41796875,
+        75.0859375
+      ],
+      "unit": "KiB",
+      "value": 69.6875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        205.013671875,
+        205.013671875,
+        205.013671875,
+        211.5078125,
+        211.0810546875,
+        210.9521484375
+      ],
+      "unit": "KiB",
+      "value": 205.013671875,
+      "window": "live-delivery",
+      "workload": "versioned-document"
+    },
+    {
+      "cell": "live.eager.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        5.347375001292676,
+        5.365791032090783,
+        5.4870000458322465,
+        5.428833945188671,
+        5.21787500474602,
+        5.174416990485042,
+        5.182249995414168,
+        5.230500013567507,
+        5.189499992411584
+      ],
+      "unit": "ms",
+      "value": 5.230500013567507,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.eager.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        38510.90637285147,
+        39420.51851776896,
+        39112.47558482447,
+        39272.15340697726,
+        39276.33371974026,
+        39860.48812021959,
+        39688.76834418214,
+        38815.483374725154,
+        39773.624732530174
+      ],
+      "unit": "roots/s",
+      "value": 39276.33371974026,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        8.240042021498084,
+        8.335000020451844,
+        8.322499983478338,
+        8.151458983775228,
+        7.981000002473593,
+        7.8247920027934015,
+        7.889124972280115,
+        8.003249997273088,
+        8.054249978158623
+      ],
+      "unit": "ms",
+      "value": 8.054249978158623,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page32.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        24547.28374950012,
+        24530.09543507725,
+        23870.384746846947,
+        24392.103037684738,
+        24605.03682544887,
+        25134.444235460564,
+        25225.45244920856,
+        25533.00146470331,
+        25322.731769596554
+      ],
+      "unit": "roots/s",
+      "value": 24605.03682544887,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        5.921665986534208,
+        6.0794170130975544,
+        6.179624993819743,
+        5.7443330297246575,
+        5.846791027579457,
+        5.905333033297211,
+        5.831249989569187,
+        5.7782920193858445,
+        5.61466597719118
+      ],
+      "unit": "ms",
+      "value": 5.846791027579457,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "live.page128.minRootsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        32528.92030295145,
+        33909.55846082987,
+        32146.371334694006,
+        34479.536483124524,
+        34396.027208585874,
+        34349.26424685321,
+        34451.0816212999,
+        34343.84952945369,
+        35411.81196984424
+      ],
+      "unit": "roots/s",
+      "value": 34349.26424685321,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page1.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.6084170308895409,
+        0.6284170085564256,
+        0.7417919696308672,
+        0.5551250069402158,
+        0.548749987501651,
+        0.5875420174561441,
+        0.5572080262936652,
+        0.5479580140672624,
+        0.5951249622739851
+      ],
+      "unit": "ms",
+      "value": 0.5875420174561441,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "firstResult.page32.maxMs",
+      "runtime": "3.14",
+      "samples": [
+        0.9676250047050416,
+        0.9402499999850988,
+        1.154624973423779,
+        0.9885419858619571,
+        0.9306669817306101,
+        0.9011669899336994,
+        0.9750829776749015,
+        0.9065840276889503,
+        0.9311669855378568
+      ],
+      "unit": "ms",
+      "value": 0.9402499999850988,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        304.388671875,
+        299.1142578125,
+        299.8955078125
+      ],
+      "unit": "KiB",
+      "value": 299.8955078125,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "eagerMemory.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        398.443359375,
+        397.326171875,
+        397.7138671875
+      ],
+      "unit": "KiB",
+      "value": 397.7138671875,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        17.7236328125,
+        20.8740234375,
+        19.9228515625,
+        14.9072265625,
+        24.287109375,
+        18.6630859375
+      ],
+      "unit": "KiB",
+      "value": 19.9228515625,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page1PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        46.1044921875,
+        40.2724609375,
+        46.4052734375,
+        42.64453125,
+        43.76953125,
+        45.2744140625
+      ],
+      "unit": "KiB",
+      "value": 46.1044921875,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page32PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        88.9853515625,
+        87.1630859375,
+        88.9697265625,
+        100.1123046875,
+        108.3662109375,
+        97.8408203125
+      ],
+      "unit": "KiB",
+      "value": 88.9697265625,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "streamedMemory.page128PeakKiB",
+      "runtime": "3.14",
+      "samples": [
+        235.1708984375,
+        237.0244140625,
+        235.9521484375,
+        245.3349609375,
+        250.4814453125,
+        245.7685546875
+      ],
+      "unit": "KiB",
+      "value": 235.9521484375,
+      "window": "live-delivery",
+      "workload": "bitemporal-current"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        7.874344191804994,
+        7.515624929510523,
+        7.632156666659284,
+        7.4511717684799805,
+        7.426438060065266,
+        7.665375051146839,
+        7.485031346732285,
+        7.548827852588147,
+        7.425781404890586
+      ],
+      "unit": "us/projection",
+      "value": 7.515624929510523,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        142182.7199681783,
+        141319.35326881253,
+        142830.6869266292,
+        139788.64330371167,
+        143497.7514063153,
+        143296.9507299596,
+        144687.051307236,
+        143471.05031128778,
+        143136.7069032561
+      ],
+      "unit": "projections/s",
+      "value": 143136.7069032561,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        604.4375,
+        604.4375,
+        604.4375
+      ],
+      "unit": "B/projection",
+      "value": 604.4375,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        128.0,
+        128.0,
+        128.0
+      ],
+      "unit": "B/projection",
+      "value": 128.0,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "runtime": "3.14",
+      "samples": [
+        45.77734375,
+        45.77734375,
+        45.77734375
+      ],
+      "unit": "KiB",
+      "value": 45.77734375,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "runtime": "3.14",
+      "samples": [
+        41.361328125,
+        41.361328125,
+        41.361328125
+      ],
+      "unit": "KiB",
+      "value": 41.361328125,
+      "window": "positional-materialization",
+      "workload": "stress-columns"
+    },
+    {
+      "cell": "stress.maxUsPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        10.671875315892976,
+        10.480469427420758,
+        10.476562238181941,
+        10.361984095652588,
+        10.339186701457947,
+        10.341140296077356,
+        10.343093890696764,
+        10.402343832538463,
+        10.368499715696089
+      ],
+      "unit": "us/projection",
+      "value": 10.368499715696089,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.minProjectionsPerSecond",
+      "runtime": "3.14",
+      "samples": [
+        94129.13728506016,
+        95564.04377004206,
+        95528.3747355621,
+        94990.72243555191,
+        95623.43496235851,
+        95344.49981876499,
+        95120.18520478481,
+        94967.19177564314,
+        95718.82622502696
+      ],
+      "unit": "projections/s",
+      "value": 95344.49981876499,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.retainedBPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        620.4375,
+        620.4375,
+        620.4375
+      ],
+      "unit": "B/projection",
+      "value": 620.4375,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.transientBPerProjection",
+      "runtime": "3.14",
+      "samples": [
+        192.0,
+        192.0,
+        192.0
+      ],
+      "unit": "B/projection",
+      "value": 192.0,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.peakFor64KiB",
+      "runtime": "3.14",
+      "samples": [
+        50.77734375,
+        50.77734375,
+        50.77734375
+      ],
+      "unit": "KiB",
+      "value": 50.77734375,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "stress.preparedSetKiB",
+      "runtime": "3.14",
+      "samples": [
+        65.5869140625,
+        65.5869140625,
+        65.5869140625
+      ],
+      "unit": "KiB",
+      "value": 65.5869140625,
+      "window": "positional-materialization",
+      "workload": "stress-document"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        34.954437069245614,
+        37.8528748115059,
+        35.86459388316143,
+        35.8437500835862,
+        35.04428059386555,
+        34.77996870060451,
+        34.981749195139855,
+        34.739592592814006,
+        34.64321889623534
+      ],
+      "unit": "us/root",
+      "value": 34.981749195139855,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        106.2099609375,
+        106.2099609375,
+        106.2099609375
+      ],
+      "unit": "KiB",
+      "value": 106.2099609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        51.09375,
+        51.09375,
+        51.09375
+      ],
+      "unit": "KiB",
+      "value": 51.09375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        34.21352994337212,
+        33.93750012037344,
+        34.19793756620493,
+        34.3776246154448,
+        33.47918755025603,
+        33.973969038925134,
+        33.45831100887153,
+        33.86327989574056,
+        34.26693729124963
+      ],
+      "unit": "us/root",
+      "value": 33.973969038925134,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        106.1044921875,
+        106.1044921875,
+        106.1044921875
+      ],
+      "unit": "KiB",
+      "value": 106.1044921875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        51.09375,
+        51.09375,
+        51.09375
+      ],
+      "unit": "KiB",
+      "value": 51.09375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-1"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        57.5325630052248,
+        57.4140631215414,
+        57.70181269326713,
+        57.47396971855778,
+        57.48959301854484,
+        57.571623983676545,
+        60.33334466337692,
+        59.66796925349627,
+        58.562500271364115
+      ],
+      "unit": "us/root",
+      "value": 57.571623983676545,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        155.0849609375,
+        155.0849609375,
+        155.0849609375
+      ],
+      "unit": "KiB",
+      "value": 155.0849609375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        88.21875,
+        88.21875,
+        88.21875
+      ],
+      "unit": "KiB",
+      "value": 88.21875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        57.29687472921796,
+        64.48696876759641,
+        60.10415563650895,
+        58.187499234918505,
+        56.44662451231852,
+        56.28646795230452,
+        56.018217946984805,
+        56.34374974761158,
+        56.72525003319606
+      ],
+      "unit": "us/root",
+      "value": 56.72525003319606,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        153.5537109375,
+        153.5537109375,
+        153.5537109375
+      ],
+      "unit": "KiB",
+      "value": 153.5537109375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        88.21875,
+        88.21875,
+        88.21875
+      ],
+      "unit": "KiB",
+      "value": 88.21875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-4"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        94.39325003768317,
+        93.50781328976154,
+        95.7708434725646,
+        93.61978118249681,
+        93.82290772919077,
+        95.92709466232918,
+        94.9739678617334,
+        93.28124906460289,
+        93.20965546066873
+      ],
+      "unit": "us/root",
+      "value": 93.82290772919077,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        225.6865234375,
+        225.6865234375,
+        225.6865234375
+      ],
+      "unit": "KiB",
+      "value": 225.6865234375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        137.71875,
+        137.71875,
+        137.71875
+      ],
+      "unit": "KiB",
+      "value": 137.71875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        94.57290616410319,
+        93.64843754156027,
+        97.68618838279508,
+        95.322906418005,
+        95.12500037089922,
+        93.87890713696834,
+        93.75131230626721,
+        93.18621778220404,
+        93.02471880801022
+      ],
+      "unit": "us/root",
+      "value": 93.87890713696834,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        223.6396484375,
+        223.6396484375,
+        223.6396484375
+      ],
+      "unit": "KiB",
+      "value": 223.6396484375,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        137.71875,
+        137.71875,
+        137.71875
+      ],
+      "unit": "KiB",
+      "value": 137.71875,
+      "window": "provider-free-delivery",
+      "workload": "read-depth-8"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        24.00518860667944,
+        23.660155420657247,
+        23.450498702004552,
+        23.306000002776273,
+        23.895812773844227,
+        23.544280338683166,
+        26.036437702714466,
+        24.704406314413063,
+        24.328124709427357
+      ],
+      "unit": "us/root",
+      "value": 23.895812773844227,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        65.8310546875,
+        65.8310546875,
+        65.8310546875
+      ],
+      "unit": "KiB",
+      "value": 65.8310546875,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        24.34375,
+        24.34375,
+        24.34375
+      ],
+      "unit": "KiB",
+      "value": 24.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        22.134125174488872,
+        22.149748474475928,
+        24.316406779689714,
+        23.805967430234887,
+        22.826812710263766,
+        22.360687580658123,
+        22.709624317940325,
+        22.132813683128916,
+        22.472655473393388
+      ],
+      "unit": "us/root",
+      "value": 22.472655473393388,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        71.5029296875,
+        71.5029296875,
+        71.5029296875
+      ],
+      "unit": "KiB",
+      "value": 71.5029296875,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        24.34375,
+        24.34375,
+        24.34375
+      ],
+      "unit": "KiB",
+      "value": 24.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-0"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        65.1926857244689,
+        79.34112545626704,
+        59.61459464742802,
+        58.355468354420736,
+        59.141906604054384,
+        58.72134352102876,
+        58.78775118617341,
+        58.694000472314656,
+        61.57812640594784
+      ],
+      "unit": "us/root",
+      "value": 59.141906604054384,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        208.0302734375,
+        208.0302734375,
+        208.0302734375
+      ],
+      "unit": "KiB",
+      "value": 208.0302734375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        125.34375,
+        125.34375,
+        125.34375
+      ],
+      "unit": "KiB",
+      "value": 125.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        58.29556175740436,
+        58.30731242895126,
+        57.5052199565107,
+        60.82550135033671,
+        58.95312460779678,
+        58.933592299581505,
+        58.256531701772474,
+        58.276031268178485,
+        57.61977990914602
+      ],
+      "unit": "us/root",
+      "value": 58.29556175740436,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        206.7841796875,
+        206.7841796875,
+        206.7841796875
+      ],
+      "unit": "KiB",
+      "value": 206.7841796875,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        125.34375,
+        125.34375,
+        125.34375
+      ],
+      "unit": "KiB",
+      "value": 125.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-8"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        168.67449994606432,
+        167.1015634201467,
+        168.236967510893,
+        169.88931201922242,
+        186.97784253163263,
+        171.15884293161798,
+        170.11590534821153,
+        168.8177198957419,
+        169.10024896787945
+      ],
+      "unit": "us/root",
+      "value": 169.10024896787945,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        640.2255859375,
+        640.2255859375,
+        640.2255859375
+      ],
+      "unit": "KiB",
+      "value": 640.2255859375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        428.34375,
+        428.34375,
+        428.34375
+      ],
+      "unit": "KiB",
+      "value": 428.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        157.22656280559022,
+        161.2057185411686,
+        160.69793855422176,
+        160.75653002189938,
+        157.2044384374749,
+        159.12500020931475,
+        158.85546963545494,
+        160.87499898276292,
+        159.82681179593783
+      ],
+      "unit": "us/root",
+      "value": 159.82681179593783,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        637.8818359375,
+        637.8818359375,
+        637.8818359375
+      ],
+      "unit": "KiB",
+      "value": 637.8818359375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        428.34375,
+        428.34375,
+        428.34375
+      ],
+      "unit": "KiB",
+      "value": 428.34375,
+      "window": "provider-free-delivery",
+      "workload": "read-many-32"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        58.738281950354576,
+        59.24868855800014,
+        59.23959361098241,
+        59.01693839405198,
+        59.08853199798614,
+        58.40625090058893,
+        58.760406318469904,
+        61.31771988293622,
+        60.937500165891834
+      ],
+      "unit": "us/root",
+      "value": 59.08853199798614,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        223.8642578125,
+        223.8642578125,
+        223.8642578125
+      ],
+      "unit": "KiB",
+      "value": 223.8642578125,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        136.96875,
+        136.96875,
+        136.96875
+      ],
+      "unit": "KiB",
+      "value": 136.96875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        61.24218816694338,
+        60.92446892580483,
+        61.2864696449833,
+        60.863281760248356,
+        62.97003164945636,
+        61.940125306136906,
+        61.29687426437158,
+        61.15103133197408,
+        61.251312217791565
+      ],
+      "unit": "us/root",
+      "value": 61.251312217791565,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        227.1630859375,
+        227.1630859375,
+        227.1630859375
+      ],
+      "unit": "KiB",
+      "value": 227.1630859375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        136.96875,
+        136.96875,
+        136.96875
+      ],
+      "unit": "KiB",
+      "value": 136.96875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-16"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        153.94399997603614,
+        156.2513116368791,
+        163.01562391163316,
+        160.3085947863292,
+        159.66406317602377,
+        159.7630325704813,
+        165.53256136830896,
+        161.0833132872358,
+        160.9531245776452
+      ],
+      "unit": "us/root",
+      "value": 160.3085947863292,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        770.2646484375,
+        770.2646484375,
+        770.2646484375
+      ],
+      "unit": "KiB",
+      "value": 770.2646484375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        480.46875,
+        480.46875,
+        480.46875
+      ],
+      "unit": "KiB",
+      "value": 480.46875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        162.1484370843973,
+        161.65234410436824,
+        165.66665726713836,
+        164.0025948290713,
+        163.81249952246435,
+        165.86328274570405,
+        162.72003085759934,
+        163.8385310798185,
+        162.32031339313835
+      ],
+      "unit": "us/root",
+      "value": 163.81249952246435,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        773.6162109375,
+        773.6162109375,
+        773.6162109375
+      ],
+      "unit": "KiB",
+      "value": 773.6162109375,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        480.46875,
+        480.46875,
+        480.46875
+      ],
+      "unit": "KiB",
+      "value": 480.46875,
+      "window": "provider-free-delivery",
+      "workload": "read-width-64"
+    },
+    {
+      "cell": "columns.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        48.01562499778811,
+        47.997405999922194,
+        48.57552994508296,
+        47.69790575664956,
+        48.65756091021467,
+        49.73046998202335,
+        50.1041558891302,
+        48.91537537332624,
+        47.938812713255174
+      ],
+      "unit": "us/root",
+      "value": 48.57552994508296,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "columns.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        136.4453125,
+        136.4453125,
+        136.4453125
+      ],
+      "unit": "KiB",
+      "value": 136.4453125,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "columns.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        36.1875,
+        36.1875,
+        36.1875
+      ],
+      "unit": "KiB",
+      "value": 36.1875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.elapsedUsPerRoot",
+      "runtime": "3.14",
+      "samples": [
+        48.63934373133816,
+        50.06640640203841,
+        49.32421870762482,
+        47.800782340345904,
+        48.27215707337018,
+        47.28515705210157,
+        47.84503107657656,
+        47.94140659214463,
+        47.53387474920601
+      ],
+      "unit": "us/root",
+      "value": 47.94140659214463,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.peakKiB",
+      "runtime": "3.14",
+      "samples": [
+        136.3671875,
+        136.3671875,
+        136.3671875
+      ],
+      "unit": "KiB",
+      "value": 136.3671875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    },
+    {
+      "cell": "document.retainedKiB",
+      "runtime": "3.14",
+      "samples": [
+        36.1875,
+        36.1875,
+        36.1875
+      ],
+      "unit": "KiB",
+      "value": 36.1875,
+      "window": "provider-free-delivery",
+      "workload": "read-sparse-64"
+    }
+  ],
+  "schemaVersion": 1,
+  "subject": "snapshot-delivery"
+}
