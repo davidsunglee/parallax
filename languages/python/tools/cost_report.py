@@ -2,17 +2,28 @@
 committed evidence, and compare two portfolios cell by cell.
 
 Verification separates what makes evidence invalid — a missing, malformed, or
-incomplete required envelope, a non-authoritative or dirty capture, a stale
-workload digest, and members produced at different commits — from what is
-merely drift or an adverse reading: a timing or memory ceiling exceeded, a
-scaling arm grown past its limit, a dependency lock that moved since the
-capture, and a producing commit the inspected head no longer descends from are
-each reported as an advisory and never fail. A capture is taken once at its
-producing commit; the blocking memory gates are the cost class's, and whether a
-later edit leaves two captures comparable is a judgement recorded beside the
-evidence. Comparison pairs readings only when their subject, runtime, window,
-workload, cell, and unit all agree, names every cell present on one side alone,
-and judges a timing delta against one explicit noise allowance.
+incomplete required envelope, a snapshot-delivery envelope that is not
+authoritative, a capture taken from a dirty tree, a workload digest that
+disagrees with the inspected checkout, and members produced at different
+commits — from what is merely drift or an adverse reading: a timing or memory
+ceiling exceeded, a scaling arm grown past its limit, a dependency lock that
+moved since the capture, and a producing commit the inspected head no longer
+descends from are each reported as an advisory and never fail. The
+write-lowering envelope's sampling protocol is its own, so it is
+non-authoritative by construction and verification accepts it so.
+``--freshness-only`` reports a moved lock as the same advisory and fails only
+when the portfolio establishes no freshness at all: no single snapshot-delivery
+member, or provenance whose recorded lock digest is absent or malformed.
+
+A workload digest covers what was measured — the frozen workload manifest and
+the fixture and model sources defining it — and never the instruments that
+measured it. A capture is taken once at its producing commit; the blocking
+memory gates are the cost class's, and whether a later instrument edit leaves
+two captures comparable is a judgement recorded beside the evidence.
+
+Comparison pairs readings only when their subject, runtime, window, workload,
+cell, and unit all agree, names every cell present on one side alone, and
+judges a timing delta against one explicit noise allowance.
 """
 
 from __future__ import annotations
@@ -21,6 +32,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import re
 import statistics
 import subprocess
 import sys
@@ -78,6 +90,14 @@ MEMORY_NOISE_ALLOWANCE: Final = 0.03
 """The same allowance for a byte reading: retained checkpoints between two
 identical captures differed by up to 2.8%, high-water marks by under 1%, in
 steps of a few dozen bytes. Counts carry no allowance and compare exactly."""
+
+LOCK_FRESHNESS_UNAVAILABLE: Final = "lock freshness unavailable"
+"""Prefix of the one freshness answer that is not a comparison, and the only one
+``--freshness-only`` fails on."""
+
+LOCK_DIGEST_PATTERN: Final = re.compile("[0-9a-f]{64}")
+"""The envelope schema's digest shape, restated because ``--freshness-only``
+answers from a portfolio it deliberately does not validate."""
 
 TIMING_UNITS: Final = frozenset(
     {"ms", "roots/s", "us/projection", "projections/s", "us/row", "us", "us/root"}
@@ -406,14 +426,22 @@ def _provenance(member: Document) -> Document | None:
 
 
 def lock_freshness(document: Document, lock_path: Path | None = None) -> tuple[bool, str]:
-    """Compare retained dependencies with a lock file without reclassifying authority."""
+    """Compare retained dependencies with a lock file without reclassifying
+    authority. Provenance carrying no well-formed lock digest answers
+    ``LOCK_FRESHNESS_UNAVAILABLE`` rather than drift, because no comparison was
+    made."""
     snapshot = _snapshot(document)
     if snapshot is None:
-        return False, "lock freshness unavailable: expected one snapshot-delivery envelope"
+        return False, f"{LOCK_FRESHNESS_UNAVAILABLE}: expected one snapshot-delivery envelope"
     provenance = _provenance(snapshot)
     if provenance is None:
-        return False, "lock freshness unavailable: snapshot-delivery provenance is not a mapping"
+        return False, f"{LOCK_FRESHNESS_UNAVAILABLE}: snapshot-delivery provenance is not a mapping"
     recorded = provenance.get("lockDigest")
+    if not isinstance(recorded, str) or LOCK_DIGEST_PATTERN.fullmatch(recorded) is None:
+        return False, (
+            f"{LOCK_FRESHNESS_UNAVAILABLE}: snapshot-delivery provenance records "
+            f"lockDigest={recorded!r}"
+        )
     inspected = lock_path or WORKSPACE / "uv.lock"
     current = hashlib.sha256(inspected.read_bytes()).hexdigest()
     digests = f"recorded lockDigest={recorded}; inspected lockDigest={current} ({inspected})"
@@ -506,11 +534,15 @@ def is_diagnostic(document: Document) -> bool:
 
 def verify(document: Document, contract: BudgetContract | None = None) -> list[str]:
     """Every reason the required portfolio is not valid evidence: a missing,
-    malformed, or incomplete required envelope, a non-authoritative or dirty
-    capture, a stale workload digest, or members produced at different commits.
+    malformed, or incomplete required envelope, a snapshot-delivery envelope
+    that is not authoritative, a capture taken from a dirty tree, a workload
+    digest disagreeing with the inspected checkout, or members produced at
+    different commits.
 
-    A ceiling exceeded, an arm grown, a moved lock, or an unpublished producing
-    commit is not among them: see :func:`advisories`.
+    The write-lowering envelope's authority is not among these: its sampling
+    protocol is its own, so it is non-authoritative by construction. Neither is
+    a ceiling exceeded, an arm grown, a moved lock, or an unpublished producing
+    commit: see :func:`advisories`.
     """
     if is_diagnostic(document):
         return ["a diagnostic reading set is not evidence and cannot be verified"]
@@ -556,7 +588,9 @@ def advisories(document: Document, contract: BudgetContract | None = None) -> li
     """Everything reported about the required evidence that never fails it: a
     timing or memory ceiling exceeded, a scaling arm grown past its limit, a
     dependency lock that moved since the capture, and a producing commit the
-    inspected head no longer descends from.
+    inspected head no longer descends from. A lock comparison that could not be
+    made at all is reported here the same way: the provenance it needs is
+    required of the envelope, so :func:`verify` refuses one lacking it.
 
     None of these makes a capture wrong. A ceiling is the cost class's to gate;
     a lock bump or a rebase changes nothing a reading measured; and a capture is
@@ -801,7 +835,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.freshness_only is not None:
         fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
         print(freshness if fresh else f"advisory: {freshness}")
-        return 0 if fresh or not freshness.startswith("lock freshness unavailable") else 1
+        return 0 if fresh or not freshness.startswith(LOCK_FRESHNESS_UNAVAILABLE) else 1
     if args.verify is not None:
         document = _load(args.verify)
         fresh, freshness = lock_freshness(document)
