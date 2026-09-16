@@ -46,6 +46,8 @@ SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.
 ACQUISITION_MODULE: Final = WORKSPACE / "tests" / "unit" / "_predicate_acquisition_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
+# `sys.path` gains the workspace above, so these imports cannot precede it; that is
+# what the E402 suppression each one carries records.
 from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 from tests.unit import memory_instruments  # noqa: E402
@@ -58,6 +60,7 @@ for module, expected in (
     if Path(module.__file__ or "").resolve() != expected:
         raise ImportError(f"this reading requires {expected}, but resolved {module.__file__}")
 
+# E402 again, and imported below the guard proving each module is this workspace's own.
 from tests.unit.memory_instruments import WARMUP, retained, untraced  # noqa: E402
 
 type Window = Literal["keyed-write", "predicate-acquisition", "model-preparation"]

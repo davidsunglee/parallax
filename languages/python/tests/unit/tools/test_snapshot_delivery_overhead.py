@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import sys
 from dataclasses import replace
+from pathlib import Path
 
+import pytest
+
+import snapshot_delivery_overhead as report
 from interpreter_matrix import CURRENT_MINOR, authority_minor
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
+from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     GEOMETRY_METRICS,
     LIVE_WINDOW,
@@ -116,3 +121,17 @@ def test_a_runtime_short_of_a_reading_is_named_and_withholds_every_comparison() 
         ),
     )
     assert all(comparison.outcome == "unavailable" for comparison in envelope.comparisons)
+
+
+# Review Cadence requires a fresh capture whenever an instrument changes, so the
+# digest a capture records has to move when one does.
+def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instrument = tmp_path / "snapshot_delivery_reading.py"
+    instrument.write_text("# an instrument\n", encoding="utf-8")
+    monkeypatch.setattr(report, "INSTRUMENTS", (instrument,))
+    original = report.evidence_digest()
+    instrument.write_text("# an edited instrument\n", encoding="utf-8")
+    assert report.evidence_digest() != original
+    assert report.evidence_digest() != workload_digest()

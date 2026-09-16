@@ -15,6 +15,13 @@ The write families insert one such value; the read families materialize
 through a provider-free port that composes each row fresh when the statement
 runs, so nothing but production owns a row once it is returned.
 
+The changed-ancestor family adds a Transaction-Time-Only Entity per (depth,
+width) named by :data:`~parallax.conformance.workloads.ANCESTOR_LEVEL_IDS`. Its
+successor changes the first leaf of the ROOT occurrence and restates everything
+else, so the write succeeds a milestone whose retained document must be patched
+at that one occurrence: the cost is the occurrence's declared width, not the
+size of the leaf that changed.
+
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
 carried by this MODULE's underscore. Never imported by production code.
@@ -32,14 +39,17 @@ from parallax.conformance.workloads import (
     GEOMETRY_LEVELS,
     READ_GEOMETRY_ROOTS,
     GeometryLevel,
+    ancestor_levels,
 )
-from parallax.core import Attr, Document, DomainModel, Entity, ValueObject, attr
+from parallax.core import Attr, Document, DomainModel, Entity, TxTemporal, ValueObject, attr
 from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from tests._support.db_port import ConnectsAsItself, projected_rows
 
 __all__ = [
+    "ANCESTOR_LEVELS",
+    "DOCUMENT_MEMBERS",
     "ENTITY_CLASSES",
     "GEOMETRY_LEVELS",
     "LAYOUTS",
@@ -54,6 +64,8 @@ __all__ = [
     "read_query",
     "shape_of",
     "stored_row",
+    "successor_class",
+    "successor_instance",
     "wire_row",
 ]
 
@@ -66,6 +78,9 @@ _MANY: Final = "items"
 _ONE: Final = "body"
 _NEXT: Final = "next"
 _PAYLOAD: Final = "payload"
+
+DOCUMENT_MEMBERS: Final[tuple[str, ...]] = (_ONE, _MANY)
+"""The declared members a geometry Entity's Structured Column carries."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +124,11 @@ def _body_chain(depth: int, width: int) -> tuple[type[ValueObject], ...]:
 
 
 def _entity(
-    name: str, body: type[ValueObject], item: type[ValueObject], layout: Layout
+    name: str,
+    body: type[ValueObject],
+    item: type[ValueObject],
+    layout: Layout,
+    base: type[Entity] = Entity,
 ) -> type[Entity]:
     annotations: dict[str, object] = {
         "id": Attr[int],
@@ -124,7 +143,7 @@ def _entity(
     keywords: dict[str, object] = {"table": name.lower(), "namespace": _NAMESPACE}
     if layout == "document":
         keywords["layout"] = Document(column=_PAYLOAD)
-    return cast("type[Entity]", type(name, (Entity,), namespace, **keywords))
+    return cast("type[Entity]", type(name, (base,), namespace, **keywords))
 
 
 def _shape(depth: int, width: int) -> GeometryShape:
@@ -148,10 +167,34 @@ SHAPES: Final[Mapping[tuple[int, int], GeometryShape]] = {
     key: _shape(*key) for key in sorted({(level.depth, level.width) for level in GEOMETRY_LEVELS})
 }
 
-ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = tuple(
-    shape.entities[layout] for shape in SHAPES.values() for layout in LAYOUTS
+ANCESTOR_LEVELS: Final[tuple[GeometryLevel, ...]] = ancestor_levels()
+"""Every level the changed-ancestor write family measures, in manifest order."""
+
+SUCCESSOR_ENTITIES: Final[Mapping[tuple[int, int], Mapping[Layout, type[Entity]]]] = {
+    key: {
+        layout: _entity(
+            f"Successor{layout.capitalize()}D{key[0]}W{key[1]}",
+            SHAPES[key].bodies[0],
+            SHAPES[key].item,
+            layout,
+            base=TxTemporal,
+        )
+        for layout in LAYOUTS
+    }
+    for key in sorted({(level.depth, level.width) for level in ANCESTOR_LEVELS})
+}
+"""The Transaction-Time-Only twin of each geometry an ancestor level names.
+
+A changed successor needs a milestone to succeed, and only a temporal profile
+opens one; the insert families keep the non-temporal Entities above.
+"""
+
+ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = (
+    *(shape.entities[layout] for shape in SHAPES.values() for layout in LAYOUTS),
+    *(entities[layout] for entities in SUCCESSOR_ENTITIES.values() for layout in LAYOUTS),
 )
-"""Every geometry Entity, in shape then layout order."""
+"""Every geometry Entity, in shape then layout order, the changed-ancestor
+successors last."""
 
 MODEL: Final = DomainModel(*ENTITY_CLASSES)
 
@@ -171,8 +214,18 @@ def entity_class(level: GeometryLevel, layout: Layout) -> type[Entity]:
     return shape_of(level).entities[layout]
 
 
+def successor_class(level: GeometryLevel, layout: Layout) -> type[Entity]:
+    """The Transaction-Time-Only Entity ``level``'s changed-ancestor case writes."""
+    return SUCCESSOR_ENTITIES[(level.depth, level.width)][layout]
+
+
 def _leaf_value(index: int, key: int) -> str:
     return f"{index:03d}-{key:08d}"
+
+
+_CHANGED_LEAF_KEY: Final = 1_000_000
+"""The key offset a changed root leaf is spelled with: the same fixed width as
+the value it replaces, so the successor weighs what its predecessor weighed."""
 
 
 def _leaves(level: GeometryLevel, key: int) -> dict[str, str]:
@@ -200,12 +253,17 @@ def wire_row(level: GeometryLevel, key: int) -> dict[str, object]:
     return {"id": key, _ONE: _body_document(level, key), _MANY: _items_document(level, key)}
 
 
-def _body_instance(shape: GeometryShape, level: GeometryLevel, key: int) -> ValueObject:
+def _body_instance(
+    shape: GeometryShape, level: GeometryLevel, key: int, *, changed: bool = False
+) -> ValueObject:
     instance: ValueObject | None = None
-    for cls in reversed(shape.bodies):
+    root = len(shape.bodies) - 1
+    for position, cls in enumerate(reversed(shape.bodies)):
         members: dict[str, object] = dict(_leaves(level, key))
         if instance is not None:
             members[_NEXT] = instance
+        if changed and position == root:
+            members[_leaf_name(0)] = _leaf_value(0, key + _CHANGED_LEAF_KEY)
         instance = cls(**members)
     assert instance is not None
     return instance
@@ -216,6 +274,19 @@ def instance(level: GeometryLevel, layout: Layout, key: int) -> Entity:
     shape = shape_of(level)
     items = tuple(shape.item(**_leaves(level, key + element)) for element in range(level.many))
     return shape.entities[layout](id=key, **{_ONE: _body_instance(shape, level, key), _MANY: items})
+
+
+def successor_instance(level: GeometryLevel, layout: Layout, key: int, *, changed: bool) -> Entity:
+    """The milestone a changed-ancestor case succeeds, or the successor that
+    replaces the root occurrence's first leaf and restates every other member.
+
+    Both carry the same fixed-width leaves, so the two differ in one value and
+    in nothing a measurement would read as size.
+    """
+    shape = shape_of(level)
+    items = tuple(shape.item(**_leaves(level, key + element)) for element in range(level.many))
+    body = _body_instance(shape, level, key, changed=changed)
+    return successor_class(level, layout)(id=key, **{_ONE: body, _MANY: items})
 
 
 def stored_row(level: GeometryLevel, layout: Layout, key: int) -> dict[str, object]:

@@ -11,10 +11,12 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import (
     ACQUISITION_LEVELS,
+    ANCESTOR_LEVEL_IDS,
     GEOMETRY_LEVELS,
     AcquisitionLevel,
     GeometryLevel,
     Workload,
+    ancestor_levels,
     catalog,
     structural_digest,
     workload_digest,
@@ -118,6 +120,14 @@ def test_structural_levels_refuse_impossible_geometry() -> None:
         AcquisitionLevel("bad", 0)
 
 
+def test_the_changed_ancestor_levels_name_geometries_that_vary_only_in_width() -> None:
+    levels = ancestor_levels()
+    assert tuple(level.id for level in levels) == ANCESTOR_LEVEL_IDS
+    assert {level.depth for level in levels} == {1}
+    assert {level.width for level in levels} == {4, 16, 64}
+    assert {level.width for level in levels if level.populated < level.width} == {64}
+
+
 def test_the_workload_digest_covers_the_structural_families(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -126,6 +136,14 @@ def test_the_workload_digest_covers_the_structural_families(
     assert len(structural) == 64
     monkeypatch.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
     assert structural_digest() != structural
+    assert workload_digest() != original
+
+
+def test_the_workload_digest_covers_the_changed_ancestor_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = workload_digest()
+    monkeypatch.setattr(workloads, "ANCESTOR_LEVEL_IDS", ANCESTOR_LEVEL_IDS[:-1])
     assert workload_digest() != original
 
 

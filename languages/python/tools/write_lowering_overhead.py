@@ -2,14 +2,16 @@
 
 The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
-the twenty categorical keyed-write cases and the geometry inserts through actual
-driver serialization, the predicate-acquisition families to their buffered
-group, and the model-preparation checkpoint. Measurements are observations:
+the twenty categorical keyed-write cases, the geometry inserts, and the
+changed-ancestor successors through actual driver serialization, the
+predicate-acquisition families to their buffered group, and the
+model-preparation checkpoint. Measurements are observations:
 only an incomplete matrix changes this command's exit status.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import subprocess
@@ -38,6 +40,7 @@ from parallax.conformance.cost_envelope import (
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
+INSTRUMENTS: Final = (READING_SCRIPT, Path(__file__).resolve())
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
 SUBJECT: Final = "write-lowering"
 WARMUPS: Final = 3
@@ -53,6 +56,11 @@ CALL_NAMES: Final = (
     "detachJsonContainer",
 )
 METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
+REPEATED_METRICS: Final = ("elapsedUs", "transientBytes")
+"""The metrics sampled once per measured run. ``retainedBytes`` is one
+checkpoint and every ``calls.*`` observation is one median, so each carries a
+single sample."""
+
 KEYED_WINDOW: Final = "keyed-write"
 ACQUISITION_WINDOW: Final = "predicate-acquisition"
 MODEL_WINDOW: Final = "model-preparation"
@@ -72,6 +80,8 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
 
 sys.path.insert(0, str(WORKSPACE))
 
+# `sys.path` gains the workspace above, so these imports cannot precede it; that is
+# what the E402 suppression each one carries records.
 from tests.unit import _predicate_acquisition_support as acquisition_support  # noqa: E402
 from tests.unit import _write_lowering_support as lowering_support  # noqa: E402
 
@@ -113,6 +123,15 @@ def unit_of(window: str, metric: str) -> str:
     return f"{'us' if metric == 'elapsedUs' else 'B'}{scale}"
 
 
+def samples_expected(cell: str) -> int:
+    """How many samples one reading cell carries under the frozen protocol.
+
+    A cell whose sample count disagrees was truncated after the child took it,
+    so the evidence is incomplete however well its median agrees.
+    """
+    return MEASURED if cell in REPEATED_METRICS else 1
+
+
 def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"expected a number, received {value!r}")
@@ -128,10 +147,12 @@ def _positive_integer(value: object, name: str) -> int:
     return value
 
 
-def _samples(value: object, name: str, *, positive: bool) -> tuple[float, ...]:
-    if not isinstance(value, list) or not value:
-        raise ValueError(f"{name} must be a non-empty list of samples")
+def _samples(value: object, name: str, expected: int, *, positive: bool) -> tuple[float, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be a list of samples")
     samples = tuple(_number(sample) for sample in cast("list[object]", value))
+    if len(samples) != expected:
+        raise ValueError(f"{name} carries {len(samples)} samples, expected {expected}")
     if any(sample < 0 or (positive and sample == 0) for sample in samples):
         raise ValueError(f"{name} samples must be {'positive' if positive else 'non-negative'}")
     return samples
@@ -171,27 +192,30 @@ def _decoded(output: str, case: str) -> Cell:
             raise ValueError(
                 f"observed calls were {sorted(calls)}, expected {sorted(expected_calls)}"
             )
+        warmups = _positive_integer(document["warmups"], "warmups")
+        measured = _positive_integer(document["measured"], "measured")
+        if warmups != WARMUPS or measured != MEASURED:
+            raise ValueError(f"sampling was {warmups}/{measured}, expected {WARMUPS}/{MEASURED}")
         reading = ChildReading(
             case=case,
             window=window,
             units=_positive_integer(document["units"], "units"),
             samples={
                 metric: _samples(
-                    samples[metric], f"samples.{metric}", positive=metric == "elapsedUs"
+                    samples[metric],
+                    f"samples.{metric}",
+                    samples_expected(metric),
+                    positive=metric == "elapsedUs",
                 )
                 for metric in METRICS
             },
             calls={name: _number(calls[name]) for name in expected_calls},
-            warmups=_positive_integer(document["warmups"], "warmups"),
-            measured=_positive_integer(document["measured"], "measured"),
+            warmups=warmups,
+            measured=measured,
             retained_warmups=_positive_integer(document["retainedWarmups"], "retainedWarmups"),
         )
         if any(count < 0 for count in reading.calls.values()):
             raise ValueError("call counts must be non-negative")
-        if reading.warmups != WARMUPS or reading.measured != MEASURED:
-            raise ValueError(
-                f"sampling was {reading.warmups}/{reading.measured}, expected {WARMUPS}/{MEASURED}"
-            )
         return reading
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         return f"the child's reading did not decode: {error}"
@@ -333,10 +357,25 @@ def sampling(retained_warmups: int) -> dict[str, object]:
     }
 
 
+def evidence_digest() -> str:
+    """The digest of every input this member's comparability depends on: the
+    workloads it measured and the instruments that measured them.
+
+    A capture is comparable with another only when both were taken by the same
+    instruments over the same workloads, so an instrument edit has to leave an
+    already-committed capture detectably stale.
+    """
+    digest = hashlib.sha256(lowering_support.write_lowering_digest().encode("utf-8"))
+    for instrument in INSTRUMENTS:
+        digest.update(instrument.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def _provenance(contract: BudgetContract, matrix: Matrix) -> Provenance:
     return Provenance.capture(
         contract,
-        workload_digest=lowering_support.write_lowering_digest(),
+        workload_digest=evidence_digest(),
         postgres=_VersionSource(),
         sampling=sampling(retained_warmups(matrix)),
     )
@@ -348,7 +387,7 @@ def _canary_reading(case: str) -> ChildReading:
         case,
         window,
         1,
-        {metric: (10.0,) for metric in METRICS},
+        {metric: (10.0,) * samples_expected(metric) for metric in METRICS},
         dict.fromkeys(CALL_NAMES, 1.0) if window == KEYED_WINDOW else {},
         WARMUPS,
         MEASURED,

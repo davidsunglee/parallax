@@ -6441,7 +6441,8 @@ locking unions retain the core refusal.
   `languages/python/docs/snapshot-graph-baseline.md`, and
   `languages/python/docs/snapshot-materialization-baseline.md` are its dated
   historical evidence. The structural write evidence — the twenty categorical
-  keyed-write cases and the geometry inserts from Typed or Wire input through
+  keyed-write cases, the geometry inserts, and the changed-ancestor successors
+  from Typed or Wire input through
   actual psycopg document serialization, the predicate-acquisition families to
   their buffered Materialized Write Group, and the model-preparation
   checkpoint, each with elapsed, high-water, and separately sampled retained
