@@ -12,7 +12,6 @@ only an incomplete matrix changes this command's exit status.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import subprocess
@@ -24,6 +23,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
 
+import evidence_boundary
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
@@ -41,8 +41,16 @@ from parallax.conformance.cost_envelope import (
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
-INSTRUMENTS: Final = (READING_SCRIPT, Path(__file__).resolve())
+REPORT_MODULE: Final = Path(__file__).resolve()
+READING_SCRIPT: Final = REPORT_MODULE.parent / "write_lowering_reading.py"
+DIAGNOSTIC_DECLARATIONS: Final = ("diagnostic", "main", "selected_cases")
+"""This report's declarations that choose a subset, parse arguments, or render a
+document, and so decide what is printed rather than what is read. They are
+outside the evidence boundary, so editing one reuses unaffected evidence."""
+
+INSTRUMENTS: Final = evidence_boundary.measurement_sources(
+    (REPORT_MODULE, READING_SCRIPT), WORKSPACE
+)
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
 SUBJECT: Final = "write-lowering"
 WARMUPS: Final = 3
@@ -367,11 +375,11 @@ def evidence_digest() -> str:
     instruments over the same workloads, so an instrument edit has to leave an
     already-committed capture detectably stale.
     """
-    digest = hashlib.sha256(lowering_support.write_lowering_digest().encode("utf-8"))
-    for instrument in INSTRUMENTS:
-        digest.update(instrument.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return evidence_boundary.digest(
+        lowering_support.write_lowering_digest(),
+        INSTRUMENTS,
+        {REPORT_MODULE: DIAGNOSTIC_DECLARATIONS},
+    )
 
 
 def _provenance(contract: BudgetContract, matrix: Matrix) -> Provenance:

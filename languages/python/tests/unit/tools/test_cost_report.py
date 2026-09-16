@@ -773,6 +773,17 @@ def test_diagnose_writes_only_diagnostic_documents_and_never_a_portfolio(
     )
 
 
+def test_a_diagnostic_run_never_writes_into_the_committed_evidence_directory(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def runner(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        raise AssertionError(f"{member.subject} {list(arguments)} must never be run")
+
+    for out in (cost_report.EVIDENCE_DIRECTORY, cost_report.EVIDENCE_DIRECTORY / "scratch"):
+        assert cost_report.diagnose(["write-lowering"], [], [], out, runner) == 2
+    assert "writes nothing into" in capsys.readouterr().err
+
+
 def test_diagnostic_options_are_fenced_from_verification_and_collection(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

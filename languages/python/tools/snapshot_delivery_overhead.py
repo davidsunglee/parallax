@@ -13,7 +13,6 @@ readings are explicit incompleteness and errors.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import statistics
 import subprocess
@@ -23,6 +22,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
+import evidence_boundary
 from interpreter_matrix import (
     CURRENT_MINOR,
     authority_minor,
@@ -51,8 +51,16 @@ from parallax.conformance.workloads import (
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
-INSTRUMENTS: Final = (READING_SCRIPT, Path(__file__).resolve())
+REPORT_MODULE: Final = Path(__file__).resolve()
+READING_SCRIPT: Final = REPORT_MODULE.parent / "snapshot_delivery_reading.py"
+DIAGNOSTIC_DECLARATIONS: Final = ("_diagnostic_selects_live", "diagnostic", "main", "selection")
+"""This report's declarations that choose a subset, parse arguments, or render a
+document, and so decide what is printed rather than what is read. They are
+outside the evidence boundary, so editing one reuses unaffected evidence."""
+
+INSTRUMENTS: Final = evidence_boundary.measurement_sources(
+    (REPORT_MODULE, READING_SCRIPT), WORKSPACE
+)
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
@@ -71,8 +79,9 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     ),
     STRESS_WINDOW: "the shipped raw-row conversion loop over prepared reads, to a finished Page",
     PLAN_WINDOW: (
-        "one whole-table instance read planned on a cold read plan cache of production "
-        "capacity; no model preparation, query validation, execution, or materialization"
+        "one whole-table instance read planned into an already composed and empty read plan "
+        "cache of production capacity; no cache construction, model preparation, query "
+        "validation, execution, or materialization"
     ),
 }
 
@@ -407,11 +416,9 @@ def evidence_digest(workloads: Mapping[str, Workload] | None = None) -> str:
     instruments over the same workloads, so an instrument edit has to leave an
     already-committed capture detectably stale.
     """
-    digest = hashlib.sha256(workload_digest(workloads).encode("utf-8"))
-    for instrument in INSTRUMENTS:
-        digest.update(instrument.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return evidence_boundary.digest(
+        workload_digest(workloads), INSTRUMENTS, {REPORT_MODULE: DIAGNOSTIC_DECLARATIONS}
+    )
 
 
 def canary(contract: BudgetContract, runner: ChildRunner) -> CostReportEnvelope:
@@ -639,6 +646,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if (args.select or args.cell or args.runtime) and not args.diagnostic:
         parser.error("--select, --cell, and --runtime are diagnostic options")
+    if args.diagnostic and args.out is not None:
+        parser.error("a diagnostic run is not evidence and is printed, never written to a file")
     contract = BudgetContract.load()
     if args.diagnostic:
         runtimes = tuple(args.runtime) or supported_minors()

@@ -47,7 +47,11 @@ from parallax.snapshot import prepare_model
 from parallax.snapshot.handle import Database
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import read_projection
-from parallax.snapshot.handle._read_plan import ReadPlanCache
+from parallax.snapshot.handle._read_plan import (
+    DEFAULT_READ_PLAN_CACHE_CAPACITY,
+    ReadPlan,
+    ReadPlanCache,
+)
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -86,9 +90,6 @@ GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_PREFIX: Final = "plan-"
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
 PLAN_EDITION: Final = "snapshot-delivery-report"
-PLAN_CACHE_CAPACITY: Final = 16
-"""The production default read plan cache capacity, so a cold cache here is
-the cache a freshly connected handle starts with."""
 
 
 def _order_row(row: Mapping[str, object]) -> MappingRow:
@@ -253,12 +254,26 @@ def _first(database: Database, workload: Workload, page_size: int) -> object:
         return next(iter(stream))
 
 
-def _timed(work: Callable[[], object], *, warmups: int, measured: int) -> tuple[float, ...]:
+def _unprepared() -> None:
+    """The preparation a seam that needs none between runs supplies."""
+
+
+def _timed(
+    work: Callable[[], object],
+    *,
+    warmups: int,
+    measured: int,
+    prepare: Callable[[], None] = _unprepared,
+) -> tuple[float, ...]:
+    """Elapsed milliseconds per measured run of ``work``, with ``prepare``
+    restoring its precondition between runs and outside every timed region."""
     with untraced():
         for _ in range(warmups):
+            prepare()
             work()
         samples: list[float] = []
         for _ in range(measured):
+            prepare()
             started = perf_counter()
             work()
             samples.append((perf_counter() - started) * 1_000)
@@ -490,13 +505,17 @@ def plan_address(workload: str, path: str) -> tuple[GeometryLevel, str, str] | N
 
 
 class ColdPlan:
-    """One query's read plan compiled on a cold cache of production capacity.
+    """One query's read plan compiled into an empty cache of production capacity.
 
-    The prepared model and the validated query are composed once, outside every
-    window: model preparation is priced by the write member, and preflight is
-    query validation rather than planning. :meth:`compile` is the window — one
-    ``ReadPlanCache.plan`` on a fresh cache — and what the cache then holds is
-    the compiled plan production retains for the next delivery of that query.
+    The prepared model, the validated query, and the cache itself are composed
+    once, outside every window: model preparation is priced by the write member,
+    preflight is query validation rather than planning, and production composes
+    the cache when the handle is connected, before its first read. :meth:`plan`
+    is the window — one ``ReadPlanCache.plan`` on a cache holding nothing — so
+    what a window prices is the growth from an empty cache to one compiled
+    entry, which is the plan production retains for the next delivery of that
+    query. :meth:`reset` restores that empty cache, and every caller runs it
+    outside the region it measures.
     """
 
     __slots__ = ("cache", "model", "query")
@@ -511,11 +530,10 @@ class ColdPlan:
             model=self.model.meta,
             form="graph",
         )
-        self.cache: ReadPlanCache | None = None
+        self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
-    def compile(self) -> ReadPlanCache:
-        cache = ReadPlanCache(PLAN_CACHE_CAPACITY)
-        cache.plan(
+    def plan(self) -> ReadPlan:
+        return self.cache.plan(
             edition=PLAN_EDITION,
             model=self.model,
             dialect=POSTGRES,
@@ -523,37 +541,29 @@ class ColdPlan:
             result_form="instance",
             preference=None,
         )
-        return cache
 
-    def again(self, cache: ReadPlanCache) -> None:
-        cache.plan(
-            edition=PLAN_EDITION,
-            model=self.model,
-            dialect=POSTGRES,
-            query=self.query,
-            result_form="instance",
-            preference=None,
-        )
+    def reset(self) -> None:
+        self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
     def cold(self, sample: Callable[[], None]) -> None:
-        self.cache = self.compile()
+        self.plan()
         sample()
-        self.cache = None
+        self.reset()
 
     def warm(self, sample: Callable[[], None]) -> None:
-        cache = self.cache
-        assert cache is not None
-        self.again(cache)
+        self.plan()
         sample()
 
 
 def _plan(
     level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
-    """One geometry level's whole-table instance read compiled on a cold cache."""
+    """One geometry level's whole-table instance read compiled into an empty cache."""
     prepared = ColdPlan(level, layout)
     if metric == "elapsedUs":
-        milliseconds = _timed(prepared.compile, warmups=warmups, measured=measured)
+        milliseconds = _timed(
+            prepared.plan, warmups=warmups, measured=measured, prepare=prepared.reset
+        )
         samples = tuple(elapsed * 1_000 for elapsed in milliseconds)
         return float(sorted(samples)[len(samples) // 2]), "us", samples
     if metric == "retainedKiB":
@@ -565,14 +575,16 @@ def _plan(
         return value, "KiB", (value,)
     with untraced():
         for _ in range(warmups):
-            prepared.compile()
+            prepared.reset()
+            prepared.plan()
+    prepared.reset()
     gc.collect()
     gc.collect()
     tracemalloc.start()
     try:
         before, _ = tracemalloc.get_traced_memory()
         tracemalloc.reset_peak()
-        held = prepared.compile()
+        held = prepared.plan()
         _, peak = tracemalloc.get_traced_memory()
         assert held is not None
     finally:

@@ -57,16 +57,17 @@ total of what the window allocated.
 | `live-delivery` | snapshot-delivery | a connected Wire find or stream against PostgreSQL, parsing included | nothing |
 | `provider-free-delivery` | snapshot-delivery | a Wire find over already-parsed provider rows through production planning, materialization, and publication | parsing and provider work |
 | `positional-materialization` | snapshot-delivery | the shipped raw-row conversion loop over prepared reads, to a finished Page | planning, statement execution, and publication |
-| `read-plan-compilation` | snapshot-delivery | one whole-table instance read planned through `ReadPlanCache.plan` on a fresh cache of production capacity (16): deep-fetch planning, `compile_read`, and the prepared level binding the cache then retains | model preparation and query validation (`preflight`), both composed once outside the window; statement execution, materialization, and publication |
+| `read-plan-compilation` | snapshot-delivery | one whole-table instance read planned through `ReadPlanCache.plan` into an empty cache of production capacity: deep-fetch planning, `compile_read`, and the prepared level binding the cache then retains, which is the growth from an empty cache to one compiled entry | the cache itself, composed before the window as production composes it when a handle connects; model preparation and query validation (`preflight`), likewise composed once outside it; statement execution, materialization, and publication |
 
 Retained checkpoints: `keyed-write` samples with the serialized rows, the
 prepared instruction, the buffered item, and the settled plan alive, before
 lowering; `predicate-acquisition` samples inside the transaction body with the
 group buffered, before any flush; `model-preparation` samples with the prepared
 selection alive; a geometry read samples with the delivered results alive;
-`read-plan-compilation` samples with the fresh cache holding its one entry and
-the rendered plan handle already dropped, which is what production retains
-between two deliveries of the same query.
+`read-plan-compilation` samples with the already composed cache holding its one
+entry and the rendered plan handle already dropped, which is what production
+retains between two deliveries of the same query; the empty cache each sample
+opens on is restored outside every measured region.
 
 The read-plan window lives in the Snapshot member rather than beside the write
 member's `model-preparation` window because it is read-side evidence over the
@@ -100,10 +101,16 @@ Every identity and numeric level below is frozen in
 write member's `workloadDigest` through `structural_digest()` together with the
 bytes of the three fixture modules, and the Snapshot member's through
 `workload_digest()`. Each member's recorded `workloadDigest` is the
-`evidence_digest()` of its own report tool, which folds in the bytes of the
-reading child and the report that drove it: an instrument edit therefore leaves
-an already-committed capture stale, because Review Cadence requires a fresh
-capture whenever an instrument changes.
+`evidence_digest()` of its own report tool, which folds that catalog digest
+together with the source of every instrument the capture depended on: the
+report, its reading child, and every `tools/` and `tests/` module they import,
+transitively (`tools/evidence_boundary.py`). An instrument edit therefore leaves
+an already-committed capture stale, and two kinds of edit deliberately do not.
+A production `parallax` change is what two captures are compared across, so
+digesting it would make every such change a recapture; and a report's own
+diagnostic, argument-parsing, and output declarations — each report's
+`DIAGNOSTIC_DECLARATIONS` — decide what is printed rather than what is read, so
+editing one reuses the evidence it cannot have changed.
 The levels were chosen from diagnostic trial runs on the capture runner and then
 frozen; the trials are not part of the baseline.
 
@@ -175,13 +182,13 @@ differ in one value and in nothing a measurement reads as size.
 ### Read-plan compilation — 3 levels, both layouts
 
 The whole-table instance read of `depth-1`, `depth-8`, and `width-64`
-(`PLAN_LEVEL_IDS`) is compiled on a cold `ReadPlanCache` under each layout
+(`PLAN_LEVEL_IDS`) is compiled into an empty `ReadPlanCache` under each layout
 (`plan-<level>`, cells `<layout>.elapsedUs`, `<layout>.peakKiB`,
 `<layout>.retainedKiB`, `read-plan-compilation` window). The shallow baseline,
 the deepest chain, and the widest occurrence are the structures a compiled plan
 could differ over; sparsity and Many cardinality are stored-data properties and
 add nothing a plan retains. Elapsed and peak are one compilation on a fresh
-cache per sample; retained is the checkpoint above.
+empty cache per sample; retained is the checkpoint above.
 
 ### Predicate-acquisition families — 3 levels per layout
 
@@ -226,7 +233,9 @@ retained by the fixture modules and are outside every window.
 - The read-plan window compiles on a cache of production capacity that holds
   nothing else, so it prices one entry, never eviction or family reuse across
   entries; and it plans one query shape per level, the whole-table instance
-  read, so a plan with includes or paging is not measured here.
+  read, so a plan with includes or paging is not measured here. What the cache
+shell itself costs is outside all three of its cells, because production pays it
+once when a handle connects rather than per delivery.
 
 ## Diagnostic runs
 
@@ -234,9 +243,12 @@ retained by the fixture modules and are outside every window.
 required members (`--member`), workloads or cases by shell pattern (`--select`),
 and runtimes (`--runtime`) — through the same reading children and windows the
 capture uses, and writes each member's answer as `diagnostic-<subject>.json`
-(or prints it). The member scripts accept the same subset directly
+(or prints it), never into the directory a committed capture lives in. The
+member scripts accept the same subset directly
 (`snapshot_delivery_overhead.py --diagnostic --select … --cell … --runtime …`,
-`write_lowering_overhead.py --diagnostic --case … --runtime …`). A diagnostic
+`write_lowering_overhead.py --diagnostic --case … --runtime …`) and print it;
+`--out` is refused with `--diagnostic`, so no member run can put a diagnostic
+document at an evidence path. A diagnostic
 document is readings alone: it carries `diagnostic: true`, no provenance, no
 comparisons, and is not an envelope, so `validate` refuses it, `--verify`
 refuses any document that is or contains one, and it can never be retained as

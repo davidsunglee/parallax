@@ -58,6 +58,11 @@ CANONICAL_PORTFOLIO: Final = Path(
 )
 """The repository's current cost portfolio and CI's verification input, relative
 to the repository root."""
+
+EVIDENCE_DIRECTORY: Final = (WORKSPACE.parents[1] / CANONICAL_PORTFOLIO).resolve().parent
+"""Where the committed capture lives. A diagnostic run is not evidence, so no
+path it writes may land here; a member script's own diagnostic is printed and
+writes nothing anywhere."""
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
 WRITE_SUBJECT: Final = write_report.SUBJECT
 TIMING_NOISE_ALLOWANCE: Final = 0.05
@@ -690,13 +695,17 @@ def diagnose(
     runner: Callable[[Member, Sequence[str]], tuple[int, str, str]] = run_member_diagnostic,
 ) -> int:
     """Take diagnostic readings from the chosen required members and write or
-    print each member's diagnostic document; never a portfolio."""
+    print each member's diagnostic document; never a portfolio, and never into
+    the directory the committed capture lives in."""
     members = [member for member in MEMBERS if member.required and member.subject in subjects]
     unknown = set(subjects) - {member.subject for member in members}
     if unknown or not members:
         print(
             f"diagnostic members are {[m.subject for m in MEMBERS if m.required]}", file=sys.stderr
         )
+        return 2
+    if out is not None and out.resolve().is_relative_to(EVIDENCE_DIRECTORY):
+        print(f"a diagnostic run writes nothing into {EVIDENCE_DIRECTORY}", file=sys.stderr)
         return 2
     status = 0
     for member in members:
