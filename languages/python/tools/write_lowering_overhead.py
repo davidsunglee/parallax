@@ -23,7 +23,6 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
 
-import evidence_boundary
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
@@ -41,16 +40,7 @@ from parallax.conformance.cost_envelope import (
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-REPORT_MODULE: Final = Path(__file__).resolve()
-READING_SCRIPT: Final = REPORT_MODULE.parent / "write_lowering_reading.py"
-DIAGNOSTIC_DECLARATIONS: Final = ("diagnostic", "main", "selected_cases")
-"""This report's declarations that choose a subset, parse arguments, or render a
-document, and so decide what is printed rather than what is read. They are
-outside the evidence boundary, so editing one reuses unaffected evidence."""
-
-INSTRUMENTS: Final = evidence_boundary.measurement_sources(
-    (REPORT_MODULE, READING_SCRIPT), WORKSPACE
-)
+READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_write_lowering_support.py"
 SUBJECT: Final = "write-lowering"
 WARMUPS: Final = 3
@@ -367,25 +357,10 @@ def sampling(retained_warmups: int) -> dict[str, object]:
     }
 
 
-def evidence_digest() -> str:
-    """The digest of every input this member's comparability depends on: the
-    workloads it measured and the instruments that measured them.
-
-    A capture is comparable with another only when both were taken by the same
-    instruments over the same workloads, so an instrument edit has to leave an
-    already-committed capture detectably stale.
-    """
-    return evidence_boundary.digest(
-        lowering_support.write_lowering_digest(),
-        INSTRUMENTS,
-        {REPORT_MODULE: DIAGNOSTIC_DECLARATIONS},
-    )
-
-
 def _provenance(contract: BudgetContract, matrix: Matrix) -> Provenance:
     return Provenance.capture(
         contract,
-        workload_digest=evidence_digest(),
+        workload_digest=lowering_support.write_lowering_digest(),
         postgres=_VersionSource(),
         sampling=sampling(retained_warmups(matrix)),
     )

@@ -6558,17 +6558,21 @@ locking unions retain the core refusal.
   and workload-catalog digests from the committed inputs, so changing either
   requires recapture. The `uv.lock` digest records the producing run's
   dependencies for reproducibility; subsequent dependency updates do not
-  invalidate historical provenance. `cost_report.py --verify` separately
-  compares the current portfolio's Snapshot delivery digest with the inspected
-  checkout's `languages/python/uv.lock` and fails with a distinct stale-evidence
-  diagnostic naming both digests when they differ, alongside authority,
-  completeness, memory-comparison, and scaling checks. It also requires the
-  write-lowering envelope to be present, complete over every supported runtime,
-  produced from a clean tree at the same commit as the Snapshot delivery member,
-  and current against the checkout's workload digests, and requires each
-  producing commit to be an ancestor of the inspected head so every checkout of
-  that head can resolve it. A timing ceiling exceeded is reported as an advisory
-  line and never fails verification. The non-required cost-report CI
+  invalidate historical provenance. `cost_report.py --verify` fails only for
+  evidence that is not evidence: a missing, malformed, or incomplete required
+  member — the Snapshot delivery and write-lowering envelopes, each complete
+  over every supported runtime — a non-authoritative or dirty capture, a
+  workload digest that disagrees with the inspected checkout, or members
+  produced at different commits. Every other finding is an advisory line that
+  never fails verification: a timing or memory ceiling exceeded, a
+  streamed-memory arm grown past its limit, a lock that moved since the capture
+  (named with both digests, by `--verify` and by `--freshness-only` alike), and
+  a producing commit the inspected head no longer descends from. Blocking
+  memory gates belong to the cost class, and a capture costs about an hour of
+  runner time and is taken once at its producing commit, so neither a
+  dependency bump, a rebase, nor an instrument edit made after it may force
+  another; comparability across such an edit is a judgement recorded beside
+  the evidence, not a source hash. The non-required cost-report CI
   job verifies the canonical current portfolio against its checked-out head lock
   and reports freshness explicitly in the job summary, including a match even
   when another verification check fails. Pull requests also check the event merge

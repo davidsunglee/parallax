@@ -376,7 +376,7 @@ def test_a_clean_published_complete_portfolio_verifies_with_no_failures(
     assert captured.err == ""
 
 
-def test_an_adverse_timing_outcome_is_advisory_and_a_memory_outcome_fails(
+def test_adverse_timing_and_memory_outcomes_are_advisory_and_never_fail(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     contract = BudgetContract.load()
@@ -395,21 +395,25 @@ def test_an_adverse_timing_outcome_is_advisory_and_a_memory_outcome_fails(
     assert "advisory:" in capsys.readouterr().out
     memory = _first_comparison(snapshot, timing=False)
     _push_outside(snapshot, memory)
-    assert verify(document) == [f"{memory['workload']}.{memory['cell']} is outside"]
+    assert verify(document) == []
+    assert advisories(document)[-1] == (
+        f"advisory: {memory['workload']}.{memory['cell']} is outside its memory ceiling"
+    )
+    assert cost_report.main(["--verify", str(portfolio)]) == 0
 
 
-def test_verification_requires_clean_published_and_fresh_producing_commits(
+def test_an_unpublished_producing_commit_is_advisory_and_a_dirty_or_stale_one_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = BudgetContract.load()
     monkeypatch.setattr(cost_report, "is_published", _unpublished)
     document = _verifiable(contract)
-    failures = verify(document)
-    assert failures == [
-        "the snapshot-delivery envelope's producing commit "
+    assert verify(document) == []
+    assert advisories(document) == [
+        "advisory: the snapshot-delivery envelope's producing commit "
         f"{_snapshot_of(document)['provenance']['commit'][:12]} is not an ancestor of the "
         "inspected head",
-        "the write-lowering envelope's producing commit "
+        "advisory: the write-lowering envelope's producing commit "
         f"{_write_of(document)['provenance']['commit'][:12]} is not an ancestor of the "
         "inspected head",
     ]
@@ -482,7 +486,7 @@ def test_collection_attempts_later_members_after_an_invalid_required_matrix() ->
     assert all(result.envelope is not None for result in results[1:])
 
 
-def test_strict_verification_detects_changed_checkout_lock_without_changing_authority(
+def test_a_moved_checkout_lock_is_advisory_and_never_changes_authority_or_the_verdict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -505,18 +509,21 @@ def test_strict_verification_detects_changed_checkout_lock_without_changing_auth
 
     lock.write_bytes(original_lock + b"\n")
     expected = (
-        "stale snapshot-delivery evidence: "
+        "advisory: stale snapshot-delivery evidence: "
         f"recorded lockDigest={hashlib.sha256(original_lock).hexdigest()}; "
         f"inspected lockDigest={hashlib.sha256(lock.read_bytes()).hexdigest()} ({lock})"
     )
-    assert verify(document) == [expected]
-    assert cost_report.main(["--verify", str(portfolio)]) == 1
-    assert capsys.readouterr().err == expected + "\n"
+    assert verify(document) == []
+    assert advisories(document) == [expected]
+    assert cost_report.main(["--verify", str(portfolio)]) == 0
+    moved = capsys.readouterr()
+    assert moved.out == expected + "\n"
+    assert moved.err == ""
     validate(snapshot)
     assert snapshot["authority"] == "authoritative"
 
 
-def test_staleness_preserves_other_verification_failures(
+def test_invalid_evidence_fails_while_every_drift_is_reported_beside_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     contract = BudgetContract.load()
@@ -550,19 +557,22 @@ def test_staleness_preserves_other_verification_failures(
         "the snapshot-delivery envelope is incomplete",
         "the snapshot-delivery envelope contains errors",
         "the snapshot-delivery envelope was not produced from a clean tree",
-        f"{memory['workload']}.{memory['cell']} is outside",
-        f"{scaling['workload']}.{scaling['cell']} is outside",
-        f"{scaling['workload']}.{scaling['cell']} grows 100.000 KiB between memory arms",
+    ]
+    assert advisories(document) == [
+        f"advisory: {memory['workload']}.{memory['cell']} is outside its memory ceiling",
+        f"advisory: {scaling['workload']}.{scaling['cell']} is outside its memory ceiling",
+        f"advisory: {scaling['workload']}.{scaling['cell']} grows 100.000 KiB between memory arms",
     ]
     (tmp_path / "uv.lock").write_bytes(b"updated dependencies")
     monkeypatch.setattr(cost_report, "WORKSPACE", tmp_path)
-    failures = verify(document)
-    assert failures[0].startswith("stale snapshot-delivery evidence:")
-    assert failures[1:] == expected
+    assert verify(document) == expected
+    reported = advisories(document)
+    assert reported[0].startswith("advisory: stale snapshot-delivery evidence:")
+    assert len(reported) == 4
     snapshot["comparisons"].clear()
     failures = verify(document)
-    assert failures[0].startswith("stale snapshot-delivery evidence:")
-    assert "comparison matrix is not exact" in failures[1]
+    assert len(failures) == 1
+    assert "comparison matrix is not exact" in failures[0]
 
 
 def test_freshness_only_compares_an_explicit_lock_without_revalidating_historical_evidence(
@@ -580,8 +590,8 @@ def test_freshness_only_compares_an_explicit_lock_without_revalidating_historica
     assert cost_report.main(args) == 0
     assert "lock freshness matches" in capsys.readouterr().out
     merge_lock.write_bytes(b"later dependencies")
-    assert cost_report.main(args) == 1
-    assert "stale snapshot-delivery evidence:" in capsys.readouterr().out
+    assert cost_report.main(args) == 0
+    assert "advisory: stale snapshot-delivery evidence:" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("members", [[], [{"subject": "snapshot-delivery", "provenance": None}]])

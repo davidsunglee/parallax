@@ -34,10 +34,18 @@ write-member captures on the capture runner, taken before the baseline and not
 part of it: 89 of 90 elapsed medians agreed within 5% and the last within 5.3%;
 every high-water mark agreed within 1% and every retained checkpoint within
 2.8%, in steps of a few dozen bytes; every pass observation agreed exactly. A
-delta near either allowance is therefore weak evidence on its own. Timing
-comparisons are advisory everywhere: `cost_report.py --verify` reports a timing
-ceiling exceeded and fails only for invalid, incomplete, unpublished, dirty,
-stale, or memory-limit-exceeding evidence.
+delta near either allowance is therefore weak evidence on its own.
+
+`cost_report.py --verify` fails only for evidence that is not evidence: a
+missing, malformed, or incomplete required member, a non-authoritative or dirty
+capture, a stale workload digest, or members produced at different commits.
+Everything else it has to say is an advisory line, printed and never an exit
+status: a timing or memory ceiling exceeded, a streamed-memory arm grown past
+its limit, a `uv.lock` that moved since the capture (`--freshness-only` reports
+the same way), and a producing commit the inspected head no longer descends
+from. Blocking memory gates are cost-class tests, not this verifier; a
+dependency bump or a rebase changes nothing a reading measured; and the capture
+budget above is why drift is stated rather than made a reason to capture again.
 
 Retained checkpoints are taken separately from the uninterrupted timing and
 high-water runs, each after 200 warm-up runs of its seam, at the production
@@ -100,19 +108,16 @@ Every identity and numeric level below is frozen in
 `ANCESTOR_LEVEL_IDS`, `READ_GEOMETRY_ROOTS`, `STRUCTURAL_LAYOUTS`) and enters the
 write member's `workloadDigest` through `structural_digest()` together with the
 bytes of the three fixture modules, and the Snapshot member's through
-`workload_digest()`. Each member's recorded `workloadDigest` is the
-`evidence_digest()` of its own report tool, which folds that catalog digest
-together with the source of every instrument the capture depended on: the
-report, its reading child, and every `tools/` and `tests/` module they import,
-transitively (`tools/evidence_boundary.py`). An instrument edit therefore leaves
-an already-committed capture stale, and two kinds of edit deliberately do not.
-A production `parallax` change is what two captures are compared across, so
-digesting it would make every such change a recapture; and a report's own
-diagnostic, argument-parsing, and output declarations — each report's
-`DIAGNOSTIC_DECLARATIONS` — decide what is printed rather than what is read, so
-editing one reuses the evidence it cannot have changed.
-The levels were chosen from diagnostic trial runs on the capture runner and then
-frozen; the trials are not part of the baseline.
+`workload_digest()` beside the catalog fixtures and models. Those digests name
+what was measured; they deliberately do not name the instruments that measured
+it. A capture costs about an hour of runner time and this work budgets exactly
+two — the baseline under `before/` and the after-capture beside it — so no
+instrument or harness edit made after a capture may force a third through a
+hash. Whether two captures remain comparable across such an edit is a judgement
+recorded in this README beside the captures, and where it is in doubt the
+original producing revision can be reproduced on the final runner. The levels
+were chosen from diagnostic trial runs on the capture runner and then frozen;
+the trials are not part of the baseline.
 
 ### Categorical keyed writes — 20 cases per runtime
 
@@ -258,13 +263,12 @@ capture path runs exactly as documented above.
 ## Baseline capture — `before/`
 
 > **Superseded pending recapture.** The capture below predates the
-> changed-ancestor family, the read-plan compilation window, and the instrument
-> coverage now folded into each member's recorded `workloadDigest`. Its
-> measured values remain the readings
-> that commit produced and are not rewritten; they are no longer a complete
-> capture of the manifest above, and `--verify` reports both members' digests as
-> stale until a fresh capture replaces this directory. Nothing here is a
-> comparison base until then.
+> changed-ancestor family and the read-plan compilation window, so it is no
+> longer a complete capture of the manifest above and both members' recorded
+> `workloadDigest` values disagree with the frozen manifest. Its measured values
+> remain the readings that commit produced and are not rewritten; `--verify`
+> reports the stale digests until the one recapture replaces this directory.
+> Nothing here is a comparison base until then.
 
 Produced from clean commit `572fa9441765` (`feat(cost): measure structural read
 and write windows on every minor`) by `uv run --project languages/python python

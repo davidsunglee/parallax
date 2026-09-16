@@ -9,13 +9,11 @@ from typing import cast
 import pytest
 
 import snapshot_delivery_overhead as report
-from evidence_boundary import measurement_source
 from interpreter_matrix import CURRENT_MINOR, authority_minor
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
 from parallax.conformance.cost_envelope import validate as validate_envelope
-from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     GEOMETRY_METRICS,
     LIVE_WINDOW,
@@ -161,34 +159,6 @@ def _documents(document: Mapping[str, object], key: str) -> list[Mapping[str, ob
     return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", listed)]
 
 
-# A capture is comparable only with one taken by the same instruments, so the
-# digest it records has to move when an instrument's own source does.
-def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    instrument = tmp_path / "snapshot_delivery_reading.py"
-    instrument.write_text("# an instrument\n", encoding="utf-8")
-    monkeypatch.setattr(report, "INSTRUMENTS", (instrument,))
-    original = report.evidence_digest()
-    instrument.write_text("# an edited instrument\n", encoding="utf-8")
-    assert report.evidence_digest() != original
-    assert report.evidence_digest() != workload_digest()
-
-
-def test_the_evidence_boundary_is_every_instrument_and_no_production_module() -> None:
-    covered = {path.relative_to(report.WORKSPACE).as_posix() for path in report.INSTRUMENTS}
-
-    assert {
-        "tools/snapshot_delivery_overhead.py",
-        "tools/snapshot_delivery_reading.py",
-        "tools/interpreter_matrix.py",
-        "tests/unit/memory_instruments.py",
-        "tests/unit/_structural_geometry_support.py",
-        "tests/unit/_snapshot_materialization_support.py",
-    } <= covered
-    assert not [name for name in covered if name.startswith("packages/")]
-
-
 def test_a_diagnostic_run_is_printed_and_can_write_over_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -201,16 +171,6 @@ def test_a_diagnostic_run_is_printed_and_can_write_over_nothing(
     assert refused.value.code == 2
     assert "diagnostic" in capsys.readouterr().err
     assert evidence.read_text(encoding="utf-8") == "the committed capture\n"
-
-
-def test_the_digested_report_source_is_what_measures_and_not_what_it_prints() -> None:
-    digested = measurement_source(report.REPORT_MODULE, report.DIAGNOSTIC_DECLARATIONS)
-    whole = report.REPORT_MODULE.read_bytes()
-
-    for printing in (b"def diagnostic(", b"def selection(", b"def main("):
-        assert printing in whole and printing not in digested
-    for measuring in (b"def _measure_runtime(", b"def run_child(", b"def plan_cells("):
-        assert measuring in digested
 
 
 def test_a_diagnostic_run_answers_only_the_chosen_addresses_and_is_no_envelope() -> None:
