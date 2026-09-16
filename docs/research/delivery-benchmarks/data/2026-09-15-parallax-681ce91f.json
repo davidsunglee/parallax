@@ -1,0 +1,1947 @@
+{
+  "conditions": {
+    "python": "3.14.7",
+    "platform": "darwin/arm64",
+    "roots": 200,
+    "fanout": 4,
+    "page_sizes": [
+      1,
+      8,
+      32,
+      128
+    ],
+    "warmups": 3,
+    "provider_free_repeats": 10,
+    "postgres_repeats": 5,
+    "memory_scope": "Python allocations traced after Database/model preparation"
+  },
+  "readings": [
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 12.667833536397666,
+        "cpu_ms": 12.660000000000004,
+        "first_ms": 12.66662502894178,
+        "roots_per_second": 15788.01927143682,
+        "cpu_share": 0.9993816198819511
+      },
+      "memory": {
+        "retained_bytes": 609844,
+        "peak_bytes": 1108252,
+        "transient_bytes": 498408
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 43.03697950672358,
+        "cpu_ms": 43.02100000000003,
+        "first_ms": 0.21758349612355232,
+        "roots_per_second": 4647.166281006184,
+        "cpu_share": 0.999628702875836
+      },
+      "memory": {
+        "retained_bytes": 3090,
+        "peak_bytes": 47940,
+        "transient_bytes": 44850
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 18.366354517638683,
+        "cpu_ms": 18.356499999999887,
+        "first_ms": 0.4048330010846257,
+        "roots_per_second": 10889.477267136706,
+        "cpu_share": 0.9994634472709686
+      },
+      "memory": {
+        "retained_bytes": 3178,
+        "peak_bytes": 69984,
+        "transient_bytes": 66806
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 15.102396020665765,
+        "cpu_ms": 15.09450000000001,
+        "first_ms": 1.0277709807269275,
+        "roots_per_second": 13242.931765683054,
+        "cpu_share": 0.999477167685515
+      },
+      "memory": {
+        "retained_bytes": 3178,
+        "peak_bytes": 148432,
+        "transient_bytes": 145254
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 13.567291520303115,
+        "cpu_ms": 13.558999999999877,
+        "first_ms": 3.5199169942643493,
+        "roots_per_second": 14741.335785459092,
+        "cpu_share": 0.9993888595751901
+      },
+      "memory": {
+        "retained_bytes": 3690,
+        "peak_bytes": 485696,
+        "transient_bytes": 482006
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 18.491541501134634,
+        "cpu_ms": 18.483499999999875,
+        "first_ms": 18.49052050965838,
+        "roots_per_second": 10815.755949158056,
+        "cpu_share": 0.9995651254313078
+      },
+      "memory": {
+        "retained_bytes": 625876,
+        "peak_bytes": 1201151,
+        "transient_bytes": 575275
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 54.20568698900752,
+        "cpu_ms": 54.17499999999986,
+        "first_ms": 0.2808959980029613,
+        "roots_per_second": 3689.649760191369,
+        "cpu_share": 0.9994338787918345
+      },
+      "memory": {
+        "retained_bytes": 3170,
+        "peak_bytes": 52424,
+        "transient_bytes": 49254
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 24.075000517768785,
+        "cpu_ms": 24.062499999999876,
+        "first_ms": 0.5618750001303852,
+        "roots_per_second": 8307.372614691662,
+        "cpu_share": 0.9994807677050854
+      },
+      "memory": {
+        "retained_bytes": 3258,
+        "peak_bytes": 85156,
+        "transient_bytes": 81898
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 21.043353975983337,
+        "cpu_ms": 21.036000000000055,
+        "first_ms": 1.5523539914283901,
+        "roots_per_second": 9504.188364091528,
+        "cpu_share": 0.9996505321351494
+      },
+      "memory": {
+        "retained_bytes": 3258,
+        "peak_bytes": 227775,
+        "transient_bytes": 224517
+      }
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 18.855978996725753,
+        "cpu_ms": 18.84599999999992,
+        "first_ms": 5.375895998440683,
+        "roots_per_second": 10606.71525115344,
+        "cpu_share": 0.9994707781161845
+      },
+      "memory": {
+        "retained_bytes": 3770,
+        "peak_bytes": 792165,
+        "transient_bytes": 788395
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 11.277540994342417,
+        "cpu_ms": 10.51199999999941,
+        "first_ms": 11.275500000920147,
+        "roots_per_second": 17734.362490930747,
+        "cpu_share": 0.9321180925232678
+      },
+      "memory": {
+        "retained_bytes": 649816,
+        "peak_bytes": 1232756,
+        "transient_bytes": 582940
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 128.3362089889124,
+        "cpu_ms": 53.69299999999999,
+        "first_ms": 0.6304580019786954,
+        "roots_per_second": 1558.4066381240775,
+        "cpu_share": 0.41837763810398043
+      },
+      "memory": {
+        "retained_bytes": 5408,
+        "peak_bytes": 248374,
+        "transient_bytes": 242966
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 33.56170799816027,
+        "cpu_ms": 15.993999999999176,
+        "first_ms": 0.8169590146280825,
+        "roots_per_second": 5959.172280831573,
+        "cpu_share": 0.4765550072980763
+      },
+      "memory": {
+        "retained_bytes": 3960,
+        "peak_bytes": 208740,
+        "transient_bytes": 204780
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 16.97133301058784,
+        "cpu_ms": 11.76300000000019,
+        "first_ms": 1.2325419811531901,
+        "roots_per_second": 11784.578139809451,
+        "cpu_share": 0.6931099632929041
+      },
+      "memory": {
+        "retained_bytes": 3960,
+        "peak_bytes": 205232,
+        "transient_bytes": 201272
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 11.856583005283028,
+        "cpu_ms": 9.945000000000093,
+        "first_ms": 2.46545800473541,
+        "roots_per_second": 16868.266338698468,
+        "cpu_share": 0.838774543691789
+      },
+      "memory": {
+        "retained_bytes": 3688,
+        "peak_bytes": 558776,
+        "transient_bytes": 555088
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 16.381499997805804,
+        "cpu_ms": 15.068000000001192,
+        "first_ms": 16.38066698797047,
+        "roots_per_second": 12208.894181045003,
+        "cpu_share": 0.9198180876000032
+      },
+      "memory": {
+        "retained_bytes": 665836,
+        "peak_bytes": 1202048,
+        "transient_bytes": 536212
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 144.7306249756366,
+        "cpu_ms": 72.28100000000026,
+        "first_ms": 0.7240839768201113,
+        "roots_per_second": 1381.8775399723952,
+        "cpu_share": 0.49941745233372525
+      },
+      "memory": {
+        "retained_bytes": 6168,
+        "peak_bytes": 276023,
+        "transient_bytes": 269855
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 44.02383300475776,
+        "cpu_ms": 24.526999999999077,
+        "first_ms": 1.2203329824842513,
+        "roots_per_second": 4542.993791076427,
+        "cpu_share": 0.5571300435686367
+      },
+      "memory": {
+        "retained_bytes": 3928,
+        "peak_bytes": 252642,
+        "transient_bytes": 248714
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 21.442500001285225,
+        "cpu_ms": 16.125999999999863,
+        "first_ms": 1.6075840103439987,
+        "roots_per_second": 9327.270606879438,
+        "cpu_share": 0.7520578290326827
+      },
+      "memory": {
+        "retained_bytes": 3848,
+        "peak_bytes": 318222,
+        "transient_bytes": 314374
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 16.359000001102686,
+        "cpu_ms": 14.177999999999358,
+        "first_ms": 3.8421250064857304,
+        "roots_per_second": 12225.686165812025,
+        "cpu_share": 0.8666788922943751
+      },
+      "memory": {
+        "retained_bytes": 4792,
+        "peak_bytes": 903208,
+        "transient_bytes": 898416
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 23.36337504675612,
+        "cpu_ms": 22.147999999999612,
+        "first_ms": 23.362250009085983,
+        "roots_per_second": 8560.407030223527,
+        "cpu_share": 0.9479794745269368
+      },
+      "memory": {
+        "retained_bytes": 772424,
+        "peak_bytes": 1447015,
+        "transient_bytes": 674591
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 139.7012080415152,
+        "cpu_ms": 69.57899999999917,
+        "first_ms": 0.6975000142119825,
+        "roots_per_second": 1431.6268470675338,
+        "cpu_share": 0.4980558219605537
+      },
+      "memory": {
+        "retained_bytes": 30611,
+        "peak_bytes": 282675,
+        "transient_bytes": 252064
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 47.94816701905802,
+        "cpu_ms": 30.879999999999797,
+        "first_ms": 1.2294159969314933,
+        "roots_per_second": 4171.170921309792,
+        "cpu_share": 0.6440287902502275
+      },
+      "memory": {
+        "retained_bytes": 12167,
+        "peak_bytes": 216193,
+        "transient_bytes": 204026
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 27.766124985646456,
+        "cpu_ms": 22.709000000000756,
+        "first_ms": 1.9534999737516046,
+        "roots_per_second": 7203.021671313116,
+        "cpu_share": 0.817867095669275
+      },
+      "memory": {
+        "retained_bytes": 7504,
+        "peak_bytes": 270480,
+        "transient_bytes": 262976
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 24.20333301415667,
+        "cpu_ms": 21.951000000001386,
+        "first_ms": 5.606957944110036,
+        "roots_per_second": 8263.324719906092,
+        "cpu_share": 0.9069412046333503
+      },
+      "memory": {
+        "retained_bytes": 5227,
+        "peak_bytes": 924928,
+        "transient_bytes": 919701
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 6.354334007482976,
+        "cpu_ms": 5.910000000000082,
+        "first_ms": 6.3530419720336795,
+        "roots_per_second": 31474.580933969864,
+        "cpu_share": 0.9300738665988224
+      },
+      "memory": {
+        "retained_bytes": 204774,
+        "peak_bytes": 301426,
+        "transient_bytes": 96652
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 82.41770800668746,
+        "cpu_ms": 37.72500000000001,
+        "first_ms": 0.3845419851131737,
+        "roots_per_second": 2426.6629688825096,
+        "cpu_share": 0.4577293025054635
+      },
+      "memory": {
+        "retained_bytes": 4458,
+        "peak_bytes": 39197,
+        "transient_bytes": 34739
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 15.873834025114775,
+        "cpu_ms": 10.840999999999212,
+        "first_ms": 0.41091599268838763,
+        "roots_per_second": 12599.350584337102,
+        "cpu_share": 0.6829477984239429
+      },
+      "memory": {
+        "retained_bytes": 4004,
+        "peak_bytes": 44401,
+        "transient_bytes": 40397
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 9.7430000314489,
+        "cpu_ms": 7.187999999999306,
+        "first_ms": 0.6988749955780804,
+        "roots_per_second": 20527.558180686734,
+        "cpu_share": 0.73776044101381
+      },
+      "memory": {
+        "retained_bytes": 2560,
+        "peak_bytes": 70540,
+        "transient_bytes": 67980
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 6.86408398905769,
+        "cpu_ms": 5.984999999999019,
+        "first_ms": 1.4039590023458004,
+        "roots_per_second": 29137.17261018775,
+        "cpu_share": 0.8719298903597255
+      },
+      "memory": {
+        "retained_bytes": 2247,
+        "peak_bytes": 201902,
+        "transient_bytes": 199655
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "page_size": null,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 4.951332986820489,
+        "cpu_ms": 4.561999999999955,
+        "first_ms": 4.949374997522682,
+        "roots_per_second": 40393.1629184226,
+        "cpu_share": 0.9213680461692104
+      },
+      "memory": {
+        "retained_bytes": 197984,
+        "peak_bytes": 298758,
+        "transient_bytes": 100774
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "page_size": 1,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 89.04270798666403,
+        "cpu_ms": 38.13299999999842,
+        "first_ms": 0.438000017311424,
+        "roots_per_second": 2246.113180092794,
+        "cpu_share": 0.42825516948237485
+      },
+      "memory": {
+        "retained_bytes": 4349,
+        "peak_bytes": 41392,
+        "transient_bytes": 37043
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "page_size": 8,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 15.708165999967605,
+        "cpu_ms": 9.070000000001244,
+        "first_ms": 0.4683330189436674,
+        "roots_per_second": 12732.231121087749,
+        "cpu_share": 0.5774066813414086
+      },
+      "memory": {
+        "retained_bytes": 6281,
+        "peak_bytes": 48157,
+        "transient_bytes": 41876
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "page_size": 32,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 8.881542016752064,
+        "cpu_ms": 5.402000000000129,
+        "first_ms": 0.790167017839849,
+        "roots_per_second": 22518.612153471408,
+        "cpu_share": 0.6082277142652772
+      },
+      "memory": {
+        "retained_bytes": 6567,
+        "peak_bytes": 72678,
+        "transient_bytes": 66111
+      }
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "page_size": 128,
+      "roots": 200,
+      "timing": {
+        "wall_ms": 5.3338330471888185,
+        "cpu_ms": 4.307999999998202,
+        "first_ms": 1.400000008288771,
+        "roots_per_second": 37496.486716135485,
+        "cpu_share": 0.8076743238652213
+      },
+      "memory": {
+        "retained_bytes": 8913,
+        "peak_bytes": 182044,
+        "transient_bytes": 173131
+      }
+    }
+  ],
+  "contributors": [
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 6.2992490000000005,
+      "cumulative_ms": 23.81919
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.271219,
+      "cumulative_ms": 9.646274
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3000,
+      "self_ms": 5.216024000000001,
+      "cumulative_ms": 27.483444000000002
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.981101,
+      "cumulative_ms": 19.306176
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 3000,
+      "self_ms": 3.731927,
+      "cumulative_ms": 7.857946000000001
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.8654610000000003,
+      "cumulative_ms": 11.613175
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.6067720000000003,
+      "cumulative_ms": 5.5688
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_retention.py:_refresh_one",
+      "calls": 3000,
+      "self_ms": 2.382724,
+      "cumulative_ms": 5.356787
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_compile.py:raw_member_of",
+      "calls": 12000,
+      "self_ms": 2.354117,
+      "cumulative_ms": 5.771669
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_graph_construction.py:allocate",
+      "calls": 3000,
+      "self_ms": 2.3097440000000002,
+      "cumulative_ms": 10.092335
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 6.405413,
+      "cumulative_ms": 24.167249
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3072,
+      "self_ms": 5.589459000000001,
+      "cumulative_ms": 29.253704000000003
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.226467,
+      "cumulative_ms": 9.633333
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.96082,
+      "cumulative_ms": 19.328272000000002
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 3072,
+      "self_ms": 3.998300000000001,
+      "cumulative_ms": 8.413726
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.8237500000000004,
+      "cumulative_ms": 11.559957
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.6419710000000003,
+      "cumulative_ms": 5.584002
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_compile.py:raw_member_of",
+      "calls": 12360,
+      "self_ms": 2.5240880000000003,
+      "cumulative_ms": 6.157624
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_retention.py:_refresh_one",
+      "calls": 3000,
+      "self_ms": 2.380135,
+      "cumulative_ms": 5.815489
+    },
+    {
+      "provider": "provider-free",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_graph_construction.py:allocate",
+      "calls": 3000,
+      "self_ms": 2.3086,
+      "cumulative_ms": 9.822747000000001
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 5400,
+      "self_ms": 9.847186,
+      "cumulative_ms": 50.910321
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 9.397557,
+      "cumulative_ms": 37.787383
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 5400,
+      "self_ms": 6.609789,
+      "cumulative_ms": 13.254971000000001
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.408926,
+      "cumulative_ms": 9.873101
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 5.1922500000000005,
+      "cumulative_ms": 21.60163
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_compile.py:raw_member_of",
+      "calls": 24000,
+      "self_ms": 4.773092,
+      "cumulative_ms": 11.633899000000001
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_prepared.py:_raw_driver_presence",
+      "calls": 24000,
+      "self_ms": 4.156680000000001,
+      "cumulative_ms": 19.557339
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_page.py:exact_stored_equal",
+      "calls": 2400,
+      "self_ms": 3.9550090000000004,
+      "cumulative_ms": 4.487983
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 3.003998,
+      "cumulative_ms": 11.859825
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_compile.py:raw_member_of",
+      "calls": 24000,
+      "self_ms": 2.7532300000000003,
+      "cumulative_ms": 14.387129
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 5544,
+      "self_ms": 10.340242000000002,
+      "cumulative_ms": 53.656345
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 9.368529,
+      "cumulative_ms": 37.796846
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 5544,
+      "self_ms": 6.977275000000001,
+      "cumulative_ms": 13.988426000000002
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.3411610000000005,
+      "cumulative_ms": 9.761266
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 5.144926,
+      "cumulative_ms": 21.527925
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_compile.py:raw_member_of",
+      "calls": 24720,
+      "self_ms": 5.019141,
+      "cumulative_ms": 12.231407
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_prepared.py:_raw_driver_presence",
+      "calls": 24720,
+      "self_ms": 4.379042,
+      "cumulative_ms": 20.554669
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_page.py:exact_stored_equal",
+      "calls": 2400,
+      "self_ms": 3.974193,
+      "cumulative_ms": 4.507308000000001
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.8979300000000006,
+      "cumulative_ms": 11.771976
+    },
+    {
+      "provider": "provider-free",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_compile.py:raw_member_of",
+      "calls": 24720,
+      "self_ms": 2.8954090000000003,
+      "cumulative_ms": 15.126816000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 6.374919,
+      "cumulative_ms": 24.041812000000004
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.217612,
+      "cumulative_ms": 9.596449
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.962560000000001,
+      "cumulative_ms": 19.24831
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 3000,
+      "self_ms": 3.5461570000000004,
+      "cumulative_ms": 7.421535
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3000,
+      "self_ms": 3.1998550000000003,
+      "cumulative_ms": 14.174209
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.8046710000000004,
+      "cumulative_ms": 11.517812000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.635983,
+      "cumulative_ms": 5.615884
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_retention.py:_refresh_one",
+      "calls": 3000,
+      "self_ms": 2.4004070000000004,
+      "cumulative_ms": 5.393306000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_graph_construction.py:allocate",
+      "calls": 3000,
+      "self_ms": 2.3052840000000003,
+      "cumulative_ms": 10.301713000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "eager",
+      "name": "_typed.py:_broad_arms",
+      "calls": 3000,
+      "self_ms": 2.257514,
+      "cumulative_ms": 4.486870000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 6.3584130000000005,
+      "cumulative_ms": 23.898172000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.256655,
+      "cumulative_ms": 9.646974
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.9994130000000006,
+      "cumulative_ms": 19.350008000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 3000,
+      "self_ms": 3.74967,
+      "cumulative_ms": 7.897439000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3000,
+      "self_ms": 3.4001020000000004,
+      "cumulative_ms": 15.058255
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.8065110000000004,
+      "cumulative_ms": 11.582095
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.618936,
+      "cumulative_ms": 5.540223
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_retention.py:_refresh_one",
+      "calls": 3000,
+      "self_ms": 2.390203,
+      "cumulative_ms": 5.840084000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_graph_construction.py:allocate",
+      "calls": 3000,
+      "self_ms": 2.2942120000000004,
+      "cumulative_ms": 9.798193
+    },
+    {
+      "provider": "postgres",
+      "workload": "conventional-fanout",
+      "delivery": "stream",
+      "name": "_typed.py:_broad_arms",
+      "calls": 3000,
+      "self_ms": 2.165797,
+      "cumulative_ms": 4.367401
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 9.466915000000002,
+      "cumulative_ms": 37.982823
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 5400,
+      "self_ms": 6.283289,
+      "cumulative_ms": 12.521275
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 5400,
+      "self_ms": 5.861159000000001,
+      "cumulative_ms": 24.760083
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.339408000000001,
+      "cumulative_ms": 9.795617000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 5.198987000000001,
+      "cumulative_ms": 21.522333
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_page.py:exact_stored_equal",
+      "calls": 2400,
+      "self_ms": 4.062578,
+      "cumulative_ms": 4.592266
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 3.3186970000000002,
+      "cumulative_ms": 12.125579
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_typed.py:_broad_arms",
+      "calls": 3000,
+      "self_ms": 2.766156,
+      "cumulative_ms": 6.417829000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_root.py:_reachable",
+      "calls": 600,
+      "self_ms": 2.722548,
+      "cumulative_ms": 4.140503
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "eager",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.6927890000000003,
+      "cumulative_ms": 5.619180000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 9.29676,
+      "cumulative_ms": 37.517091
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 5400,
+      "self_ms": 6.539491000000001,
+      "cumulative_ms": 13.009485000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 5400,
+      "self_ms": 6.0369720000000004,
+      "cumulative_ms": 25.661001000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 3000,
+      "self_ms": 5.310548,
+      "cumulative_ms": 9.725501000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 5.137677,
+      "cumulative_ms": 21.439516
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_page.py:exact_stored_equal",
+      "calls": 2400,
+      "self_ms": 4.00544,
+      "cumulative_ms": 4.536641
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_typed.py:_broad_arms",
+      "calls": 3000,
+      "self_ms": 2.889279,
+      "cumulative_ms": 6.559321000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_typed.py:state",
+      "calls": 3000,
+      "self_ms": 2.866613,
+      "cumulative_ms": 11.703152000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_root.py:_reachable",
+      "calls": 600,
+      "self_ms": 2.697534,
+      "cumulative_ms": 4.132560000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "duplicate-include",
+      "delivery": "stream",
+      "name": "_root.py:_decode",
+      "calls": 3000,
+      "self_ms": 2.65492,
+      "cumulative_ms": 5.551437
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 5400,
+      "self_ms": 7.152728000000001,
+      "cumulative_ms": 13.539945000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 7.040704,
+      "cumulative_ms": 63.65631100000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3000,
+      "self_ms": 6.569292,
+      "cumulative_ms": 35.750193
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "__init__.py:is_document_value",
+      "calls": 15600,
+      "self_ms": 5.020546,
+      "cumulative_ms": 9.689185000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.769421,
+      "cumulative_ms": 34.433174
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_build_record",
+      "calls": 2400,
+      "self_ms": 4.389254,
+      "cumulative_ms": 15.060276000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_codec.py:decode_canonical_wire",
+      "calls": 9600,
+      "self_ms": 4.219525,
+      "cumulative_ms": 10.44809
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_convert.py:_classify_payload",
+      "calls": 3000,
+      "self_ms": 4.15916,
+      "cumulative_ms": 29.657555000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 3000,
+      "self_ms": 4.007122,
+      "cumulative_ms": 8.394464000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "eager",
+      "name": "_identity.py:claim_identity",
+      "calls": 3000,
+      "self_ms": 3.9297610000000005,
+      "cumulative_ms": 6.815153
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 5400,
+      "self_ms": 7.227479,
+      "cumulative_ms": 13.620350000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 7.071465000000001,
+      "cumulative_ms": 64.11652500000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 3000,
+      "self_ms": 6.797693000000001,
+      "cumulative_ms": 36.847215000000006
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "__init__.py:is_document_value",
+      "calls": 15852,
+      "self_ms": 5.468081000000001,
+      "cumulative_ms": 10.521478
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 3000,
+      "self_ms": 4.737448,
+      "cumulative_ms": 34.560782
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_build_record",
+      "calls": 2400,
+      "self_ms": 4.355759,
+      "cumulative_ms": 15.142682
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_convert.py:_classify_payload",
+      "calls": 3000,
+      "self_ms": 4.195529,
+      "cumulative_ms": 29.78854
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_codec.py:decode_canonical_wire",
+      "calls": 9600,
+      "self_ms": 4.19509,
+      "cumulative_ms": 10.546343000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 3000,
+      "self_ms": 4.115463000000001,
+      "cumulative_ms": 8.670451000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "document-heavy",
+      "delivery": "stream",
+      "name": "_identity.py:claim_identity",
+      "calls": 3000,
+      "self_ms": 3.9659250000000004,
+      "cumulative_ms": 6.991224000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 2.193524,
+      "cumulative_ms": 3.460475
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 1200,
+      "self_ms": 1.6054700000000002,
+      "cumulative_ms": 3.0463500000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_prepared.py:convert_driver",
+      "calls": 600,
+      "self_ms": 1.4031900000000002,
+      "cumulative_ms": 7.332543
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_graph_construction.py:construct",
+      "calls": 600,
+      "self_ms": 1.181075,
+      "cumulative_ms": 17.435855
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 600,
+      "self_ms": 1.094162,
+      "cumulative_ms": 7.387971
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_materialization.py:roots",
+      "calls": 603,
+      "self_ms": 1.068509,
+      "cumulative_ms": 46.383693
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_build_record",
+      "calls": 600,
+      "self_ms": 1.0334390000000002,
+      "cumulative_ms": 3.620747
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "__init__.py:is_document_value",
+      "calls": 3000,
+      "self_ms": 1.007654,
+      "cumulative_ms": 1.9635990000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_retention.py:_refresh_one",
+      "calls": 600,
+      "self_ms": 0.974882,
+      "cumulative_ms": 2.885937
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "eager",
+      "name": "_convert.py:_decode_row",
+      "calls": 600,
+      "self_ms": 0.953182,
+      "cumulative_ms": 1.9986410000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 2.54998,
+      "cumulative_ms": 18.811395
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 1200,
+      "self_ms": 1.617291,
+      "cumulative_ms": 3.087035
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_prepared.py:convert_driver",
+      "calls": 600,
+      "self_ms": 1.5231320000000002,
+      "cumulative_ms": 7.833235000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_graph_construction.py:construct",
+      "calls": 600,
+      "self_ms": 1.207907,
+      "cumulative_ms": 17.578881000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "__init__.py:is_document_value",
+      "calls": 3090,
+      "self_ms": 1.149642,
+      "cumulative_ms": 2.219106
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 600,
+      "self_ms": 1.053144,
+      "cumulative_ms": 7.412534
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_build_record",
+      "calls": 600,
+      "self_ms": 1.035951,
+      "cumulative_ms": 3.6589020000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_retention.py:_refresh_one",
+      "calls": 600,
+      "self_ms": 1.015841,
+      "cumulative_ms": 2.971974
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_convert.py:_decode_row",
+      "calls": 600,
+      "self_ms": 0.999783,
+      "cumulative_ms": 2.06112
+    },
+    {
+      "provider": "postgres",
+      "workload": "versioned-document",
+      "delivery": "stream",
+      "name": "_convert.py:_classify_payload",
+      "calls": 600,
+      "self_ms": 0.966983,
+      "cumulative_ms": 10.379246
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 2.080271,
+      "cumulative_ms": 3.3400340000000006
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_instance_state.py:publish",
+      "calls": 600,
+      "self_ms": 1.1765510000000001,
+      "cumulative_ms": 2.145021
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_graph_construction.py:construct",
+      "calls": 600,
+      "self_ms": 1.157251,
+      "cumulative_ms": 19.852731000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_materialization.py:roots",
+      "calls": 603,
+      "self_ms": 1.0291000000000001,
+      "cumulative_ms": 36.900245000000005
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_typed.py:_edge",
+      "calls": 600,
+      "self_ms": 0.9767510000000001,
+      "cumulative_ms": 7.898935000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_retention.py:_refresh_one",
+      "calls": 600,
+      "self_ms": 0.9206770000000001,
+      "cumulative_ms": 2.899276
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "__init__.py:_edge",
+      "calls": 600,
+      "self_ms": 0.8818520000000001,
+      "cumulative_ms": 3.7205150000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_graph_construction.py:_populate",
+      "calls": 600,
+      "self_ms": 0.866132,
+      "cumulative_ms": 3.5201610000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_page.py:add_claim",
+      "calls": 600,
+      "self_ms": 0.77169,
+      "cumulative_ms": 1.7875180000000002
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "eager",
+      "name": "_convert.py:_decode_row",
+      "calls": 600,
+      "self_ms": 0.744762,
+      "cumulative_ms": 0.8321160000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_root.py:__init__",
+      "calls": 600,
+      "self_ms": 2.4614730000000002,
+      "cumulative_ms": 7.137475000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_graph_construction.py:construct",
+      "calls": 600,
+      "self_ms": 1.180592,
+      "cumulative_ms": 19.928674
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_instance_state.py:publish",
+      "calls": 600,
+      "self_ms": 1.1481640000000002,
+      "cumulative_ms": 2.12393
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_retention.py:_refresh_one",
+      "calls": 600,
+      "self_ms": 0.9770100000000002,
+      "cumulative_ms": 3.580922
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_typed.py:_edge",
+      "calls": 600,
+      "self_ms": 0.9713880000000001,
+      "cumulative_ms": 7.837451000000001
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "__init__.py:_edge",
+      "calls": 600,
+      "self_ms": 0.8970290000000001,
+      "cumulative_ms": 3.702926
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_graph_construction.py:_populate",
+      "calls": 600,
+      "self_ms": 0.8864650000000001,
+      "cumulative_ms": 3.5276350000000005
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_read_plan.py:_frozen_query_value",
+      "calls": 957,
+      "self_ms": 0.871106,
+      "cumulative_ms": 2.197125
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_page.py:add_claim",
+      "calls": 600,
+      "self_ms": 0.85707,
+      "cumulative_ms": 1.9674130000000003
+    },
+    {
+      "provider": "postgres",
+      "workload": "bitemporal-current",
+      "delivery": "stream",
+      "name": "_identity.py:claim_identity",
+      "calls": 600,
+      "self_ms": 0.837666,
+      "cumulative_ms": 2.1885559999999997
+    }
+  ]
+}

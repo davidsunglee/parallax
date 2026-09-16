@@ -1,0 +1,68 @@
+{
+  "provenance": {
+    "measured_on": "2026-09-11",
+    "source": "Transcribed from the COR-147 measurement report; the raw JSON emitted by measure_sqlalchemy_delivery.py was not retained.",
+    "script": "../scripts/measure_sqlalchemy_delivery.py",
+    "sqlalchemy": "2.0.52 with compiled extensions",
+    "python": "3.14.7",
+    "platform": "darwin/arm64",
+    "postgresql": "18.6 (Testcontainers, pg-full profile)",
+    "roots": 200,
+    "fanout": 4,
+    "page_sizes": [1, 8, 32, 128],
+    "warmups": 3,
+    "repeats": 5,
+    "eager": "Session.execute(select(...)).scalars().all() on a fresh Session per operation",
+    "stream": "ORM yield_per execution option, drained retaining only the last root",
+    "relationships": "selectinload",
+    "memory_scope": "tracemalloc Python allocations after warm-up; excludes PostgreSQL, driver C buffers, RSS",
+    "units": {"wall_ms": "median wall milliseconds", "first_ms": "median milliseconds to the first root with populated relationships", "kib": "KiB retained / transient / peak"}
+  },
+  "workloads": {
+    "conventional-fanout": {
+      "eager": {"wall_ms": 8.57, "first_ms": 7.99, "statements": 2, "memory_kib": {"retained": 1213.8, "transient": 640.6, "peak": 1854.5}},
+      "stream": {
+        "1":   {"wall_ms": 133.38, "first_ms": 1.11, "statements": 201},
+        "8":   {"wall_ms": 20.63,  "first_ms": 1.23, "statements": 26},
+        "32":  {"wall_ms": 8.60,   "first_ms": 1.54, "statements": 8, "memory_kib": {"retained": 65.8, "transient": 359.6, "peak": 425.4}},
+        "128": {"wall_ms": 7.68,   "first_ms": 4.35, "statements": 3}
+      }
+    },
+    "duplicate-include": {
+      "eager": {"wall_ms": 12.67, "first_ms": 11.94, "statements": 3, "memory_kib": {"retained": 1351.4, "transient": 759.2, "peak": 2110.6}},
+      "stream": {
+        "1":   {"wall_ms": 245.32, "first_ms": 1.62, "statements": 401},
+        "8":   {"wall_ms": 36.69,  "first_ms": 1.87, "statements": 51},
+        "32":  {"wall_ms": 38.65,  "first_ms": 6.51, "statements": 15, "memory_kib": {"retained": 123.8, "transient": 415.3, "peak": 539.2}},
+        "128": {"wall_ms": 21.95,  "first_ms": 12.77, "statements": 5}
+      }
+    },
+    "document-heavy": {
+      "eager": {"wall_ms": 11.49, "first_ms": 10.39, "statements": 2, "memory_kib": {"retained": 1711.9, "transient": 608.9, "peak": 2320.8}},
+      "stream": {
+        "1":   {"wall_ms": 155.66, "first_ms": 1.22, "statements": 201},
+        "8":   {"wall_ms": 24.54,  "first_ms": 1.44, "statements": 26},
+        "32":  {"wall_ms": 10.53,  "first_ms": 2.01, "statements": 8, "memory_kib": {"retained": 74.9, "transient": 444.4, "peak": 519.3}},
+        "128": {"wall_ms": 11.32,  "first_ms": 6.41, "statements": 3}
+      }
+    },
+    "versioned-document": {
+      "eager": {"wall_ms": 1.83, "first_ms": 1.46, "statements": 1, "memory_kib": {"retained": 334.4, "transient": 55.6, "peak": 390.0}},
+      "stream": {
+        "1":   {"wall_ms": 19.88, "first_ms": 0.52, "statements": 1},
+        "8":   {"wall_ms": 3.70,  "first_ms": 0.63, "statements": 1},
+        "32":  {"wall_ms": 1.99,  "first_ms": 0.66, "statements": 1, "memory_kib": {"retained": 2.7, "transient": 136.2, "peak": 138.9}},
+        "128": {"wall_ms": 1.49,  "first_ms": 0.86, "statements": 1}
+      }
+    },
+    "bitemporal-current": {
+      "eager": {"wall_ms": 1.22, "first_ms": 1.02, "statements": 1, "memory_kib": {"retained": 256.9, "transient": 63.6, "peak": 320.5}},
+      "stream": {
+        "1":   {"wall_ms": 20.59, "first_ms": 0.59, "statements": 1},
+        "8":   {"wall_ms": 3.54,  "first_ms": 0.59, "statements": 1},
+        "32":  {"wall_ms": 2.13,  "first_ms": 0.69, "statements": 1, "memory_kib": {"retained": 4.4, "transient": 120.3, "peak": 124.7}},
+        "128": {"wall_ms": 1.75,  "first_ms": 1.02, "statements": 1}
+      }
+    }
+  }
+}

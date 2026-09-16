@@ -1,0 +1,74 @@
+{
+  "provenance": {
+    "measured_on": "2026-09-11",
+    "source": "Transcribed from the COR-146 measurement report; the raw JSON emitted by the script was not retained. The commit measured was not recorded in that report.",
+    "script": "../scripts/measure_parallax_delivery.py (pre-repair revision; see the 2026-09-15 note)",
+    "python": "3.14.7",
+    "platform": "darwin/arm64",
+    "postgresql": "18.6 (Testcontainers, pg-full profile)",
+    "roots": 200,
+    "fanout": 4,
+    "page_sizes": [1, 8, 32, 128],
+    "warmups": 3,
+    "repeats": {"provider-free": 10, "postgres": 5},
+    "memory_scope": "tracemalloc Python allocations after Database/model preparation; excludes PostgreSQL, driver C buffers, RSS",
+    "units": {"wall_ms": "median wall milliseconds", "cpu_ms": "median process CPU milliseconds", "first_ms": "median milliseconds to the first published root", "kib": "KiB retained / transient / peak"}
+  },
+  "provider-free": {
+    "conventional-fanout": {
+      "eager": {"wall_ms": 15.10, "cpu_ms": 15.10, "first_ms": 15.10, "roots_per_second": 13245},
+      "stream": {"32": {"wall_ms": 18.77, "cpu_ms": 18.77, "first_ms": 1.57, "roots_per_second": 10653}}
+    },
+    "duplicate-include": {
+      "eager": {"wall_ms": 22.24, "cpu_ms": 22.23, "first_ms": 22.24, "roots_per_second": 8993},
+      "stream": {"32": {"wall_ms": 26.88, "cpu_ms": 26.86, "first_ms": 2.69, "roots_per_second": 7441}}
+    }
+  },
+  "postgres": {
+    "conventional-fanout": {
+      "eager": {"wall_ms": 17.25, "cpu_ms": 16.39, "first_ms": 17.24, "roots_per_second": 11596, "memory_kib": {"retained": 751.8, "transient": 767.3, "peak": 1519.1}},
+      "stream": {
+        "1":   {"wall_ms": 490.44, "first_ms": 2.44, "peak_kib": 51.1},
+        "8":   {"wall_ms": 63.85,  "first_ms": 2.28},
+        "32":  {"wall_ms": 29.62,  "cpu_ms": 19.44, "first_ms": 3.31, "roots_per_second": 6752, "memory_kib": {"retained": 4.1, "transient": 296.5, "peak": 300.6}},
+        "128": {"wall_ms": 24.57,  "first_ms": 8.71, "peak_kib": 804.7}
+      }
+    },
+    "duplicate-include": {
+      "eager": {"wall_ms": 28.22, "cpu_ms": 24.00, "first_ms": 28.21, "roots_per_second": 7088, "memory_kib": {"retained": 767.5, "transient": 1281.1, "peak": 2048.6}},
+      "stream": {
+        "1":   {"wall_ms": 278.16, "first_ms": 1.56, "peak_kib": 58.7},
+        "8":   {"wall_ms": 105.62, "first_ms": 3.37},
+        "32":  {"wall_ms": 40.69,  "cpu_ms": 28.19, "first_ms": 4.54, "roots_per_second": 4916, "memory_kib": {"retained": 4.2, "transient": 456.7, "peak": 460.9}},
+        "128": {"wall_ms": 37.07,  "first_ms": 14.47, "peak_kib": 1308.7}
+      }
+    },
+    "document-heavy": {
+      "eager": {"wall_ms": 31.87, "cpu_ms": 28.59, "first_ms": 31.87, "roots_per_second": 6275, "memory_kib": {"retained": 912.4, "transient": 1348.9, "peak": 2261.4}},
+      "stream": {
+        "1":   {"wall_ms": 596.53, "first_ms": 2.83, "peak_kib": 78.7},
+        "8":   {"wall_ms": 118.47, "first_ms": 3.96},
+        "32":  {"wall_ms": 43.51,  "cpu_ms": 32.49, "first_ms": 5.39, "roots_per_second": 4596, "memory_kib": {"retained": 38.2, "transient": 495.9, "peak": 534.1}},
+        "128": {"wall_ms": 39.64,  "first_ms": 17.14, "peak_kib": 1464.4}
+      }
+    },
+    "versioned-document": {
+      "eager": {"wall_ms": 7.28, "cpu_ms": 6.16, "first_ms": 7.28, "roots_per_second": 27463, "memory_kib": {"retained": 250.2, "transient": 276.4, "peak": 526.6}},
+      "stream": {
+        "1":   {"wall_ms": 86.91, "first_ms": 0.62, "peak_kib": 48.7},
+        "8":   {"wall_ms": 25.39, "first_ms": 1.22},
+        "32":  {"wall_ms": 12.44, "cpu_ms": 8.46, "first_ms": 1.64, "roots_per_second": 16083, "memory_kib": {"retained": 15.8, "transient": 140.0, "peak": 155.7}},
+        "128": {"wall_ms": 9.61,  "first_ms": 4.07, "peak_kib": 352.8}
+      }
+    },
+    "bitemporal-current": {
+      "eager": {"wall_ms": 8.38, "cpu_ms": 8.06, "first_ms": 8.38, "roots_per_second": 23854, "memory_kib": {"retained": 308.9, "transient": 145.5, "peak": 454.5}},
+      "stream": {
+        "1":   {"wall_ms": 280.36, "first_ms": 1.33, "peak_kib": 47.4},
+        "8":   {"wall_ms": 36.72,  "first_ms": 1.78},
+        "32":  {"wall_ms": 17.30,  "cpu_ms": 11.38, "first_ms": 2.16, "roots_per_second": 11564, "memory_kib": {"retained": 12.9, "transient": 148.3, "peak": 161.2}},
+        "128": {"wall_ms": 9.54,   "first_ms": 3.82, "peak_kib": 386.1}
+      }
+    }
+  }
+}
