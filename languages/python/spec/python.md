@@ -6561,15 +6561,23 @@ locking unions retain the core refusal.
   invalidate historical provenance. `cost_report.py --verify` fails only for
   evidence that is not evidence: a missing, malformed, or incomplete required
   member — the Snapshot delivery and write-lowering envelopes, each complete
-  over every supported runtime — a non-authoritative or dirty capture, a
-  workload digest that disagrees with the inspected checkout, or members
-  produced at different commits. Every other finding is an advisory line that
-  never fails verification: a timing or memory ceiling exceeded, a
+  over every supported runtime — a Snapshot delivery envelope that is not
+  authoritative, a capture taken from a dirty tree, a workload digest that
+  disagrees with the inspected checkout, or members produced at different
+  commits. The write-lowering envelope's own sampling protocol makes it
+  non-authoritative, and verification accepts it so. A workload digest names
+  the frozen workload manifest with the fixture and model sources defining it,
+  never the instruments that measured it. Every other finding is an advisory
+  line that never fails verification: a timing or memory ceiling exceeded, a
   streamed-memory arm grown past its limit, a lock that moved since the capture
   (named with both digests, by `--verify` and by `--freshness-only` alike), and
-  a producing commit the inspected head no longer descends from. Blocking
-  memory gates belong to the cost class, and a capture costs about an hour of
-  runner time and is taken once at its producing commit, so neither a
+  a producing commit the inspected head no longer descends from.
+  `--freshness-only` exits non-zero only where it made no comparison at all —
+  no single Snapshot delivery member, or provenance whose recorded lock digest
+  is absent or malformed — which is provenance `--verify` refuses the member
+  for in any case. Blocking memory gates belong to the cost class, and a
+  capture costs about an hour of runner time and is taken once at its
+  producing commit, so neither a
   dependency bump, a rebase, nor an instrument edit made after it may force
   another; comparability across such an edit is a judgement recorded beside
   the evidence, not a source hash. The non-required cost-report CI

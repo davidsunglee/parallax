@@ -37,15 +37,21 @@ every high-water mark agreed within 1% and every retained checkpoint within
 delta near either allowance is therefore weak evidence on its own.
 
 `cost_report.py --verify` fails only for evidence that is not evidence: a
-missing, malformed, or incomplete required member, a non-authoritative or dirty
-capture, a stale workload digest, or members produced at different commits.
-Everything else it has to say is an advisory line, printed and never an exit
-status: a timing or memory ceiling exceeded, a streamed-memory arm grown past
-its limit, a `uv.lock` that moved since the capture (`--freshness-only` reports
-the same way), and a producing commit the inspected head no longer descends
-from. Blocking memory gates are cost-class tests, not this verifier; a
-dependency bump or a rebase changes nothing a reading measured; and the capture
-budget above is why drift is stated rather than made a reason to capture again.
+missing, malformed, or incomplete required member, a Snapshot delivery member
+that is not authoritative, a capture taken from a dirty tree, a stale workload
+digest, or members produced at different commits. The write-lowering member is
+`non-authoritative` because its sampling protocol is its own, and verification
+accepts it so. Everything else it has to say is an advisory line, printed and
+never an exit status: a timing or memory ceiling exceeded, a streamed-memory arm
+grown past its limit, a `uv.lock` that moved since the capture, and a producing
+commit the inspected head no longer descends from. `--freshness-only` reports a
+moved lock the same way and exits non-zero only where no comparison was made at
+all — no single Snapshot delivery member, or provenance whose recorded
+`lockDigest` is absent or not a digest — which is provenance `--verify` fails
+the member for in any case. Blocking memory gates are cost-class tests, not this
+verifier; a dependency bump or a rebase changes nothing a reading measured; and
+the capture budget recorded below is why drift is stated rather than made a
+reason to capture again.
 
 Retained checkpoints are taken separately from the uninterrupted timing and
 high-water runs, each after 200 warm-up runs of its seam, at the production
@@ -81,11 +87,13 @@ The read-plan window lives in the Snapshot member rather than beside the write
 member's `model-preparation` window because it is read-side evidence over the
 same geometry Entities the geometry read families deliver, it runs on the same
 runtime matrix as every other Snapshot cell, and the Snapshot member's recorded
-`workloadDigest` already covers its reading child and the frozen manifest, so
-one digest names everything the cell depends on. The per-root delivery cells
-keep their warmed steady-state meaning: a delivery reading's floor holds the
-compiled plan its 200 warm-ups established, and this window prices that plan
-separately.
+`workloadDigest` already covers the frozen manifest and the fixture and model
+sources its levels are defined by, so one digest names what this cell measures
+as it names what every other Snapshot cell measures. No digest names the reading
+child that measures it, for the reason recorded under the manifest below. The
+per-root delivery cells keep their warmed steady-state meaning: a delivery
+reading's floor holds the compiled plan its 200 warm-ups established, and this
+window prices that plan separately.
 
 ### Live roots and lifetimes
 
@@ -287,16 +295,17 @@ checkout.
 | instance-state | non-authoritative | 3.13, 3.14 | 624 | 4 | 4 |
 | write-lowering | non-authoritative | 3.13, 3.14 | 802 | — | — |
 
-`cost_report.py --verify before/portfolio.json` reports one failure and seven
-advisories, all pre-existing in the historical `db56a19e` portfolio and none a
-consequence of this ticket: `document-heavy.streamedMemory.page128PeakKiB` grows
-37.69 KiB between the 200- and 2000-root arms against the 16 KiB limit (37.79
-KiB historically), and the timing ceilings of
+`cost_report.py --verify before/portfolio.json` reported no failure and eight
+advisories at its producing commit, all pre-existing in the historical
+`db56a19e` portfolio and none a consequence of this ticket:
+`document-heavy.streamedMemory.page128PeakKiB` grows 37.69 KiB between the 200-
+and 2000-root arms against the 16 KiB limit (37.79 KiB historically), and the
+timing ceilings of
 `duplicate-include.providerFreeCpu.eager` (`maxMs`, `minRootsPerSecond`),
 `document-heavy.live.eager` (both), `versioned-document.live.page32` (both),
 and `versioned-document.live.page128.minRootsPerSecond` are exceeded on the
-authority runtime by 1–9%. No limit was relaxed to obtain this capture: the
-growth failure is recorded as an outcome.
+authority runtime by 1–9%. No limit was relaxed to obtain this capture: each
+exceeded limit is recorded as the advisory outcome it is.
 
 ### Keyed writes per row (`keyed-write` window)
 

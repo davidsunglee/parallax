@@ -392,14 +392,26 @@ def test_adverse_timing_and_memory_outcomes_are_advisory_and_never_fail(
     portfolio = tmp_path / "portfolio.json"
     portfolio.write_text(json.dumps(document), encoding="utf-8")
     assert cost_report.main(["--verify", str(portfolio)]) == 0
-    assert "advisory:" in capsys.readouterr().out
+    printed = capsys.readouterr()
+    assert (
+        f"advisory: {timing['workload']}.{timing['cell']} is outside its timing ceiling"
+        in printed.out
+    )
+    assert printed.err == ""
     memory = _first_comparison(snapshot, timing=False)
     _push_outside(snapshot, memory)
     assert verify(document) == []
     assert advisories(document)[-1] == (
         f"advisory: {memory['workload']}.{memory['cell']} is outside its memory ceiling"
     )
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
     assert cost_report.main(["--verify", str(portfolio)]) == 0
+    printed = capsys.readouterr()
+    assert (
+        f"advisory: {memory['workload']}.{memory['cell']} is outside its memory ceiling"
+        in printed.out
+    )
+    assert printed.err == ""
 
 
 def test_an_unpublished_producing_commit_is_advisory_and_a_dirty_or_stale_one_fails(
@@ -594,7 +606,16 @@ def test_freshness_only_compares_an_explicit_lock_without_revalidating_historica
     assert "advisory: stale snapshot-delivery evidence:" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("members", [[], [{"subject": "snapshot-delivery", "provenance": None}]])
+@pytest.mark.parametrize(
+    "members",
+    [
+        [],
+        [{"subject": "snapshot-delivery", "provenance": None}],
+        [{"subject": "snapshot-delivery", "provenance": {}}],
+        [{"subject": "snapshot-delivery", "provenance": {"lockDigest": "0" * 63}}],
+        [{"subject": "snapshot-delivery", "provenance": {"lockDigest": 0}}],
+    ],
+)
 def test_freshness_reports_unavailable_evidence_without_losing_validation_diagnostics(
     tmp_path: Path, members: list[dict[str, object]], capsys: pytest.CaptureFixture[str]
 ) -> None:
