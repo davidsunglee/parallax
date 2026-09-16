@@ -6519,8 +6519,9 @@ locking unions retain the core refusal.
   atomic report over every required live, provider-free, eager, streamed,
   first-result, memory-scaling, and materialization-stress cell, taken on every
   supported CPython minor, beside the provider-free geometry read families and
-  the read-plan compilation cells, which price one query's compiled plan on a
-  cold read plan cache of production capacity. Its
+  the read-plan compilation cells, which price one query's compiled plan as the
+  growth of an already composed and empty read plan cache of production
+  capacity. Its
   Budget Contract comparisons are made on the runtime the authority fingerprint
   names; every other runtime's readings are evidence without comparisons, and
   the geometry and read-plan cells are compared against nothing. It withholds an overall
@@ -6537,7 +6538,11 @@ locking unions retain the core refusal.
   runtimes through the same children and windows, and answers a document that
   is readings alone — marked `diagnostic`, carrying no provenance, and no
   envelope — so it can be neither validated, verified, nor retained as a
-  capture; the capture path is unchanged by its presence. Pull
+  capture. No diagnostic run writes a document at an evidence path: a member
+  script's diagnostic is printed and refuses `--out`, and the collector refuses
+  an output directory inside the one the committed capture lives in, so a
+  diagnostic can never be mistaken for evidence by having replaced it. The
+  capture path is unchanged by its presence. Pull
   requests observe merge base and head on one assigned runner and main observes
   head, uploading commit-keyed envelopes and advisory summaries from a
   non-required CI job.

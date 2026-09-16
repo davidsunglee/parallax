@@ -89,6 +89,7 @@ from parallax.snapshot.handle._publication import (
 )
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_plan import (
+    DEFAULT_READ_PLAN_CACHE_CAPACITY,
     ReadPlanCache,
     check_read_plan_cache_capacity,
 )
@@ -203,7 +204,7 @@ class Database:
         runtime: DatabaseRuntime,
         model: DomainModel | ServingModel,
         *,
-        read_plan_cache_capacity: int = 16,
+        read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
@@ -291,7 +292,7 @@ class Database:
         adapter: DatabaseAdapter,
         model: DomainModel | ServingModel,
         *,
-        read_plan_cache_capacity: int = 16,
+        read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:

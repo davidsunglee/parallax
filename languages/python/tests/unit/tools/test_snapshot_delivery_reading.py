@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from inspect import signature
 from types import SimpleNamespace
 from typing import Any
 
@@ -8,9 +9,9 @@ import pytest
 
 import snapshot_delivery_reading
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
+from parallax.snapshot.handle import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
-    PLAN_CACHE_CAPACITY,
     PLAN_METRICS,
     CatalogPort,
     ColdPlan,
@@ -162,31 +163,35 @@ def test_plan_addresses_name_a_frozen_level_layout_and_metric() -> None:
         plan_address("plan-unknown", "columns.retainedKiB")
 
 
+def test_the_plan_window_reads_a_cache_of_the_capacity_a_production_handle_composes() -> None:
+    composed = signature(Database.connect).parameters["read_plan_cache_capacity"].default
+    cache = ColdPlan(plan_levels()[0], "columns").cache
+    statistics = cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+
+    assert statistics.capacity == composed
+
+
 @in_a_child_interpreter
-def test_a_cold_plan_checkpoint_holds_one_compiled_plan_and_a_warm_cache_holds_nothing_new() -> (
-    None
-):
+def test_a_cold_plan_checkpoint_prices_one_entry_in_a_cache_composed_before_the_window() -> None:
     import tracemalloc
 
     level = plan_levels()[0]
     for layout in ("columns", "document"):
         prepared = ColdPlan(level, layout)
+        composed = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
         tracemalloc.start()
         try:
             cold = retained(prepared.cold)
-            assert prepared.cache is None
-            prepared.cache = prepared.compile()
-            statistics = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
-            assert (statistics.capacity, statistics.size, statistics.hits, statistics.misses) == (
-                PLAN_CACHE_CAPACITY,
-                1,
-                0,
-                1,
-            )
+            reopened = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+            prepared.plan()
+            planted = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
             warm = retained(prepared.warm)
             statistics = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
         finally:
             tracemalloc.stop()
+        assert (composed.size, composed.hits, composed.misses) == (0, 0, 0), layout
+        assert (reopened.size, reopened.hits, reopened.misses) == (0, 0, 0), layout
+        assert (planted.size, planted.hits, planted.misses) == (1, 0, 1), layout
         assert cold > 4 * 1_024, (layout, cold)
         assert warm < 512, (layout, warm)
         assert statistics.size == 1 and statistics.misses == 1 and statistics.hits > 0

@@ -13,7 +13,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
-from typing import Literal, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core import deep_fetch
 from parallax.core.dialect import Dialect, LockMode
@@ -50,7 +50,8 @@ type _ReadPlanKey = tuple[
 ]
 type _FamilyKey = tuple[str, _Identity, _Identity, object, ResultForm, Concurrency | None]
 
-_DEFAULT_CAPACITY = 16
+DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 16
+"""The bounded plan reuse a handle composed without an explicit capacity gets."""
 
 
 def check_read_plan_cache_capacity(capacity: int) -> int:
@@ -433,7 +434,7 @@ class ReadPlanCache:
         "_pending",
     )
 
-    def __init__(self, capacity: int = _DEFAULT_CAPACITY) -> None:
+    def __init__(self, capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY) -> None:
         self._capacity = check_read_plan_cache_capacity(capacity)
         self._entries: OrderedDict[_ReadPlanKey, _CachedDelivery] = OrderedDict()
         self._pending: dict[_ReadPlanKey, _Pending] = {}

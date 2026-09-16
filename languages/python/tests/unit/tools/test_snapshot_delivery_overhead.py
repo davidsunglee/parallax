@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 import snapshot_delivery_overhead as report
+from evidence_boundary import measurement_source
 from interpreter_matrix import CURRENT_MINOR, authority_minor
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
@@ -151,8 +154,15 @@ def test_a_runtime_short_of_a_reading_is_named_and_withholds_every_comparison() 
     assert all(comparison.outcome == "unavailable" for comparison in envelope.comparisons)
 
 
-# Review Cadence requires a fresh capture whenever an instrument changes, so the
-# digest a capture records has to move when one does.
+def _documents(document: Mapping[str, object], key: str) -> list[Mapping[str, object]]:
+    """The JSON objects a diagnostic document lists under ``key``."""
+    listed = document[key]
+    assert isinstance(listed, list)
+    return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", listed)]
+
+
+# A capture is comparable only with one taken by the same instruments, so the
+# digest it records has to move when an instrument's own source does.
 def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -163,6 +173,44 @@ def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
     instrument.write_text("# an edited instrument\n", encoding="utf-8")
     assert report.evidence_digest() != original
     assert report.evidence_digest() != workload_digest()
+
+
+def test_the_evidence_boundary_is_every_instrument_and_no_production_module() -> None:
+    covered = {path.relative_to(report.WORKSPACE).as_posix() for path in report.INSTRUMENTS}
+
+    assert {
+        "tools/snapshot_delivery_overhead.py",
+        "tools/snapshot_delivery_reading.py",
+        "tools/interpreter_matrix.py",
+        "tests/unit/memory_instruments.py",
+        "tests/unit/_structural_geometry_support.py",
+        "tests/unit/_snapshot_materialization_support.py",
+    } <= covered
+    assert not [name for name in covered if name.startswith("packages/")]
+
+
+def test_a_diagnostic_run_is_printed_and_can_write_over_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    evidence = tmp_path / "portfolio.json"
+    evidence.write_text("the committed capture\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as refused:
+        report.main(["--diagnostic", "--select", "plan-*", "--out", str(evidence)])
+
+    assert refused.value.code == 2
+    assert "diagnostic" in capsys.readouterr().err
+    assert evidence.read_text(encoding="utf-8") == "the committed capture\n"
+
+
+def test_the_digested_report_source_is_what_measures_and_not_what_it_prints() -> None:
+    digested = measurement_source(report.REPORT_MODULE, report.DIAGNOSTIC_DECLARATIONS)
+    whole = report.REPORT_MODULE.read_bytes()
+
+    for printing in (b"def diagnostic(", b"def selection(", b"def main("):
+        assert printing in whole and printing not in digested
+    for measuring in (b"def _measure_runtime(", b"def run_child(", b"def plan_cells("):
+        assert measuring in digested
 
 
 def test_a_diagnostic_run_answers_only_the_chosen_addresses_and_is_no_envelope() -> None:
@@ -180,14 +228,13 @@ def test_a_diagnostic_run_answers_only_the_chosen_addresses_and_is_no_envelope()
     assert document["diagnostic"] is True
     assert document["runtimes"] == ["3.13"]
     assert document["unavailable"] == []
-    readings = document["readings"]
-    assert isinstance(readings, list)
-    assert {(r["runtime"], r["workload"], r["cell"]) for r in readings} == {  # type: ignore[index]
+    readings = _documents(document, "readings")
+    assert {(r["runtime"], r["workload"], r["cell"]) for r in readings} == {
         ("3.13", cell.workload, cell.path)
         for cell in plan_cells()
         if cell.path.endswith(".retainedKiB")
     }
-    assert all(r["window"] == PLAN_WINDOW for r in readings)  # type: ignore[index]
+    assert all(r["window"] == PLAN_WINDOW for r in readings)
     assert {request.workload for request in asked} == {cell.workload for cell in plan_cells()}
     assert "provenance" not in document and "comparisons" not in document
     with pytest.raises(Exception):  # noqa: B017 - any schema or semantic refusal proves it is no envelope
@@ -204,9 +251,8 @@ def test_a_diagnostic_run_names_live_cells_it_cannot_provision() -> None:
         None,
     )
     assert document["readings"] == []
-    unavailable = document["unavailable"]
-    assert isinstance(unavailable, list)
-    assert any(item["code"] == "cell-unprovisioned" for item in unavailable)  # type: ignore[index]
+    unavailable = _documents(document, "unavailable")
+    assert any(item["code"] == "cell-unprovisioned" for item in unavailable)
 
 
 def test_selection_matches_workload_and_cell_patterns_and_defaults_to_everything() -> None:
