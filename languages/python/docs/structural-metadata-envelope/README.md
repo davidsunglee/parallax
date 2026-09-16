@@ -295,9 +295,11 @@ checkout.
 | instance-state | non-authoritative | 3.13, 3.14 | 624 | 4 | 4 |
 | write-lowering | non-authoritative | 3.13, 3.14 | 802 | — | — |
 
-`cost_report.py --verify before/portfolio.json` reported no failure and eight
-advisories at its producing commit, all pre-existing in the historical
-`db56a19e` portfolio and none a consequence of this ticket:
+`cost_report.py --verify before/portfolio.json` reported one failure (the arm
+growth below) and seven timing advisories at its producing commit, when arm
+growth was still a verification failure; the current verifier reports the same
+eight outcomes as advisories. All are pre-existing in the historical
+`db56a19e` portfolio and none is a consequence of this ticket:
 `document-heavy.streamedMemory.page128PeakKiB` grows 37.69 KiB between the 200-
 and 2000-root arms against the 16 KiB limit (37.79 KiB historically), and the
 timing ceilings of
