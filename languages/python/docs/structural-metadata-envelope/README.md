@@ -57,12 +57,26 @@ total of what the window allocated.
 | `live-delivery` | snapshot-delivery | a connected Wire find or stream against PostgreSQL, parsing included | nothing |
 | `provider-free-delivery` | snapshot-delivery | a Wire find over already-parsed provider rows through production planning, materialization, and publication | parsing and provider work |
 | `positional-materialization` | snapshot-delivery | the shipped raw-row conversion loop over prepared reads, to a finished Page | planning, statement execution, and publication |
+| `read-plan-compilation` | snapshot-delivery | one whole-table instance read planned through `ReadPlanCache.plan` on a fresh cache of production capacity (16): deep-fetch planning, `compile_read`, and the prepared level binding the cache then retains | model preparation and query validation (`preflight`), both composed once outside the window; statement execution, materialization, and publication |
 
 Retained checkpoints: `keyed-write` samples with the serialized rows, the
 prepared instruction, the buffered item, and the settled plan alive, before
 lowering; `predicate-acquisition` samples inside the transaction body with the
 group buffered, before any flush; `model-preparation` samples with the prepared
-selection alive; a geometry read samples with the delivered results alive.
+selection alive; a geometry read samples with the delivered results alive;
+`read-plan-compilation` samples with the fresh cache holding its one entry and
+the rendered plan handle already dropped, which is what production retains
+between two deliveries of the same query.
+
+The read-plan window lives in the Snapshot member rather than beside the write
+member's `model-preparation` window because it is read-side evidence over the
+same geometry Entities the geometry read families deliver, it runs on the same
+runtime matrix as every other Snapshot cell, and the Snapshot member's recorded
+`workloadDigest` already covers its reading child and the frozen manifest, so
+one digest names everything the cell depends on. The per-root delivery cells
+keep their warmed steady-state meaning: a delivery reading's floor holds the
+compiled plan its 200 warm-ups established, and this window prices that plan
+separately.
 
 ### Live roots and lifetimes
 
@@ -158,6 +172,17 @@ the width of the replaced ancestor is separated from the payload that replaced
 it. The predecessor and successor carry the same fixed-width leaves, so the two
 differ in one value and in nothing a measurement reads as size.
 
+### Read-plan compilation — 3 levels, both layouts
+
+The whole-table instance read of `depth-1`, `depth-8`, and `width-64`
+(`PLAN_LEVEL_IDS`) is compiled on a cold `ReadPlanCache` under each layout
+(`plan-<level>`, cells `<layout>.elapsedUs`, `<layout>.peakKiB`,
+`<layout>.retainedKiB`, `read-plan-compilation` window). The shallow baseline,
+the deepest chain, and the widest occurrence are the structures a compiled plan
+could differ over; sparsity and Many cardinality are stored-data properties and
+add nothing a plan retains. Elapsed and peak are one compilation on a fresh
+cache per sample; retained is the checkpoint above.
+
 ### Predicate-acquisition families — 3 levels per layout
 
 A Bitemporal Entity with the categorical Value Object shape, under each layout.
@@ -198,12 +223,32 @@ retained by the fixture modules and are outside every window.
   of any family here.
 - The acquisition window abandons its transaction after the checkpoint, so the
   cost of the flush that would follow is measured only by the keyed-write cases.
+- The read-plan window compiles on a cache of production capacity that holds
+  nothing else, so it prices one entry, never eviction or family reuse across
+  entries; and it plans one query shape per level, the whole-table instance
+  read, so a plan with includes or paging is not measured here.
+
+## Diagnostic runs
+
+`cost_report.py --diagnostic` takes readings for a chosen subset — one or both
+required members (`--member`), workloads or cases by shell pattern (`--select`),
+and runtimes (`--runtime`) — through the same reading children and windows the
+capture uses, and writes each member's answer as `diagnostic-<subject>.json`
+(or prints it). The member scripts accept the same subset directly
+(`snapshot_delivery_overhead.py --diagnostic --select … --cell … --runtime …`,
+`write_lowering_overhead.py --diagnostic --case … --runtime …`). A diagnostic
+document is readings alone: it carries `diagnostic: true`, no provenance, no
+comparisons, and is not an envelope, so `validate` refuses it, `--verify`
+refuses any document that is or contains one, and it can never be retained as
+a capture. Without `--diagnostic` every one of those options is refused and the
+capture path runs exactly as documented above.
 
 ## Baseline capture — `before/`
 
 > **Superseded pending recapture.** The capture below predates the
-> changed-ancestor family and the instrument coverage now folded into each
-> member's recorded `workloadDigest`. Its measured values remain the readings
+> changed-ancestor family, the read-plan compilation window, and the instrument
+> coverage now folded into each member's recorded `workloadDigest`. Its
+> measured values remain the readings
 > that commit produced and are not rewritten; they are no longer a complete
 > capture of the manifest above, and `--verify` reports both members' digests as
 > stale until a fresh capture replaces this directory. Nothing here is a

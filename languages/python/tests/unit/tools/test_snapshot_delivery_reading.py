@@ -7,16 +7,21 @@ from typing import Any
 import pytest
 
 import snapshot_delivery_reading
-from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog
+from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
+    PLAN_CACHE_CAPACITY,
+    PLAN_METRICS,
     CatalogPort,
+    ColdPlan,
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
+    _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
     geometry_address,
+    plan_address,
 )
-from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
+from tests.unit.memory_instruments import in_a_child_interpreter, retained, serve_one_measurement
 
 
 class _Stream:
@@ -141,6 +146,55 @@ def test_a_geometry_level_reads_every_metric_over_a_provider_free_find() -> None
         assert value > 0
         assert reading_unit == ("us/root" if metric == "elapsedUsPerRoot" else "KiB")
         assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)
+
+
+def test_plan_addresses_name_a_frozen_level_layout_and_metric() -> None:
+    level, layout, metric = plan_address("plan-depth-8", "document.elapsedUs") or (None,) * 3
+    assert level is not None and level.id == "depth-8"
+    assert (layout, metric) == ("document", "elapsedUs")
+    assert plan_address("read-depth-8", "document.peakKiB") is None
+    assert plan_address("conventional-fanout", "live.eager.maxMs") is None
+    with pytest.raises(ValueError, match="not a read-plan compilation level"):
+        plan_address("plan-many-8", "columns.retainedKiB")
+    with pytest.raises(ValueError, match="not a read-plan compilation address"):
+        plan_address("plan-depth-1", "columns.elapsedUsPerRoot")
+    with pytest.raises(KeyError):
+        plan_address("plan-unknown", "columns.retainedKiB")
+
+
+@in_a_child_interpreter
+def test_a_cold_plan_checkpoint_holds_one_compiled_plan_and_a_warm_cache_holds_nothing_new() -> (
+    None
+):
+    import tracemalloc
+
+    level = plan_levels()[0]
+    for layout in ("columns", "document"):
+        prepared = ColdPlan(level, layout)
+        tracemalloc.start()
+        try:
+            cold = retained(prepared.cold)
+            assert prepared.cache is None
+            prepared.cache = prepared.compile()
+            statistics = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+            assert (statistics.capacity, statistics.size, statistics.hits, statistics.misses) == (
+                PLAN_CACHE_CAPACITY,
+                1,
+                0,
+                1,
+            )
+            warm = retained(prepared.warm)
+            statistics = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+        finally:
+            tracemalloc.stop()
+        assert cold > 4 * 1_024, (layout, cold)
+        assert warm < 512, (layout, warm)
+        assert statistics.size == 1 and statistics.misses == 1 and statistics.hits > 0
+        for metric in PLAN_METRICS:
+            value, reading_unit, samples = _plan(level, layout, metric, warmups=1, measured=2)
+            assert value > 0
+            assert reading_unit == ("us" if metric == "elapsedUs" else "KiB")
+            assert len(samples) == (2 if metric == "elapsedUs" else 1)
 
 
 if __name__ == "__main__":

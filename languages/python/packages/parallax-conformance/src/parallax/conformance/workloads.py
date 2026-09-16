@@ -24,6 +24,7 @@ __all__ = [
     "ACQUISITION_LEVELS",
     "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
+    "PLAN_LEVEL_IDS",
     "READ_GEOMETRY_ROOTS",
     "STRUCTURAL_LAYOUTS",
     "AcquisitionLevel",
@@ -32,6 +33,7 @@ __all__ = [
     "Workload",
     "ancestor_levels",
     "catalog",
+    "plan_levels",
     "structural_digest",
     "workload_digest",
 ]
@@ -118,6 +120,19 @@ def ancestor_levels() -> tuple[GeometryLevel, ...]:
     return tuple(by_id[level_id] for level_id in ANCESTOR_LEVEL_IDS)
 
 
+PLAN_LEVEL_IDS: Final[tuple[str, ...]] = ("depth-1", "depth-8", "width-64")
+"""The geometry levels whose whole-table instance read is compiled on a cold read
+plan cache: the shallow baseline, the deepest occurrence chain, and the widest
+occurrence. Sparsity and Many cardinality are properties of stored data, not of
+a compiled plan, so their levels add no structure a plan would retain."""
+
+
+def plan_levels() -> tuple[GeometryLevel, ...]:
+    """Every geometry level the read-plan compilation family measures."""
+    by_id = {level.id: level for level in GEOMETRY_LEVELS}
+    return tuple(by_id[level_id] for level_id in PLAN_LEVEL_IDS)
+
+
 def structural_digest() -> str:
     """The SHA-256 digest of every structural family's frozen identity and geometry."""
     manifest = {
@@ -125,6 +140,7 @@ def structural_digest() -> str:
         "readGeometryRoots": READ_GEOMETRY_ROOTS,
         "geometry": [asdict(level) for level in GEOMETRY_LEVELS],
         "ancestor": list(ANCESTOR_LEVEL_IDS),
+        "plan": list(PLAN_LEVEL_IDS),
         "acquisition": [asdict(level) for level in ACQUISITION_LEVELS],
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()

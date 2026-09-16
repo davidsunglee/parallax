@@ -18,7 +18,8 @@ import json
 import statistics
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
@@ -45,6 +46,7 @@ from parallax.conformance.workloads import (
     STRUCTURAL_LAYOUTS,
     Workload,
     catalog,
+    plan_levels,
     workload_digest,
 )
 
@@ -54,9 +56,13 @@ INSTRUMENTS: Final = (READING_SCRIPT, Path(__file__).resolve())
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
+PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
+GEOMETRY_PREFIX: Final = "read-"
+PLAN_PREFIX: Final = "plan-"
 LIVE_WINDOW: Final = "live-delivery"
 PROVIDER_FREE_WINDOW: Final = "provider-free-delivery"
 STRESS_WINDOW: Final = "positional-materialization"
+PLAN_WINDOW: Final = "read-plan-compilation"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     LIVE_WINDOW: "a connected Wire find or stream against PostgreSQL, parsing included",
     PROVIDER_FREE_WINDOW: (
@@ -64,6 +70,10 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "materialization, and publication; no parsing or provider work"
     ),
     STRESS_WINDOW: "the shipped raw-row conversion loop over prepared reads, to a finished Page",
+    PLAN_WINDOW: (
+        "one whole-table instance read planned on a cold read plan cache of production "
+        "capacity; no model preparation, query validation, execution, or materialization"
+    ),
 }
 
 
@@ -107,10 +117,20 @@ def expanded_cells(contract: BudgetContract) -> tuple[BudgetCell, ...]:
 def geometry_cells() -> tuple[GeometryCell, ...]:
     """Every geometry read address, in level then layout then metric order."""
     return tuple(
-        GeometryCell(f"read-{level.id}", f"{layout}.{metric}")
+        GeometryCell(f"{GEOMETRY_PREFIX}{level.id}", f"{layout}.{metric}")
         for level in GEOMETRY_LEVELS
         for layout in STRUCTURAL_LAYOUTS
         for metric in GEOMETRY_METRICS
+    )
+
+
+def plan_cells() -> tuple[GeometryCell, ...]:
+    """Every read-plan compilation address, in level then layout then metric order."""
+    return tuple(
+        GeometryCell(f"{PLAN_PREFIX}{level.id}", f"{layout}.{metric}")
+        for level in plan_levels()
+        for layout in STRUCTURAL_LAYOUTS
+        for metric in PLAN_METRICS
     )
 
 
@@ -135,8 +155,10 @@ def needs_database(path: str) -> bool:
     return path.startswith(("live.", "firstResult.", "eagerMemory.", "streamedMemory."))
 
 
-def window_of(path: str) -> str:
-    """The window one cell path is read over."""
+def window_of(path: str, workload: str = "") -> str:
+    """The window one cell is read over."""
+    if workload.startswith(PLAN_PREFIX):
+        return PLAN_WINDOW
     if needs_database(path):
         return LIVE_WINDOW
     if path.startswith("stress."):
@@ -207,6 +229,8 @@ def unit(path: str) -> str:
         return "B/projection"
     if path.endswith("elapsedUsPerRoot"):
         return "us/root"
+    if path.endswith(".elapsedUs"):
+        return "us"
     return "KiB"
 
 
@@ -281,7 +305,7 @@ def _reading(
         float(value),
         results[0].unit,
         samples,
-        window=window_of(path),
+        window=window_of(path, workload),
         runtime=runtime,
     )
 
@@ -291,22 +315,21 @@ def addresses(contract: BudgetContract, runtimes: Sequence[str]) -> tuple[Addres
     return tuple(
         (runtime, cell.workload, cell.path)
         for runtime in runtimes
-        for cell in (*expanded_cells(contract), *geometry_cells())
+        for cell in (*expanded_cells(contract), *geometry_cells(), *plan_cells())
     )
 
 
-def build_envelope(
+def _collected(
     contract: BudgetContract,
-    provenance: Provenance,
     results: Mapping[Address, Sequence[ChildResult]],
-    runtimes: Sequence[str] = (CURRENT_MINOR,),
-) -> CostReportEnvelope:
-    """Build and validate the report envelope from all attempted cells."""
+    selected: Sequence[Address],
+) -> tuple[list[Reading], list[Diagnostic]]:
+    """Every reading ``results`` completes among ``selected``, and every reason
+    one of them is unavailable."""
     readings: list[Reading] = []
     diagnostics: list[Diagnostic] = []
-    by_address: dict[Address, Reading] = {}
     scaling_arms = contract.memory_scaling_arms
-    for address in addresses(contract, runtimes):
+    for address in selected:
         runtime, workload, path = address
         outcomes = results.get(address, ())
         failures = [outcome for outcome in outcomes if isinstance(outcome, Diagnostic)]
@@ -322,9 +345,21 @@ def build_envelope(
                 )
             )
             continue
-        reading = _reading(runtime, workload, path, successful, scaling_arms)
-        readings.append(reading)
-        by_address[address] = reading
+        readings.append(_reading(runtime, workload, path, successful, scaling_arms))
+    return readings, diagnostics
+
+
+def build_envelope(
+    contract: BudgetContract,
+    provenance: Provenance,
+    results: Mapping[Address, Sequence[ChildResult]],
+    runtimes: Sequence[str] = (CURRENT_MINOR,),
+) -> CostReportEnvelope:
+    """Build and validate the report envelope from all attempted cells."""
+    readings, diagnostics = _collected(contract, results, addresses(contract, runtimes))
+    by_address = {
+        (reading.runtime or "", reading.workload, reading.cell): reading for reading in readings
+    }
     complete = not diagnostics and len(readings) == len(addresses(contract, runtimes))
     compared = authority_minor(contract.authority)
     comparisons = tuple(
@@ -420,15 +455,24 @@ def _request(
     )
 
 
+type Selection = Callable[[str, str], bool]
+"""Whether one (workload, cell) address is measured."""
+
+
+def every_cell(_workload: str, _path: str) -> bool:
+    return True
+
+
 def _measure_runtime(
     contract: BudgetContract,
-    provisioner: Provisioner,
+    provisioner: Provisioner | None,
     runner: ChildRunner,
     runtime: str,
     results: dict[Address, list[ChildResult]],
+    selected: Selection = every_cell,
 ) -> None:
     workloads = catalog(contract)
-    cells = expanded_cells(contract)
+    cells = [cell for cell in expanded_cells(contract) if selected(cell.workload, cell.path)]
     memory_children = contract.memory_children
     scaling_arms = contract.memory_scaling_arms
     for workload_id in contract.workload_ids:
@@ -436,9 +480,21 @@ def _measure_runtime(
         live = [
             cell for cell in cells if cell.workload == workload_id and needs_database(cell.path)
         ]
+        if live and provisioner is None:
+            for cell in live:
+                results[(runtime, cell.workload, cell.path)].append(
+                    Diagnostic(
+                        "cell-unprovisioned",
+                        f"CPython {runtime} {cell.workload}.{cell.path} needs a provisioned "
+                        "database",
+                    )
+                )
+            live = []
         if live:
+            assert provisioner is not None
             workload.provision(provisioner, scaling_arms[0])
         for cell in live:
+            assert provisioner is not None
             for _ in range(memory_children if is_memory_cell(cell.path) else 1):
                 results[(runtime, cell.workload, cell.path)].append(
                     runner(
@@ -455,8 +511,10 @@ def _measure_runtime(
         memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
         for roots in scaling_arms[1:]:
             if memory_live:
+                assert provisioner is not None
                 workload.provision(provisioner, roots)
             for cell in memory_live:
+                assert provisioner is not None
                 for _ in range(memory_children):
                     results[(runtime, cell.workload, cell.path)].append(
                         runner(
@@ -479,7 +537,9 @@ def _measure_runtime(
                         _request(contract, runtime, cell.workload, cell.path, scaling_arms[0], None)
                     )
                 )
-    for cell in geometry_cells():
+    for cell in (*geometry_cells(), *plan_cells()):
+        if not selected(cell.workload, cell.path):
+            continue
         for _ in range(memory_children if is_memory_cell(cell.path) else 1):
             results[(runtime, cell.workload, cell.path)].append(
                 runner(_request(contract, runtime, cell.workload, cell.path, scaling_arms[0], None))
@@ -507,27 +567,100 @@ def measure(
     return build_envelope(contract, provenance, results, selected)
 
 
+def selection(workloads: Sequence[str], cells: Sequence[str]) -> Selection:
+    """The addresses whose workload matches any of ``workloads`` and whose cell
+    matches any of ``cells``, as shell-style patterns; an empty list matches all."""
+
+    def selected(workload: str, path: str) -> bool:
+        return (not workloads or any(fnmatchcase(workload, p) for p in workloads)) and (
+            not cells or any(fnmatchcase(path, p) for p in cells)
+        )
+
+    return selected
+
+
+def diagnostic(
+    contract: BudgetContract,
+    runner: ChildRunner,
+    runtimes: Sequence[str],
+    selected: Selection,
+    provisioner: Provisioner | None,
+) -> dict[str, object]:
+    """Readings for a chosen subset of addresses, as a diagnostic document.
+
+    A diagnostic run answers a question about some cells; it is not evidence. It
+    carries no provenance and is not an envelope, so nothing downstream can
+    validate, verify, or retain it as a capture.
+    """
+    chosen = [
+        address for address in addresses(contract, runtimes) if selected(address[1], address[2])
+    ]
+    results: dict[Address, list[ChildResult]] = {address: [] for address in chosen}
+    for runtime in runtimes:
+        _measure_runtime(contract, provisioner, runner, runtime, results, selected)
+    readings, diagnostics = _collected(contract, results, chosen)
+    return {
+        "diagnostic": True,
+        "subject": SUBJECT,
+        "runtimes": list(runtimes),
+        "readings": [reading.document() for reading in readings],
+        "unavailable": [asdict(item) for item in diagnostics],
+    }
+
+
 def _number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"expected a number, received {value!r}")
     return float(value)
 
 
+def _diagnostic_selects_live(
+    contract: BudgetContract, runtimes: Sequence[str], selected: Selection
+) -> bool:
+    return any(
+        needs_database(path)
+        for _runtime, workload, path in addresses(contract, runtimes)
+        if selected(workload, path)
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--canary", action="store_true")
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="take readings for a subset of addresses; the result is not evidence",
+    )
+    parser.add_argument("--select", action="append", default=[], help="workload pattern")
+    parser.add_argument("--cell", action="append", default=[], help="cell pattern")
+    parser.add_argument("--runtime", action="append", default=[], help="CPython minor")
     args = parser.parse_args(argv)
+    if (args.select or args.cell or args.runtime) and not args.diagnostic:
+        parser.error("--select, --cell, and --runtime are diagnostic options")
     contract = BudgetContract.load()
-    if args.canary:
-        envelope = canary(contract, run_child)
+    if args.diagnostic:
+        runtimes = tuple(args.runtime) or supported_minors()
+        selected = selection(args.select, args.cell)
+        provisioner = (
+            Provisioner() if _diagnostic_selects_live(contract, runtimes, selected) else None
+        )
+        try:
+            document = diagnostic(contract, run_child, runtimes, selected, provisioner)
+        finally:
+            if provisioner is not None:
+                provisioner.close()
+        rendered = json.dumps(document, indent=2, sort_keys=True)
+    elif args.canary:
+        rendered = json.dumps(canary(contract, run_child).document(), indent=2, sort_keys=True)
     else:
         provisioner = Provisioner()
         try:
             envelope = measure(contract, provisioner, run_child)
         finally:
             provisioner.close()
-    rendered = json.dumps(envelope.document(), indent=2, sort_keys=True)
+        rendered = json.dumps(envelope.document(), indent=2, sort_keys=True)
     if args.out is None:
         print(rendered)
     else:

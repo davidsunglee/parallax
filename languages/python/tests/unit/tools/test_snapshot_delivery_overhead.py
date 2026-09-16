@@ -11,10 +11,13 @@ from interpreter_matrix import CURRENT_MINOR, authority_minor
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
+from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     GEOMETRY_METRICS,
     LIVE_WINDOW,
+    PLAN_METRICS,
+    PLAN_WINDOW,
     PROVIDER_FREE_WINDOW,
     STRESS_WINDOW,
     ChildReading,
@@ -23,10 +26,13 @@ from snapshot_delivery_overhead import (
     addresses,
     build_envelope,
     canary,
+    diagnostic,
     expanded_cells,
     expected_readings,
     geometry_cells,
     is_memory_cell,
+    plan_cells,
+    selection,
     unit,
     window_of,
 )
@@ -59,10 +65,30 @@ def test_geometry_cells_cover_every_level_layout_and_metric() -> None:
         assert is_memory_cell(cell.path) == (not cell.path.endswith("elapsedUsPerRoot"))
 
 
+def test_plan_cells_cover_the_frozen_levels_under_both_layouts_in_their_own_window() -> None:
+    cells = plan_cells()
+    assert len(cells) == (
+        len(workloads.plan_levels()) * len(workloads.STRUCTURAL_LAYOUTS) * len(PLAN_METRICS)
+    )
+    assert {cell.workload for cell in cells} == {
+        f"plan-{level_id}" for level_id in workloads.PLAN_LEVEL_IDS
+    }
+    for cell in cells:
+        assert window_of(cell.path, cell.workload) == PLAN_WINDOW
+        assert window_of(cell.path) == PROVIDER_FREE_WINDOW
+        assert unit(cell.path) == ("us" if cell.path.endswith(".elapsedUs") else "KiB")
+        assert is_memory_cell(cell.path) == (not cell.path.endswith(".elapsedUs"))
+        assert expected_readings(BudgetContract.load(), cell.path) == (
+            1 if cell.path.endswith(".elapsedUs") else BudgetContract.load().memory_children
+        )
+
+
 def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> None:
     contract = BudgetContract.load()
     expected = addresses(contract, ("3.13", "3.14"))
-    assert len(expected) == 2 * (len(expanded_cells(contract)) + len(geometry_cells()))
+    assert len(expected) == 2 * (
+        len(expanded_cells(contract)) + len(geometry_cells()) + len(plan_cells())
+    )
     assert len(set(expected)) == len(expected)
     assert window_of("live.eager.maxMs") == LIVE_WINDOW
     assert window_of("providerFreeCpu.eager.maxMs") == PROVIDER_FREE_WINDOW
@@ -95,7 +121,9 @@ def test_envelope_compares_the_authority_runtime_alone_and_labels_every_reading(
     assert {(r.runtime, r.workload, r.cell) for r in envelope.readings} == set(
         addresses(contract, runtimes)
     )
-    assert all(reading.window == window_of(reading.cell) for reading in envelope.readings)
+    assert all(
+        reading.window == window_of(reading.cell, reading.workload) for reading in envelope.readings
+    )
     assert {(c.workload, c.cell) for c in envelope.comparisons} == {
         (cell.workload, cell.path) for cell in expanded_cells(contract)
     }
@@ -135,3 +163,56 @@ def test_the_evidence_digest_covers_the_instruments_that_took_the_readings(
     instrument.write_text("# an edited instrument\n", encoding="utf-8")
     assert report.evidence_digest() != original
     assert report.evidence_digest() != workload_digest()
+
+
+def test_a_diagnostic_run_answers_only_the_chosen_addresses_and_is_no_envelope() -> None:
+    contract = BudgetContract.load()
+    asked: list[ChildRequest] = []
+
+    def runner(request: ChildRequest) -> ChildReading:
+        asked.append(request)
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples)
+
+    document = diagnostic(
+        contract, runner, ("3.13",), selection(["plan-*"], ["*.retainedKiB"]), None
+    )
+    assert document["diagnostic"] is True
+    assert document["runtimes"] == ["3.13"]
+    assert document["unavailable"] == []
+    readings = document["readings"]
+    assert isinstance(readings, list)
+    assert {(r["runtime"], r["workload"], r["cell"]) for r in readings} == {  # type: ignore[index]
+        ("3.13", cell.workload, cell.path)
+        for cell in plan_cells()
+        if cell.path.endswith(".retainedKiB")
+    }
+    assert all(r["window"] == PLAN_WINDOW for r in readings)  # type: ignore[index]
+    assert {request.workload for request in asked} == {cell.workload for cell in plan_cells()}
+    assert "provenance" not in document and "comparisons" not in document
+    with pytest.raises(Exception):  # noqa: B017 - any schema or semantic refusal proves it is no envelope
+        validate_envelope(document)
+
+
+def test_a_diagnostic_run_names_live_cells_it_cannot_provision() -> None:
+    contract = BudgetContract.load()
+    document = diagnostic(
+        contract,
+        lambda request: ChildReading(1.0, unit(request.cell), (1.0,) * request.measured),
+        (CURRENT_MINOR,),
+        selection(["conventional-fanout"], ["live.eager.maxMs"]),
+        None,
+    )
+    assert document["readings"] == []
+    unavailable = document["unavailable"]
+    assert isinstance(unavailable, list)
+    assert any(item["code"] == "cell-unprovisioned" for item in unavailable)  # type: ignore[index]
+
+
+def test_selection_matches_workload_and_cell_patterns_and_defaults_to_everything() -> None:
+    assert selection([], [])("anything", "any.cell")
+    chosen = selection(["read-*", "plan-depth-1"], ["columns.*"])
+    assert chosen("read-depth-8", "columns.peakKiB")
+    assert chosen("plan-depth-1", "columns.elapsedUs")
+    assert not chosen("plan-depth-8", "columns.elapsedUs")
+    assert not chosen("read-depth-8", "document.peakKiB")
