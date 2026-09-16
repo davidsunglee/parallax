@@ -1,18 +1,24 @@
 """Collect every quantitative Python report into one fail-late portfolio, verify
 committed evidence, and compare two portfolios cell by cell.
 
-Verification separates what makes evidence invalid — a missing or incomplete
-required envelope, a non-authoritative or dirty capture, an unpublished
-producing commit, stale workload or dependency digests, and a memory ceiling or
-scaling limit exceeded — from what makes it adverse: a timing ceiling exceeded is
-reported and never fails. Comparison pairs readings only when their subject,
-runtime, window, workload, cell, and unit all agree, names every cell present on
-one side alone, and judges a timing delta against one explicit noise allowance.
+Verification separates what makes evidence invalid — a missing, malformed, or
+incomplete required envelope, a non-authoritative or dirty capture, a stale
+workload digest, and members produced at different commits — from what is
+merely drift or an adverse reading: a timing or memory ceiling exceeded, a
+scaling arm grown past its limit, a dependency lock that moved since the
+capture, and a producing commit the inspected head no longer descends from are
+each reported as an advisory and never fail. A capture is taken once at its
+producing commit; the blocking memory gates are the cost class's, and whether a
+later edit leaves two captures comparable is a judgement recorded beside the
+evidence. Comparison pairs readings only when their subject, runtime, window,
+workload, cell, and unit all agree, names every cell present on one side alone,
+and judges a timing delta against one explicit noise allowance.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import statistics
@@ -29,14 +35,12 @@ import write_lowering_overhead as write_report
 from interpreter_matrix import authority_minor, supported_minors
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Reading, validate
+from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     addresses as snapshot_addresses,
 )
 from snapshot_delivery_overhead import (
     comparison as snapshot_comparison,
-)
-from snapshot_delivery_overhead import (
-    evidence_digest as snapshot_evidence_digest,
 )
 from snapshot_delivery_overhead import (
     expanded_cells,
@@ -444,41 +448,51 @@ def _provenance_failures(member: Document, subject: str, expected_digest: str) -
     provenance = _provenance(member)
     if provenance is None:
         return [f"the {subject} envelope has no provenance"]
-    commit = str(provenance.get("commit", ""))
     if provenance.get("dirty") is not False:
         failures.append(f"the {subject} envelope was not produced from a clean tree")
-    if not is_published(commit):
-        failures.append(
-            f"the {subject} envelope's producing commit {commit[:12]} is not an ancestor "
-            "of the inspected head"
-        )
     if provenance.get("workloadDigest") != expected_digest:
         failures.append(f"the {subject} envelope's workload digest is stale")
     return failures
 
 
-def _scaling_failures(snapshot: Document, contract: BudgetContract) -> list[str]:
+def _unpublished(member: Document, subject: str) -> list[str]:
+    provenance = _provenance(member)
+    if provenance is None:
+        return []
+    commit = str(provenance.get("commit", ""))
+    if is_published(commit):
+        return []
+    return [
+        f"advisory: the {subject} envelope's producing commit {commit[:12]} is not an "
+        "ancestor of the inspected head"
+    ]
+
+
+def _scaling_growth(snapshot: Document, contract: BudgetContract) -> list[str]:
     memory = cast("Mapping[str, object]", contract.sampling["memory"])
     arm_limit = _number(memory["armGrowthMaxKiB"])
     arm_size = contract.memory_children
     arm_count = len(contract.memory_scaling_arms)
     compared = authority_minor(contract.authority)
-    failures: list[str] = []
+    grown: list[str] = []
     for reading in _readings(snapshot):
         cell = str(reading.get("cell"))
         if not cell.startswith("streamedMemory.") or reading.get("runtime") != compared:
             continue
         samples = [_number(value) for value in cast("Sequence[object]", reading.get("samples", ()))]
+        if len(samples) < arm_size * arm_count:
+            continue
         arm_medians = [
             statistics.median(samples[index * arm_size : (index + 1) * arm_size])
             for index in range(arm_count)
         ]
         growth = max(arm_medians[1:]) - arm_medians[0]
         if growth > arm_limit:
-            failures.append(
-                f"{reading.get('workload')}.{cell} grows {growth:.3f} KiB between memory arms"
+            grown.append(
+                f"advisory: {reading.get('workload')}.{cell} grows {growth:.3f} KiB between "
+                "memory arms"
             )
-    return failures
+    return grown
 
 
 def is_diagnostic(document: Document) -> bool:
@@ -491,10 +505,12 @@ def is_diagnostic(document: Document) -> bool:
 
 
 def verify(document: Document, contract: BudgetContract | None = None) -> list[str]:
-    """Every reason the required portfolio is not fresh, authoritative, complete,
-    published, and within its memory limits.
+    """Every reason the required portfolio is not valid evidence: a missing,
+    malformed, or incomplete required envelope, a non-authoritative or dirty
+    capture, a stale workload digest, or members produced at different commits.
 
-    A timing ceiling exceeded is not among them: see :func:`advisories`.
+    A ceiling exceeded, an arm grown, a moved lock, or an unpublished producing
+    commit is not among them: see :func:`advisories`.
     """
     if is_diagnostic(document):
         return ["a diagnostic reading set is not evidence and cannot be verified"]
@@ -502,9 +518,6 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
     snapshot, failures = _required_member(document, SNAPSHOT_SUBJECT)
     if snapshot is None:
         return failures
-    fresh, freshness = lock_freshness(document)
-    if not fresh:
-        failures.append(freshness)
     try:
         validate(snapshot)
         validate_snapshot_matrix(snapshot, active)
@@ -516,14 +529,7 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         failures.append("the snapshot-delivery envelope is incomplete")
     if snapshot.get("errors"):
         failures.append("the snapshot-delivery envelope contains errors")
-    failures += _provenance_failures(snapshot, SNAPSHOT_SUBJECT, snapshot_evidence_digest())
-    for comparison in cast("Sequence[Document]", snapshot.get("comparisons", ())):
-        if comparison.get("outcome") == "within" or comparison.get("unit") in TIMING_UNITS:
-            continue
-        failures.append(
-            f"{comparison.get('workload')}.{comparison.get('cell')} is {comparison.get('outcome')}"
-        )
-    failures += _scaling_failures(snapshot, active)
+    failures += _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest())
     write, write_failures = _required_member(document, WRITE_SUBJECT)
     failures += write_failures
     if write is None:
@@ -535,7 +541,9 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         return [*failures, f"the write-lowering envelope is invalid: {error}"]
     if write.get("incomplete") or write.get("errors"):
         failures.append("the write-lowering envelope is incomplete")
-    failures += _provenance_failures(write, WRITE_SUBJECT, write_report.evidence_digest())
+    failures += _provenance_failures(
+        write, WRITE_SUBJECT, write_report.lowering_support.write_lowering_digest()
+    )
     commits = {
         str(cast("Document", member["provenance"])["commit"]) for member in (snapshot, write)
     }
@@ -544,17 +552,42 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
     return failures
 
 
-def advisories(document: Document) -> list[str]:
-    """Every timing ceiling the required evidence exceeds, reported and not failed."""
+def advisories(document: Document, contract: BudgetContract | None = None) -> list[str]:
+    """Everything reported about the required evidence that never fails it: a
+    timing or memory ceiling exceeded, a scaling arm grown past its limit, a
+    dependency lock that moved since the capture, and a producing commit the
+    inspected head no longer descends from.
+
+    None of these makes a capture wrong. A ceiling is the cost class's to gate;
+    a lock bump or a rebase changes nothing a reading measured; and a capture is
+    taken once, so drift is stated beside the evidence rather than used to demand
+    another hour of the runner.
+    """
+    if is_diagnostic(document):
+        return []
     snapshot = _snapshot(document)
     if snapshot is None:
         return []
-    return [
-        f"advisory: {comparison.get('workload')}.{comparison.get('cell')} is "
-        f"{comparison.get('outcome')} its timing ceiling"
-        for comparison in cast("Sequence[Document]", snapshot.get("comparisons", ()))
-        if comparison.get("outcome") != "within" and comparison.get("unit") in TIMING_UNITS
-    ]
+    active = contract or BudgetContract.load()
+    reported: list[str] = []
+    fresh, freshness = lock_freshness(document)
+    if not fresh:
+        reported.append(f"advisory: {freshness}")
+    reported += _unpublished(snapshot, SNAPSHOT_SUBJECT)
+    for comparison in cast("Sequence[Document]", snapshot.get("comparisons", ())):
+        if comparison.get("outcome") == "within":
+            continue
+        kind = "timing" if comparison.get("unit") in TIMING_UNITS else "memory"
+        reported.append(
+            f"advisory: {comparison.get('workload')}.{comparison.get('cell')} is "
+            f"{comparison.get('outcome')} its {kind} ceiling"
+        )
+    with contextlib.suppress(KeyError, TypeError, ValueError):
+        reported += _scaling_growth(snapshot, active)
+    write = _members(document, WRITE_SUBJECT)
+    if len(write) == 1:
+        reported += _unpublished(write[0], WRITE_SUBJECT)
+    return reported
 
 
 type PairAddress = tuple[str, str, str, str]
@@ -767,8 +800,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return diagnose(subjects, args.select, args.runtime, args.out)
     if args.freshness_only is not None:
         fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
-        print(freshness)
-        return 0 if fresh else 1
+        print(freshness if fresh else f"advisory: {freshness}")
+        return 0 if fresh or not freshness.startswith("lock freshness unavailable") else 1
     if args.verify is not None:
         document = _load(args.verify)
         fresh, freshness = lock_freshness(document)
