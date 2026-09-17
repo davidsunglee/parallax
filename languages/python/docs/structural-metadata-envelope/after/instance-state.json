@@ -1,0 +1,4482 @@
+{
+  "authority": "non-authoritative",
+  "comparisons": [
+    {
+      "cell": "aggregate.retained.reduction",
+      "limit": 0.33,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "ratio",
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.construction.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ratio",
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.attribute-read.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.serialization.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.retained.reduction",
+      "limit": 0.33,
+      "operator": "at-least",
+      "outcome": "within",
+      "unit": "ratio",
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.construction.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "within",
+      "unit": "ratio",
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.attribute-read.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.serialization.armAgainstArm",
+      "limit": 1.2,
+      "operator": "at-most",
+      "outcome": "outside",
+      "unit": "ratio",
+      "workload": "cpython-3.14"
+    }
+  ],
+  "errors": [],
+  "incomplete": [],
+  "provenance": {
+    "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
+    "commit": "1636e9f0ce072dce25ddd1ebeabd0b1368b65031",
+    "cores": 10,
+    "cpu": "Apple M5",
+    "cpython": "3.14.7",
+    "dirty": false,
+    "lockDigest": "bc31fd8f1c540887b91b19dc7c19f56d8c9a620d5bd9c0645ea3b6993bff66d2",
+    "machine": "Mac17,4",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "postgres": "not-used",
+    "ramGiB": 32,
+    "sampling": {
+      "construction": {
+        "marginalNodes": 11
+      },
+      "isolation": "one-child-per-scenario",
+      "runtimes": [
+        "3.13",
+        "3.14"
+      ],
+      "scenarios": [
+        "shallow",
+        "wide",
+        "nested",
+        "nullable",
+        "partial",
+        "polymorphic",
+        "warmed"
+      ],
+      "timing": {
+        "repetitions": 2000,
+        "warmups": [
+          200
+        ]
+      }
+    },
+    "workloadDigest": "ad704a677b8b4af8bff1ab39471b9db791853d4499ae00777724690e9ff795ce"
+  },
+  "readings": [
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 560.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 560.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1416.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 856.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 799.9332970939577,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 203.52521678432822,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 26.79161843843758,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 707.3329761624336,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 696.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 560.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1202.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 506.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2795.220853295177,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 195.32060250639915,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 28.802125598303974,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 759.2499605379999,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 384.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 248.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5216.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4832.0,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 3999.518748605624,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 11920.543742598966,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 83.61873915418983,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 83.61873915418983,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 96.54162568040192,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1484.9375002086163,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.4482758620689655,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5571428571428572,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.3142857142857143,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5571428571428572,
+      "workload": "cpython-3.13/shallow"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 16.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 16.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1352.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1352.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3360.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2008.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1941.3707952480763,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 111.31672072224319,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 24.501314328517765,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1242.8545160219073,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 17.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 976.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 840.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1664.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 688.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 8455.481252167374,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 139.26870888099074,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 24.316406779689714,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1286.1459981650114,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 18.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 512.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 376.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5680.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5168.0,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 7172.841654391959,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 16785.929311299697,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 299.29124866612256,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 299.29124866612256,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 86.19662548881024,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2678.4169604070485,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.47540983606557374,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5523809523809524,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6213017751479291,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.7218934911242604,
+      "workload": "cpython-3.13/wide"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3080.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3080.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4416.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1336.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 9662.668744567782,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 301.81079637259245,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 27.92089944705367,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2578.646002802998,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2792.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2656.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5184.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2392.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 14641.493750968948,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": -126.86873669736087,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 28.65829737856984,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2513.0834546871483,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1064.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 928.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 7754.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 6690.0,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 17478.835344081745,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 18871.581665007398,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 691.4593977853656,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 691.4593977853656,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 88.29169673845172,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 6237.312452867627,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6189111747851003,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6506024096385542,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6545454545454545,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6987012987012987,
+      "workload": "cpython-3.13/nested"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1160.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1160.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2496.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1336.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1274.0062025841326,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 196.5983014088124,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 22.195850033313036,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 874.5834929868579,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 11.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 976.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 840.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1704.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 728.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5679.991701617837,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 39.77880114689469,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 22.362498566508293,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 914.0420006588101,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 12.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 464.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 328.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5320.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4856.0,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5486.429150914773,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 14391.654339851812,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 199.3592013604939,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 199.3592013604939,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 81.46039908751845,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1952.4374511092901,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5245901639344263,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6095238095238096,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.7172413793103448,
+      "workload": "cpython-3.13/nullable"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 648.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 648.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1608.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 960.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 988.9499982818961,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 191.05002284049988,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 25.220803217962384,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 937.9165130667388,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 11.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 976.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 840.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1704.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 728.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5336.314550368115,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 233.26895316131413,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 23.35415338166058,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 919.853977393359,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 12.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 432.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 296.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5264.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4832.0,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4981.468798359856,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 14267.176721477881,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 244.26637100987136,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 244.26637100987136,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 82.33749540522695,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1965.5624637380242,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5573770491803278,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6476190476190475,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.33333333333333337,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5432098765432098,
+      "workload": "cpython-3.13/partial"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1160.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1160.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2448.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1288.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1108.629151713103,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 178.72483003884554,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 25.22914603884731,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 811.4999509416521,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 8.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 784.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 648.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1304.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 520.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4305.189597653225,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 63.74791846610606,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 25.568505017352955,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 831.1044657602906,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 9.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 408.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 272.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 7832.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 7424.0,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4887.195804622024,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 32657.1166748181,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 276.81461651809514,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 276.81461651809514,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 85.27678437530994,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1737.0414570905268,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.47959183673469385,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5802469135802469,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6482758620689655,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.7655172413793103,
+      "workload": "cpython-3.13/polymorphic"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 798.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 798.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1762.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 964.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1796.7041989322752,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 144.29579605348408,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 27.32286520767957,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 759.5000206492841,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1022.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 886.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1494.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 472.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4079.9354552291334,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 169.18950714170933,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 28.505237423814833,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 763.7295057065785,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 806.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 670.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5400.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4594.0,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 6552.989553892985,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 12265.302456216887,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.8945586159825325,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.8945586159825325,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 104.57812459208071,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1990.2914646081626,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.21135029354207435,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.24379232505643345,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": -0.010025062656641603,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.16040100250626566,
+      "workload": "cpython-3.13/warmed"
+    },
+    {
+      "cell": "aggregate.retained.before",
+      "samples": [],
+      "unit": "B",
+      "value": 7200.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.retained.after",
+      "samples": [],
+      "unit": "B",
+      "value": 3264.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.retained.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5466666666666666,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.bare.before",
+      "samples": [],
+      "unit": "B",
+      "value": 6384.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.bare.after",
+      "samples": [],
+      "unit": "B",
+      "value": 2448.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "aggregate.bare.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6165413533834587,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "vsOrdinary.retained.before",
+      "samples": [],
+      "unit": "B",
+      "value": 7960.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "vsOrdinary.retained.after",
+      "samples": [],
+      "unit": "B",
+      "value": 3264.0,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "vsOrdinary.retained.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5899497487437186,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.construction.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 1.0677589820106788,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.construction.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 1.0231997905228578,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.construction.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.7895234496549737,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.attribute-read.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.3979999731747452,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.attribute-read.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.3979999731747452,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.attribute-read.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.42490378531946,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.serialization.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.2227110205632803,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.serialization.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.2227110205632803,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "operation.serialization.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.244664075181408,
+      "workload": "cpython-3.13"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 584.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 584.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1520.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 936.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1083.5979017429054,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 275.79807210713625,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 37.05725248437375,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 971.3544859550893,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 720.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 584.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1322.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 602.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 3599.1208511404693,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 299.02466339990497,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 35.6093660229817,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 973.4374471008778,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 416.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 280.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5624.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5208.0,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5538.514594081789,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 15580.568450968713,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 362.15721047483385,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 362.15721047483385,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 126.55211321543902,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1977.8329879045486,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.4222222222222223,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5205479452054795,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.28767123287671237,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5205479452054795,
+      "workload": "cpython-3.14/shallow"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 16.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 16.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1376.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1376.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3464.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2088.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2415.9395950846374,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 374.87292429432273,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 36.6679705621209,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1682.853966485709,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 17.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1000.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 864.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1784.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 784.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 10254.477098351344,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 154.29389313794672,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 33.74609150341712,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1559.5415025018156,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 18.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 544.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 408.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 6000.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5456.0,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 9127.433341927826,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 20412.691705860198,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 887.8164866473526,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 887.8164866473526,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 112.03906251466833,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 3182.4790057726204,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.45599999999999996,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5277777777777778,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6046511627906976,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.7034883720930232,
+      "workload": "cpython-3.14/wide"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3208.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 3208.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4696.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1488.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 11723.470850847661,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 411.29966266453266,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 35.86250822991133,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 3369.4999874569476,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2920.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2784.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5440.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2520.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 17835.649952758104,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 401.64205711334944,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 35.38329619914293,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 3424.895985517651,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1232.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1096.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 8002.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 6770.0,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 20878.66670335643,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 24692.728783702478,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 564.0313785988837,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 564.0313785988837,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 114.28749421611428,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 7870.292000006884,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5780821917808219,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6063218390804598,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6159600997506234,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.658354114713217,
+      "workload": "cpython-3.14/nested"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1184.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1184.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2600.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1416.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1625.5666501820087,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 224.62083725258708,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 33.96875108592212,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1228.6670389585197,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 11.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1000.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 864.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1832.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 832.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 6864.460400538519,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2.873089397326112,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 31.770853092893958,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1234.7705196589231,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 12.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 496.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 360.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5760.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5264.0,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 6787.020800402388,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 17801.646172301844,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 970.9443722385913,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 970.9443722385913,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 91.05835342779756,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 2161.020995117724,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.504,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5833333333333333,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5810810810810811,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6959459459459459,
+      "workload": "cpython-3.14/nullable"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 10.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 672.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 672.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1712.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1040.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1092.2332992777228,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 224.8712000437081,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 28.697896050289273,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1040.0624596513808,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 11.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1000.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 864.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1832.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 832.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5521.470797248185,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 297.6752584800124,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 26.197952684015036,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1041.1664843559265,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 12.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 464.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 328.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5720.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5256.0,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 5175.195849733427,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 15459.554170956835,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 436.4683059975505,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 436.4683059975505,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 85.10209736414254,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1994.978985749185,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.536,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6203703703703703,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.30952380952380953,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5119047619047619,
+      "workload": "cpython-3.14/partial"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 7.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1184.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1184.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 2552.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1368.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1161.689596483484,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 237.89393599145114,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 27.047636519585335,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 870.4165229573846,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 8.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 808.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 672.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1432.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 624.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4130.989545956254,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 227.55248937755823,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 27.44942737211074,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 871.6249722056091,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 9.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 440.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 304.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 8008.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 7568.0,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4952.30209780857,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 33101.82287823409,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 261.16661611013114,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 261.16661611013114,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 88.38392594563109,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1813.2914556190372,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.4554455445544554,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5476190476190477,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.6283783783783784,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.7432432432432432,
+      "workload": "cpython-3.14/polymorphic"
+    },
+    {
+      "cell": "fields",
+      "samples": [],
+      "unit": "count",
+      "value": 4.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "warmups",
+      "samples": [],
+      "unit": "count",
+      "value": 200.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 5.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 822.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 822.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 0.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1872.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1050.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1870.9750031121075,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 209.98298423364758,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 30.95313149970025,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "ordinary.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 834.2080400325358,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1046.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 910.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 1670.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 624.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 4204.829147784039,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 21.69185900129378,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 0.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 30.213486752472818,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "legacy.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 811.9164849631488,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.cells",
+      "samples": [],
+      "unit": "count",
+      "value": 6.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.retainedBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 838.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.bareBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 702.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.lifecycleBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 136.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.peakBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 5808.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.transientBytes",
+      "samples": [],
+      "unit": "B",
+      "value": 4970.0,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.constructNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 6534.947903128341,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.callNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 12499.86455659382,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.scaffoldingNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 338.3036586456001,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.unreproducedNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 338.3036586456001,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.readNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 95.06763308309019,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "compact.dumpNs",
+      "samples": [],
+      "unit": "ns",
+      "value": 1912.0415090583265,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "vsLegacy.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.1988527724665392,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "vsLegacy.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.22857142857142854,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "vsOrdinary.retainedReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": -0.019464720194647178,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "vsOrdinary.bareReduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.14598540145985406,
+      "workload": "cpython-3.14/warmed"
+    },
+    {
+      "cell": "aggregate.retained.before",
+      "samples": [],
+      "unit": "B",
+      "value": 7448.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "aggregate.retained.after",
+      "samples": [],
+      "unit": "B",
+      "value": 3592.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "aggregate.retained.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5177228786251342,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "aggregate.bare.before",
+      "samples": [],
+      "unit": "B",
+      "value": 6632.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "aggregate.bare.after",
+      "samples": [],
+      "unit": "B",
+      "value": 2776.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "aggregate.bare.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5814234016887816,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "vsOrdinary.retained.before",
+      "samples": [],
+      "unit": "B",
+      "value": 8208.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "vsOrdinary.retained.after",
+      "samples": [],
+      "unit": "B",
+      "value": 3592.0,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "vsOrdinary.retained.reduction",
+      "samples": [],
+      "unit": "ratio",
+      "value": 0.5623781676413255,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.construction.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 1.0882244920261068,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.construction.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 1.0149042166099624,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.construction.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.746192339842397,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.attribute-read.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.2469122320027117,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.attribute-read.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.2469122320027117,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.attribute-read.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 3.097926766539836,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.serialization.armAgainstArm",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.086653898672964,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.serialization.likeForLike",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.086653898672964,
+      "workload": "cpython-3.14"
+    },
+    {
+      "cell": "operation.serialization.vsOrdinary",
+      "samples": [],
+      "unit": "ratio",
+      "value": 2.0735782184553155,
+      "workload": "cpython-3.14"
+    }
+  ],
+  "schemaVersion": 1,
+  "subject": "instance-state"
+}

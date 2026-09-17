@@ -71,15 +71,16 @@ from snapshot_delivery_overhead import (
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
 CANONICAL_PORTFOLIO: Final = Path(
-    "languages/python/docs/structural-metadata-envelope/before/portfolio.json"
+    "languages/python/docs/structural-metadata-envelope/after/portfolio.json"
 )
 """The repository's current cost portfolio and CI's verification input, relative
-to the repository root."""
+to the repository root. The `before/` capture beside it is the retained
+comparison base, not a verification input."""
 
-EVIDENCE_DIRECTORY: Final = (WORKSPACE.parents[1] / CANONICAL_PORTFOLIO).resolve().parent
-"""Where the committed capture lives. A diagnostic run is not evidence, so no
-path it writes may land here; a member script's own diagnostic is printed and
-writes nothing anywhere."""
+EVIDENCE_DIRECTORY: Final = (WORKSPACE.parents[1] / CANONICAL_PORTFOLIO).resolve().parents[1]
+"""Where the committed captures live, the current one and its comparison base
+alike. A diagnostic run is not evidence, so no path it writes may land here; a
+member script's own diagnostic is printed and writes nothing anywhere."""
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
 WRITE_SUBJECT: Final = write_report.SUBJECT
 TIMING_NOISE_ALLOWANCE: Final = 0.05

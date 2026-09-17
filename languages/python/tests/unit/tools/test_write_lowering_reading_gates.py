@@ -2,8 +2,9 @@
 
 `spec/memory-gates.yaml` holds one blocking ceiling per retained checkpoint and
 per high-water mark of every keyed-write, predicate-acquisition, and
-model-preparation case, derived from the retained baseline capture. Each family
-below reads its cases through the same child the report measures with —
+model-preparation case, derived from the retained capture the file names as its
+basis. Each family below reads its cases through the same child the report
+measures with —
 :func:`write_lowering_reading.measure`, the identical windows, roots, and
 warm-ups — and grades the retained and transient readings against their gates.
 The acquisition family additionally grades its scaling domain: the per-row
@@ -60,16 +61,15 @@ TRANSIENT: Final = "transientBytes"
 GATED_CELLS: Final = (RETAINED, TRANSIENT)
 
 DUPLICATED_CASES: Final = (
+    "txtime.opening.columns.typed",
     "txtime.changed.columns.wire",
     "txtime.changed.document.wire",
     "bitemporal.interior.document.wire",
 )
 """Where the retained-duplication seed is proved to trip. The seed adds one
-prepared row per row, so it is seen where the tree under test sits within one
-row of its gate: the Wire successors, whose checkpoints the unification left
-near the baseline. A Typed case whose checkpoint fell further under the
-unification than one row is below this seed's reach until the gates are
-re-derived from the after-capture, which the evidence README records."""
+prepared row per row, which is 17% to 35% of a categorical checkpoint against a 10%
+headroom: the smallest Typed checkpoint and the three Wire successors, whose
+checkpoints are the largest of the categorical cases."""
 
 COPIED_CASES: Final = (
     "geometry.width-64.document.typed",
@@ -79,12 +79,11 @@ COPIED_CASES: Final = (
 """Where the peak-copy seed is proved to trip: the cases whose document binds are
 widest, so that :data:`BIND_COPIES` complete copies of them exceed the headroom."""
 
-BIND_COPIES: Final = 4
+BIND_COPIES: Final = 1
 """How many complete mutable copies of each document bind the peak seed holds
 across the driver dump. One copy is what the immutable-serialization bridge
-removed, and at the tree under test one copy sits under the headroom the
-baseline-derived gates carry; four is the multiple the seed is proved at, and
-the evidence README records the one-copy figure beside it."""
+removed, and on the widest cases it is 19% to 23% of the high-water mark against a
+10% headroom."""
 
 TRAVERSED_CASE: Final = "txtime.changed.document.wire"
 """The changed Relational Document successor, whose one successor patch per row
@@ -295,7 +294,7 @@ def test_a_seeded_mutable_copy_of_every_document_bind_trips_the_transient_gate()
     # It leaves the checkpoint untouched — the copies are gone before any sample
     # — and raises the high-water mark by the documents' own size times the
     # copies held, which on the wide and Many-heavy cases exceeds the headroom
-    # above the baseline.
+    # above the reading.
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(lowering_support, "serialize", _copying_binds(lowering_support.serialize))
         for workload in COPIED_CASES:
