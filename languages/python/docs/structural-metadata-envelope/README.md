@@ -270,44 +270,93 @@ capture path runs exactly as documented above.
 
 ## Baseline capture — `before/`
 
-> **Superseded pending recapture.** The capture below predates the
-> changed-ancestor family and the read-plan compilation window, so it is no
-> longer a complete capture of the manifest above and both members' recorded
-> `workloadDigest` values disagree with the frozen manifest. Its measured values
-> remain the readings that commit produced and are not rewritten; `--verify`
-> reports the stale digests until the one recapture replaces this directory.
-> Nothing here is a comparison base until then.
-
-Produced from clean commit `572fa9441765` (`feat(cost): measure structural read
-and write windows on every minor`) by `uv run --project languages/python python
-languages/python/tools/cost_report.py --out /tmp/cor-158-before`, 2026-09-16
-13:42–14:43 EDT, on Mac17,4 (Apple M5, 10 cores, 32 GiB, macOS 26.6.2) with
-CPython 3.14.7 and 3.13.15 and PostgreSQL 18.6 (`postgres:18.6-alpine` through
-Testcontainers), then retained here unchanged. The Snapshot delivery member is
-`authoritative`; the other three are `non-authoritative` because their sampling
-protocols are their own. Every member's `uv.lock` digest matches the capture
-checkout.
+Produced from clean commit `b7abe2d055fd` (`docs(cost): keep the baseline's
+historical verify result`) by `uv run --project languages/python python
+languages/python/tools/cost_report.py --out /tmp/cor-158-before-b7abe2d0`,
+2026-09-16 19:47–20:56 EDT, on Mac17,4 (Apple M5, 10 cores, 32 GiB, macOS
+26.6.2) with CPython 3.14.7 and 3.13.15 and PostgreSQL 18.6
+(`postgres:18.6-alpine` through Testcontainers), then retained here unchanged.
+All four members name that commit and a clean tree, and none carries an
+incomplete cell or an error. The Snapshot delivery member is `authoritative`;
+the other three are `non-authoritative` because their sampling protocols are
+their own. Every member's `uv.lock` digest matches the capture checkout. This
+is the Phase 1 baseline: it is captured once and is the comparison base for the
+after-capture.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
 |---|---|---|---:|---:|---:|
-| snapshot-delivery | authoritative | 3.13, 3.14 | 288 | 83 | 7 |
-| lifecycle-overhead | non-authoritative | 3.14 | 87 | 2 | 13 |
+| snapshot-delivery | authoritative | 3.13, 3.14 | 324 | 72 | 18 |
+| lifecycle-overhead | non-authoritative | 3.14 | 87 | 3 | 12 |
 | instance-state | non-authoritative | 3.13, 3.14 | 624 | 4 | 4 |
-| write-lowering | non-authoritative | 3.13, 3.14 | 802 | — | — |
+| write-lowering | non-authoritative | 3.13, 3.14 | 962 | — | — |
 
-`cost_report.py --verify before/portfolio.json` reported one failure (the arm
-growth below) and seven timing advisories at its producing commit, when arm
-growth was still a verification failure; the current verifier reports the same
-eight outcomes as advisories. All are pre-existing in the historical
-`db56a19e` portfolio and none is a consequence of this ticket:
-`document-heavy.streamedMemory.page128PeakKiB` grows 37.69 KiB between the 200-
-and 2000-root arms against the 16 KiB limit (37.79 KiB historically), and the
-timing ceilings of
-`duplicate-include.providerFreeCpu.eager` (`maxMs`, `minRootsPerSecond`),
-`document-heavy.live.eager` (both), `versioned-document.live.page32` (both),
-and `versioned-document.live.page128.minRootsPerSecond` are exceeded on the
-authority runtime by 1–9%. No limit was relaxed to obtain this capture: each
-exceeded limit is recorded as the advisory outcome it is.
+`cost_report.py --verify before/portfolio.json` exits 0 and reports twenty
+advisories, verbatim:
+
+```text
+advisory: conventional-fanout.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: conventional-fanout.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.eager.maxMs is outside its timing ceiling
+advisory: document-heavy.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page32.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page128.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page128.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.eager.maxMs is outside its timing ceiling
+advisory: versioned-document.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.page32.maxMs is outside its timing ceiling
+advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.page128.maxMs is outside its timing ceiling
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 37.865 KiB between memory arms
+advisory: bitemporal-current.streamedMemory.page32PeakKiB grows 16.162 KiB between memory arms
+```
+
+Eighteen timing ceilings are exceeded on the authority runtime and two
+streamed-memory arms grow past the 16 KiB limit. The `document-heavy` page-128
+growth is pre-existing in the historical `db56a19e` portfolio (37.79 KiB there);
+the `bitemporal-current` page-32 growth (16.162 KiB) is 0.16 KiB over its limit
+and was within it in the earlier `572fa944` capture. No limit was relaxed to
+obtain this capture; each outcome is recorded as the advisory it is, and the
+blocking memory gates are the cost class's.
+
+### Measured noise floor
+
+An earlier capture of the same manifest's categorical, geometry, acquisition,
+model, delivery, stress, and geometry-read cells was taken from `572fa944` on
+this runner at 13:42–14:43 EDT the same day, before the changed-ancestor family
+and the read-plan window existed; it is not retained, and this section is what
+remains of it. A cell-by-cell `--compare` of that capture against this one
+paired 1,425 cells with a median delta of 0.0% and a symmetric scatter: 219
+cells slower by more than 5% and 221 faster, tenth percentile −8.9%, ninetieth
++14.8%. Nothing distinguishes either run as disturbed; that spread is the
+run-to-run noise of timing on this machine and commit family across an hour of
+capture, and it is wider than the 5% allowance the two-run trial above
+supported. The after-capture's timing deltas must be read against this floor:
+a per-cell timing delta inside roughly ±15% is not evidence on its own, and a
+timing claim rests on the direction agreeing across a family of cells and both
+runtimes, not on one cell crossing 5%.
+
+Memory cells, which the blocking gates are stated over, agree far more closely
+and are characterized here separately. Of the 148 paired Snapshot memory cells,
+119 agreed exactly and 138 within 3%; every eager-memory, stress, geometry-read,
+and read-plan cell agreed within 2.2%, and the ten outside 3% are all
+streamed-memory `retainedKiB` and `page1PeakKiB` cells whose values are a few
+KiB, where a 1–5 KiB swing between two drains is 3–112% (`versioned-document
+.streamedMemory.retainedKiB`: 4.73 against 10.01 KiB on 3.13). Of the 180
+paired write memory cells, 87 of 90 retained checkpoints agreed within 3% and
+every pass observation agreed exactly, while every keyed-write high-water mark
+in this capture is 4,184 B/row higher than in the earlier one — the same
+constant on every categorical and geometry case and on both runtimes — and
+`model.prepared` retains about 205 KB more. The prepared model gained six
+Transaction-Time-Only twin Entities between the two captures, which accounts
+for the model checkpoint; the constant per-row offset is coincident with that
+growth and is recorded as an observation, not attributed. Phase 5 compares
+against this capture alone.
 
 ### Keyed writes per row (`keyed-write` window)
 
@@ -316,70 +365,81 @@ observations are per row on either runtime (they agree exactly).
 
 | Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B | encodeDocument / encodeMany / applyPatches / detachJsonContainer |
 |---|---:|---:|---:|---:|---:|---:|---|
-| txtime.opening.columns.typed | 160.8 | 13186 | 3618 | 180.6 | 13698 | 3624 | 4 / 1 / 0 / 2 |
-| txtime.opening.columns.wire | 158.0 | 12082 | 2612 | 171.2 | 12634 | 2610 | 4 / 1 / 0 / 2 |
-| txtime.opening.document.typed | 177.9 | 13186 | 3618 | 190.8 | 13698 | 3624 | 5 / 1 / 0 / 11 |
-| txtime.opening.document.wire | 149.0 | 12082 | 2562 | 171.5 | 12634 | 2610 | 5 / 1 / 0 / 11 |
-| txtime.changed.columns.typed | 186.5 | 12767 | 4584 | 211.8 | 12919 | 4780 | 4 / 1 / 0 / 2 |
-| txtime.changed.columns.wire | 185.6 | 11695 | 3610 | 191.6 | 11883 | 3648 | 4 / 1 / 0 / 2 |
-| txtime.changed.document.typed | 204.8 | 13522 | 4634 | 223.8 | 13794 | 4730 | 4 / 1 / 1 / 22 |
-| txtime.changed.document.wire | 193.3 | 12450 | 3610 | 208.9 | 12758 | 3648 | 4 / 1 / 1 / 22 |
-| txtime.unchanged.columns.typed | 198.4 | 12761 | 4634 | 213.6 | 12913 | 4680 | 4 / 1 / 0 / 2 |
-| txtime.unchanged.columns.wire | 201.9 | 11689 | 3560 | 201.8 | 11885 | 3698 | 4 / 1 / 0 / 2 |
-| txtime.unchanged.document.typed | 198.2 | 13037 | 4684 | 220.5 | 13309 | 4730 | 2 / 1 / 1 / 16 |
-| txtime.unchanged.document.wire | 189.0 | 11957 | 3610 | 201.7 | 12265 | 3748 | 2 / 1 / 1 / 16 |
-| plain.changed.columns.typed | 159.9 | 12914 | 3848 | 171.9 | 13474 | 3936 | 4 / 1 / 0 / 2 |
-| plain.changed.columns.wire | 158.2 | 11842 | 2824 | 163.2 | 12438 | 2904 | 4 / 1 / 0 / 2 |
-| plain.changed.document.typed | 160.4 | 12914 | 3898 | 178.6 | 13474 | 3986 | 4 / 1 / 0 / 2 |
-| plain.changed.document.wire | 143.2 | 11842 | 2824 | 163.0 | 12438 | 2904 | 4 / 1 / 0 / 2 |
-| bitemporal.interior.columns.typed | 322.3 | 17612 | 6520 | 323.2 | 17062 | 6782 | 12 / 3 / 0 / 6 |
-| bitemporal.interior.columns.wire | 301.6 | 16664 | 5592 | 303.7 | 16208 | 5796 | 12 / 3 / 0 / 6 |
-| bitemporal.interior.document.typed | 302.0 | 18733 | 6520 | 351.8 | 17973 | 6682 | 4 / 1 / 1 / 44 |
-| bitemporal.interior.document.wire | 287.5 | 17787 | 5592 | 313.5 | 17273 | 5796 | 4 / 1 / 1 / 44 |
+| txtime.opening.columns.typed | 193.2 | 17370 | 3618 | 206.5 | 17882 | 3674 | 4 / 1 / 0 / 2 |
+| txtime.opening.columns.wire | 173.2 | 16266 | 2612 | 193.5 | 16818 | 2660 | 4 / 1 / 0 / 2 |
+| txtime.opening.document.typed | 218.8 | 17370 | 3618 | 219.8 | 17882 | 3674 | 5 / 1 / 0 / 11 |
+| txtime.opening.document.wire | 185.9 | 16266 | 2612 | 196.8 | 16818 | 2610 | 5 / 1 / 0 / 11 |
+| txtime.changed.columns.typed | 219.9 | 16594 | 4584 | 241.4 | 16970 | 4780 | 4 / 1 / 0 / 2 |
+| txtime.changed.columns.wire | 200.4 | 15522 | 3560 | 220.2 | 15934 | 3748 | 4 / 1 / 0 / 2 |
+| txtime.changed.document.typed | 256.3 | 16594 | 4634 | 258.2 | 16970 | 4730 | 4 / 1 / 1 / 22 |
+| txtime.changed.document.wire | 222.1 | 15522 | 3510 | 249.4 | 15934 | 3648 | 4 / 1 / 1 / 22 |
+| txtime.unchanged.columns.typed | 222.2 | 16594 | 4634 | 242.6 | 16970 | 4780 | 4 / 1 / 0 / 2 |
+| txtime.unchanged.columns.wire | 204.8 | 15522 | 3610 | 229.1 | 15934 | 3748 | 4 / 1 / 0 / 2 |
+| txtime.unchanged.document.typed | 234.7 | 16594 | 4634 | 254.9 | 16970 | 4780 | 2 / 1 / 1 / 16 |
+| txtime.unchanged.document.wire | 213.9 | 15522 | 3560 | 230.8 | 15934 | 3698 | 2 / 1 / 1 / 16 |
+| plain.changed.columns.typed | 182.2 | 17098 | 3898 | 206.5 | 17658 | 3986 | 4 / 1 / 0 / 2 |
+| plain.changed.columns.wire | 173.7 | 16026 | 2874 | 187.7 | 16622 | 2954 | 4 / 1 / 0 / 2 |
+| plain.changed.document.typed | 198.9 | 17098 | 3848 | 215.4 | 17658 | 3936 | 4 / 1 / 0 / 2 |
+| plain.changed.document.wire | 193.4 | 16026 | 2874 | 212.4 | 16622 | 2954 | 4 / 1 / 0 / 2 |
+| bitemporal.interior.columns.typed | 328.2 | 17612 | 6620 | 366.1 | 17212 | 6632 | 12 / 3 / 0 / 6 |
+| bitemporal.interior.columns.wire | 332.4 | 16656 | 5642 | 345.6 | 16274 | 5746 | 12 / 3 / 0 / 6 |
+| bitemporal.interior.document.typed | 343.0 | 18709 | 6570 | 367.3 | 18031 | 6832 | 4 / 1 / 1 / 44 |
+| bitemporal.interior.document.wire | 349.1 | 17703 | 5592 | 363.5 | 17323 | 5746 | 4 / 1 / 1 / 44 |
 
 An unchanged-document successor costs what a changed one costs under either
 layout: the retained predecessor document is detached whole rather than reused,
 which the sixteen `detachJsonContainer` returns per row make visible.
 
-### Geometry inserts per row (`keyed-write` window, Typed)
+### Geometry inserts and changed-ancestor updates per row (`keyed-write` window, Typed)
 
-| Level | Layout | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B | encodeDocument / detachJsonContainer |
-|---|---|---:|---:|---:|---:|---:|---:|---|
-| depth-1 | columns | 156.7 | 12154 | 3162 | 170.0 | 12618 | 3168 | 3 / 0 |
-| depth-1 | document | 158.8 | 12154 | 3112 | 181.4 | 12618 | 3168 | 4 / 16 |
-| depth-4 | columns | 226.0 | 14546 | 4336 | 236.6 | 15106 | 4392 | 6 / 30 |
-| depth-4 | document | 221.1 | 14546 | 4336 | 228.7 | 15106 | 4392 | 7 / 61 |
-| depth-8 | columns | 266.5 | 18448 | 5968 | 293.0 | 19202 | 6024 | 10 / 140 |
-| depth-8 | document | 275.3 | 18498 | 5918 | 302.0 | 19202 | 6074 | 11 / 191 |
-| many-0 | columns | 138.9 | 11130 | 2208 | 146.0 | 11586 | 2306 | 1 / 0 |
-| many-0 | document | 133.5 | 11130 | 2208 | 147.7 | 11586 | 2306 | 2 / 6 |
-| many-8 | columns | 221.3 | 14682 | 5690 | 233.0 | 15146 | 5696 | 9 / 0 |
-| many-8 | document | 280.7 | 15117 | 5590 | 250.0 | 15469 | 5696 | 10 / 46 |
-| many-32 | columns | 534.1 | 38074 | 15816 | 491.7 | 38418 | 15822 | 33 / 0 |
-| many-32 | document | 532.1 | 38637 | 15816 | 507.4 | 38989 | 15822 | 34 / 166 |
-| width-16 | columns | 239.1 | 13834 | 4792 | 261.6 | 14298 | 4898 | 3 / 0 |
-| width-16 | document | 263.3 | 13834 | 4792 | 356.1 | 14298 | 4798 | 4 / 52 |
-| width-64 | columns | 563.7 | 29130 | 11512 | 971.2 | 29466 | 11518 | 3 / 0 |
-| width-64 | document | 578.9 | 30234 | 11512 | 920.2 | 30578 | 11568 | 4 / 196 |
-| sparse-64 | columns | 202.8 | 12034 | 3112 | 351.1 | 12498 | 3218 | 3 / 0 |
-| sparse-64 | document | 214.3 | 12034 | 3112 | 316.8 | 12498 | 3218 | 4 / 7 |
+| Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B | encodeDocument / encodeMany / applyPatches / detachJsonContainer |
+|---|---:|---:|---:|---:|---:|---:|---|
+| geometry.depth-1.columns | 205.3 | 16338 | 3162 | 206.3 | 16802 | 3218 | 3 / 1 / 0 / 0 |
+| geometry.depth-1.document | 208.5 | 16338 | 3112 | 211.1 | 16802 | 3168 | 4 / 1 / 0 / 16 |
+| geometry.depth-4.columns | 253.1 | 18730 | 4336 | 241.1 | 19290 | 4442 | 6 / 1 / 0 / 30 |
+| geometry.depth-4.document | 260.3 | 18730 | 4336 | 258.8 | 19290 | 4392 | 7 / 1 / 0 / 61 |
+| geometry.depth-8.columns | 330.6 | 22682 | 6018 | 316.4 | 23386 | 6024 | 10 / 1 / 0 / 140 |
+| geometry.depth-8.document | 341.7 | 22682 | 6018 | 326.7 | 23386 | 6024 | 11 / 1 / 0 / 191 |
+| geometry.many-0.columns | 166.5 | 15314 | 2208 | 183.8 | 15770 | 2256 | 1 / 1 / 0 / 0 |
+| geometry.many-0.document | 177.8 | 15314 | 2258 | 178.2 | 15770 | 2256 | 2 / 1 / 0 / 6 |
+| geometry.many-8.columns | 277.2 | 18866 | 5640 | 308.2 | 19330 | 5646 | 9 / 1 / 0 / 0 |
+| geometry.many-8.document | 291.0 | 18866 | 5640 | 339.7 | 19330 | 5696 | 10 / 1 / 0 / 46 |
+| geometry.many-32.columns | 561.2 | 38074 | 15816 | 631.5 | 38426 | 15822 | 33 / 1 / 0 / 0 |
+| geometry.many-32.document | 588.2 | 38637 | 15816 | 732.3 | 38989 | 15872 | 34 / 1 / 0 / 166 |
+| geometry.width-16.columns | 265.0 | 18018 | 4742 | 367.6 | 18482 | 4898 | 3 / 1 / 0 / 0 |
+| geometry.width-16.document | 273.2 | 18018 | 4792 | 396.8 | 18482 | 4848 | 4 / 1 / 0 / 52 |
+| geometry.width-64.columns | 592.2 | 29130 | 11512 | 812.1 | 29466 | 11518 | 3 / 1 / 0 / 0 |
+| geometry.width-64.document | 619.1 | 30234 | 11562 | 804.8 | 30586 | 11618 | 4 / 1 / 0 / 196 |
+| geometry.sparse-64.columns | 235.9 | 16218 | 3062 | 350.9 | 16682 | 3168 | 3 / 1 / 0 / 0 |
+| geometry.sparse-64.document | 239.9 | 16218 | 3112 | 321.8 | 16682 | 3118 | 4 / 1 / 0 / 7 |
+| ancestor.depth-1.columns | 238.6 | 16122 | 4226 | 337.1 | 16498 | 4272 | 3 / 1 / 0 / 0 |
+| ancestor.depth-1.document | 244.8 | 16122 | 4226 | 361.6 | 16498 | 4372 | 3 / 1 / 1 / 33 |
+| ancestor.width-16.columns | 310.6 | 17802 | 5856 | 447.6 | 18178 | 6002 | 3 / 1 / 0 / 0 |
+| ancestor.width-16.document | 333.5 | 17802 | 5806 | 479.1 | 18178 | 6002 | 3 / 1 / 1 / 105 |
+| ancestor.width-64.columns | 650.5 | 31483 | 12626 | 872.9 | 31835 | 12772 | 3 / 1 / 0 / 0 |
+| ancestor.width-64.document | 697.8 | 33140 | 12576 | 916.0 | 33692 | 12722 | 3 / 1 / 1 / 393 |
+| ancestor.sparse-64.columns | 281.7 | 16002 | 4226 | 411.2 | 16378 | 4322 | 3 / 1 / 0 / 0 |
+| ancestor.sparse-64.document | 291.2 | 16002 | 4176 | 433.0 | 16378 | 4372 | 3 / 1 / 1 / 15 |
 
 Retained bytes at the settled checkpoint are the same under both layouts at
-every level, as the managed representation is layout-independent. The wide and
-sparse levels run substantially slower on 3.14 than on 3.13 (up to 1.7x at
-`width-64`); the difference sits in the Typed ingress of a wide instance and is
-recorded as an observation, not attributed.
+every level, as the managed representation is layout-independent. Under
+Relational Document layout a changed ancestor's `detachJsonContainer` count
+tracks the replaced occurrence's declared width (33 at four leaves, 393 at
+sixty-four), which is the whole-document detach a successor patch pays today.
+The wide and sparse levels run substantially slower on 3.14 than on 3.13 (up to
+1.5x at `sparse-64`); the difference sits in the Typed ingress of a wide
+instance and is recorded as an observation, not attributed.
 
 ### Predicate acquisition per resolved row (`predicate-acquisition` window)
 
 | Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B |
 |---|---:|---:|---:|---:|---:|---:|
-| acquisition.rows-8.columns | 72.1 | 5930 | 2368 | 101.7 | 6181 | 2577 |
-| acquisition.rows-32.columns | 51.6 | 4060 | 1736 | 73.3 | 4248 | 1810 |
-| acquisition.rows-128.columns | 48.6 | 3531 | 1582 | 50.9 | 3673 | 1617 |
-| acquisition.rows-8.document | 75.6 | 7942 | 3581 | 79.5 | 8289 | 3789 |
-| acquisition.rows-32.document | 58.0 | 6214 | 2922 | 59.4 | 6394 | 3005 |
-| acquisition.rows-128.document | 51.0 | 5685 | 2767 | 57.3 | 5833 | 2811 |
+| acquisition.rows-8.columns | 147.8 | 5920 | 2373 | 114.9 | 6239 | 2572 |
+| acquisition.rows-32.columns | 56.9 | 4061 | 1745 | 73.4 | 4227 | 1807 |
+| acquisition.rows-128.columns | 49.2 | 3530 | 1581 | 66.8 | 3681 | 1618 |
+| acquisition.rows-8.document | 77.7 | 7948 | 3601 | 98.7 | 8226 | 3803 |
+| acquisition.rows-32.document | 57.2 | 6224 | 2932 | 71.6 | 6415 | 3000 |
+| acquisition.rows-128.document | 51.7 | 5687 | 2765 | 60.6 | 5853 | 2810 |
 
 Per-row figures fall with row count as the read's fixed planning and
 compilation cost is amortized; the difference between the layouts is the retained
@@ -390,42 +450,60 @@ decoded members.
 
 | Runtime | µs | peak B | retained B |
 |---|---:|---:|---:|
-| 3.13 | 3228.6 | 445192 | 430880 |
-| 3.14 | 3277.6 | 447480 | 440280 |
+| 3.13 | 4482.2 | 652472 | 635624 |
+| 3.14 | 6119.2 | 655608 | 649080 |
 
 ### Geometry reads (`provider-free-delivery` window, 32 roots)
 
 | Level | Layout | 3.13 µs/root | 3.13 peak KiB | 3.13 retained KiB | 3.14 µs/root | 3.14 peak KiB | 3.14 retained KiB |
 |---|---|---:|---:|---:|---:|---:|---:|
-| depth-1 | columns | 30.88 | 108.7 | 50.8 | 34.98 | 106.2 | 51.1 |
-| depth-1 | document | 35.46 | 108.7 | 50.8 | 33.97 | 106.1 | 51.1 |
-| depth-4 | columns | 59.25 | 154.3 | 88.0 | 57.57 | 155.1 | 88.2 |
-| depth-4 | document | 52.33 | 153.7 | 88.0 | 56.73 | 153.6 | 88.2 |
-| depth-8 | columns | 90.67 | 222.8 | 137.5 | 93.82 | 225.7 | 137.7 |
-| depth-8 | document | 96.10 | 220.8 | 137.5 | 93.88 | 223.6 | 137.7 |
-| many-0 | columns | 21.58 | 67.2 | 24.1 | 23.90 | 65.8 | 24.3 |
-| many-0 | document | 21.20 | 73.0 | 24.1 | 22.47 | 71.5 | 24.3 |
-| many-8 | columns | 55.94 | 205.0 | 125.1 | 59.14 | 208.0 | 125.3 |
-| many-8 | document | 66.90 | 203.5 | 125.1 | 58.30 | 206.8 | 125.3 |
-| many-32 | columns | 150.16 | 636.2 | 428.1 | 169.10 | 640.2 | 428.3 |
-| many-32 | document | 152.16 | 633.8 | 428.1 | 159.83 | 637.9 | 428.3 |
-| width-16 | columns | 52.64 | 220.5 | 136.7 | 59.09 | 223.9 | 137.0 |
-| width-16 | document | 53.47 | 223.9 | 136.7 | 61.25 | 227.2 | 137.0 |
-| width-64 | columns | 149.07 | 766.9 | 480.2 | 160.31 | 770.3 | 480.5 |
-| width-64 | document | 155.05 | 770.4 | 480.2 | 163.81 | 773.6 | 480.5 |
-| sparse-64 | columns | 47.12 | 139.0 | 35.9 | 48.58 | 136.4 | 36.2 |
-| sparse-64 | document | 45.03 | 139.0 | 35.9 | 47.94 | 136.4 | 36.2 |
+| depth-1 | columns | 33.48 | 108.7 | 50.8 | 31.58 | 106.2 | 51.1 |
+| depth-1 | document | 33.03 | 108.7 | 50.8 | 31.96 | 106.1 | 51.1 |
+| depth-4 | columns | 55.22 | 154.3 | 88.0 | 54.81 | 155.1 | 88.2 |
+| depth-4 | document | 54.47 | 153.7 | 88.0 | 57.22 | 153.6 | 88.2 |
+| depth-8 | columns | 90.43 | 222.8 | 137.5 | 93.34 | 225.7 | 137.7 |
+| depth-8 | document | 95.17 | 220.8 | 137.5 | 92.50 | 223.6 | 137.7 |
+| many-0 | columns | 23.33 | 67.2 | 24.1 | 23.76 | 65.8 | 24.3 |
+| many-0 | document | 23.79 | 73.0 | 24.1 | 23.19 | 71.5 | 24.3 |
+| many-8 | columns | 59.62 | 205.0 | 125.1 | 55.90 | 208.0 | 125.3 |
+| many-8 | document | 58.56 | 203.5 | 125.1 | 58.38 | 206.8 | 125.3 |
+| many-32 | columns | 166.70 | 636.2 | 428.1 | 160.18 | 640.2 | 428.3 |
+| many-32 | document | 159.79 | 633.8 | 428.1 | 159.90 | 637.9 | 428.3 |
+| width-16 | columns | 59.33 | 220.5 | 136.7 | 58.87 | 223.9 | 137.0 |
+| width-16 | document | 58.62 | 223.9 | 136.7 | 57.96 | 227.2 | 137.0 |
+| width-64 | columns | 156.98 | 766.9 | 480.2 | 160.50 | 770.3 | 480.5 |
+| width-64 | document | 159.29 | 770.4 | 480.2 | 161.28 | 773.6 | 480.5 |
+| sparse-64 | columns | 50.40 | 139.0 | 35.9 | 48.01 | 136.4 | 36.2 |
+| sparse-64 | document | 46.91 | 139.0 | 35.9 | 46.01 | 136.4 | 36.2 |
 
 The retained page grows with the expanded positional output rather than with
 the authored input: `sparse-64` retains 36 KiB for 32 roots carrying one
 populated leaf each, against 24 KiB at `many-0`, because every declared
 position is materialized.
 
+### Read-plan compilation (`read-plan-compilation` window)
+
+| Level | Layout | 3.13 µs | 3.13 peak KiB | 3.13 retained KiB | 3.14 µs | 3.14 peak KiB | 3.14 retained KiB |
+|---|---|---:|---:|---:|---:|---:|---:|
+| depth-1 | columns | 120.5 | 22.55 | 14.55 | 125.1 | 23.57 | 15.94 |
+| depth-1 | document | 122.3 | 23.01 | 15.33 | 119.5 | 24.40 | 16.75 |
+| depth-8 | columns | 138.3 | 22.55 | 14.55 | 118.2 | 23.57 | 15.94 |
+| depth-8 | document | 156.3 | 23.01 | 15.33 | 114.8 | 24.40 | 16.75 |
+| width-64 | columns | 169.1 | 22.55 | 14.55 | 118.1 | 23.57 | 15.94 |
+| width-64 | document | 132.9 | 23.01 | 15.33 | 114.8 | 24.40 | 16.75 |
+
+The cold compiled plan is the same size at every level under a given layout: a
+whole-table instance read's plan retains its top-level fan-out only, because
+nested occurrence shapes are referenced from accepted metadata rather than
+copied into the plan. The Columns-to-Document difference (0.8 KiB) is the
+shared-document fan-out, which is what a later change to compiled-read
+residency should be read against.
+
 ### Preserved positional-materialization cells (authority runtime)
 
-`stress-columns`: 7.5 µs/projection, 604.4 retained B/projection, 128.0
+`stress-columns`: 6.2 µs/projection, 604.4 retained B/projection, 128.0
 transient B/projection, 45.8 KiB peak for 64 KiB, 41.4 KiB prepared set.
-`stress-document`: 10.4 µs/projection, 620.4 retained B/projection, 192.0
+`stress-document`: 7.1 µs/projection, 620.4 retained B/projection, 192.0
 transient B/projection, 50.8 KiB peak for 64 KiB, 65.6 KiB prepared set. Every
-delivery and stress ceiling other than the seven timing cells and the one
-scaling arm named above is within its limit.
+delivery and stress ceiling other than the eighteen timing cells and the two
+scaling arms named above is within its limit.
