@@ -49,9 +49,10 @@ moved lock the same way and exits non-zero only where no comparison was made at
 all — no single Snapshot delivery member, or provenance whose recorded
 `lockDigest` is absent or not a digest — which is provenance `--verify` fails
 the member for in any case. Blocking memory gates are cost-class tests, not this
-verifier; a dependency bump or a rebase changes nothing a reading measured; and
-the capture budget recorded below is why drift is stated rather than made a
-reason to capture again.
+verifier — `--verify` states a reading past its gate as one more advisory, on
+whichever runtime read it (see *Memory gates* below); a dependency bump or a
+rebase changes nothing a reading measured; and the capture budget recorded
+below is why drift is stated rather than made a reason to capture again.
 
 Retained checkpoints are taken separately from the uninterrupted timing and
 high-water runs, each after 200 warm-up runs of its seam, at the production
@@ -249,6 +250,105 @@ retained by the fixture modules and are outside every window.
   read, so a plan with includes or paging is not measured here. What the cache
 shell itself costs is outside all three of its cells, because production pays it
 once when a handle connects rather than per delivery.
+
+## Memory gates
+
+`../../spec/memory-gates.yaml` is the blocking half of this evidence: one
+ceiling per byte-unit reading address of the structural windows — the retained
+checkpoint and the high-water mark of each of the 46 keyed-write cases, the six
+acquisition levels, and the model-preparation checkpoint (106 gates, in bytes
+per row or bytes), and the retained and peak readings of the eighteen geometry
+reads and six cold plan compilations (48 gates, in KiB converted to bytes) —
+154 in all, beside the scaling domains and the advisory allowances. The cost
+class grades them, under both layouts and through the same reading children the
+capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
+`tests/unit/tools/test_snapshot_delivery_reading_gates.py`; timing is asserted
+nowhere. The gates live in a file of their own rather than in
+`budget-contract.yaml` because that contract's digest is part of the
+`authority` fingerprint the baseline's Snapshot member was classified under:
+editing it would reclassify the retained capture or demand a third.
+
+### Basis
+
+Every ceiling is the rule's output, not an edit: the largest reading of the
+address on either runtime in `before/`, scaled by **1.10** and rounded up to a
+whole byte, and
+`test_every_memory_gate_is_the_baseline_reading_under_the_stated_rule`
+recomputes all 154 from `before/portfolio.json`. The headroom is the Budget
+Contract's own `individualMax` for a memory cell; the run-to-run agreement
+recorded under *Measured noise floor* — retained checkpoints within 2.8% and
+high-water marks within 1% on this runner, and a further 1–3% between the two
+runtimes, which taking the larger runtime absorbs — sits inside it. A byte
+reading is a property of the interpreter's object layouts rather than of the
+runner, which is why a fixed ceiling can be graded on CI's floating runner
+label where an elapsed time cannot; the residual risk that a CPython patch
+release or a platform allocator moves a reading by more than the headroom is
+accepted, and would surface as a gate failure to be read against this basis,
+never as a ceiling to relax.
+
+The baseline is the pre-unification tree, so at the tree the gates were
+introduced on most readings sit well under them: the categorical Typed
+retained checkpoints by 13–22%, the geometry inserts and changed-ancestor
+successors by up to 42%, the prepared model by 34%, while the Wire successor
+checkpoints, the geometry reads' retained pages, and the acquisition rows
+agree with the baseline within 1%. The readings above the baseline all sit
+inside the headroom: `txtime.changed.document.wire` retains 3,698–3,748 B/row
+against 3,648 (+1.4–2.7%), `bitemporal.interior.document.wire` +0.9%, the
+Columns cold-plan checkpoints +1.5%, and the `read-depth-4` and
+`read-depth-8` peaks +3.1% and +4.7%. Each is carried to Phase 5. The gates'
+sensitivity at this tree is therefore the headroom plus whatever the
+unification saved on the address, and the after-capture is the basis to
+re-derive them from under the same rule.
+
+### Scaling domains
+
+The acquisition levels per layout are a scaling domain: per-row retained and
+transient readings at 8, 32, and 128 rows must not increase with the row
+count, since the resolving read's planning and compilation are a fixed cost
+the rows amortize and nothing production keeps is sized by rows squared. The
+geometry families are gated per level under both layouts, which bounds each
+family's slope at its frozen levels; the read side's O(NW) positional
+expansion (`sparse-64` retains 36 KiB for 32 roots carrying one populated leaf)
+and the write side's O(W) changed-ancestor cost are inside those ceilings, not
+separately gated.
+
+### Sensitivity
+
+Each seed below is a monkeypatch inside the gate suite's child, at the seam it
+names, and is proved to trip the gate it targets. Figures are from the tree
+the gates were introduced on (2026-09-17, CPython 3.14.7, this runner) and
+are readings, not evidence.
+
+| Seed | Seam | Effect | Proved on |
+|---|---|---|---|
+| A per-instruction registry keeping a detached copy of every prepared row, accumulating | `prepare_typed_write` / `prepare_wire_write` | retained +964 to +1,064 B/row on the categorical cases, +5,080 on `width-64` | the three Wire successor cases, which sit within one row of their gate |
+| A second formed model retained beside the first | `DomainModel` formation inside the model window | retained 427 KB to 823 KB (formation is 396 KB of the 427; the catalog, codec, and planner are 31 KB) | `model.prepared` |
+| Four complete mutable copies of every document bind held across the driver dump | `serialize` | peak +4.5 to +6.2 KB per copy; one copy leaves every case inside its gate (`width-64.document` 30,306 against 33,645; `many-32.columns` 34,106 against 42,269) | the three widest cases, at four copies |
+| A resolving port keeping every row it answered | `projected_rows` | retained +1,000 to +1,160 B/row at every level | `rows-32.columns`, `rows-128.document` |
+| A key tuple sized by the row count kept per row | `projected_rows` | retained +120 B/row at 8 rows, +1,080 at 128: the per-row readings stop falling | the Columns domain's monotonicity and `rows-128.columns` |
+| A reduced dictionary kept beside every positional row | `build_positional_object` | retained +17.3 KiB at `depth-1`, +148 KiB at `sparse-64` (the full declared width), +190 KiB at `many-32` | `depth-1`, `sparse-64`, `many-32`, both layouts |
+| A detached copy of the answered rows alive during materialization, replaced per statement | `projected_rows` | peak +23 to +28 KiB at `depth-1`, +216 KiB at `width-64`; the retained page is not raised | `depth-1`, `width-64`, both layouts |
+| A second plan cache compiling every plan again | `ColdPlan.plan` | retained 16.2 to 32.6 KiB | every plan level, both layouts |
+
+What the gates cannot see is pinned beside them: lowering the settled plan a
+second time (`stream_lowered` twice on `txtime.changed.document.wire`) leaves
+the checkpoint at 3,698–3,748 B/row and the high-water mark at 15,030 B/row —
+neither gate moves — while the `applyPatches` pass observation goes from one
+per row to two and the elapsed median from 227 to 270 µs/row (+19%), which the
+advisory comparison would report as `slower`, past the 5% allowance and the
+±15% floor. A duplicate traversal that allocates and frees inside a window is
+visible only to the advisories; a transient copy under the headroom is
+invisible to the peak gate; and a retained duplicate smaller than the slack
+the unification opened under a gate is invisible to that gate until Phase 5
+re-derives it.
+
+### Ownership
+
+`tests/unit/_memory_gate_support.py` names the cost item owning each gate;
+`tests/unit/test_scheduling_partition.py` grades that every named item is
+collected in the cost class and that the owners partition the 154 gates, so a
+gate is never owned by a report member's registration. The cost class is
+CI-owned (`python-check-cost`, six shards) and outside `just check`.
 
 ## Diagnostic runs
 

@@ -6523,12 +6523,15 @@ locking unions retain the core refusal.
   protocol and workload manifest; `languages/python/docs/write-lowering-envelope/`
   keeps the earlier captures whose window stopped at `LoweredStatement`. Pass
   observations are diagnostics and never a gate. There is deliberately **no
-  timing gate anywhere in
-  this target**: a total in bytes and an elapsed time are machine- and
+  timing gate anywhere in this target**: an elapsed time is machine- and
   interpreter-relative, and every CI job runs a floating runner label, so a
-  threshold over either would fail for reasons unrelated to the change under it.
-  What is gated instead is the SHAPE of what is retained, in the `cost` class
-  above. The two comparisons the measurement contract does name — an aggregate
+  threshold over it would fail for reasons unrelated to the change under it.
+  What is gated instead, in the `cost` class above, is the SHAPE of what is
+  retained and — for the structural read and write windows alone — the byte
+  readings themselves, under the Memory Gates below: a byte reading is a
+  property of the interpreter's object layouts rather than of the runner, its
+  run-to-run agreement is measured and recorded, and its gate carries that
+  headroom. The two comparisons the measurement contract does name — an aggregate
   reduction against its target, and a representative operation against its
   threshold — are computed by the report and DISPLAYED as an escalation block, so
   each returns to a human decision by being emitted rather than by being noticed.
@@ -6536,6 +6539,39 @@ locking unions retain the core refusal.
   under `core/spec/language-testing.md` §2: it exits non-zero on exactly one
   thing, a matrix cell it has no reading for, which says there is nothing to read
   rather than that what was read is wrong.
+- **Memory Gates.** [`memory-gates.yaml`](memory-gates.yaml) is the sole
+  machine-readable source of the blocking memory ceilings: one per byte-unit
+  reading address of the structural windows — the retained checkpoint and the
+  high-water mark of every keyed-write, predicate-acquisition, and
+  model-preparation case, and the retained and peak readings of every
+  provider-free geometry read and cold read-plan compilation, under both
+  layouts — beside the scaling domains whose per-unit readings must not grow
+  with scale (the predicate-acquisition levels, per layout) and the advisory
+  allowances timing and byte deltas are read against. Python code loads it
+  through `parallax.conformance.budget.MemoryGates`; no gate, report, or test
+  transcribes a ceiling. Every ceiling is derived from the capture the file
+  names as its basis by one rule — the largest reading of the address on any
+  supported runtime, scaled by the file's headroom and rounded up to a whole
+  byte — and a database-free check recomputes every entry from that capture,
+  so the file is the rule's output and never an edit. Each gate is owned by
+  exactly one `cost` item, named by module and function in
+  `tests/unit/_memory_gate_support.py`, which reads the window through the same
+  reading child the report measures with; the scheduling-partition check grades
+  that every named item is collected in the class and that the owners partition
+  the gates, so ownership is never inferred from a report member's
+  registration. Seeded regressions — a retained duplicate at the preparation
+  seam, a second formed model, mutable copies of every document bind held
+  across the driver dump, per-row retention and a rows-squared structure at the
+  resolving read, a reduced tree beside every positional row, a copy of the
+  answered rows alive during materialization, and a second plan cache — are
+  proved to trip their gates in the same suites, and what the gates cannot see
+  is pinned there too: a duplicate traversal that allocates and frees inside a
+  window moves neither reading, and only the pass observations and advisory
+  timing reflect it. The headroom is `1.10`, the Budget Contract's own
+  `individualMax` for a memory cell; a gate is re-derived only from a clean
+  capture under the same rule, and never relaxed to admit a reading. The
+  report's verifier states a reading past its gate as an advisory and never
+  fails for it, because the gate blocks in the cost class and only there.
 - **Snapshot Delivery Budget Contract.**
   [`budget-contract.yaml`](budget-contract.yaml) is the sole machine-readable
   source of the Snapshot delivery workload identifiers, benchmark fixture
@@ -6642,7 +6678,8 @@ locking unions retain the core refusal.
   line that never fails verification: a timing or memory ceiling exceeded, a
   streamed-memory arm grown past its limit, a lock that moved since the capture
   (named with both digests, by `--verify` and by `--freshness-only` alike), and
-  a producing commit the inspected head no longer descends from.
+  a producing commit the inspected head no longer descends from, and a reading
+  past the memory gate at its address on any runtime.
   `--freshness-only` exits non-zero only where it made no comparison at all —
   no single Snapshot delivery member, or provenance whose recorded lock digest
   is absent or malformed — which is provenance `--verify` refuses the member

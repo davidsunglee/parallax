@@ -6,11 +6,12 @@ incomplete required envelope, a snapshot-delivery envelope that is not
 authoritative, a capture taken from a dirty tree, a workload digest that
 disagrees with the inspected checkout, and members produced at different
 commits — from what is merely drift or an adverse reading: a timing or memory
-ceiling exceeded, a scaling arm grown past its limit, a dependency lock that
-moved since the capture, and a producing commit the inspected head no longer
-descends from are each reported as an advisory and never fail. The
-write-lowering envelope's sampling protocol is its own, so it is
-non-authoritative by construction and verification accepts it so.
+ceiling exceeded, a reading past the memory gate the cost class blocks on, a
+scaling arm grown past its limit, a dependency lock that moved since the
+capture, and a producing commit the inspected head no longer descends from are
+each reported as an advisory and never fail. The write-lowering envelope's
+sampling protocol is its own, so it is non-authoritative by construction and
+verification accepts it so.
 ``--freshness-only`` reports a moved lock as the same advisory and fails only
 when the portfolio establishes no freshness at all: no single snapshot-delivery
 member, or provenance whose recorded lock digest is absent or malformed.
@@ -45,7 +46,7 @@ from jsonschema import ValidationError
 
 import write_lowering_overhead as write_report
 from interpreter_matrix import authority_minor, supported_minors
-from parallax.conformance.budget import BudgetContract
+from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
 from parallax.conformance.cost_envelope import Reading, validate
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
@@ -541,8 +542,8 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
 
     The write-lowering envelope's authority is not among these: its sampling
     protocol is its own, so it is non-authoritative by construction. Neither is
-    a ceiling exceeded, an arm grown, a moved lock, or an unpublished producing
-    commit: see :func:`advisories`.
+    a ceiling exceeded, a memory gate passed, an arm grown, a moved lock, or an
+    unpublished producing commit: see :func:`advisories`.
     """
     if is_diagnostic(document):
         return ["a diagnostic reading set is not evidence and cannot be verified"]
@@ -584,18 +585,56 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
     return failures
 
 
-def advisories(document: Document, contract: BudgetContract | None = None) -> list[str]:
-    """Everything reported about the required evidence that never fails it: a
-    timing or memory ceiling exceeded, a scaling arm grown past its limit, a
-    dependency lock that moved since the capture, and a producing commit the
-    inspected head no longer descends from. A lock comparison that could not be
-    made at all is reported here the same way: the provenance it needs is
-    required of the envelope, so :func:`verify` refuses one lacking it.
+def _gate_advisories(document: Document, gates: MemoryGates) -> list[str]:
+    """Every reading of a required member past the memory gate at its address,
+    on whichever runtime read it. The gate blocks in the cost class, where the
+    same window is read again in an interpreter of its own; here it is stated."""
+    indexed = {(gate.subject, gate.workload, gate.cell): gate for gate in gates.gates}
+    reported: list[str] = []
+    for subject in (SNAPSHOT_SUBJECT, WRITE_SUBJECT):
+        members = _members(document, subject)
+        if len(members) != 1:
+            continue
+        for reading in _readings(members[0]):
+            address = (subject, str(reading["workload"]), str(reading["cell"]))
+            gate = indexed.get(address)
+            if gate is None:
+                continue
+            unit = str(reading.get("unit"))
+            spelled = _spelled((str(reading.get("runtime", "")), address[1], address[2]))
+            if unit != gate.unit:
+                reported.append(
+                    f"advisory: {subject} {spelled} is read in {unit} and gated in {gate.unit}"
+                )
+                continue
+            value = _number(reading["value"])
+            if not gate.within(value):
+                reported.append(
+                    f"advisory: {subject} {spelled} is outside its memory gate "
+                    f"({reading_bytes(value, unit):.0f} B over {gate.max_bytes} B; "
+                    "the cost class gates it)"
+                )
+    return reported
 
-    None of these makes a capture wrong. A ceiling is the cost class's to gate;
-    a lock bump or a rebase changes nothing a reading measured; and a capture is
-    taken once, so drift is stated beside the evidence rather than used to demand
-    another hour of the runner.
+
+def advisories(
+    document: Document,
+    contract: BudgetContract | None = None,
+    gates: MemoryGates | None = None,
+) -> list[str]:
+    """Everything reported about the required evidence that never fails it: a
+    timing or memory ceiling exceeded, a reading past its memory gate, a
+    scaling arm grown past its limit, a dependency lock that moved since the
+    capture, and a producing commit the inspected head no longer descends from.
+    A lock comparison that could not be made at all is reported here the same
+    way: the provenance it needs is required of the envelope, so :func:`verify`
+    refuses one lacking it.
+
+    None of these makes a capture wrong. A ceiling is the cost class's to gate,
+    and a memory gate blocks there and only there; a lock bump or a rebase
+    changes nothing a reading measured; and a capture is taken once, so drift is
+    stated beside the evidence rather than used to demand another hour of the
+    runner.
     """
     if is_diagnostic(document):
         return []
@@ -621,6 +660,8 @@ def advisories(document: Document, contract: BudgetContract | None = None) -> li
     write = _members(document, WRITE_SUBJECT)
     if len(write) == 1:
         reported += _unpublished(write[0], WRITE_SUBJECT)
+    with contextlib.suppress(KeyError, TypeError, ValueError):
+        reported += _gate_advisories(document, gates or MemoryGates.load())
     return reported
 
 
