@@ -16,6 +16,7 @@ from parallax.core.inheritance import (
     INHERITANCE_MODULE,
     MODEL_COMPILER,
     RULE_SET,
+    EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     compile_facet,
@@ -223,6 +224,16 @@ def test_an_entity_view_holds_its_applicable_document_shape() -> None:
         view.applicable_attributes,
         view.applicable_value_objects,
     )
+
+
+def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_selection() -> None:
+    view = _view(_corpus("customer"), "Customer")
+    selection = view.member_selection
+    assert tuple(selection.attributes[:]) == tuple(view.applicable_attributes)
+    assert selection.attributes != object()
+    assert selection.identities != object()
+    with pytest.raises(ValueError, match="aligns every shape member"):
+        EntityMemberSelection(MemberShape(()), selection.bindings, selection.attribute_count)
 
 
 def test_an_applicable_member_is_the_ancestors_own_accepted_value() -> None:

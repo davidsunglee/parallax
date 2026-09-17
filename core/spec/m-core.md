@@ -7,7 +7,7 @@ other module depends on it, directly or transitively. It owns no serialized-
 literal grammar, canonical spelling, or parser provenance; those belong to
 `m-wire`.
 
-## JSON container detachment
+## JSON container ownership
 
 `detachJsonContainer(value)` recursively copies JSON-shaped mappings and
 sequences into plain object and array container kinds. It retains scalar values,
@@ -15,12 +15,32 @@ normalizes no leaf spelling, consults no model shape or path, and shares no
 container with its input. Modules use it when an immutable observation or pure
 document operation must break aliases without acquiring document-codec semantics.
 
+`retainDocumentValue(value)` establishes recursively immutable ownership of a
+document value for a consumer that must retain it. It owns every mutable object
+and array container, reuses a subtree already carrying this ownership guarantee,
+and preserves object iteration and array element order. The result exposes
+read-only object access and immutable arrays; a read-only wrapper over
+externally mutable storage is not already owned. A conforming implementation MAY
+adopt final private object storage from a trusted producer without another copy,
+provided no mutation-capable alias survives adoption and every descendant is
+already safe to retain. Adoption is an internal producer seam, not a public
+trust flag or a backing-storage accessor.
+
+Ownership says nothing about declared shape, leaf validity, or canonical
+encoding. Those remain the document codec's responsibilities. An ordinary read
+may consume a freshly parsed, ownership-transferred document directly; it need
+not retain an immutable copy unless a predecessor, diagnostic, or other
+long-lived owner requires one.
+
 ## Provider-neutral document reads
 
 A `DocumentValue` is any value in the JSON data model, including a bare JSON
 null. It is a portable tree of object, array, string, number, boolean, and null
 values, never rendered JSON text, a driver object, or a provider-native document
-handle. This carrier space is deliberately wider than the conforming `Json`
+handle. Object and array nodes may be freshly parsed mutable containers or the
+implementation's recognized recursively immutable owned carriers; arbitrary
+mapping and sequence implementations do not enter this closed algebra merely by
+presenting a read-only interface. This carrier space is deliberately wider than the conforming `Json`
 `NeutralValue` below: reads must preserve invalid stored JSON kinds so the
 document codec can classify them instead of losing them at the database seam.
 

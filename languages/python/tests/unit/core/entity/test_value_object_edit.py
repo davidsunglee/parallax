@@ -97,7 +97,7 @@ def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
 
 def test_an_edit_replaces_a_many_occurrence_whole() -> None:
     edited = _address().edit(phones=(vm.Phone(type="work", number="2"),))
-    assert edited.__parallax_document__()["phones"] == [{"type": "work", "number": "2"}]
+    assert edited.__parallax_document__()["phones"] == ({"type": "work", "number": "2"},)
 
 
 def test_an_edit_with_no_changes_is_legal_and_carries_the_same_state() -> None:

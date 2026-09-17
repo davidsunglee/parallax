@@ -53,8 +53,10 @@ from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
+    Leaf,
     Multiplicity,
     NestedValueObjectMetadata,
+    ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     VoDocumentViolation,
     entity_by_name,
@@ -854,11 +856,11 @@ def _prepare_write(
             until=instruction.until,
         )
     else:
-        members = _declared_member_map(model, entity)
+        selection = _member_selection(model, entity)
         assignment_results: list[_TransformedAssignment] = []
         for assignment in instruction.assignments:
             _owner, _separator, name = assignment.attr.rpartition(".")
-            member = members.get(name)
+            member = None if selection is None else selection.binding(name)
             if member is None:
                 transformed = _TransformedMember(assignment.value, None, False)
             else:
@@ -1047,9 +1049,14 @@ def _prepare_managed_write(
             bounds=PreparedTemporalBounds(managed_valid_from, managed_until),
         )
     assert validated_predicate is not None
-    assignment_members = _declared_member_map(model, entity)
+    selection = _member_selection(model, entity)
+    if selection is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
     prepared_assignments = tuple(
-        PreparedAssignment(assignment_members[assignment.attr.rpartition(".")[2]], assignment.value)
+        PreparedAssignment(
+            cast("_DeclaredMember", selection.binding(assignment.attr.rpartition(".")[2])),
+            assignment.value,
+        )
         for assignment in instruction.assignments
     )
     return PreparedPredicateWrite(
@@ -1142,16 +1149,11 @@ type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 type _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
-def _declared_member_map(
+def _member_selection(
     model: AcceptedMetamodel, entity: EntityMetadata
-) -> Mapping[str, _DeclaredMember]:
+) -> inheritance.EntityMemberSelection | None:
     position = inheritance.view(model).entity(entity.identity)
-    if position is None:
-        return {}
-    return {
-        **{member.identity.name: member for member in position.applicable_attributes},
-        **{member.identity.path[-1]: member for member in position.applicable_value_objects},
-    }
+    return None if position is None else position.member_selection
 
 
 def _canonical_write_row(
@@ -1195,12 +1197,12 @@ def _transform_row(
     *,
     converter: _LeafConverter,
 ) -> _TransformedRow:
-    members = _declared_member_map(model, entity)
+    selection = _member_selection(model, entity)
     transformed: dict[str, object] = {}
     violations: dict[str, VoDocumentViolation | None] = {}
     attribute_validity: dict[str, bool] = {}
     for name, value in row.items():
-        member = members.get(name)
+        member = None if selection is None else selection.binding(name)
         if member is None:
             transformed[name] = value
             continue
@@ -1215,8 +1217,8 @@ def _transform_row(
             attribute_validity[name] = result.value_valid
         else:
             violations[name] = result.vo_violation
-    for member in members.values():
-        if not isinstance(member, AttributeMetadata):
+    if selection is not None:
+        for member in selection.value_objects:
             violations.setdefault(member.identity.path[-1], None)
     return _TransformedRow(
         row=MappingProxyType(transformed),
@@ -1290,13 +1292,15 @@ def _transform_document(
 ) -> tuple[object, VoDocumentViolation | None]:
     if not isinstance(value, Mapping):
         return value, VoDocumentViolation("", "not-a-document", value)
-    attributes = {member.identity.name: member for member in container.attributes}
-    occurrences = {member.identity.path[-1]: member for member in container.value_objects}
     transformed: dict[str, object] = {}
     child_violations: dict[str, VoDocumentViolation | None] = {}
     for name, nested in cast("Mapping[str, object]", value).items():
         child_path = f"{path}.{name}"
-        if (attribute := attributes.get(name)) is not None:
+        position = container.document_shape.position(name)
+        member = None if position is None else container.members[position]
+        definition = None if position is None else container.document_shape.members[position]
+        if isinstance(definition, Leaf):
+            attribute = cast("ValueObjectAttributeMetadata", member)
             if nested is None:
                 transformed[name] = None
             else:
@@ -1307,7 +1311,8 @@ def _transform_document(
                     if valid
                     else VoDocumentViolation(name, "type-mismatch", managed, attribute.type)
                 )
-        elif (occurrence := occurrences.get(name)) is not None:
+        elif member is not None:
+            occurrence = cast("NestedValueObjectMetadata", member)
             if nested is None:
                 transformed[name] = None
                 child_violations[name] = None
@@ -1324,7 +1329,8 @@ def _transform_document(
             transformed[name] = nested
 
     violation: VoDocumentViolation | None = None
-    for name, attribute in attributes.items():
+    for attribute in container.attributes:
+        name = attribute.identity.name
         leaf = transformed.get(name)
         if name not in transformed or leaf is None:
             if not attribute.nullable:
@@ -1334,7 +1340,8 @@ def _transform_document(
             violation = leaf_violation
             break
     if violation is None:
-        for name, occurrence in occurrences.items():
+        for occurrence in container.value_objects:
+            name = occurrence.identity.path[-1]
             nested = transformed.get(name)
             if name not in transformed or nested is None:
                 zero_state = (
@@ -1415,7 +1422,7 @@ def resolve_target(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     raise WriteInstructionError(f"unknown entity {name!r}")
 
 
-def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> frozenset[str]:
+def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> Mapping[str, object]:
     """The declared attribute + value-object names a write may reference (business
     names, never physical columns) — ``entity``'s whole inheritance FAMILY for a
     participant, its own declarations otherwise (the Inheritance Facet's
@@ -1423,7 +1430,5 @@ def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> froze
     non-participant, so no branch is needed here)."""
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return frozenset()
-    attrs = {attribute.identity.name for attribute in view.applicable_attributes}
-    value_objects = {vo.identity.path[-1] for vo in view.applicable_value_objects}
-    return frozenset(attrs | value_objects)
+        return {}
+    return cast("Mapping[str, object]", view.member_selection.shape.by_name)

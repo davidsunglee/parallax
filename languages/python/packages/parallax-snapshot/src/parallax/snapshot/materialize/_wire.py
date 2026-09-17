@@ -45,13 +45,11 @@ from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, Temp
 from parallax.core.inheritance import family_variant_name
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
-    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
-    ValueObjectIdentity,
     ValueObjectMetadata,
 )
 from parallax.core.unit_work import ReadOrigin
@@ -712,26 +710,20 @@ def opened_wire_entity(
     member set — a complete Create Payload by `m-unit-work`'s own full-document
     rule, carrying the empty collection at every ``many`` the payload omitted.
     """
-    declared_attributes = {
-        attribute.identity.name: attribute
-        for attribute in _declared_attributes(model, entity).values()
-    }
-    declared_occurrences = {
-        occurrence.identity.path[-1]: occurrence
-        for occurrence in _declared_value_objects(model, entity).values()
-    }
+    position = inheritance_view(model).entity(entity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.canonical}: no Inheritance Facet view")
     rendered: dict[str, WireValue] = {}
     for name, value in row.items():
-        attribute = declared_attributes.get(name)
-        if attribute is not None:
-            _put(rendered, name, _wire_scalar(attribute.type, value))
+        binding = position.member_selection.binding(name)
+        if isinstance(binding, AttributeMetadata):
+            _put(rendered, name, _wire_scalar(binding.type, value))
             continue
-        occurrence = declared_occurrences.get(name)
-        if occurrence is not None:  # pragma: no branch - the payload names declared members only
+        if binding is not None:  # pragma: no branch - the payload names declared members only
             _put(
                 rendered,
                 name,
-                _occurrence(value, occurrence, _AUTHORED, encode_wire),
+                _occurrence(value, binding, _AUTHORED, encode_wire),
             )
     variant = _family_variant(model, entity)
     if variant is not None:
@@ -739,24 +731,6 @@ def opened_wire_entity(
     node = _frozen_mapping(_WireEntityNode, rendered)
     object.__setattr__(node, "_source", hint)
     return node
-
-
-def _declared_attributes(
-    model: Metamodel, entity: EntityIdentity
-) -> Mapping[AttributeIdentity, AttributeMetadata]:
-    position = inheritance_view(model).entity(entity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}
-    return {attribute.identity: attribute for attribute in position.applicable_attributes}
-
-
-def _declared_value_objects(
-    model: Metamodel, entity: EntityIdentity
-) -> Mapping[ValueObjectIdentity, ValueObjectMetadata]:
-    position = inheritance_view(model).entity(entity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {}
-    return {occurrence.identity: occurrence for occurrence in position.applicable_value_objects}
 
 
 def _family_variant(model: Metamodel, entity: EntityIdentity) -> str | None:

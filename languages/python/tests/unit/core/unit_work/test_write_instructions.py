@@ -724,7 +724,7 @@ def test_member_transformation_preserves_unknown_values_when_position_metadata_i
         return MissingPosition()
 
     monkeypatch.setattr(inheritance, "view", missing_view)
-    assert wi._declared_member_map(_ACCOUNT, entity) == {}  # pyright: ignore[reportPrivateUsage]
+    assert wi._member_selection(_ACCOUNT, entity) is None  # pyright: ignore[reportPrivateUsage]
 
     transformed = wi._transform_row(  # pyright: ignore[reportPrivateUsage]
         _ACCOUNT,

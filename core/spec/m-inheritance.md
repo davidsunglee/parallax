@@ -611,6 +611,14 @@ InheritanceFacet
   position(members: nonempty sequence<EntityIdentity>)
     -> InheritancePositionView | absent
 
+EntityMemberSelection
+  shape: MemberShape
+  bindings: immutable sequence<AttributeMetadata | ValueObjectMetadata>
+  attributes: immutable sequence<AttributeMetadata>
+  value_objects: immutable sequence<ValueObjectMetadata>
+  position(MemberIdentity) -> integer
+  binding(MemberName) -> AttributeMetadata | ValueObjectMetadata | absent
+
 InheritanceEntityView
   entity: EntityIdentity
   root: EntityIdentity
@@ -621,6 +629,7 @@ InheritanceEntityView
   tag_column: string | absent
   tag_value: string | absent
   persistence: PersistenceMode
+  member_selection: EntityMemberSelection
   applicable_attributes: immutable sequence<AttributeMetadata>
   applicable_relationships: immutable sequence<RelationshipDeclaration>
   applicable_value_objects: immutable sequence<ValueObjectMetadata>
@@ -646,6 +655,17 @@ Entity has the trivial view whose `root` is itself, whose `ancestry` and
 amortized O(1) read of formation output — the compiler precomputes these
 answers once, so behavioral modules never repeat ancestry walks at query or
 write time.
+
+`member_selection` is the one complete inheritance-effective Attribute and
+top-level Value Object selection for the Entity. It composes every applicable
+Attribute in root-to-descendant declaration order, then every applicable Value
+Object occurrence in that order. Its `shape.members` and `bindings` are aligned;
+the shape references declaration-owned member definitions while each binding
+retains its contextual Entity identity and storage metadata. The selection owns
+the distinct `MemberIdentity`-to-position index. `applicable_attributes`,
+`applicable_value_objects`, `applicable_document_shape`, and their named lookups
+are views over this selection rather than independently retained tuples, shapes,
+or name maps.
 
 - `root` names the family's root (the family identity); `ancestry` is the
   parent chain `root -> … -> entity` in that order.

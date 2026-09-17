@@ -19,4 +19,5 @@ def test_a_document_shape_indexes_the_same_members_as_a_linear_scan() -> None:
         expected = next(member for member in shape.members if member.name == name)
         assert shape.by_name.get(name) is expected
         assert shape.member(name) is expected
+    assert len(shape.by_name) == 2
     assert shape.member("absent") is None

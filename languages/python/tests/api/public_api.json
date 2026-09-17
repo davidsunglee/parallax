@@ -470,6 +470,7 @@
     "DirectColumn",
     "DiscriminatorAssignment",
     "DocumentPath",
+    "DocumentResidentSelection",
     "EntityLayoutView",
     "FACET_KEY",
     "INDEX_OVER_DOCUMENT_MEMBER",

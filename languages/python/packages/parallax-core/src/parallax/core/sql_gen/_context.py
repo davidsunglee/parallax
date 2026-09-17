@@ -42,6 +42,7 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     TemporalBound,
+    detach_json_container,
     matches_neutral_type,
 )
 from parallax.core.db_port import JsonDocument
@@ -196,7 +197,7 @@ class LoweredStatement:
 
 def _wire_bind(value: object) -> WireValue:
     if isinstance(value, JsonDocument):
-        value = value.value
+        value = detach_json_container(value.value)
     if value is None:
         return None
     try:

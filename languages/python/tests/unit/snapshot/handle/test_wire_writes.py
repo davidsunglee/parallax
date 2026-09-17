@@ -279,7 +279,7 @@ def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None
 
     db_for(CONTACT, port).transact(body)
     stored = cast("JsonDocument", _writes(port)[0].binds[2])
-    assert cast("dict[str, Any]", stored.value)["phones"] == []
+    assert cast("Mapping[str, Any]", stored.value)["phones"] == ()
 
 
 def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> None:
@@ -297,7 +297,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
         assert opened["members"] == []
 
     db_for(ROSTER_META, columns_port).transact(columns)
-    assert _bound_documents(columns_port) == [[]]
+    assert _bound_documents(columns_port) == [()]
 
     document_port = ScriptedAdapter(Transact(Write()))
 

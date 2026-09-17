@@ -273,7 +273,10 @@ For each physical branch, SQL selects from the layout values as follows:
    `PresentDocument` and passes its document to `m-document-codec`'s
    Entity-member locator, then fans the classified
    inputs out into the requested logical members — none, where the read requested
-   none — and the raw value is not among them. A document-resident top-level Value
+   none — and the raw value is not among them. The fan-out references the
+   concrete Entity's complete storage-owned resident shape and separately retains
+   only the selected result-key-to-path pairs plus family padding; it never builds
+   a selected-only shape. A document-resident top-level Value
    Object and the direct slot in step 3 therefore reach the same located-member
    classifier before either can create its occurrence cursor.
 

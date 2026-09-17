@@ -34,6 +34,7 @@ from parallax.core.inheritance._compile import (
 from parallax.core.inheritance._facet import (
     FACET_KEY,
     INHERITANCE_MODULE,
+    EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     InheritancePositionView,
@@ -116,6 +117,7 @@ __all__ = [
     "TPH_DESCENDANT_TABLE_FORBIDDEN",
     "TPH_ROOT_TABLE_REQUIRED",
     "AttributeTableContributor",
+    "EntityMemberSelection",
     "InheritanceEntityView",
     "InheritanceError",
     "InheritanceFacet",
@@ -404,9 +406,6 @@ def _concrete_accepted_field_names(
     not of the position being written.
     """
     return tuple(
-        frozenset(
-            {member.identity.name for member in position.applicable_attributes}
-            | {member.identity.path[-1] for member in position.applicable_value_objects}
-        )
+        frozenset(position.member_selection.shape.by_name)
         for position in (_entity_view(facet, concrete) for concrete in effective)
     )

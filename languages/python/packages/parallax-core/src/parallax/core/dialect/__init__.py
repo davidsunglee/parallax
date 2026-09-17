@@ -29,6 +29,7 @@ from parallax.core.base import (
     DocumentRead,
     Float32,
     Float64,
+    FrozenMap,
     Int32,
     Int64,
     Json,
@@ -168,7 +169,7 @@ def _document_value_bind(value: object) -> object:
     Serializing it here is what keeps a key order and a separator convention out
     of every golden — a scalar has neither.
     """
-    if isinstance(value, (dict, list)):
+    if isinstance(value, (dict, list, FrozenMap, tuple)):
         return cast("object", value)
     return json.dumps(value)
 

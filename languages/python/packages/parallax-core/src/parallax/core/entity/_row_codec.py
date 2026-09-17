@@ -63,11 +63,7 @@ from parallax.core.entity._errors import (
 from parallax.core.entity._expressions import serialize_member
 from parallax.core.entity._instance_state import is_present, named_state, plan_of
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
-from parallax.core.metamodel import (
-    AttributeMetadata,
-    EntityIdentity,
-    ValueObjectMetadata,
-)
+from parallax.core.metamodel import EntityIdentity
 
 __all__ = ["AuthoredRow", "EntityRowCodec"]
 
@@ -113,7 +109,7 @@ class _RowFacts:
     """
 
     identity: EntityIdentity
-    members: Mapping[str, AttributeMetadata | ValueObjectMetadata]
+    layout: EntityLayout
     framework_owned: frozenset[str]
     primary_key: tuple[str, ...]
 
@@ -276,7 +272,9 @@ class EntityRowCodec:
 
     def _require_declared(self, facts: _RowFacts, selected: Iterable[str], operation: str) -> None:
         """Refuse a selection naming a member the resolved identity does not declare."""
-        undeclared = sorted(name for name in selected if name not in facts.members)
+        undeclared = sorted(
+            name for name in selected if facts.layout.member_selection.shape.position(name) is None
+        )
         if not undeclared:
             return
         named = ", ".join(repr(name) for name in undeclared)
@@ -358,7 +356,8 @@ class EntityRowCodec:
         """
         return tuple(
             canonical
-            for canonical in facts.members
+            for member in facts.layout.member_selection.shape.members
+            for canonical in (member.name,)
             if canonical in selected and canonical not in facts.framework_owned
         )
 
@@ -370,13 +369,9 @@ def _row_facts(layout: EntityLayout) -> _RowFacts:
     which Attributes carry a concrete's key is answered once for every consumer
     that asks it.
     """
-    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {
-        attribute.identity.name: attribute for attribute in layout.attributes
-    }
-    members.update({occurrence.identity.path[-1]: occurrence for occurrence in layout.occurrences})
     return _RowFacts(
         identity=layout.concrete,
-        members=MappingProxyType(members),
+        layout=layout,
         framework_owned=frozenset(
             attribute.identity.name for attribute in layout.attributes if attribute.framework_owned
         ),

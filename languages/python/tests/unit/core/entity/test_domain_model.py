@@ -47,6 +47,30 @@ def _value_object_class() -> type:
     return Point
 
 
+class _ReusablePoint(ValueObject):
+    x: Attr[int]
+
+
+class _ReusableFirst(Entity, table="reusable_first", name="ReusableFirst"):
+    id: Attr[int] = attr(primary_key=True)
+    point: Attr[_ReusablePoint]
+
+
+class _ReusableSecond(Entity, table="reusable_second", name="ReusableSecond"):
+    id: Attr[int] = attr(primary_key=True)
+    location: Attr[_ReusablePoint]
+
+
+class _ReusableBrokenFirst(Entity, table="reusable_broken_first", name="ReusableBroken"):
+    id: Attr[int] = attr(primary_key=True)
+    point: Attr[_ReusablePoint]
+
+
+class _ReusableBrokenSecond(Entity, table="reusable_broken_second", name="ReusableBroken"):
+    id: Attr[int] = attr(primary_key=True)
+    location: Attr[_ReusablePoint]
+
+
 def test_a_model_over_no_source_is_empty_with_no_argument_index() -> None:
     with pytest.raises(MetamodelDefinitionError) as caught:
         DomainModel()
@@ -273,6 +297,19 @@ def test_one_class_composes_into_any_number_of_models() -> None:
     assert narrow.meta(Region).identity == wide.meta(Region).identity
     assert [entity.identity.name for entity in narrow.entities] == ["Region"]
     assert [entity.identity.name for entity in wide.entities] == ["Region", "Site"]
+
+
+def test_reusable_value_object_definitions_survive_successful_and_failed_formations() -> None:
+    first = DomainModel(_ReusableFirst)
+    with pytest.raises(MetamodelValidationError):
+        DomainModel(_ReusableBrokenFirst, _ReusableBrokenSecond)
+    second = DomainModel(_ReusableSecond)
+    first_occurrence = first.meta(_ReusableFirst).value_object("point")
+    second_occurrence = second.meta(_ReusableSecond).value_object("location")
+    assert first_occurrence is not None
+    assert second_occurrence is not None
+    assert first_occurrence.document_shape is second_occurrence.document_shape
+    assert first_occurrence.attributes[0].definition is second_occurrence.attributes[0].definition
 
 
 def test_an_entity_class_the_model_did_not_compose_names_no_entity_of_it() -> None:

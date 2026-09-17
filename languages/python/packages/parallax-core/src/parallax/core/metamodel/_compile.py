@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, TypeGuard, cast
+from typing import Any, Final, TypeGuard, cast, overload
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._identities import (
@@ -24,7 +24,7 @@ from parallax.core.metamodel._identities import (
     ValueObjectIdentity,
 )
 from parallax.core.metamodel._issues import METAMODEL_MODULE
-from parallax.core.metamodel._shape import MemberShape
+from parallax.core.metamodel._shape import Leaf, MemberShape, Occurrence
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
     CompiledMetadata,
@@ -67,8 +67,42 @@ __all__ = [
 @dataclass(frozen=True, slots=True)
 class _ValueObjectAttributeMetadata:
     identity: ValueObjectAttributeIdentity
-    type: NeutralType
-    nullable: bool
+    definition: Leaf
+
+    @property
+    def type(self) -> NeutralType:
+        return self.definition.type
+
+    @property
+    def nullable(self) -> bool:
+        return self.definition.nullable
+
+
+type _BoundMember = ValueObjectAttributeMetadata | NestedValueObjectMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class _BindingRange[T](Sequence[T]):
+    bindings: tuple[_BoundMember, ...]
+    start: int
+    stop: int
+
+    def __len__(self) -> int:
+        return self.stop - self.start
+
+    @overload
+    def __getitem__(self, index: int) -> T: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[T]: ...
+
+    def __getitem__(self, index: int | slice) -> T | Sequence[T]:
+        if isinstance(index, slice):
+            return cast("Sequence[T]", self.bindings[self.start : self.stop][index])
+        position = index if index >= 0 else len(self) + index
+        if position < 0 or position >= len(self):
+            raise IndexError(index)
+        return cast("T", self.bindings[self.start + position])
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,35 +122,59 @@ class _OccurrenceMetadata:
     """
 
     identity: ValueObjectIdentity
-    multiplicity: Multiplicity
-    nullable: bool
-    attributes: tuple[ValueObjectAttributeMetadata, ...]
-    value_objects: tuple[NestedValueObjectMetadata, ...]
-    document_shape: MemberShape
-    _attribute_index: Mapping[str, ValueObjectAttributeMetadata] = field(
+    definition: Occurrence
+    members: tuple[_BoundMember, ...]
+    _attributes: _BindingRange[ValueObjectAttributeMetadata] = field(
         init=False, repr=False, compare=False
     )
-    _value_object_index: Mapping[str, NestedValueObjectMetadata] = field(
+    _value_objects: _BindingRange[NestedValueObjectMetadata] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
+        leaf_count = sum(isinstance(member.definition, Leaf) for member in self.members)
         object.__setattr__(
             self,
-            "_attribute_index",
-            MappingProxyType({member.identity.name: member for member in self.attributes}),
+            "_attributes",
+            _BindingRange(self.members, 0, leaf_count),
         )
         object.__setattr__(
             self,
-            "_value_object_index",
-            MappingProxyType({member.identity.path[-1]: member for member in self.value_objects}),
+            "_value_objects",
+            _BindingRange(self.members, leaf_count, len(self.members)),
         )
+
+    @property
+    def multiplicity(self) -> Multiplicity:
+        return self.definition.multiplicity
+
+    @property
+    def nullable(self) -> bool:
+        return self.definition.nullable
+
+    @property
+    def attributes(self) -> Sequence[ValueObjectAttributeMetadata]:
+        return self._attributes
+
+    @property
+    def value_objects(self) -> Sequence[NestedValueObjectMetadata]:
+        return self._value_objects
+
+    @property
+    def document_shape(self) -> MemberShape:
+        return self.definition.shape
 
     def attribute(self, name: str) -> ValueObjectAttributeMetadata | None:
-        return self._attribute_index.get(name)
+        position = self.definition.shape.position(name)
+        if position is None or not isinstance(self.definition.shape.members[position], Leaf):
+            return None
+        return cast("ValueObjectAttributeMetadata", self.members[position])
 
     def value_object(self, name: str) -> NestedValueObjectMetadata | None:
-        return self._value_object_index.get(name)
+        position = self.definition.shape.position(name)
+        if position is None or not isinstance(self.definition.shape.members[position], Occurrence):
+            return None
+        return cast("NestedValueObjectMetadata", self.members[position])
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,15 +344,12 @@ def value_object_metadata(
     descriptor carries identical to the one the accepted model publishes.
     """
     identity = ValueObjectIdentity(entity, (occurrence.name,))
-    attributes, nested = _expand_shape(entity, identity, occurrence.shape, frozenset())
+    members = _bind_shape(entity, identity, occurrence.shape, frozenset())
     return _ValueObjectMetadata(
         identity=identity,
         storage=occurrence.storage,
-        multiplicity=occurrence.multiplicity,
-        nullable=occurrence.nullable,
-        attributes=attributes,
-        value_objects=nested,
-        document_shape=MemberShape.of(attributes, nested),
+        definition=occurrence.definition,
+        members=members,
     )
 
 
@@ -305,24 +360,21 @@ def _nested_value_object_metadata(
     expanding: frozenset[ValueObjectShapeKey],
 ) -> NestedValueObjectMetadata:
     identity = ValueObjectIdentity(entity, path)
-    attributes, nested = _expand_shape(entity, identity, occurrence.shape, expanding)
+    members = _bind_shape(entity, identity, occurrence.shape, expanding)
     return _NestedValueObjectMetadata(
         identity=identity,
-        multiplicity=occurrence.multiplicity,
-        nullable=occurrence.nullable,
-        attributes=attributes,
-        value_objects=nested,
-        document_shape=MemberShape.of(attributes, nested),
+        definition=occurrence.definition,
+        members=members,
     )
 
 
-def _expand_shape(
+def _bind_shape(
     entity: EntityIdentity,
     identity: ValueObjectIdentity,
     shape: ValueObjectShapeDeclaration,
     expanding: frozenset[ValueObjectShapeKey],
-) -> tuple[tuple[ValueObjectAttributeMetadata, ...], tuple[NestedValueObjectMetadata, ...]]:
-    """One shape's members as path-identified Metadata, Shape Keys discarded.
+) -> tuple[_BoundMember, ...]:
+    """One shape's definitions bound to path identities, Shape Keys discarded.
 
     Reuse of one shape at several paths expands to distinct occurrence trees;
     reuse on a single path is a containment cycle ``m-value-object`` already
@@ -334,19 +386,18 @@ def _expand_shape(
             "expands a containment cycle that validation should have rejected"
         )
     below = expanding | {shape.key}
-    attributes = tuple(
+    attributes: tuple[_BoundMember, ...] = tuple(
         _ValueObjectAttributeMetadata(
             identity=ValueObjectAttributeIdentity(identity, declared.name),
-            type=declared.type,
-            nullable=declared.nullable,
+            definition=declared.definition,
         )
         for declared in shape.attributes
     )
-    nested = tuple(
+    nested: tuple[_BoundMember, ...] = tuple(
         _nested_value_object_metadata(entity, (*identity.path, occurrence.name), occurrence, below)
         for occurrence in shape.value_objects
     )
-    return attributes, nested
+    return attributes + nested
 
 
 class MetamodelMetadataCompiler:

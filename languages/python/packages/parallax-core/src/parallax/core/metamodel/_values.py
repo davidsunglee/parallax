@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
-from typing import Final
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Final
 
 from parallax.core.base import NeutralType, String
 from parallax.core.metamodel._identities import (
@@ -25,6 +25,9 @@ from parallax.core.metamodel._identities import (
     RelationshipIdentity,
     RelationshipReference,
 )
+
+if TYPE_CHECKING:
+    from parallax.core.metamodel._shape import Leaf, MemberShape, Occurrence
 
 __all__ = [
     "APPLICATION_ASSIGNED",
@@ -404,8 +407,16 @@ class AttributeMetadata:
     read_only: bool = False
     optimistic_locking: bool = False
     framework_owned: bool = False
+    definition: Leaf = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        from parallax.core.metamodel._shape import Leaf
+
+        object.__setattr__(
+            self,
+            "definition",
+            Leaf(name=self.identity.name, type=self.type, nullable=self.nullable),
+        )
         if self.max_length is None:
             return
         if self.max_length < 1:
@@ -589,10 +600,18 @@ class ValueObjectAttributeDeclaration:
     name: str
     type: NeutralType
     nullable: bool = False
+    definition: Leaf = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object Attribute name is nonempty")
+        from parallax.core.metamodel._shape import Leaf
+
+        object.__setattr__(
+            self,
+            "definition",
+            Leaf(name=self.name, type=self.type, nullable=self.nullable),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,6 +625,21 @@ class ValueObjectShapeDeclaration:
     key: ValueObjectShapeKey
     attributes: tuple[ValueObjectAttributeDeclaration, ...] = ()
     value_objects: tuple[NestedValueObjectOccurrenceDeclaration, ...] = ()
+    member_shape: MemberShape = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        from parallax.core.metamodel._shape import MemberShape
+
+        object.__setattr__(
+            self,
+            "member_shape",
+            MemberShape(
+                members=(
+                    *(attribute.definition for attribute in self.attributes),
+                    *(occurrence.definition for occurrence in self.value_objects),
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,10 +654,23 @@ class NestedValueObjectOccurrenceDeclaration:
     shape: ValueObjectShapeDeclaration
     multiplicity: Multiplicity = Multiplicity.ONE
     nullable: bool = False
+    definition: Occurrence = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a nested Value Object occurrence name is nonempty")
+        from parallax.core.metamodel._shape import Occurrence
+
+        object.__setattr__(
+            self,
+            "definition",
+            Occurrence(
+                name=self.name,
+                multiplicity=self.multiplicity,
+                nullable=self.nullable,
+                shape=self.shape.member_shape,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,7 +688,20 @@ class ValueObjectOccurrenceDeclaration:
     shape: ValueObjectShapeDeclaration
     multiplicity: Multiplicity = Multiplicity.ONE
     nullable: bool = False
+    definition: Occurrence = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object occurrence name is nonempty")
+        from parallax.core.metamodel._shape import Occurrence
+
+        object.__setattr__(
+            self,
+            "definition",
+            Occurrence(
+                name=self.name,
+                multiplicity=self.multiplicity,
+                nullable=self.nullable,
+                shape=self.shape.member_shape,
+            ),
+        )

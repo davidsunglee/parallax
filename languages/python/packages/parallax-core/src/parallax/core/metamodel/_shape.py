@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol, Self
@@ -30,6 +30,8 @@ class _LeafSource(Protocol):
     def type(self) -> NeutralType: ...
     @property
     def nullable(self) -> bool: ...
+    @property
+    def definition(self) -> Leaf: ...
 
 
 class _OccurrenceSource(Protocol):
@@ -41,6 +43,8 @@ class _OccurrenceSource(Protocol):
     def nullable(self) -> bool: ...
     @property
     def document_shape(self) -> MemberShape: ...
+    @property
+    def definition(self) -> Occurrence: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,21 +71,35 @@ type DocumentMember = Leaf | Occurrence
 
 
 @dataclass(frozen=True, slots=True)
+class _MembersByName(Mapping[str, DocumentMember]):
+    members: tuple[DocumentMember, ...]
+    positions: Mapping[str, int]
+
+    def __getitem__(self, name: str) -> DocumentMember:
+        return self.members[self.positions[name]]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.positions)
+
+    def __len__(self) -> int:
+        return len(self.positions)
+
+
+@dataclass(frozen=True, slots=True)
 class MemberShape:
     """The applicable members of one document, in canonical emission order."""
 
     members: tuple[DocumentMember, ...]
+    _position_by_name: Mapping[str, int] = field(init=False, compare=False, repr=False)
     by_name: Mapping[str, DocumentMember] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        by_name: dict[str, DocumentMember] = {}
-        for member in self.members:
-            by_name.setdefault(member.name, member)
-        object.__setattr__(
-            self,
-            "by_name",
-            MappingProxyType(by_name),
-        )
+        positions: dict[str, int] = {}
+        for position, member in enumerate(self.members):
+            positions.setdefault(member.name, position)
+        position_by_name = MappingProxyType(positions)
+        object.__setattr__(self, "_position_by_name", position_by_name)
+        object.__setattr__(self, "by_name", _MembersByName(self.members, position_by_name))
 
     @classmethod
     def of(
@@ -90,21 +108,15 @@ class MemberShape:
         value_objects: Sequence[_OccurrenceSource],
     ) -> Self:
         """Compose leaves before occurrences, reusing each occurrence's held shape."""
-        leaves: tuple[DocumentMember, ...] = tuple(
-            Leaf(name=attribute.identity.name, type=attribute.type, nullable=attribute.nullable)
-            for attribute in attributes
-        )
-        occurrences = tuple(
-            Occurrence(
-                name=value_object.identity.path[-1],
-                multiplicity=value_object.multiplicity,
-                nullable=value_object.nullable,
-                shape=value_object.document_shape,
-            )
-            for value_object in value_objects
-        )
+        leaves: tuple[DocumentMember, ...] = tuple(attribute.definition for attribute in attributes)
+        occurrences = tuple(value_object.definition for value_object in value_objects)
         return cls(members=leaves + occurrences)
+
+    def position(self, name: str) -> int | None:
+        """The canonical position ``name`` occupies, or absence on a miss."""
+        return self._position_by_name.get(name)
 
     def member(self, name: str) -> DocumentMember | None:
         """The member ``name`` names, or absent when the shape does not declare it."""
-        return self.by_name.get(name)
+        position = self.position(name)
+        return None if position is None else self.members[position]

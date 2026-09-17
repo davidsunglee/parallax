@@ -59,12 +59,10 @@ def test_entity_scope_reference_front_doors_resolve_direct_members() -> None:
     assert scope.subject_of(f"{entity.identity.canonical}.id").compared == "t0.id"
 
 
-def test_write_layout_helpers_bound_a_missing_inheritance_position(
+def test_declaring_helper_bounds_a_missing_inheritance_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entity = WALLET.entities[0]
-    view = storage_layout.view(WALLET).entity(entity.identity)
-    assert view is not None
 
     class MissingPosition:
         @staticmethod
@@ -77,7 +75,6 @@ def test_write_layout_helpers_bound_a_missing_inheritance_position(
     monkeypatch.setattr(inheritance, "view", missing_view)
 
     assert sql_write.declaring(WALLET, entity) is entity
-    assert sql_write.placed_members(WALLET, entity, view) == sql_write.PlacedMembers((), ())
 
 
 def test_nested_lowering_helpers_reject_the_wrong_validated_node_family() -> None:

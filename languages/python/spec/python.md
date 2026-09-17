@@ -2541,10 +2541,12 @@ of shared edition identity.
   `None`, one member row, or a tuple of member rows, decided by the occurrence's
   declared multiplicity rather than by the value's shape: a One admits
   `ABSENT | None | row` and a Many admits `ABSENT | tuple[row, ...]`. A member row
-  is an exact built-in tuple laid out by the model-owned Value Object layout for
-  that exact, path-specific `ValueObjectIdentity` — the occurrence's own leaves in
+  is an exact built-in tuple laid out by the occurrence binding and the reusable
+  declaration-owned `MemberShape` it references — the occurrence's own leaves in
   declaration order, then its nested occurrences in theirs — and the same rule
-  applies recursively at every depth. A member the stored document did not carry
+  applies recursively at every depth. Distinct occurrence paths retain distinct
+  contextual identities while occurrences of one reusable declaration share its
+  member definitions and nested shapes. A member the stored document did not carry
   holds `ABSENT` at its own position, which is how presence survives a row that
   cannot omit. Mutable mappings or sequences, raw document dictionaries, Pydantic
   Value Objects, and a separate frozen-map abstraction do not cross this seam.
@@ -2668,6 +2670,15 @@ of shared edition identity.
   fixes no such row — two members claiming one position, or a family primary key
   the row does not express — is refused where the layout is derived, as a raised
   error rather than a stored-data classification.
+
+  Inheritance owns one complete effective `EntityMemberSelection` per Entity:
+  one `MemberShape`, aligned contextual Attribute / Value Object bindings, and
+  one identity-to-position index. Every layout catalog over the accepted model
+  references that selection; it does not rebuild member tuples, name maps,
+  definitions, or identity positions. Storage adds only its aligned resident
+  positions and Document Paths. A compiled read references the complete resident
+  shape and retains its own selected result-key paths and padding, so selecting a
+  subset never creates a second structural definition.
 
   A row is read against its layout and against nothing else: a Page identity
   claim is computed once through the layout's own primary-key positions. Each
@@ -3866,6 +3877,48 @@ of shared edition identity.
   previous/new-edition comparison exists, an unentered stream and a public
   preflight refusal still emit nothing, and with no Provider or a declined root
   nothing about an edition is allocated or delivered.
+
+### Immutable encoded documents
+
+- **Owned container representation.** `parallax.core.base.FrozenMap[K, V]` is
+  the exact recursively owned read-only mapping carrier; ordered document arrays
+  use built-in tuples. Public `FrozenMap(source)` construction copies the outer
+  mapping and `retain_document_value(value)` recursively owns mutable mapping and
+  list descendants, including those reached through tuples or read-only proxies.
+  An exact `FrozenMap` and a tuple whose descendants are already safe may be
+  reused by identity. Arbitrary mappings and tuples do not become trusted merely
+  because their outer interface is immutable. `DocumentValue` and its runtime
+  membership check admit built-in parsed `dict` / `list` containers and these
+  exact immutable outputs; they do not admit arbitrary mapping implementations.
+- **Restricted ownership transfer.** Core owns one private adoption operation
+  for a trusted producer's final dictionary of already-safe values. The producer
+  relinquishes every mutation-capable alias after adoption. The operation is not
+  exported, carries no public trust flag, and performs no leaf validation.
+  `FrozenMap` exposes no supported backing accessor and cannot be subclassed.
+  The only backing reader is the Postgres adapter's private standard-JSON hook,
+  used synchronously while serializing a document bind.
+- **Codec result contract.** `encode_document`, `encode_many`, and
+  `encode_candidate` return recursively immutable encoded containers.
+  `apply_patches` keeps its existing export and refusal/ordering semantics but
+  intentionally changes its result contract from mutable containers to the same
+  immutable representation. Mutable source and replacement containers are
+  retained before sharing; recognized immutable untouched subtrees may be shared
+  by identity. SQL lowering encodes managed occurrence values directly into this
+  representation without per-element Presence maps or repeated child detaches.
+- **Predecessor lifetime.** Ordinary reads consume freshly parsed,
+  ownership-transferred dictionaries and lists without a freeze pass. Keyed and
+  predicate-write observation establish recursive ownership exactly when a raw
+  predecessor document must outlive that read. An unchanged temporal successor
+  binds the identical retained document; a changed successor constructs one
+  final root, preserves unknown keys outside assigned paths, and shares untouched
+  immutable subtrees.
+- **Postgres document binds.** Every `JsonDocument` becomes a per-bind psycopg
+  `Jsonb(document, dumps=...)`. The private `dumps` callable uses standard-library
+  `json.dumps` with its existing default settings and a default hook recognizing
+  exact `FrozenMap` values. The hook returns existing private backing by reference
+  to the encoder; it never calls `dict(value)` or recursively thaws the tree.
+  Tuples take the standard JSON array path, unsupported leaves raise the same
+  `TypeError`, and scalar/null document-mutation binds keep their previous route.
 
 ### Private read composition
 

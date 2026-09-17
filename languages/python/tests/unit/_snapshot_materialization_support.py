@@ -78,7 +78,6 @@ from parallax.core.document_codec import (
     MemberShape,
     Occurrence,
     encode_leaf,
-    entity_shape,
     occurrence_shape,
 )
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -91,7 +90,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.storage_layout import DirectColumn, DocumentPath, TableLayout
+from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle import _read
@@ -410,28 +409,22 @@ def _driver_row(
     meta = model.meta
     layout = model.layouts.entity(entity)
     table = _table_layout(meta, entity)
+    storage_view = storage_layout_view(meta).entity(entity)
+    if storage_view is None:  # pragma: no cover - every materialized concrete owns rows
+        raise AssertionError(f"{entity.canonical}: no storage layout view")
     contracts = {
         contract.attribute.identity: contract for contract in compiled.attribute_reads(entity)
     }
     projected = frozenset(member.storage.name for member in compiled.projected_documents)
     row: dict[str, object] = {}
-    document_attributes = tuple(
-        member
-        for member in layout.attributes
-        if isinstance(table.placement(member.identity), DocumentPath)
-    )
-    document_occurrences = tuple(
-        member
-        for member in layout.occurrences
-        if isinstance(table.placement(member.identity), DocumentPath)
-    )
-    document = cast(
-        "dict[str, DocumentValue]",
-        fixture_document(
-            entity_shape(document_attributes, document_occurrences),
-            spec.values,
-            preserve_unknown=False,
-        ),
+    residents = storage_view.document_residents
+    document = (
+        {}
+        if residents is None
+        else cast(
+            "dict[str, DocumentValue]",
+            fixture_document(residents.shape, spec.values, preserve_unknown=False),
+        )
     )
     for attribute in layout.attributes:
         if not isinstance(table.placement(attribute.identity), DirectColumn):

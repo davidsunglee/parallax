@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import INFINITY_LITERAL, NeutralType, detach_json_container
+from parallax.core.base import INFINITY_LITERAL, FrozenMap, NeutralType
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import (
     Dialect,
@@ -36,16 +36,15 @@ from parallax.core.dialect import (
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
-    Leaf,
-    MemberShape,
-    Presence,
     Present,
     SetLeaf,
     SetValue,
     apply_patches,
-    encode_document,
     encode_leaf,
-    encode_many,
+)
+from parallax.core.document_codec._document import (
+    encode_managed_document,
+    encode_managed_many,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -64,9 +63,8 @@ from parallax.core.sql_gen._context import (
     StatementBuilder,
 )
 from parallax.core.storage_layout import (
-    DocumentPath,
+    DocumentResidentSelection,
     EntityLayoutView,
-    MemberPlacement,
     RelationalDocument,
 )
 from parallax.core.unit_work import PredecessorRow
@@ -141,12 +139,6 @@ def _attribute(meta: Metamodel, identity: AttributeIdentity) -> AttributeMetadat
     return attribute
 
 
-@dataclass(frozen=True, slots=True)
-class PlacedMembers:
-    attributes: tuple[tuple[AttributeMetadata, MemberPlacement], ...]
-    value_objects: tuple[tuple[ValueObjectMetadata, MemberPlacement], ...]
-
-
 def declaring(meta: Metamodel, entity: EntityMetadata) -> EntityMetadata:
     position = inheritance.view(meta).entity(entity.identity)
     if position is None:
@@ -157,26 +149,6 @@ def declaring(meta: Metamodel, entity: EntityMetadata) -> EntityMetadata:
 
 def entity_layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
     return storage_layout.view(meta).entity(entity.identity)
-
-
-def placed_members(
-    meta: Metamodel, entity: EntityMetadata, view: EntityLayoutView
-) -> PlacedMembers:
-    position = inheritance.view(meta).entity(entity.identity)
-    if position is None:
-        return PlacedMembers((), ())
-    return PlacedMembers(
-        tuple(
-            (attribute, placement)
-            for attribute in position.applicable_attributes
-            if (placement := view.layout.placement(attribute.identity)) is not None
-        ),
-        tuple(
-            (occurrence, placement)
-            for occurrence in position.applicable_value_objects
-            if (placement := view.layout.placement(occurrence.identity)) is not None
-        ),
-    )
 
 
 def version_attribute(
@@ -229,11 +201,9 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
-    placed = placed_members(meta, entity, view)
     rows = [
         _member_cells(
             view,
-            placed,
             entry.row.attributes,
             entry.row.value_objects,
             entity,
@@ -339,7 +309,6 @@ def _assignment_clause(
     version_column = None if version is None else _column(view, version.identity, entity)
     cells = _member_cells(
         view,
-        placed_members(meta, entity, view),
         assignments.attributes,
         assignments.value_objects,
         entity,
@@ -397,7 +366,9 @@ def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
     exactly as it does for a whole-document cell one clause family over.
     """
     return tuple(
-        JsonDocument(cast("object", bind)) if isinstance(bind, (dict, list)) else bind
+        JsonDocument(cast("object", bind))
+        if isinstance(bind, (dict, list, FrozenMap, tuple))
+        else bind
         for bind in binds
     )
 
@@ -547,7 +518,6 @@ def _temporal_gate(
 
 def _member_cells(
     view: EntityLayoutView,
-    placed: PlacedMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
     entity: EntityMetadata,
@@ -590,11 +560,10 @@ def _member_cells(
         if discriminator is not None and slot == discriminator.slot:
             cells.append((slot.column.name, discriminator.value, None))
         elif isinstance(contributor, RelationalDocument):
-            resident = _resident_members(placed, slot.column.name)
-            shape = view.relational_document_shape
-            if shape is None:  # pragma: no cover - a Relational Document slot owns its shape
+            resident = view.document_residents
+            if resident is None:  # pragma: no cover - a Relational Document slot owns residency
                 raise SqlGenError(
-                    f"{view.entity.canonical}: Relational Document slot has no document shape"
+                    f"{view.entity.canonical}: Relational Document slot has no resident selection"
                 )
             if opening:
                 cells.append(
@@ -602,7 +571,6 @@ def _member_cells(
                         slot.column.name,
                         JsonDocument(
                             _successor_document(
-                                shape,
                                 resident,
                                 attributes,
                                 value_objects,
@@ -618,15 +586,11 @@ def _member_cells(
                     cells.append((slot.column.name, patches, None))
             matched += _resident_count(resident, attributes, value_objects)
         elif isinstance(contributor, AttributeIdentity) and contributor in attributes:
-            attribute = next(
-                attribute
-                for attribute, _placement in placed.attributes
-                if attribute.identity == contributor
-            )
+            attribute = _attribute_binding(view, contributor)
             cells.append((slot.column.name, attributes[contributor], attribute.type))
             matched += 1
         elif isinstance(contributor, ValueObjectIdentity):
-            occurrence = _occurrence_of(placed, contributor)
+            occurrence = _occurrence_binding(view, contributor)
             if contributor in value_objects:
                 value = value_objects[contributor]
                 document = None if value is None else _occurrence_document(occurrence, value)
@@ -640,43 +604,22 @@ def _member_cells(
     return cells
 
 
-@dataclass(frozen=True, slots=True)
-class _ResidentMembers:
-    """The members one Structured Column's document carries, canonical order."""
-
-    attributes: tuple[tuple[AttributeMetadata, tuple[str, ...]], ...]
-    value_objects: tuple[tuple[ValueObjectMetadata, tuple[str, ...]], ...]
-
-
-def _resident_members(placed: PlacedMembers, column: str) -> _ResidentMembers:
-    return _ResidentMembers(
-        tuple(
-            (attribute, placement.path)
-            for attribute, placement in placed.attributes
-            if isinstance(placement, DocumentPath) and placement.slot.column.name == column
-        ),
-        tuple(
-            (occurrence, placement.path)
-            for occurrence, placement in placed.value_objects
-            if isinstance(placement, DocumentPath) and placement.slot.column.name == column
-        ),
-    )
-
-
 def _resident_count(
-    resident: _ResidentMembers,
+    resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
 ) -> int:
     """How many of this step's named members the Structured Column accounts for."""
-    return sum(attribute.identity in attributes for attribute, _path in resident.attributes) + sum(
-        occurrence.identity in value_objects for occurrence, _path in resident.value_objects
+    return sum(
+        (isinstance(binding, AttributeMetadata) and binding.identity in attributes)
+        or (not isinstance(binding, AttributeMetadata) and binding.identity in value_objects)
+        for position in resident.positions
+        for binding in (resident.member_selection.bindings[position],)
     )
 
 
 def _row_document(
-    shape: MemberShape,
-    resident: _ResidentMembers,
+    resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
 ) -> object:
@@ -688,18 +631,17 @@ def _row_document(
     row sets to ``None`` is JSON null, and a `many` occurrence always contributes
     its array even where the row never mentions it (`m-document-codec`).
     """
-    values: dict[str, Presence] = {}
-    for attribute, _path in resident.attributes:
-        if attribute.identity in attributes:
-            raw = attributes[attribute.identity]
-            values[attribute.identity.name] = NULL if raw is None else Present(raw)
-    for occurrence, _path in resident.value_objects:
-        if occurrence.identity in value_objects:
+    values: dict[str, object] = {}
+    for position in resident.positions:
+        binding = resident.member_selection.bindings[position]
+        if isinstance(binding, AttributeMetadata) and binding.identity in attributes:
+            raw = attributes[binding.identity]
+            values[binding.identity.name] = raw
+        elif not isinstance(binding, AttributeMetadata) and binding.identity in value_objects:
+            occurrence = binding
             raw = value_objects[occurrence.identity]
-            values[occurrence.identity.path[-1]] = (
-                NULL if raw is None else Present(_occurrence_document(occurrence, raw))
-            )
-    return encode_document(shape, values)
+            values[occurrence.identity.path[-1]] = raw
+    return encode_managed_document(resident.shape, values)
 
 
 def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
@@ -708,8 +650,7 @@ def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
 
 
 def _successor_document(
-    shape: MemberShape,
-    resident: _ResidentMembers,
+    resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
     predecessor: PredecessorRow | None,
@@ -732,15 +673,15 @@ def _successor_document(
     (:func:`_row_document`).
     """
     if predecessor is None or predecessor.document is None:
-        return _row_document(shape, resident, attributes, value_objects)
+        return _row_document(resident, attributes, value_objects)
     patches = _successor_patches(resident, attributes, value_objects, predecessor)
     if not patches:
-        return detach_json_container(predecessor.document)
-    return apply_patches(shape, predecessor.document, patches)
+        return predecessor.document
+    return apply_patches(resident.shape, predecessor.document, patches)
 
 
 def _successor_patches(
-    resident: _ResidentMembers,
+    resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
     predecessor: PredecessorRow,
@@ -762,29 +703,37 @@ def _successor_patches(
     the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).
     """
     patches: list[DocumentPatch] = []
-    for attribute, path in resident.attributes:
-        name = attribute.identity.name
-        if attribute.identity not in attributes or attributes[attribute.identity] == (
-            predecessor.members.get(name)
-        ):
-            continue
-        raw = attributes[attribute.identity]
-        patches.append(SetLeaf(path, NULL if raw is None else Present(raw)))
-    for occurrence, path in resident.value_objects:
-        name = occurrence.identity.path[-1]
-        if occurrence.identity not in value_objects or value_objects[occurrence.identity] == (
-            predecessor.members.get(name)
-        ):
-            continue
-        raw = value_objects[occurrence.identity]
-        patches.append(
-            SetValue(path, None if raw is None else _occurrence_document(occurrence, raw))
-        )
+    for position, placement in zip(resident.positions, resident.placements, strict=True):
+        binding = resident.member_selection.bindings[position]
+        if isinstance(binding, AttributeMetadata):
+            name = binding.identity.name
+            if binding.identity not in attributes or attributes[binding.identity] == (
+                predecessor.members.get(name)
+            ):
+                continue
+            raw = attributes[binding.identity]
+            patches.append(SetLeaf(placement.path, NULL if raw is None else Present(raw)))
+        else:
+            occurrence = binding
+            if (
+                occurrence.identity not in value_objects
+            ):  # pragma: no cover - successor rows are complete
+                continue
+            name = occurrence.identity.path[-1]
+            if value_objects[occurrence.identity] == predecessor.members.get(name):
+                continue
+            raw = value_objects[occurrence.identity]
+            patches.append(
+                SetValue(
+                    placement.path,
+                    None if raw is None else _occurrence_document(occurrence, raw),
+                )
+            )
     return tuple(patches)
 
 
 def _patches(
-    resident: _ResidentMembers,
+    resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
 ) -> _DocumentAssignments:
@@ -800,32 +749,46 @@ def _patches(
     """
     patches: list[DocumentAssignment] = []
     leaf_types: list[NeutralType | None] = []
-    for attribute, path in resident.attributes:
-        if attribute.identity in attributes:
-            raw = attributes[attribute.identity]
+    for position, placement in zip(resident.positions, resident.placements, strict=True):
+        binding = resident.member_selection.bindings[position]
+        if isinstance(binding, AttributeMetadata) and binding.identity in attributes:
+            raw = attributes[binding.identity]
             patches.append(
-                DocumentLeafAssignment(path, None if raw is None else _leaf(attribute.type, raw))
+                DocumentLeafAssignment(
+                    placement.path,
+                    None if raw is None else _leaf(binding.type, raw),
+                )
             )
-            leaf_types.append(attribute.type)
-    for occurrence, path in resident.value_objects:
-        if occurrence.identity in value_objects:
+            leaf_types.append(binding.type)
+        elif not isinstance(binding, AttributeMetadata):
+            occurrence = binding
+            if occurrence.identity not in value_objects:
+                continue
             raw = value_objects[occurrence.identity]
             patches.append(
                 DocumentValueAssignment(
-                    path, None if raw is None else _occurrence_document(occurrence, raw)
+                    placement.path,
+                    None if raw is None else _occurrence_document(occurrence, raw),
                 )
             )
             leaf_types.append(None)
     return _DocumentAssignments(tuple(patches), tuple(leaf_types))
 
 
-def _occurrence_of(placed: PlacedMembers, identity: ValueObjectIdentity) -> ValueObjectMetadata:
-    for occurrence, _placement in placed.value_objects:
-        if occurrence.identity == identity:
-            return occurrence
-    raise SqlGenError(  # pragma: no cover - a slot's contributor is always placed
-        f"{identity.path[-1]!r}: the occurrence occupying a Column is not an applicable member"
-    )
+def _attribute_binding(view: EntityLayoutView, identity: AttributeIdentity) -> AttributeMetadata:
+    binding = view.member_selection.bindings[view.member_selection.position(identity)]
+    if not isinstance(binding, AttributeMetadata):  # pragma: no cover - identities are disjoint
+        raise SqlGenError(f"{identity.name!r}: the Column contributor is not an Attribute")
+    return binding
+
+
+def _occurrence_binding(
+    view: EntityLayoutView, identity: ValueObjectIdentity
+) -> ValueObjectMetadata:
+    binding = view.member_selection.bindings[view.member_selection.position(identity)]
+    if isinstance(binding, AttributeMetadata):  # pragma: no cover - identities are disjoint
+        raise SqlGenError(f"{identity.path[-1]!r}: the Column contributor is not an occurrence")
+    return binding
 
 
 def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> object:
@@ -841,44 +804,8 @@ def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> obje
     """
     shape = occurrence.document_shape
     if occurrence.multiplicity is Multiplicity.MANY:
-        elements = cast("Sequence[object]", value)
-        return encode_many(shape, [_element_presences(shape, element) for element in elements])
-    return encode_document(shape, _element_presences(shape, value))
-
-
-def _element_presences(shape: MemberShape, value: object) -> dict[str, Presence]:
-    """One document's members as presences, keyed by canonical name.
-
-    A key the input omits contributes no entry, so the codec classifies it
-    ``Missing``; an authored ``None`` is an explicit null. A nested occurrence
-    composes through the codec in turn, so nothing here assembles a JSON object
-    or array of its own.
-    """
-    raw: Mapping[str, object] = (
-        cast("Mapping[str, object]", value) if isinstance(value, Mapping) else {}
-    )
-    presences: dict[str, Presence] = {}
-    for member in shape.members:
-        if member.name not in raw:
-            continue
-        nested = raw[member.name]
-        if nested is None:
-            presences[member.name] = NULL
-        elif isinstance(member, Leaf):
-            presences[member.name] = Present(nested)
-        elif member.multiplicity is Multiplicity.MANY:
-            elements = cast("Sequence[object]", nested)
-            presences[member.name] = Present(
-                encode_many(
-                    member.shape,
-                    [_element_presences(member.shape, element) for element in elements],
-                )
-            )
-        else:
-            presences[member.name] = Present(
-                encode_document(member.shape, _element_presences(member.shape, nested))
-            )
-    return presences
+        return encode_managed_many(shape, cast("Sequence[Mapping[str, object]]", value))
+    return encode_managed_document(shape, cast("Mapping[str, object]", value))
 
 
 def _leaf(neutral_type: NeutralType, value: object) -> object:

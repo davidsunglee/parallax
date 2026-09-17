@@ -30,6 +30,14 @@ and driver row mappings do not cross the port. The compiled statement owns the
 corresponding result keys; a name-keyed consumer MAY expose a Mapping view over
 those keys and the positional row, but MUST NOT construct a dictionary per row.
 
+A structured-document bind crosses the port as an already portable codec
+document, including the recognized recursively immutable object and array
+carriers `m-core` admits. A concrete adapter serializes that carrier directly
+through its driver's structured-document binding mechanism. It MUST NOT first
+thaw or recursively copy an immutable document into mutable containers, and it
+MUST NOT interpret model shape or leaf meaning. The final serialized bytes and
+driver buffers remain necessary adapter output.
+
 `executePipeline` takes an ordered sequence of independent row-returning
 statements, each carrying its own SQL, binds, and `documentReads`, and returns
 one row batch per statement in the same order. A conforming implementation sends
@@ -288,7 +296,10 @@ presence cell from the managed row, and places the resulting provider-neutral
 managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
 `NULL` remains distinct from `PresentDocument(document: JSON null)` even when the
 driver used one host sentinel for both raw values. No consumer may reconstruct
-the tag from the raw document cell after the adapter boundary.
+the tag from the raw document cell after the adapter boundary. A freshly parsed
+document transfers to the read consumer as owned input; the adapter does not
+freeze every ordinary read. A later predecessor or evidence owner establishes
+recursive immutable retention only when its longer lifetime requires it.
 
 ## The portable isolation vocabulary
 

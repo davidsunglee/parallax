@@ -25,8 +25,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.storage_layout import DocumentPath, EntityLayoutView, MemberPlacement
-from parallax.snapshot.handle._family import entity_layout, family_primary_key, placed_members
+from parallax.core.storage_layout import DocumentPath, EntityLayoutView
+from parallax.snapshot.handle._family import entity_layout, family_primary_key
 
 __all__ = [
     "collapse_group_key",
@@ -38,10 +38,8 @@ __all__ = [
 type _MemberAddress = tuple[int, str, tuple[str, ...]]
 
 
-def _member_addresses(
-    meta: Metamodel, entity: EntityMetadata, layout: EntityLayoutView
-) -> dict[str, _MemberAddress]:
-    """Each member name this Entity writes, mapped to where its Table puts it.
+def _member_address(layout: EntityLayoutView, name: str) -> _MemberAddress | None:
+    """Where the effective member named ``name`` lives in its prepared layout.
 
     Answered from Member Placement rather than from the Table's slots, because a
     document-resident member claims no slot of its own: several members share one
@@ -53,20 +51,20 @@ def _member_addresses(
     ever names it, and every form that emits it derives it from the view's own
     assignment instead.
     """
-    ordinals = {slot.column.name: ordinal for ordinal, slot in enumerate(layout.layout.columns)}
-    placed = placed_members(meta, entity, layout)
-    named: list[tuple[str, MemberPlacement]] = [
-        (attribute.identity.name, placement) for attribute, placement in placed.attributes
-    ]
-    named.extend(
-        (occurrence.identity.path[-1], placement) for occurrence, placement in placed.value_objects
+    binding = layout.member_selection.binding(name)
+    if binding is None:
+        return None
+    placement = layout.layout.placement(binding.identity)
+    if placement is None:  # pragma: no cover - accepted row owners place every effective member
+        return None
+    ordinal = layout.layout.column_position(placement.slot.column)
+    if ordinal is None:  # pragma: no cover - a placement's slot belongs to this layout
+        return None
+    return (
+        ordinal,
+        placement.slot.column.name,
+        placement.path if isinstance(placement, DocumentPath) else (),
     )
-    addresses: dict[str, _MemberAddress] = {}
-    for name, placement in named:
-        column = placement.slot.column.name
-        path = placement.path if isinstance(placement, DocumentPath) else ()
-        addresses[name] = (ordinals[column], column, path)
-    return addresses
 
 
 def collapse_group_key(
@@ -115,7 +113,6 @@ def collapse_group_key(
     view = entity_layout(meta, entity)
     if view is None:
         return None
-    addresses = _member_addresses(meta, entity, view)
     members: Sequence[str] = (
         [attribute.identity.name for attribute in family_primary_key(meta, entity)]
         if mutation == "delete"
@@ -123,7 +120,7 @@ def collapse_group_key(
     )
     selection: list[_MemberAddress] = []
     for name in members:
-        address = addresses.get(name)
+        address = _member_address(view, name)
         if address is None or name not in row:
             return None
         selection.append(address)
