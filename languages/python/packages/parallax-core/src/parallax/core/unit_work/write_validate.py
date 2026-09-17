@@ -29,12 +29,10 @@ edge may reach it) -- but does NOT forbid ``parallax.core.inheritance``
 So the payload-shape / target-validity rules (`m-inheritance` "Concrete-subtype
 writes") are PURE functions living in their own owning scope
 (:func:`parallax.core.inheritance.validate_subtype_write`) and called directly
-from here; the declared-composite walk (`m-value-object` "Writing") cannot
-reach its own owning scope's helpers at all, so its structural traversal is the
-Metadata reading `m-metamodel` owns
-(:func:`~parallax.core.metamodel.vo_document_violation`, error-neutral) and this
-module renders ITS OWN rule vocabulary and message text from the returned
-violation. This applies the composition-at-the-engine pattern to writes: pure
+from here; the declared-composite walk (`m-value-object` "Writing") is the
+error-neutral authored-document traversal `m-document-codec` owns, and this
+module renders ITS OWN rule vocabulary and message text from its sparse findings.
+This applies the composition-at-the-engine pattern to writes: pure
 per-concern rule functions in their owning scopes, ONE shared compose function
 (this module) both callers invoke, so the rule ORDER stays a single source of
 truth regardless of which scope a given rule's logic lives in.
@@ -84,10 +82,11 @@ that document happens to be shaped like a marker).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Final, Literal, cast
+from typing import Final, cast
 
 from parallax.core import inheritance
-from parallax.core.base import coerce_neutral_input, matches_neutral_type
+from parallax.core.base import NeutralType, coerce_neutral_input, matches_neutral_type
+from parallax.core.document_codec._authoring import MAPPING_SOURCE_ACCESS, validate_authoring
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -95,7 +94,6 @@ from parallax.core.metamodel import (
     Multiplicity,
     ValueObjectMetadata,
     VoDocumentViolation,
-    vo_document_violation,
 )
 
 __all__ = ["WriteRejectedError", "validate_write"]
@@ -127,8 +125,7 @@ def validate_write(
     model: Metamodel,
     *,
     mutation: str = "insert",
-    known_vo_violations: Mapping[str, VoDocumentViolation | None] | None = None,
-    known_attribute_validity: Mapping[str, bool] | None = None,
+    known_failures: Mapping[int, VoDocumentViolation] | None = None,
     subtype_validated: bool = False,
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
@@ -161,6 +158,18 @@ def validate_write(
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    failures = (
+        validate_authoring(
+            view.member_selection.shape,
+            row,
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize_leaf,
+            path=entity.identity.canonical,
+            allow_root_markers=True,
+        )
+        if known_failures is None
+        else known_failures
+    )
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
     owner = entity.identity.name
     for attribute in view.applicable_attributes:
@@ -171,22 +180,15 @@ def validate_write(
             attribute,
             required=full_document,
             owner=owner,
-            known_valid=(
-                None
-                if known_attribute_validity is None
-                else known_attribute_validity.get(attribute.identity.name)
-            ),
+            known_failure=failures.get(view.member_selection.position(attribute.identity)),
         )
     for value_object in view.applicable_value_objects:
-        name = value_object.identity.path[-1]
         _check_value_object_member(
             row,
             value_object,
             required=full_document,
             owner=owner,
-            known_violation=(
-                False if known_vo_violations is None else known_vo_violations.get(name)
-            ),
+            known_violation=failures.get(view.member_selection.position(value_object.identity)),
         )
 
 
@@ -201,7 +203,7 @@ def _check_entity_attribute(
     *,
     required: bool,
     owner: str,
-    known_valid: bool | None,
+    known_failure: VoDocumentViolation | None,
 ) -> None:
     name = attribute.identity.name
     value = row.get(name)
@@ -214,12 +216,7 @@ def _check_entity_attribute(
         return
     if _is_scalar_write_marker(value):
         return
-    valid = (
-        matches_neutral_type(coerce_neutral_input(value, attribute.type), attribute.type)
-        if known_valid is None
-        else known_valid
-    )
-    if not valid:
+    if known_failure is not None:
         raise WriteRejectedError(
             "write-value-type-mismatch",
             f"{owner}.{name}: value {value!r} does not match the declared type {attribute.type!r}",
@@ -242,7 +239,7 @@ def _check_value_object_member(
     *,
     required: bool,
     owner: str,
-    known_violation: VoDocumentViolation | Literal[False] | None,
+    known_violation: VoDocumentViolation | None,
 ) -> None:
     name = vo.identity.path[-1]
     value = row.get(name)
@@ -260,15 +257,18 @@ def _check_value_object_member(
                 f"{owner}.{name}: required value object is absent (or null)",
             )
         return
-    violation = vo_document_violation(vo, value) if known_violation is False else known_violation
-    if violation is not None:
-        raise _rejected_error(violation, base=f"{owner}.{name}")
+    if known_violation is not None:
+        raise _rejected_error(known_violation, base=f"{owner}.{name}")
+
+
+def _normalize_leaf(neutral_type: NeutralType, value: object, _path: str) -> tuple[object, bool]:
+    managed = coerce_neutral_input(value, neutral_type)
+    return managed, matches_neutral_type(managed, neutral_type)
 
 
 # --------------------------------------------------------------------------- #
 # Renders THIS module's own rule vocabulary / message text from the shared,   #
-# error-neutral `m-metamodel` document violation -- that reading owns no text #
-# of its own, see its own docstring.                                          #
+# error-neutral document-codec finding, which owns no policy text of its own. #
 # --------------------------------------------------------------------------- #
 def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteRejectedError:
     path = _joined(base, violation.path)

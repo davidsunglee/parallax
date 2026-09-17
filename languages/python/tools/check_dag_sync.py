@@ -186,10 +186,13 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # member its descriptor installed and a Relationship Path composes its own
     # segments, so the values a developer builds state their rules from accepted
     # metadata alone. Granting neither model formation nor any whole-model
-    # semantic view is what makes that provable rather than asserted.
+    # semantic view is what makes that provable rather than asserted. The
+    # document codec contributes only the member-local authored-document walk;
+    # it resolves no Entity position or model fact.
     "parallax.core.entity._expressions": frozenset(
         {
             "parallax.core.base",
+            "parallax.core.document_codec",
             "parallax.core.wire",
             "parallax.core.metamodel",
             "parallax.core.predicate",

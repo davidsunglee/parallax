@@ -17,14 +17,14 @@ family-effectively against a model.
 
 from __future__ import annotations
 
-from typing import Literal
-
 from parallax.core.base import coerce_neutral_input, matches_neutral_type
 from parallax.core.metamodel._states import ValueObjectMetadata
 from parallax.core.metamodel._values import AttributeMetadata, PrimaryKey
-from parallax.core.metamodel._vo_document import VoDocumentViolation, vo_document_violation
+from parallax.core.metamodel._vo_document import VoDocumentViolation
 
 __all__ = ["WriteAssignmentError", "judge_assignment"]
+
+_UNJUDGED = object()
 
 
 class WriteAssignmentError(ValueError):
@@ -44,7 +44,7 @@ def judge_assignment(
     member: AttributeMetadata | ValueObjectMetadata,
     value: object,
     *,
-    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
     known_value_valid: bool | None = None,
 ) -> None:
     """Judge writing ``value`` to the already-resolved ``member``, or raise.
@@ -55,7 +55,7 @@ def judge_assignment(
     assignment legal only where the member is nullable, and any other value must
     conform to the declared `m-core` neutral type after the developer input
     policy's coercion. A Value Object occurrence refuses ``None`` unless nullable
-    and otherwise requires a well-formed document against its declared composite.
+    and otherwise consumes the structural verdict its authoring caller supplied.
 
     The message names the member relative to its own owner, so a caller that
     knows a wider position prefixes rather than re-renders.
@@ -100,23 +100,25 @@ def _judge_value_object(
     occurrence: ValueObjectMetadata,
     value: object,
     *,
-    known_violation: VoDocumentViolation | Literal[False] | None,
+    known_violation: VoDocumentViolation | object | None,
 ) -> None:
     name = occurrence.identity.path[-1]
     if value is None:
         if not occurrence.nullable:
             raise _vo_error(name, VoDocumentViolation("", "value-object-missing"))
         return
-    violation = (
-        vo_document_violation(occurrence, value) if known_violation is False else known_violation
-    )
-    if violation is not None:
-        raise _vo_error(name, violation)
+    if known_violation is not None and not isinstance(known_violation, VoDocumentViolation):
+        raise TypeError(
+            f"{name}: Value Object assignment judgement requires the document codec's "
+            "authoring verdict"
+        )
+    if known_violation is not None:
+        raise _vo_error(name, known_violation)
 
 
 def _vo_error(name: str, violation: VoDocumentViolation) -> WriteAssignmentError:
     """This module's own rule vocabulary and wording for a shared, error-neutral
-    Value Object document violation — ``_vo_document`` owns no text of its own.
+    Value Object document violation — the codec finding owns no text of its own.
 
     A malformed value-object assignment is, in this vocabulary, one more shape of
     "the value does not match the declared type", so every case classifies as

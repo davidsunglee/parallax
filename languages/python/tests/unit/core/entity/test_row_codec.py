@@ -245,17 +245,17 @@ def test_full_row_carries_every_declarable_scalar_type() -> None:
     }
 
 
-def test_full_row_renders_a_nullable_value_object_as_a_managed_document() -> None:
+def test_full_row_borrows_a_nullable_value_object_for_shared_preparation() -> None:
     customer = vm.Customer(
         id=1,
         name="Ada",
         address=vm.Address(street="Main St", city="Berlin", geo=None, phones=()),
     )
     row = row_codec_for(vm.CUSTOMER_MODEL).full_row(customer)
-    assert row["address"] == {"street": "Main St", "city": "Berlin", "geo": None, "phones": []}
+    assert row["address"] is customer.address
 
 
-def test_full_row_serializes_a_many_value_object_to_a_list_of_documents() -> None:
+def test_full_row_borrows_a_many_value_object_collection_for_shared_preparation() -> None:
     status = sm.SnapOrderStatus(
         id=1,
         order_id=1,
@@ -264,12 +264,10 @@ def test_full_row_serializes_a_many_value_object_to_a_list_of_documents() -> Non
         primary_tag=None,
         tags=(sm.Tag(label="a", detail=None, details=()),),
     )
-    assert row_codec_for(sm.SNAP_ORDERS_MODEL).full_row(status)["tags"] == [
-        {"label": "a", "detail": None, "details": []}
-    ]
+    assert row_codec_for(sm.SNAP_ORDERS_MODEL).full_row(status)["tags"] is status.tags
 
 
-def test_full_row_serializes_a_value_object_to_its_full_containment_depth() -> None:
+def test_full_row_borrows_a_value_object_without_rendering_its_containment_tree() -> None:
     sample = mm.Sample(
         id=1,
         label="one",
@@ -291,16 +289,8 @@ def test_full_row_serializes_a_value_object_to_its_full_containment_depth() -> N
         ),
     )
     profile = row_codec_for(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
-    assert isinstance(profile, dict)
-    assert profile["amount"] == Decimal("1.25")
-    assert profile["blob"] == b"\x02"
-    assert profile["day"] == dt.date(2026, 1, 1)
-    assert profile["instant"] == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
-    assert profile["origin"] == {"city": "Oslo", "since": dt.date(2020, 1, 1)}
-    assert profile["entries"] == [
-        {"kind": "k", "active": True, "price": Decimal("2.00"), "issued": None}
-    ]
     assert sample.profile is not None
+    assert profile is sample.profile
     document = to_document(sample.profile)
     assert document is not None
     assert document["day"] == "2026-01-01"
@@ -403,9 +393,9 @@ def test_identity_row_carries_the_values_the_instance_holds_unchanged() -> None:
 def test_serialization_is_the_identity_on_every_type_a_primary_key_can_hold(
     value: object, expected: object
 ) -> None:
-    # All three operations serialize, and a primary key is structurally
-    # restricted to a scalar Attribute type `serialize_member` passes through by
-    # identity — which is why uniform serialization moves no emitted bind: the
+    # A primary key is structurally restricted to a scalar Attribute and the row
+    # codec borrows scalar values unchanged — which is why row derivation moves
+    # no emitted bind: the
     # metamodel schema gives `primaryKey` to an Attribute alone, and never to a
     # Value Object occurrence.
     codec = row_codec_for(KEYED_MODEL if isinstance(value, Keyed) else LABELLED_MODEL)
@@ -451,9 +441,8 @@ def test_authored_row_reads_a_published_value_s_provenance_without_creating_stor
 
 
 def test_authored_row_states_a_changed_value_object_beside_a_raw_identity() -> None:
-    # The two halves keep their own value conventions: the identity is what the
-    # instance holds, the occurrence its canonical document, which omits what the
-    # caller never populated rather than spelling it as an explicit null.
+    # The identity is read directly and the occurrence stays in its frontend
+    # carrier so shared preparation can traverse it once.
     original = mm.Traveler(
         id=1,
         address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
@@ -463,7 +452,7 @@ def test_authored_row_states_a_changed_value_object_beside_a_raw_identity() -> N
     authored = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).authored_row(edited)
     assert authored is not None
     assert authored.row["id"] == 1
-    assert authored.row["address"] == {"city": "Bergen"}
+    assert authored.row["address"] is edited.address
 
 
 def test_authored_row_orders_both_sides_by_the_models_candidate_pass() -> None:
@@ -476,7 +465,7 @@ def test_authored_row_orders_both_sides_by_the_models_candidate_pass() -> None:
     assert list(authored.originals) == ["owner", "balance"]
 
 
-def test_authored_row_serializes_an_occurrence_on_both_sides() -> None:
+def test_authored_row_borrows_an_occurrence_on_both_sides() -> None:
     original = vm.Address(
         street="Main St", city="Oslo", geo=None, phones=(vm.Phone(number="555-0100"),)
     )
@@ -485,18 +474,8 @@ def test_authored_row_serializes_an_occurrence_on_both_sides() -> None:
     )
     authored = row_codec_for(vm.CUSTOMER_MODEL).authored_row(edited)
     assert authored is not None
-    assert authored.row["address"] == {
-        "street": "Main St",
-        "city": "Bergen",
-        "geo": None,
-        "phones": [],
-    }
-    assert authored.originals["address"] == {
-        "street": "Main St",
-        "city": "Oslo",
-        "geo": None,
-        "phones": [{"number": "555-0100"}],
-    }
+    assert authored.row["address"] is edited.address
+    assert authored.originals["address"] is original
 
 
 def test_authored_row_refuses_a_selection_a_restoration_would_have_carried() -> None:
@@ -781,7 +760,6 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
         "parallax.core.entity._declaration",
         "parallax.core.entity._entity",
         "parallax.core.entity._errors",
-        "parallax.core.entity._expressions",
         "parallax.core.entity._instance_state",
         "parallax.core.entity._layout",
         "parallax.core.metamodel",

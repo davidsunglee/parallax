@@ -23,7 +23,6 @@ an internal formation seam.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
 
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
@@ -138,6 +137,8 @@ __all__ = [
     "validate_write_assignment",
     "view",
 ]
+
+_UNJUDGED = object()
 
 
 class InheritanceError(ValueError):
@@ -329,7 +330,7 @@ def validate_write_assignment(
     name: str,
     value: object,
     *,
-    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
     known_value_valid: bool | None = None,
 ) -> None:
     """The ONE predicate-write assignment check every caller applies to one
@@ -378,7 +379,7 @@ def _judged(
     member: AttributeMetadata | ValueObjectMetadata,
     value: object,
     *,
-    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_vo_violation: VoDocumentViolation | object | None = _UNJUDGED,
     known_value_valid: bool | None = None,
 ) -> None:
     """Judge ``member`` against ``value``, re-raising owner-qualified."""

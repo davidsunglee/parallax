@@ -60,7 +60,6 @@ from parallax.core.entity._errors import (
     ENTITY_ROW_TARGET_NOT_IN_MODEL,
     EntityRowError,
 )
-from parallax.core.entity._expressions import serialize_member
 from parallax.core.entity._instance_state import is_present, named_state, plan_of
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import EntityIdentity
@@ -79,9 +78,10 @@ class AuthoredRow:
 
     ``row`` is the identity plus every member the chain touched, at the value it
     now holds; ``originals`` is the touched members alone, at the value the chain
-    first recorded. Both are serialized by the same rule and ordered by the same
-    candidate pass, so a caller comparing them member by member compares like
-    with like. The sides are asymmetric by exactly the identity: every name in
+    first recorded. Both carry authored frontend values in the same canonical
+    order, so preparation can borrow either through one traversal and a caller
+    comparing them member by member compares like with like. The sides are
+    asymmetric by exactly the identity: every name in
     ``originals`` is a name in ``row``, and what ``row`` carries beyond them is
     the key naming the object this authoring is stated against.
 
@@ -214,8 +214,7 @@ class EntityRowCodec:
         return AuthoredRow(
             row=row,
             originals={
-                canonical: serialize_member(touched[canonical])
-                for canonical in self._emitted(facts, selected)
+                canonical: touched[canonical] for canonical in self._emitted(facts, selected)
             },
         )
 
@@ -324,10 +323,7 @@ class EntityRowCodec:
         self, facts: _RowFacts, names: WireNames, value: object, operation: str
     ) -> dict[str, object]:
         py_names = self._require_supplied(facts, names, facts.primary_key, operation)
-        return {
-            canonical: serialize_member(getattr(value, py_names[canonical]))
-            for canonical in facts.primary_key
-        }
+        return {canonical: getattr(value, py_names[canonical]) for canonical in facts.primary_key}
 
     def _serialized(
         self,
@@ -340,10 +336,7 @@ class EntityRowCodec:
         """``selected``'s serialized values in the model's own candidate order."""
         emitted = self._emitted(facts, selected)
         py_names = self._require_supplied(facts, names, emitted, operation)
-        return {
-            canonical: serialize_member(getattr(value, py_names[canonical]))
-            for canonical in emitted
-        }
+        return {canonical: getattr(value, py_names[canonical]) for canonical in emitted}
 
     def _emitted(self, facts: _RowFacts, selected: frozenset[str]) -> tuple[str, ...]:
         """``selected``'s emittable members in the model's own candidate order.

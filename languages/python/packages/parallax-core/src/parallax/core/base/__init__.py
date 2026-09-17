@@ -166,14 +166,22 @@ def frozen_map_json_backing[K, V](value: FrozenMap[K, V]) -> dict[K, V]:
 
 
 def _document_values_equal(left: object, right: object) -> bool:
-    if isinstance(left, Mapping) and isinstance(right, Mapping):
+    left_is_mapping = isinstance(left, Mapping)
+    right_is_mapping = isinstance(right, Mapping)
+    if left_is_mapping or right_is_mapping:
+        if not left_is_mapping or not right_is_mapping:
+            return False
         left_mapping = cast("Mapping[object, object]", left)
         right_mapping = cast("Mapping[object, object]", right)
         return len(left_mapping) == len(right_mapping) and all(
             key in right_mapping and _document_values_equal(value, right_mapping[key])
             for key, value in left_mapping.items()
         )
-    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+    left_is_sequence = isinstance(left, (list, tuple))
+    right_is_sequence = isinstance(right, (list, tuple))
+    if left_is_sequence or right_is_sequence:
+        if not left_is_sequence or not right_is_sequence:
+            return False
         left_sequence = cast("Sequence[object]", left)
         right_sequence = cast("Sequence[object]", right)
         return len(left_sequence) == len(right_sequence) and all(

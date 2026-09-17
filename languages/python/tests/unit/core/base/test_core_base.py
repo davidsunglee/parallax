@@ -120,6 +120,11 @@ def test_frozen_map_is_the_exact_owned_mapping_type() -> None:
         base.frozen_map_json_backing(cast("base.FrozenMap[str, object]", object()))
 
 
+def test_frozen_map_compares_unequal_to_a_non_mapping_without_recursing() -> None:
+    assert base.FrozenMap({"city": "Oslo"}) != object()
+    assert base.FrozenMap({"items": ()}) != {"items": object()}
+
+
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
     eastern = dt.timezone(dt.timedelta(hours=-5))
     aware = dt.datetime(2026, 7, 12, 8, 30, 0, 123456, tzinfo=eastern)

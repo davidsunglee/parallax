@@ -222,6 +222,13 @@ algebra. `prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.
+Both producers supply their source access and leaf policy to
+`m-document-codec`'s one authored-document traversal. The Typed producer borrows
+live Value Object instances and tuples until that traversal; it does not first
+render a recursive mapping/list tree. Structural validation consumes the sparse
+position-keyed findings from that same pass rather than walking the document
+again. A validation-only caller invokes the same traversal without constructing
+successful managed output.
 
 `PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
 prepared temporal bounds. `PreparedPredicateWrite` carries its
@@ -579,6 +586,13 @@ and duplicate-free, and unlike a Planned Row it names only the members its step
 changes. Entity Layout continues to decide physical `SET` and bind order
 (`m-sql`).
 
+Trusted settlement builders construct each final Attribute and Value Object map
+once and transfer that storage directly into the immutable carrier. Public or
+untrusted construction still establishes ownership defensively. Temporal
+expansion builds each successor directly as its final `InsertEntry` and
+`PlannedRow`; there is no separate successor-row carrier and no metadata-to-name-
+to-metadata remapping between prepared assignments and final member identities.
+
 A **Generated Value Expression** is the closed set of cell values the *database*
 computes from the row being written rather than binding as a literal, and
 `m-pk-gen` is its only source: the `max` allocation an insert folds into its own
@@ -757,7 +771,10 @@ and because a decorator must distinguish `m-edit`'s carried state from its
 authored assignments without a second read (ADR 0042). Successors retain or view
 that state rather than copying it, and bulk materialization MAY expose a logical
 Predecessor Row view over columnar storage instead of allocating one row object
-per observation.
+per observation. Where a trusted columnar or keyed-read producer has just
+assembled the final shallow predecessor map from already-owned values, it
+transfers that map into the Predecessor Row's immutable storage; the carrier does
+not copy that map and then freeze it again.
 
 Under Relational Document Layout a Predecessor Row additionally retains the
 **raw Structured Column document**, as a distinct named field beside its member

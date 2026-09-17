@@ -430,14 +430,13 @@ construction it may reference any behavioral module it harnesses.
   transactions, reads, nor persistence.
 - **`m-unit-work --> m-document-codec`.** A write asks the codec for every rule
   about the form of the documents it moves, so each has one owner rather than a
-  restatement in the module that prepares and eliminates writes: a prepared
-  keyed row's documents carry the canonical form the codec's shape rules give
-  them; an encoded occurrence assignment becomes the managed document a
-  comparison is stated over through the codec's declared-member reduction, which
-  decodes that assignment's leaves; and whether an assigned member restores the
-  value a read observed is the codec's one effective-change classification. What
-  unit work keeps is which members it hands each operation and what it does with
-  the answer, and nothing it holds is encoded back through the codec. The
+  restatement in the module that prepares and eliminates writes: Typed and Wire
+  ingress supply source access and leaf conversion to the codec's one authored-
+  document traversal; a prepared keyed row's documents carry the immutable form
+  that traversal builds; and whether an assigned member restores the value a read
+  observed is the codec's one effective-change classification. What unit work
+  keeps is which members it hands each operation and what it does with the answer,
+  and nothing it holds is encoded back through the codec. The
   direction stays one-way — `m-document-codec` names no write, instruction, or
   transaction construct.
 - **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and

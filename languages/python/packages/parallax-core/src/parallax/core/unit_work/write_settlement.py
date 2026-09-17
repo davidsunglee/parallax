@@ -27,7 +27,6 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core import inheritance
@@ -36,6 +35,7 @@ from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
+    AttributeMetadata,
     Document,
     EntityMetadata,
     Metamodel,
@@ -49,9 +49,9 @@ from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import (
     ColumnSlice,
     PredecessorColumns,
-    freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
+    PreparedAssignment,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedTemporalBounds,
@@ -102,6 +102,8 @@ from parallax.core.unit_work.planned import (
     TemporalUpperBound,
     Versioned,
     VersionGate,
+    adopt_planned_assignments,
+    adopt_planned_row,
     shortfall_classification,
     shortfall_for,
 )
@@ -110,6 +112,9 @@ from parallax.core.unit_work.planner import FamilyFacts, family_facts
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
+    AuthoredState,
+    CarriedState,
+    ChangedState,
     Concurrency,
     ConcurrencyStrategy,
     SubjectIdentity,
@@ -515,16 +520,11 @@ class WriteSettlement:
                     affected_rows=ANY_COUNT,
                 ),
             )
-        view = self._families.view(entity)
-        assignment_row = {
-            _assignment_member(assignment.attr): assignment.value
-            for assignment in instruction.managed_assignments
-        }
         return (
             PlannedUpdate(
                 entity=entity.identity,
                 target=target,
-                assignments=_assignments(entity, view, assignment_row),
+                assignments=_prepared_assignments(entity, instruction.managed_assignments),
                 concurrency=UNVERSIONED,
                 affected_rows=ANY_COUNT,
             ),
@@ -653,10 +653,14 @@ class WriteSettlement:
             tx_instant=tx_instant,
         )
         row = instruction.rows[0]
+        authored_attributes, authored_value_objects = _resolve(
+            entity, facts.view, row, context="insert"
+        )
         return _temporal_steps(
             facts,
             key_row=row,
-            authored=row,
+            authored_attributes=authored_attributes,
+            authored_value_objects=authored_value_objects,
             predecessor=None if observed is None else observed.predecessor,
         )
 
@@ -718,10 +722,10 @@ class WriteSettlement:
             declaring_entity=declaring_entity,
             view=self._families.view(entity),
             axes=TemporalAxes(
-                transaction_start=tx_axis.start_attribute.name,
-                transaction_end=tx_axis.end_attribute.name,
-                valid_start=None if valid_axis is None else valid_axis.start_attribute.name,
-                valid_end=None if valid_axis is None else valid_axis.end_attribute.name,
+                transaction_start=tx_axis.start_attribute,
+                transaction_end=tx_axis.end_attribute,
+                valid_start=None if valid_axis is None else valid_axis.start_attribute,
+                valid_end=None if valid_axis is None else valid_axis.end_attribute,
             ),
             # Reaching a surviving temporal mutation is what makes the attempt
             # capture its instant; the close's new Transaction-Time end and
@@ -835,17 +839,14 @@ class WriteSettlement:
             _require_unobserved(entity, mutation, group.observations)
         emission: _NonTemporalEmission = _DELETION
         if mutation != "delete":
-            assignment_row = {
-                _assignment_member(assignment.attr): assignment.value
+            if facts.version_attribute is not None and any(
+                isinstance(assignment.member, AttributeMetadata)
+                and assignment.member.identity == facts.version_attribute
                 for assignment in group.mutation.managed_assignments
-            }
-            if (
-                facts.version_attribute is not None
-                and facts.version_attribute.name in assignment_row
             ):
                 self._concurrency.reject_authored_version(entity.identity, facts.version_attribute)
             emission = _Revision(
-                _assignments(entity, facts.view, assignment_row),
+                _prepared_assignments(entity, group.mutation.managed_assignments),
                 self._version_overlay(facts.version_attribute),
             )
         return _MaterializedNonTemporalSegment(
@@ -895,10 +896,7 @@ class WriteSettlement:
             key_attribute_names=group.key_attributes,
             key_columns=group.key_columns,
             predecessors=group.observations.predecessors,
-            assignment_row={
-                _assignment_member(assignment.attr): assignment.value
-                for assignment in group.mutation.managed_assignments
-            },
+            assignments=group.mutation.managed_assignments,
             steps_per_row=closes + len(facts.resolved_successors),
         )
 
@@ -983,34 +981,35 @@ class _MaterializedTemporalSegment:
     key_attribute_names: tuple[str, ...]
     key_columns: tuple[ColumnSlice[object], ...]
     predecessors: PredecessorColumns
-    assignment_row: Mapping[str, object]
+    assignments: tuple[PreparedAssignment, ...]
     steps_per_row: int
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "assignment_row",
-            MappingProxyType(
-                {name: freeze_retained_value(value) for name, value in self.assignment_row.items()}
-            ),
-        )
 
     def __len__(self) -> int:
         return len(self.key_columns[0]) * self.steps_per_row
 
     def step(self, index: int) -> PlannedStep:
         row, sub_step = divmod(index, self.steps_per_row)
-        key_row = dict(
-            zip(
-                self.key_attribute_names,
-                (column[row] for column in self.key_columns),
-                strict=True,
-            )
+        key_values = tuple(column[row] for column in self.key_columns)
+        key_row = dict(zip(self.key_attribute_names, key_values, strict=True))
+        close = self.facts.close
+        assert close is not None
+        authored_attributes: dict[AttributeIdentity, PlannedValue] = dict(
+            zip(close.key_attributes, key_values, strict=True)
         )
+        authored_value_objects: dict[ValueObjectIdentity, object] = {}
+        for assignment in self.assignments:
+            member = assignment.member
+            if isinstance(member, AttributeMetadata):
+                authored_attributes[member.identity] = _cell(
+                    self.facts.entity, member.identity.name, assignment.value, "insert"
+                )
+            else:
+                authored_value_objects[member.identity] = assignment.value
         return _temporal_steps(
             self.facts,
             key_row=key_row,
-            authored={**key_row, **self.assignment_row},
+            authored_attributes=authored_attributes,
+            authored_value_objects=authored_value_objects,
             predecessor=self.predecessors.row(row),
         )[sub_step]
 
@@ -1019,7 +1018,8 @@ def _temporal_steps(
     facts: _TemporalFacts,
     *,
     key_row: Mapping[str, object],
-    authored: Mapping[str, object],
+    authored_attributes: Mapping[AttributeIdentity, PlannedValue],
+    authored_value_objects: Mapping[ValueObjectIdentity, object],
     predecessor: PredecessorRow | None,
 ) -> tuple[PlannedStep, ...]:
     """One temporal row's close and its successors, in that order.
@@ -1033,11 +1033,9 @@ def _temporal_steps(
     (already run, into ``facts``) and
     :func:`~parallax.core.unit_work.temporal.bind_successor`.
 
-    ``key_row`` addresses the close; ``authored`` is the represented state a
-    changed or authored successor overlays. The eager arm passes the
-    instruction's one row as both — the address is projected out of it — while
-    a group passes its own key columns and the group-wide assignment overlay
-    on top of them.
+    ``key_row`` addresses the close; the authored maps are already resolved to
+    final member identities. A group therefore never maps prepared Metadata
+    back to authored strings merely to resolve it again.
     """
     steps: list[PlannedStep] = []
     close = facts.close
@@ -1052,34 +1050,39 @@ def _temporal_steps(
                 observed_valid_end=(
                     None
                     if facts.axes.valid_end is None
-                    else predecessor.member(facts.axes.valid_end)
+                    else predecessor.member(facts.axes.valid_end.name)
                 ),
                 cause=close.cause,
                 gate=_temporal_gate(close.gate_start_attribute, predecessor, close.gated),
                 instant=facts.instant,
             )
         )
-    steps.extend(
-        PlannedInsert(
-            entity=facts.entity.identity,
-            entries=(
-                InsertEntry(
-                    row=_planned_row(facts.entity, facts.view, successor.members, None),
-                    origin=successor.origin,
-                ),
-            ),
+    predecessor_attributes: dict[AttributeIdentity, PlannedValue] = {}
+    predecessor_value_objects: dict[ValueObjectIdentity, object] = {}
+    if predecessor is not None:
+        predecessor_attributes, predecessor_value_objects = _resolve(
+            facts.entity, facts.view, predecessor.members, context=None
         )
-        for successor in (
-            bind_successor(
-                resolved,
-                facts.axes,
-                transaction_instant=facts.instant,
-                authored=authored,
-                predecessor=predecessor,
-            )
-            for resolved in facts.resolved_successors
+    for resolved in facts.resolved_successors:
+        match resolved.state:
+            case AuthoredState():
+                attributes = dict(authored_attributes)
+                value_objects = dict(authored_value_objects)
+            case CarriedState():
+                attributes = dict(predecessor_attributes)
+                value_objects = dict(predecessor_value_objects)
+            case ChangedState():
+                attributes = {**predecessor_attributes, **authored_attributes}
+                value_objects = {**predecessor_value_objects, **authored_value_objects}
+        entry = bind_successor(
+            resolved,
+            facts.axes,
+            transaction_instant=facts.instant,
+            attributes=attributes,
+            value_objects=value_objects,
+            predecessor=predecessor,
         )
-    )
+        steps.append(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
     return tuple(steps)
 
 
@@ -1141,12 +1144,12 @@ def _versioned_assignments(
     """
     if version is None or observed_version is None:
         return base
-    return PlannedAssignments(
-        attributes={
+    return adopt_planned_assignments(
+        {
             **base.attributes,
             version.attribute: version.arithmetic.advance(observed_version),
         },
-        value_objects=base.value_objects,
+        base.value_objects,
     )
 
 
@@ -1235,7 +1238,7 @@ def _planned_row(
     if version is not None:
         attribute, initial_value = version
         attributes[attribute] = initial_value
-    return PlannedRow(attributes=attributes, value_objects=value_objects)
+    return adopt_planned_row(attributes, value_objects)
 
 
 def _assignments(
@@ -1244,7 +1247,24 @@ def _assignments(
     row: Mapping[str, object],
 ) -> PlannedAssignments:
     attributes, value_objects = _resolve(entity, view, row, context="update")
-    return PlannedAssignments(attributes=attributes, value_objects=value_objects)
+    return adopt_planned_assignments(attributes, value_objects)
+
+
+def _prepared_assignments(
+    entity: EntityMetadata, assignments: Sequence[PreparedAssignment]
+) -> PlannedAssignments:
+    """Resolved predicate assignments in their final member-identity maps."""
+    attributes: dict[AttributeIdentity, PlannedValue] = {}
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    for assignment in assignments:
+        member = assignment.member
+        if isinstance(member, AttributeMetadata):
+            attributes[member.identity] = _cell(
+                entity, member.identity.name, assignment.value, "update"
+            )
+        else:
+            value_objects[member.identity] = assignment.value
+    return adopt_planned_assignments(attributes, value_objects)
 
 
 def _resolve(
@@ -1252,7 +1272,7 @@ def _resolve(
     view: InheritanceEntityView,
     row: Mapping[str, object],
     *,
-    context: str,
+    context: str | None,
 ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
     """``row``'s cells under their resolved member identities, read off the
     family-effective indexes the Inheritance Facet compiled once.
@@ -1273,7 +1293,9 @@ def _resolve(
                 f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
                 "of the Entity's family"
             )
-        attributes[attribute.identity] = _cell(entity, name, value, context)
+        attributes[attribute.identity] = (
+            value if context is None else _cell(entity, name, value, context)
+        )
     return attributes, value_objects
 
 
@@ -1453,7 +1475,9 @@ def reject_readless_document_many(
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
     for assignment in instruction.managed_assignments:
-        member = _assignment_member(assignment.attr)
+        if isinstance(assignment.member, AttributeMetadata):
+            continue
+        member = assignment.member.identity.path[-1]
         occurrence = occurrences.get(member)
         if occurrence is None:
             continue
@@ -1563,12 +1587,6 @@ def _marker(value: object) -> tuple[str, object] | None:
         return None
     key = next(iter(marker))
     return (key, marker[key]) if key in _MARKER_KEYS else None
-
-
-def _assignment_member(attr: str) -> str:
-    """The declared member name of an assignment's ``Class.member`` reference."""
-    _, _, member = attr.rpartition(".")
-    return member
 
 
 def _reject_temporal_delete(entity: EntityMetadata, mutation: str, surface: WriteSurface) -> None:

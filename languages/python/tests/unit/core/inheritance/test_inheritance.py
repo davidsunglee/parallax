@@ -13,8 +13,12 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
+from parallax.core.base import STRING, NeutralType, coerce_neutral_input, matches_neutral_type
 from parallax.core.base import Decimal as DecimalType
+from parallax.core.document_codec._authoring import (
+    MAPPING_SOURCE_ACCESS,
+    validate_member_authoring,
+)
 from parallax.core.metamodel import (
     UNRESOLVED_ENTITY_REFERENCE,
     AbstractRoot,
@@ -236,50 +240,82 @@ _VO_MODEL = formed(_VO_META)
 _VO_METADATA = _require_metadata(_VO_MODEL, _VO_ENTITY)
 
 
+def _assignment(name: str, value: object) -> None:
+    position = inheritance.view(_VO_MODEL).entity(_VO_METADATA.identity)
+    assert position is not None
+    member = position.member_selection.binding(name)
+    assert member is not None
+
+    def normalize(neutral_type: NeutralType, leaf: object, _path: str) -> tuple[object, bool]:
+        managed = coerce_neutral_input(leaf, neutral_type)
+        return managed, matches_neutral_type(managed, neutral_type)
+
+    failure = validate_member_authoring(
+        member.definition,
+        value,
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=normalize,
+        path=f"{_VO_METADATA.identity.canonical}.{name}",
+    )
+    inheritance.validate_write_assignment(
+        _VO_MODEL, _VO_METADATA, name, value, known_vo_violation=failure
+    )
+
+
 def test_validate_write_assignment_accepts_a_well_formed_nested_value_object() -> None:
     document: dict[str, object] = {
         "note": "n",
         "detail": {"hint": "h"},
         "grid": [{"cell": "a"}],
     }
-    inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)  # no raise
+    _assignment("spec", document)  # no raise
+
+
+def test_value_object_assignment_judgement_requires_codec_evidence() -> None:
+    with pytest.raises(TypeError, match="requires the document codec's authoring verdict"):
+        inheritance.validate_write_assignment(
+            _VO_MODEL,
+            _VO_METADATA,
+            "spec",
+            {"note": "n", "detail": {"hint": "h"}, "grid": []},
+        )
 
 
 def test_validate_write_assignment_rejects_a_many_value_object_non_list() -> None:
     with pytest.raises(inheritance.WriteAssignmentError, match="must bind a list of documents"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "tags", "not-a-list")
+        _assignment("tags", "not-a-list")
 
 
 def test_validate_write_assignment_rejects_a_missing_required_attribute() -> None:
     document: dict[str, object] = {"detail": {"hint": "h"}}
     with pytest.raises(inheritance.WriteAssignmentError, match="required attribute is absent"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
+        _assignment("spec", document)
 
 
 def test_validate_write_assignment_rejects_a_missing_required_nested_value_object() -> None:
     document: dict[str, object] = {"note": "n"}
     with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
+        _assignment("spec", document)
 
 
 def test_validate_write_assignment_rejects_a_nested_many_element_type_mismatch() -> None:
     # The offending leaf's path threads through a NESTED `cardinality: many`
     # member's own bracket-indexed element (`spec.grid[0].cell`) — the shared
-    # walk's (`parallax.core.metamodel._vo_document`) own index-prefixing.
+    # document codec authoring walk's own index-prefixing.
     document: dict[str, object] = {
         "note": "n",
         "detail": {"hint": "h"},
         "grid": [{"cell": 42}],
     }
     with pytest.raises(inheritance.WriteAssignmentError, match=r"spec\.grid\[0\]\.cell"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", document)
+        _assignment("spec", document)
 
 
 def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatch() -> None:
     # A TOP-level `cardinality: many` member's own element violation paths
     # bracket-first, with no leading dot (`Gadget.tags[0].label`).
     with pytest.raises(inheritance.WriteAssignmentError, match=r"tags\[0\]\.label"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "tags", [{"label": 42}])
+        _assignment("tags", [{"label": 42}])
 
 
 # --------------------------------------------------------------------------- #
@@ -291,16 +327,16 @@ def test_validate_write_assignment_rejects_a_top_level_many_element_type_mismatc
 def test_validate_write_assignment_rejects_none_for_a_non_nullable_value_object() -> None:
     # `core` is `nullable: false` (unlike `spec`/`tags` above) -- an explicit
     # `None` assignment must be refused the SAME way a missing required value
-    # object is, reusing `vo_document_violation`'s own `"value-object-
-    # missing"` wording rather than forking new text.
+    # object is, reusing the shared authoring verdict's `"value-object-missing"`
+    # wording rather than forking new text.
     with pytest.raises(inheritance.WriteAssignmentError, match="required value object is absent"):
-        inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "core", None)
+        _assignment("core", None)
 
 
 def test_validate_write_assignment_accepts_none_for_a_nullable_value_object() -> None:
     # `spec` is `nullable: true` -- an explicit `None` is a legal clearing
     # assignment, never itself a structural violation.
-    inheritance.validate_write_assignment(_VO_MODEL, _VO_METADATA, "spec", None)  # no raise
+    _assignment("spec", None)  # no raise
 
 
 def test_validate_write_assignment_rejects_none_for_a_non_nullable_scalar() -> None:

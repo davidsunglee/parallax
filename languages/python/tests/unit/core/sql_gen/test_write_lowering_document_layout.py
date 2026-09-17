@@ -331,7 +331,7 @@ def _successor(
         if attribute.identity.name in members
     }
     value_objects = {
-        occurrence.identity: members[occurrence.identity.path[-1]]
+        occurrence.identity: retain_document_value(members[occurrence.identity.path[-1]])
         for occurrence in person.declared_value_objects
         if occurrence.identity.path[-1] in members
     }
