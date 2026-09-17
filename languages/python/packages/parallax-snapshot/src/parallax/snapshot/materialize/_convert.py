@@ -10,7 +10,7 @@ A compiled read first extracts provider-neutral member carriers into an exact
 Payload Witness and establishes identity from that positional row. Only after a
 Root View has compared every reached witness does conversion classify and decode
 Entity-document members and Value Object occurrences into positional member rows
-laid out by the exact, path-specific Value Object layout, recursively at every
+laid out by the declaration-owned canonical Member Shape, recursively at every
 depth. An undeclared stored key never contributes, and every
 declared one occupies its own position — holding the value exactly where the read
 contract says the value carries it, and ``ABSENT`` where the stored document held
@@ -25,8 +25,8 @@ mapping view, so conversion builds no second payload for the write side.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from operator import itemgetter
 from typing import Final, Protocol, cast
 
@@ -44,10 +44,11 @@ from parallax.core.document_codec import (
     DocumentFinding,
     DocumentFindingCode,
     DocumentPathSegment,
+    MemberShape,
+    Missing,
     Present,
     decode_occurrence_classified,
     occurrence_shape,
-    reduce_declared_members_classified,
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
@@ -623,55 +624,28 @@ def _attribute_issue(
 # --------------------------------------------------------------------------- #
 
 
+def build_positional_object(shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:
+    """Build one declaration-ordered member row from interpreted codec values."""
+    return tuple(
+        ABSENT if isinstance(value, Missing) or value is UNAVAILABLE else value
+        for _member, value in zip(shape.members, values, strict=True)
+    )
+
+
+def build_positional_many(values: Iterable[object]) -> tuple[object, ...]:
+    """Build one ordered Many result from completed positional elements."""
+    return tuple(values)
+
+
 def _occurrence(
     raw: object,
     declared: _VoContainer,
     *,
     outer_classified: bool = False,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """One TOP-LEVEL occurrence as the positional member rows a slot holds.
-
-    Decoding and structuring are two passes on purpose: the codec's reduction is
-    already recursive, so it runs exactly once per stored occurrence and
-    :func:`_structure` then walks what it produced. Decoding a nested value a
-    second time would ask the codec to read a managed value as a document
-    spelling, which is a different thing entirely.
-    """
-    decoded, findings = _decode_document(raw, declared, outer_classified=outer_classified)
-    return _structure_occurrence(decoded, declared), findings
-
-
-def _structure_occurrence(decoded: object, declared: _VoContainer) -> tuple[object, ...] | None:
-    """One already-reduced occurrence as member rows.
-
-    A Many occurrence has no absent state: its zero-element value is the empty
-    tuple, and an element the reduction collapsed contributes none. A One
-    occurrence is ``None`` exactly where the reduction collapsed the whole
-    composite.
-    """
-    if declared.multiplicity is Multiplicity.MANY:
-        items = cast("list[object]", decoded) if isinstance(decoded, list) else []
-        return tuple(
-            _structure(cast("Mapping[str, object]", item), declared)
-            for item in items
-            if item is not None
-        )
-    if decoded is None:
-        return None
-    return _structure(cast("Mapping[str, object]", decoded), declared)
-
-
-def _decode_document(
-    raw: object,
-    declared: _VoContainer,
-    *,
-    outer_classified: bool = False,
-) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """One occurrence reduced to its declared members, as the plain document shape
-    an observation retains."""
+    """Build one top-level occurrence directly as positional member rows."""
     if outer_classified:
         return raw, ()
-    outer_findings: tuple[DocumentFinding, ...] = ()
     carrier = (
         raw
         if isinstance(raw, (SqlNull, PresentDocument))
@@ -684,58 +658,17 @@ def _decode_document(
         carrier,
         multiplicity=declared.multiplicity,
         nullable=declared.nullable,
+        build_object=build_positional_object,
+        build_many=build_positional_many,
     )
-    outer_findings = classified.findings
-    raw = classified.presence.value if isinstance(classified.presence, Present) else None
-    if declared.multiplicity is Multiplicity.MANY:
-        items = cast("list[object]", raw) if isinstance(raw, list) else []
-        decoded: list[object] = []
-        findings: list[DocumentFinding] = list(outer_findings)
-        for index, item in enumerate(items):
-            element, element_findings = _decode_element(item, declared)
-            decoded.append(element)
-            findings.extend(
-                replace(finding, path=(index, *finding.path)) for finding in element_findings
-            )
-        return decoded, tuple(findings)
-    one_decoded, one_findings = _decode_element(raw, declared)
-    return one_decoded, (*outer_findings, *one_findings)
-
-
-def _decode_element(
-    raw: object, declared: _VoContainer
-) -> tuple[dict[str, object] | None, tuple[DocumentFinding, ...]]:
-    """One ``one``-shaped document (or array element) reduced to the members the
-    read contract carries: a non-mapping collapses to ``None`` — the whole
-    composite absent — never a partial mapping, and a JSON-null leaf answers
-    ``None`` while a present one decodes by its declared Neutral Type.
-
-    Which declared members become keys is the read contract itself
-    (`m-snapshot-read` *What a materialized value carries*), which is why this
-    reduction takes no presence option of its own: it is the classified reduction,
-    and the same one the classified row transform applies, so a document decoded
-    here and one decoded there answer alike."""
-    reduced, findings = reduce_declared_members_classified(occurrence_shape(declared), raw)
-    return cast("dict[str, object] | None", reduced), findings
-
-
-def _structure(document: Mapping[str, object], declared: _VoContainer) -> tuple[object, ...]:
-    """One reduced document as its declaration-order member row: this
-    occurrence's own leaves, then its nested occurrences, each at the position
-    its declaration fixes.
-
-    A member the document does not hold — and a leaf the reduction could not make
-    available — reads ``ABSENT`` at its own position, which is how presence
-    survives a row that cannot omit. No raw document mapping continues past here.
-    """
-    row: list[object] = []
-    for leaf in declared.attributes:
-        value = document.get(leaf.identity.name, UNAVAILABLE)
-        row.append(ABSENT if value is UNAVAILABLE else value)
-    for nested in declared.value_objects:
-        value = document.get(nested.identity.path[-1], UNAVAILABLE)
-        row.append(ABSENT if value is UNAVAILABLE else _structure_occurrence(value, nested))
-    return tuple(row)
+    value = (
+        classified.presence.value
+        if isinstance(classified.presence, Present)
+        else ()
+        if declared.multiplicity is Multiplicity.MANY
+        else None
+    )
+    return value, classified.findings
 
 
 def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredDataIssueInput:

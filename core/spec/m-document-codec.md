@@ -276,6 +276,19 @@ branch, advancing a cursor after each conforming occurrence. Thus `address.city`
 and `address.geo.lat` are judged from the `address` root under both layouts even
 though their physical paths differ.
 
+Classified occurrence decoding constructs the requesting consumer's output during
+that same recursive traversal. The consumer supplies exactly two synchronous
+construction operations: one consumes the interpreted direct members of an
+object in `MemberShape` order, and one consumes the interpreted elements of a
+`Many` in stored order. A construction operation chooses only the final carrier;
+it receives completed child outputs and existing presence or unavailable states,
+and neither classifies raw content nor creates findings. A dictionary consumer
+uses mapping and list construction, while positional materialization uses member
+rows and tuples and translates `Missing` and `Unavailable` into its own absent
+position. Exactly one construction pair runs for a decode. The traversal MUST NOT
+first build a reduced document tree for a positional consumer, detach a requested
+occurrence subtree, or decode a child again during construction.
+
 Judgement remains demand-driven rather than a scan of an opaque subtree. One
 classified invocation judges one requested direct member of one Entity root or
 cursor. Advancing through an occurrence judges only its carrier kind; its members
@@ -492,13 +505,16 @@ it does change is the position each patch names, whole.
   and a `many`'s elements additionally have no identity by which stored and
   supplied elements could be matched.
 
-The exported declared-member reduction is the one operation that walks a whole
-encoded document against its shape — the others above build a document, read one
-path, or write the positions their patches name — and it is what a materialization
-reduces a stored document through and what normalizes an encoded assignment into
-the managed document a comparison is stated over. It decodes leaves by declared
-Neutral Type, reduces a `one` recursively and a `many` element-wise, and excludes
-every key the shape does not declare. Consumers MUST NOT implement another local reduction.
+The exported declared-member reduction is the dictionary-output form of the one
+classified traversal that walks a whole encoded document against its shape — the
+others above build a document, read one path, or write the positions their
+patches name. It decodes leaves by declared Neutral Type, reduces a `one`
+recursively and a `many` element-wise, and excludes every key the shape does not
+declare. Positional materialization supplies its own construction pair to this
+same traversal instead of reducing to dictionaries and walking those dictionaries
+again. An encoded assignment comparison retains the unclassified reduction below,
+whose presence and malformed-content contract is different. Consumers MUST NOT
+implement another local classified traversal or local reduction.
 
 The reduction takes one option that narrows its result. **Presence preservation**
 asks which members *this document* holds, which the source answers by itself: a
@@ -725,8 +741,10 @@ neither outcome changes this shape-aware verdict.
   Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
   either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`
   after entering a conforming occurrence. The classified operations decode by
-  declared Neutral Type and drop unknown keys. Materialization never inspects an
-  Entity carrier's JSON shape, projects `Missing` itself, interprets a direct
+  declared Neutral Type and drop unknown keys. Their caller-selected construction
+  operations build final positional member rows during that traversal; no reduced
+  mapping tree survives for a later structuring pass. Materialization never
+  inspects an Entity carrier's JSON shape, projects `Missing` itself, interprets a direct
   document carrier, or falls back to strict decoding for requested stored state
   below a logical root.
 - Temporal observation retains the raw predecessor document unchanged and patches

@@ -9,7 +9,7 @@ branches; it performs no authored reference or relationship resolution.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never, cast
@@ -24,7 +24,7 @@ from parallax.core.base import (
 from parallax.core.db_port import Row
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
-from parallax.core.document_codec import DocumentFinding, is_text_compared
+from parallax.core.document_codec import DocumentFinding, MemberShape, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import (
@@ -235,19 +235,34 @@ class RowMaterializer:
         return self._value(row, self.stages.result_key(resolved, key))
 
     def raw_member_classifier(
-        self, resolved: EntityIdentity, key: str
+        self,
+        resolved: EntityIdentity,
+        key: str,
+        *,
+        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+        build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
         """Prepare one classified member's row-independent decoding walk."""
         shared = self.stages.shared_document
         if shared is not None:
             try:
-                return shared.located_classifier(resolved, key)
+                return shared.located_classifier(
+                    resolved,
+                    key,
+                    build_object=build_object,
+                    build_many=build_many,
+                )
             except KeyError:
                 pass
         direct = self.stages.direct_documents
         if direct is None:
             raise KeyError(key)
-        return direct.member_classifier(resolved, key)
+        return direct.member_classifier(
+            resolved,
+            key,
+            build_object=build_object,
+            build_many=build_many,
+        )
 
     def classify_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
@@ -439,9 +454,19 @@ class CompiledRead:
         return self._materializer.raw_member_of(row, resolved, key)
 
     def raw_member_classifier(
-        self, resolved: EntityIdentity, key: str
+        self,
+        resolved: EntityIdentity,
+        key: str,
+        *,
+        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+        build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        return self._materializer.raw_member_classifier(resolved, key)
+        return self._materializer.raw_member_classifier(
+            resolved,
+            key,
+            build_object=build_object,
+            build_many=build_many,
+        )
 
     def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None:
         """Return a shared-document member key, or answer no shared carrier."""

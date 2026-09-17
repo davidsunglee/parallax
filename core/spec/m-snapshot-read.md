@@ -119,6 +119,16 @@ share that one judgment and its frozen evidence. Entity Graph Construction and
 Wire publication trust the resulting judged Entity State and never invoke a
 second codec or scalar-admission pass over it.
 
+For each requested Value Object occurrence, that one codec traversal constructs
+the final positional member row directly in canonical `MemberShape` order. Nested
+`One` outputs are member rows and nested `Many` outputs are ordered tuples of
+member rows as soon as their children have been interpreted. The materializer's
+output construction translates codec absence and unavailability to its positional
+absence marker while consuming the traversal; it does not first retain a reduced
+mapping/list tree, detach a raw occurrence subtree, or walk decoded members a
+second time. Dictionary consumers select a mapping/list construction over the same
+classification rules and finding paths rather than a second decoder.
+
 An issue anywhere in a root's requested include tree classifies that result root.
 Shared affected nodes repeat the issue for every result root that reaches them,
 while duplicate diagnoses within one root collapse. Classification preserves the

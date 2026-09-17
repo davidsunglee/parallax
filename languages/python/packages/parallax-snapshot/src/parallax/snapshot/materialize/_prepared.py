@@ -30,19 +30,21 @@ per-row lookup wrapper or mapping.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
 from parallax.core.base import SQL_NULL, DocumentValue, UnknownFamilyTag
 from parallax.core.db_port import Row
-from parallax.core.document_codec import DocumentFinding, locate_raw_entity_member
+from parallax.core.document_codec import DocumentFinding, MemberShape, locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectMetadata
 from parallax.snapshot.materialize._convert import (
     AttributeReadContract,
     LevelContext,
+    build_positional_many,
+    build_positional_object,
     convert_deferred,
 )
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, PageBuilder
@@ -81,7 +83,12 @@ class _CompiledRead(Protocol):
     ) -> object: ...
 
     def raw_member_classifier(
-        self, resolved: EntityIdentity, key: str
+        self,
+        resolved: EntityIdentity,
+        key: str,
+        *,
+        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+        build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]: ...
 
     def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None: ...
@@ -277,7 +284,14 @@ def _level_context(
         classified,
         tuple(compiled.raw_member_ordinal(identity, key) for key in keys),
         classifiers=tuple(
-            compiled.raw_member_classifier(identity, key) if key in classified else None
+            compiled.raw_member_classifier(
+                identity,
+                key,
+                build_object=build_positional_object,
+                build_many=build_positional_many,
+            )
+            if key in classified
+            else None
             for key in keys
         ),
         document_member_names=tuple(compiled.raw_member_location(identity, key) for key in keys),

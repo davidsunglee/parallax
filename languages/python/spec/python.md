@@ -2479,6 +2479,14 @@ of shared edition identity.
   entry stands between the provider tuple and its witness. Decoded member rows and
   stored-data findings are created only when a Root View reaches the occurrence;
   an exactly equal state already judged for another root may then be borrowed.
+  The prepared read configures the Document Codec with two reusable construction
+  functions: an object constructor that consumes canonical-order interpreted
+  members into the exact built-in member-row tuple, translating codec `MISSING`
+  and `UNAVAILABLE` to `ABSENT`, and a Many constructor that consumes interpreted
+  elements into an exact tuple. Shared-document and direct-occurrence classifiers
+  retain those functions once per prepared level. Their codec traversal constructs
+  nested positional rows directly and returns findings beside them; it allocates
+  no reduced dictionary/list tree and performs no later `_structure` walk.
   Absence is spelled rather than omitted,
   because a positional row cannot omit, by ONE private sentinel — the one owned
   beside the member layouts a row is read against (*Exact-model member layouts*),
