@@ -113,7 +113,7 @@ def test_retained_tuple_freezes_nested_mutable_values_without_copying_immutable_
 
     frozen = freeze_retained_value((immutable, [1, {"nested": [2]}]))
 
-    assert frozen == (immutable, (1, MappingProxyType({"nested": (2,)})))
+    assert frozen == (immutable, (1, FrozenMap({"nested": (2,)})))
     assert cast("tuple[object, ...]", frozen)[0] is immutable
 
 

@@ -407,6 +407,28 @@ def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -
     assert cast("Present", wrong_many.presence).value == []
 
 
+def test_document_classification_rejects_container_subclasses() -> None:
+    shape = MemberShape(members=(Leaf("required", INT32, False),))
+    tuple_subclass = type("TupleSubclass", (tuple,), {})
+    dict_subclass = type("DictSubclass", (dict,), {})
+
+    wrong_many = decode_occurrence_classified(
+        shape,
+        PresentDocument(tuple_subclass(({"required": 1},))),
+        multiplicity=Multiplicity.MANY,
+        nullable=False,
+    )
+    wrong_one = decode_occurrence_classified(
+        shape,
+        PresentDocument(dict_subclass(required=1)),
+        multiplicity=Multiplicity.ONE,
+        nullable=False,
+    )
+
+    assert wrong_many.findings[0].code == "many-wrong-kind"
+    assert wrong_one.findings[0].code == "one-wrong-kind"
+
+
 @pytest.mark.parametrize(
     ("neutral_type", "stored"),
     [

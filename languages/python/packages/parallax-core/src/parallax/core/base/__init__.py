@@ -166,8 +166,8 @@ def frozen_map_json_backing[K, V](value: FrozenMap[K, V]) -> dict[K, V]:
 
 
 def _document_values_equal(left: object, right: object) -> bool:
-    left_is_mapping = isinstance(left, Mapping)
-    right_is_mapping = isinstance(right, Mapping)
+    left_is_mapping = type(left) in (dict, FrozenMap)
+    right_is_mapping = type(right) in (dict, FrozenMap)
     if left_is_mapping or right_is_mapping:
         if not left_is_mapping or not right_is_mapping:
             return False
@@ -177,8 +177,8 @@ def _document_values_equal(left: object, right: object) -> bool:
             key in right_mapping and _document_values_equal(value, right_mapping[key])
             for key, value in left_mapping.items()
         )
-    left_is_sequence = isinstance(left, (list, tuple))
-    right_is_sequence = isinstance(right, (list, tuple))
+    left_is_sequence = type(left) in (list, tuple)
+    right_is_sequence = type(right) in (list, tuple)
     if left_is_sequence or right_is_sequence:
         if not left_is_sequence or not right_is_sequence:
             return False
@@ -199,10 +199,13 @@ def retain_document_value(value: object) -> object:
         return adopt_frozen_map(
             {key: retain_document_value(nested) for key, nested in source.items()}
         )
-    if isinstance(value, tuple):
+    if type(value) is tuple:
         source = cast("tuple[object, ...]", value)
         retained = tuple(retain_document_value(nested) for nested in source)
         return source if all(a is b for a, b in zip(retained, source, strict=True)) else retained
+    if isinstance(value, tuple):
+        source = cast("tuple[object, ...]", value)
+        return tuple(retain_document_value(nested) for nested in source)
     if isinstance(value, list):
         return tuple(retain_document_value(nested) for nested in cast("list[object]", value))
     return value
@@ -282,9 +285,9 @@ def is_document_value(value: object) -> TypeGuard[DocumentValue]:
         return True
     if isinstance(value, float):
         return math.isfinite(value)
-    if isinstance(value, (list, tuple)):
+    if type(value) in (list, tuple):
         return all(is_document_value(item) for item in cast("Sequence[object]", value))
-    if isinstance(value, (dict, FrozenMap)):
+    if type(value) in (dict, FrozenMap):
         return all(
             isinstance(key, str) and is_document_value(item)
             for key, item in cast("Mapping[object, object]", value).items()

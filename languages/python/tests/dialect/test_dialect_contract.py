@@ -253,6 +253,18 @@ def test_document_mutation_preserves_supported_frozen_composites(dialect: Dialec
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_mutation_does_not_route_container_subclasses_as_composites(
+    dialect: Dialect,
+) -> None:
+    tuple_subclass = type("TupleSubclass", (tuple,), {})
+    value = tuple_subclass(({"label": "x"},))
+
+    _, binds = dialect.document_mutation("payload", [DocumentValueAssignment(("tags",), value)])
+
+    assert binds[1] == '[{"label": "x"}]'
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_an_occurrence_assignment_is_one_call_over_its_own_path(dialect: Dialect) -> None:
     # The seam renders both nodes of the algebra identically, because an assigned
     # occurrence hands it one already-encoded document for one absolute path. There

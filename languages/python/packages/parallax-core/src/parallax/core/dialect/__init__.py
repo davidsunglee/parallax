@@ -18,7 +18,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal
 
 from parallax.core.base import (
     SQL_NULL,
@@ -169,8 +169,8 @@ def _document_value_bind(value: object) -> object:
     Serializing it here is what keeps a key order and a separator convention out
     of every golden — a scalar has neither.
     """
-    if isinstance(value, (dict, list, FrozenMap, tuple)):
-        return cast("object", value)
+    if type(value) in (dict, list, FrozenMap, tuple):
+        return value
     return json.dumps(value)
 
 
