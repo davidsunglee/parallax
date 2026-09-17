@@ -47,7 +47,7 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._family import entity_layout, members, placed_members
+from parallax.snapshot.handle._family import entity_layout, members
 from parallax.snapshot.handle._predicate_writes import (
     _predecessor_payload,  # pyright: ignore[reportPrivateUsage] - the predicate lane's own contribution, proved to be one extraction with retention's
 )
@@ -337,12 +337,35 @@ def test_a_retained_predecessor_is_the_extraction_a_predicate_write_also_streams
     observation = hint.observation.evidence
     assert isinstance(observation, TemporalObservation)
 
-    streamed = _predecessor_payload(members(placed_members(model, entity, layout)), columns)
+    streamed = _predecessor_payload(members(layout), columns)
     assert {"manifest", "legs"} <= streamed.keys()
     assert dict(observation.predecessor.members) == streamed
     # The Structured Column rides BESIDE the members either way, so the shared
     # extraction is over the members alone.
     assert observation.predecessor.document == _VOYAGE_DOCUMENT
+
+
+def test_a_retained_predecessor_document_is_isolated_from_the_read_carrier() -> None:
+    model = _accepted("document-layout")
+    document: dict[str, object] = {
+        "title": "Northbound",
+        "manifest": {"cargo": "grain"},
+    }
+    observations = ObservedRows()
+    observations.observe_row(0, corpus_entity("Voyage"), _voyage_columns(), document)
+    hint = _hint(model, observations)
+    assert hint.observation is not None
+    observation = hint.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+
+    cast("dict[str, object]", document["manifest"])["cargo"] = "ore"
+
+    assert observation.predecessor.document == {
+        "title": "Northbound",
+        "manifest": {"cargo": "grain"},
+    }
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", observation.predecessor.document)["title"] = "Southbound"
 
 
 # --------------------------------------------------------------------------- #

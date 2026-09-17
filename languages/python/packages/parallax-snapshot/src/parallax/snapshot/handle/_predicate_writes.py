@@ -114,7 +114,6 @@ from parallax.snapshot.handle._family import (
     family_primary_key,
     is_temporal,
     members,
-    placed_members,
     slot_column,
     version_attribute,
 )
@@ -402,14 +401,11 @@ def _reject_readless_document_many(
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - accepted entities always have a layout view
         return
-    by_name = {
-        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
-    }
     assigned = {
         assignment_member(assignment.attr) for assignment in instruction.managed_assignments
     }
     for name in assigned:
-        occurrence = by_name.get(name)
+        occurrence = entity.value_object(name)
         if occurrence is None:
             continue
         placement = layout.layout.placement(occurrence.identity)
@@ -517,7 +513,7 @@ def _materialize_predicate_write(
     # declared one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
     predecessor_need = version_attr is None and temporal
-    member_columns = members(placed_members(meta, entity, layout))
+    member_columns = members(layout)
     shape = comparison_shape(meta, entity)
     comparison_assignments = _normalize_assignment_values(assignments, shape)
 

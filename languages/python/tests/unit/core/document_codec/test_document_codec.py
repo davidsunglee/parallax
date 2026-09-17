@@ -66,6 +66,7 @@ from parallax.core.document_codec import (
     reduce_declared_members_classified,
     shape_of_declaration,
 )
+from parallax.core.document_codec._document import encode_managed_document
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.metamodel import (
     Multiplicity,
@@ -488,8 +489,8 @@ def test_encode_emits_the_presence_table() -> None:
 
 def test_a_many_member_stores_the_empty_array_for_every_zero_state() -> None:
     for zero in (MISSING, NULL, Present([])):
-        assert encode_document(_SHAPE, {"entries": zero})["entries"] == []
-    assert encode_many(shape_of_declaration(_ENTRY), []) == []
+        assert encode_document(_SHAPE, {"entries": zero})["entries"] == ()
+    assert encode_many(shape_of_declaration(_ENTRY), []) == ()
 
 
 def test_nesting_composes_from_the_leaves_up_through_these_two_operations() -> None:
@@ -515,6 +516,24 @@ def test_nesting_composes_from_the_leaves_up_through_these_two_operations() -> N
         "origin": {"city": "Oslo"},
         "entries": [{"kind": "home", "price": "19.99"}, {"kind": "work"}],
     }
+
+
+def test_managed_encoding_builds_the_same_immutable_document_without_presence_maps() -> None:
+    managed = {
+        "origin": {"city": "Oslo"},
+        "entries": ({"kind": "home", "price": decimal.Decimal("19.99")},),
+    }
+    encoded = encode_managed_document(_SHAPE, managed)
+
+    assert encoded == {
+        "origin": {"city": "Oslo"},
+        "entries": [{"kind": "home", "price": "19.99"}],
+    }
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
+
+    zero_many = encode_managed_document(_SHAPE, {"origin": None})
+    assert zero_many == {"origin": None, "entries": ()}
 
 
 def test_decode_answers_by_declared_type_and_never_by_inspecting_the_value() -> None:
@@ -807,6 +826,61 @@ def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:
         apply_patches(_SHAPE, {}, [])
 
 
+def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> None:
+    patched = apply_patches(
+        _SHAPE,
+        {"origin": {"city": "Oslo", "unknown": 1}},
+        [
+            SetValue(("origin",), {"city": "Bergen", "replacement": True}),
+            SetLeaf(("origin", "city"), Present("Tromso")),
+        ],
+    )
+    assert patched == {"origin": {"city": "Tromso", "replacement": True}}
+
+    replaced_last = apply_patches(
+        _SHAPE,
+        {"origin": {"city": "Oslo"}},
+        [
+            SetLeaf(("origin", "city"), Present("Tromso")),
+            SetValue(("origin",), {"city": "Alta"}),
+        ],
+    )
+    assert replaced_last == {"origin": {"city": "Alta"}}
+
+    built_in_order = apply_patches(
+        _SHAPE,
+        {},
+        [
+            SetLeaf(("origin", "city"), Present("Oslo")),
+            SetLeaf(("origin", "city"), Present("Bergen")),
+        ],
+    )
+    assert built_in_order == {"origin": {"city": "Bergen"}}
+
+
+def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() -> None:
+    predecessor = encode_managed_document(
+        _SHAPE, {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)}
+    )
+    replacement = {"city": "Bergen"}
+    changed = apply_patches(_SHAPE, predecessor, [SetValue(("origin",), replacement)])
+
+    replacement["city"] = "Alta"
+
+    assert changed["entries"] is predecessor["entries"]
+    assert changed["origin"] == {"city": "Bergen"}
+    assert predecessor["origin"] == {"city": "Oslo"}
+
+
+def test_patch_treats_a_non_object_root_or_intermediate_as_an_empty_object() -> None:
+    assert apply_patches(_SHAPE, 7, [SetLeaf(("flag",), Present(True))]) == {"flag": True}
+    assert apply_patches(
+        _SHAPE,
+        {"origin": "not-an-object"},
+        [SetLeaf(("origin", "city"), Present("Oslo"))],
+    ) == {"origin": {"city": "Oslo"}}
+
+
 def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> None:
     # The pairing is exclusive both ways. Applying either mismatch would build a
     # document the same shape reads back as invalid stored data — a leaf holding an
@@ -817,28 +891,59 @@ def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> Non
         apply_patches(_SHAPE, {}, [SetValue(("day",), {})])
 
 
-def test_a_returned_document_shares_no_mutable_state_with_one_passed_in() -> None:
-    # Untouched subtrees included: patching copies the whole input rather than only
-    # the path it traverses, so a temporal successor can never write through into the
-    # retained predecessor it was built from.
+def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() -> None:
     stored: dict[str, object] = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
-    patched = cast("dict[str, object]", apply_patches(_SHAPE, stored, [SetLeaf(("flag",), NULL)]))
-    cast("dict[str, object]", patched["origin"])["city"] = "Bergen"
-    cast("list[dict[str, object]]", patched["entries"])[0]["kind"] = "work"
-    assert stored == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
-    # The same holds for the occurrence documents `encode` composes and the subtrees
-    # `decode` and `SetValue` hand back.
+    patched = apply_patches(_SHAPE, stored, [SetLeaf(("flag",), NULL)])
+    cast("dict[str, object]", stored["origin"])["city"] = "Bergen"
+    cast("list[dict[str, object]]", stored["entries"])[0]["kind"] = "work"
+    assert patched == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}], "flag": None}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", patched)["flag"] = True
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", patched["origin"])["city"] = "Tromso"
+
     origin = {"city": "Oslo"}
     encoded = encode_document(_SHAPE, {"origin": Present(origin)})
-    cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
     assert origin == {"city": "Oslo"}
     answered = decode_path(_SHAPE, {"origin": origin}, ("origin",))
     assert isinstance(answered, Present)
     cast("dict[str, object]", answered.value)["city"] = "Tromso"
     assert origin == {"city": "Oslo"}
-    replaced = cast("dict[str, object]", apply_patches(_SHAPE, {}, [SetValue(("origin",), origin)]))
-    cast("dict[str, object]", replaced["origin"])["city"] = "Alta"
-    assert origin == {"city": "Oslo"}
+    replaced = apply_patches(_SHAPE, {}, [SetValue(("origin",), origin)])
+    origin["city"] = "Alta"
+    assert replaced["origin"] == {"city": "Oslo"}
+    assert origin == {"city": "Alta"}
+
+    payload: list[object] = [{"value": 1}]
+    encoded_payload = encode_document(_one_leaf(JSON), {"leaf": Present(payload)})
+    cast("dict[str, object]", payload[0])["value"] = 2
+    assert encoded_payload == {"leaf": ({"value": 1},)}
+
+
+def test_immutable_codec_outputs_compose_through_decode_compare_and_patch() -> None:
+    encoded = encode_managed_document(
+        _SHAPE,
+        {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)},
+    )
+
+    assert decode_path(_SHAPE, encoded, ("origin",)) == Present({"city": "Oslo"})
+    assert reduce_declared_members(_SHAPE, encoded, preserve_presence=True) == {
+        "origin": {"city": "Oslo"},
+        "entries": [{"kind": "home"}],
+    }
+    classified, findings = reduce_declared_members_classified(_SHAPE, encoded)
+    assert classified == {
+        "origin": {"city": "Oslo"},
+        "entries": [{"kind": "home"}],
+    }
+    assert findings == ()
+    assert apply_patches(_SHAPE, encoded, [SetLeaf(("flag",), Present(True))]) == {
+        "flag": True,
+        "origin": {"city": "Oslo"},
+        "entries": [{"kind": "home"}],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -862,6 +967,15 @@ def test_a_candidate_carries_each_constrained_leafs_document_encoding() -> None:
 
 def test_a_candidate_nests_exactly_as_the_stored_document_nests() -> None:
     assert encode_candidate(_SHAPE, {("origin", "city"): "Oslo"}) == {"origin": {"city": "Oslo"}}
+
+
+def test_a_candidate_owns_a_mutable_composite_json_leaf() -> None:
+    payload: list[object] = [{"value": 1}]
+    candidate = encode_candidate(_one_leaf(JSON), {("leaf",): payload})
+
+    cast("dict[str, object]", payload[0])["value"] = 2
+
+    assert candidate == {"leaf": ({"value": 1},)}
 
 
 def test_an_unnamed_path_is_unconstrained_rather_than_absent() -> None:

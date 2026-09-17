@@ -11,6 +11,7 @@ from interpreter_matrix import CURRENT_MINOR, supported_minors
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
+from parallax.core.base import detach_json_container
 from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.entity import EntityRowCodec
 from parallax.core.unit_work import TemporalObservation, WritePlanner
@@ -165,7 +166,9 @@ def test_every_keyed_case_lowers_to_its_stated_statements_and_dumps_each_documen
         assert len(dumped) == len(statement.binds)
         for bind, buffer in zip(statement.binds, dumped, strict=True):
             if isinstance(bind, JsonDocument):
-                assert bytes(buffer or b"") == json.dumps(bind.value).encode()
+                assert (
+                    bytes(buffer or b"") == json.dumps(detach_json_container(bind.value)).encode()
+                )
 
 
 def test_typed_and_wire_ingress_lower_to_the_same_statements() -> None:

@@ -301,6 +301,7 @@ TableLayout
   columns: immutable sequence<ColumnSlot>
   physicalPrimaryKey: immutable sequence<ColumnSlot>
   column(Column) -> ColumnSlot | absent
+  columnPosition(Column) -> integer | absent
   contribution(ColumnContributor) -> ColumnSlot | absent
   placement(MemberIdentity) -> MemberPlacement | absent
 ```
@@ -343,9 +344,11 @@ shared Table. The shared Structured Column applies to every row owner in its
 governed Table, because every governed row carries a document even when that
 document is the empty object.
 
-All sequences and sets are immutable. The three lookups are total, nonthrowing,
+All sequences and sets are immutable. The four lookups are total, nonthrowing,
 and expected amortized O(1); they return absent for an unknown Column,
-contributor, or member. Physical-column uniqueness makes the Column lookup
+contributor, or member. `columnPosition(...)` names the position in `columns` and
+shares the Column index used by `column(...)`; it does not retain a second
+Column-keyed index. Physical-column uniqueness makes both Column lookups
 unambiguous.
 
 ## Member Placement is the sole logical locator
@@ -608,12 +611,19 @@ DiscriminatorAssignment
   slot: ColumnSlot
   value: string
 
+DocumentResidentSelection
+  shape: MemberShape
+  memberSelection: EntityMemberSelection
+  positions: immutable sequence<integer>
+  placements: immutable sequence<DocumentPath>
+
 EntityLayoutView
   entity: EntityIdentity
   layout: TableLayout
   columns: immutable sequence<ColumnSlot>
   discriminator: DiscriminatorAssignment | absent
-  relationalDocumentShape: MemberShape | absent
+  memberSelection: EntityMemberSelection
+  documentResidents: DocumentResidentSelection | absent
 
 PositionColumn
   contributor: AttributeIdentity | ValueObjectIdentity
@@ -651,13 +661,15 @@ shared-table discriminator is included and its derived concrete tag value is
 exposed by `discriminator`. The sequence references layout slots and creates no
 second physical order.
 
-`relationalDocumentShape` is present exactly under `Document`. It contains the
-Attributes and top-level Value Object occurrences applicable to this concrete
-Entity whose placement is a `DocumentPath` over the Table's
-`RelationalDocument` slot, in logical placement order. It is retained once in
-the Entity's compact facet facts and each view references it; distinct concrete
-variants of one shared Table therefore carry their own applicable document
-shape. Under `Columns` it is absent, even though nested Value Object members
+`memberSelection` is the exact `m-inheritance` selection for this Entity, held by
+reference rather than copied. `documentResidents` is present exactly under
+`Document`. It selects the positions applicable to this concrete Entity whose
+placement is a `DocumentPath` over the Table's `RelationalDocument` slot, in
+logical placement order, and aligns those positions with their prepared paths.
+Its shape references the selected definitions from `memberSelection.shape`; it
+does not rebuild or copy member definitions or contextual bindings. Distinct
+concrete variants of one shared Table therefore carry their own complete resident
+selection. Under `Columns` it is absent, even though nested Value Object members
 still have Document Paths inside their occurrence-owned Structured Columns.
 
 `position(...)` accepts the canonical effective concrete-Entity sequence

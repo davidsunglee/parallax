@@ -184,6 +184,8 @@ class JsonDocument:
     its native structured-document bind (psycopg ``Jsonb``, …). Keeping the carrier
     neutral is what lets a concrete adapter own its driver's bind mechanics without
     leaking them into the developer surface (m-db-port: managed carriers only).
+    Recursively immutable encoded containers remain the same value inside this
+    wrapper; an adapter serializes them directly rather than thawing another tree.
     """
 
     value: object

@@ -12,20 +12,22 @@ table-per-concrete-subtype `union all` restarts.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
+from parallax.core import inheritance, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     BranchColumn,
     TpcsBranchPlan,
+    document_projection,
 )
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
@@ -41,6 +43,27 @@ MATERIALIZATION_KEYS = model("materialization-key-compatibility")
 
 def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
     return tuple(target(model_, name).identity for name in names)
+
+
+def test_document_fan_out_references_complete_residency_while_selecting_one_member() -> None:
+    entity = target(DOCUMENT_LAYOUT, "Voyage")
+    inherited = inheritance.view(DOCUMENT_LAYOUT).entity(entity.identity)
+    physical = storage_layout.view(DOCUMENT_LAYOUT).entity(entity.identity)
+    assert inherited is not None
+    assert physical is not None
+    residents = physical.document_residents
+    assert residents is not None
+    selected = residents.member_selection.bindings[residents.positions[0]]
+    assert isinstance(selected, AttributeMetadata)
+
+    projected, fan_out = document_projection(physical, (selected,), ())
+
+    assert projected is not None
+    assert fan_out is not None
+    assert fan_out.shape is residents.shape
+    assert fan_out.shape is not None
+    assert fan_out.members == ((selected.storage.name, residents.placements[0].path),)
+    assert len(fan_out.shape.members) > len(fan_out.members)
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_branches() -> None:
@@ -409,6 +432,68 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
     resolved, variant, unknown, _document = compiled.row_identity({"id": 1, "kind": "leaf"})
     assert (resolved, variant, unknown) == (target(meta, "EmptyLeaf").identity, "EmptyLeaf", None)
+
+
+@pytest.mark.parametrize(
+    ("strategy", "shared_table"),
+    [("table-per-hierarchy", "mixed_family"), ("table-per-concrete-subtype", None)],
+)
+def test_family_document_padding_keeps_an_unselected_occurrence_only_resident_shape(
+    strategy: Literal["table-per-hierarchy", "table-per-concrete-subtype"],
+    shared_table: str | None,
+) -> None:
+    from parallax.descriptor._records import (
+        Attribute,
+        DocumentLayout,
+        Entity,
+        Inheritance,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    root = Entity(
+        name="MixedRoot",
+        table=shared_table,
+        layout=DocumentLayout(column="payload"),
+        inheritance=Inheritance(
+            role="root",
+            strategy=strategy,
+            tag_column="kind" if shared_table is not None else None,
+        ),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    scalar = Entity(
+        name="ScalarLeaf",
+        table=None if shared_table is not None else "scalar_leaf",
+        inheritance=Inheritance(
+            role="concrete-subtype",
+            parent="MixedRoot",
+            tag_value="scalar" if shared_table is not None else None,
+        ),
+        attributes=(Attribute(name="detail", type="string", column="detail"),),
+    )
+    occurrence = Entity(
+        name="OccurrenceLeaf",
+        table=None if shared_table is not None else "occurrence_leaf",
+        inheritance=Inheritance(
+            role="concrete-subtype",
+            parent="MixedRoot",
+            tag_value="occurrence" if shared_table is not None else None,
+        ),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
+    )
+    meta = formed(Metamodel(entities=(root, scalar, occurrence)))
+
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "MixedRoot"))
+
+    assert "payload" in compiled.statement.sql
 
 
 def test_user_binds_precede_framework_tag_binds() -> None:

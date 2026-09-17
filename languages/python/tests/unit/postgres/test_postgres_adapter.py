@@ -19,14 +19,15 @@ from typing import Any, cast
 
 import psycopg
 import pytest
-from psycopg import errors
+from psycopg import errors, postgres
+from psycopg.adapt import PyFormat, Transformer
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
 from psycopg.types.json import Jsonb
 
 import parallax.postgres
 import parallax.postgres._connection as connection_module
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core.base import SQL_NULL, FrozenMap, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
@@ -95,6 +96,25 @@ def testadapt_binds_wraps_the_document_value() -> None:
     (adapted,) = adapt_binds([JsonDocument(document)])
     assert isinstance(adapted, Jsonb)
     assert adapted.obj == document
+
+
+def test_frozen_documents_dump_byte_equal_to_the_standard_json_settings() -> None:
+    mutable = {"city": "Oslo", "tags": [{"label": "home"}], "active": True}
+    frozen = FrozenMap({"city": "Oslo", "tags": ({"label": "home"},), "active": True})
+    transformer = Transformer(postgres.adapters)
+
+    baseline = transformer.dump_sequence([Jsonb(mutable)], [PyFormat.AUTO])
+    actual = transformer.dump_sequence(adapt_binds([JsonDocument(frozen)]), [PyFormat.AUTO])
+
+    assert actual == baseline
+
+
+def test_frozen_document_dump_preserves_standard_unsupported_leaf_errors() -> None:
+    transformer = Transformer(postgres.adapters)
+    adapted = adapt_binds([JsonDocument(FrozenMap({"unsupported": object()}))])
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        transformer.dump_sequence(adapted, [PyFormat.AUTO])
 
 
 # -- port-boundary re-raise (m-db-error) ----------------------------------------

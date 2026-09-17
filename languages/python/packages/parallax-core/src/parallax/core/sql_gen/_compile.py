@@ -63,6 +63,7 @@ from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_in
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
+from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_entity_view
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -85,8 +86,8 @@ from parallax.core.sql_gen._seek import lowered_terms as _lowered_terms
 from parallax.core.sql_gen._seek import order_clause as _order_clause
 from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
+from parallax.core.storage_layout import EntityLayoutView as _EntityLayoutView
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
-from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
 from parallax.core.wire import encode_wire
 
@@ -538,7 +539,7 @@ def compile_template(
 # --------------------------------------------------------------------------- #
 def _projection(
     entity: EntityMetadata,
-    layout: _TableLayout,
+    view: _EntityLayoutView,
     dialect: Dialect,
     alias: str,
     projected_vos: tuple[ValueObjectMetadata, ...],
@@ -558,6 +559,8 @@ def _projection(
     occupies it. Neither choice is inferred from result form in this compiler.
     """
 
+    layout = view.layout
+
     columns = _select_projection(
         layout.columns,
         entity.declared_attributes,
@@ -565,7 +568,7 @@ def _projection(
         project_discriminator=False,
     )
     document, fan_out = _document_projection(
-        layout, entity.declared_attributes, projected_vos, observation=observation
+        view, entity.declared_attributes, projected_vos, observation=observation
     )
     if document is not None:
         columns = (*columns, document)
@@ -801,7 +804,7 @@ def _compile_read_arm(
 
     proj_sql, proj_binds, document_reads, result_keys, stages = _projection(
         target,
-        layout,
+        _storage_entity_view(storage, target.identity),
         dialect,
         scope.alias,
         query.projection.value_objects,

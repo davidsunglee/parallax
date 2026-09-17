@@ -58,19 +58,16 @@ from parallax.core.metamodel import (
     AttributeReference,
     Column,
     DerivedAxis,
-    DocumentMember,
     EntityIdentity,
     EntityReference,
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
-    Leaf,
     Max,
     MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NullPlacement,
-    Occurrence,
     PersistenceMode,
     RelationshipIdentity,
     RelationshipReference,
@@ -522,16 +519,19 @@ class ValueObjectShape:
     ``shape`` carries a single Shape Key minted once per class, so every
     occurrence of the class reuses one declaration node — exactly the reuse the
     formation-time reuse and containment-cycle rules are stated over.
-    ``document_shape`` is the matching codec-ready tree, composed at class
+    The declaration owns the matching codec-ready tree, composed at class
     creation with nested class trees shared by reference.
     """
 
     shape: ValueObjectShapeDeclaration
-    document_shape: MemberShape
     name_to_py: Mapping[str, str]
     py_to_name: Mapping[str, str]
     nested_classes: Mapping[str, type]
     many_py: frozenset[str]
+
+    @property
+    def document_shape(self) -> MemberShape:
+        return self.shape.member_shape
 
 
 def declaration_of(cls: type) -> EntityDeclaration:
@@ -1141,26 +1141,12 @@ def _build_value_object(
     _install_fields(annotations, ns, shapes, nested_classes, many_py, framework_owned=frozenset())
     declared_attributes = tuple(attributes)
     declared_nested = tuple(nested)
-    document_leaves: tuple[DocumentMember, ...] = tuple(
-        Leaf(name=attribute.name, type=attribute.type, nullable=attribute.nullable)
-        for attribute in declared_attributes
-    )
-    document_occurrences = tuple(
-        Occurrence(
-            name=occurrence.name,
-            multiplicity=occurrence.multiplicity,
-            nullable=occurrence.nullable,
-            shape=shape_of(nested_classes[py_name]).document_shape,
-        )
-        for py_name, occurrence in zip(nested_classes, declared_nested, strict=True)
-    )
     ns[_SHAPE] = ValueObjectShape(
         shape=ValueObjectShapeDeclaration(
             key=ValueObjectShapeKey(),
             attributes=declared_attributes,
             value_objects=declared_nested,
         ),
-        document_shape=MemberShape(members=document_leaves + document_occurrences),
         name_to_py=MappingProxyType(
             {canonical: py_name for py_name, canonical in py_to_name.items()}
         ),

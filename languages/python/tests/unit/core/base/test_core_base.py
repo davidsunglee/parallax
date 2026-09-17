@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+from types import MappingProxyType
+from typing import cast
 
 import pytest
 
@@ -70,8 +72,52 @@ def test_infinity_is_the_native_upper_bound_sentinel() -> None:
 
 def test_document_values_are_finite_portable_json_trees() -> None:
     assert base.is_document_value({"ratio": 1.5, "items": [True, None]})
+    assert base.is_document_value(base.FrozenMap({"ratio": 1.5, "items": (True, None)}))
     assert not base.is_document_value(float("nan"))
+    assert not base.is_document_value(MappingProxyType({"ratio": 1.5}))
     assert not base.is_document_value(object())
+
+
+def test_document_retention_owns_mutable_descendants_and_reuses_safe_subtrees() -> None:
+    safe = base.FrozenMap({"city": "Oslo"})
+    nested = {"safe": safe, "items": ({"name": "Ada"},)}
+    retained = cast("base.FrozenMap[str, object]", base.retain_document_value(nested))
+
+    cast("dict[str, object]", cast("tuple[object, ...]", nested["items"])[0])["name"] = "Bo"
+
+    assert retained == {"safe": {"city": "Oslo"}, "items": ({"name": "Ada"},)}
+    assert retained["safe"] is safe
+    assert base.retain_document_value(safe) is safe
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", retained)["safe"] = {}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", cast("tuple[object, ...]", retained["items"])[0])["name"] = "Bo"
+
+
+def test_a_proxy_is_retained_as_owned_storage_not_trusted_by_its_wrapper() -> None:
+    backing = {"nested": {"city": "Oslo"}}
+    proxy = MappingProxyType(backing)
+    retained = base.retain_document_value(proxy)
+
+    cast("dict[str, object]", backing["nested"])["city"] = "Bergen"
+
+    assert retained == {"nested": {"city": "Oslo"}}
+    assert retained is not proxy
+
+
+def test_frozen_map_is_the_exact_owned_mapping_type() -> None:
+    frozen = base.FrozenMap({"city": "Oslo"})
+    name = "city"
+
+    assert repr(frozen) == "FrozenMap({'city': 'Oslo'})"
+    with pytest.raises(TypeError, match="immutable"):
+        setattr(frozen, name, "Bergen")
+    with pytest.raises(TypeError, match="immutable"):
+        delattr(frozen, name)
+    with pytest.raises(TypeError, match="does not support subclassing"):
+        type("ExtendedFrozenMap", (base.FrozenMap,), {})
+    with pytest.raises(TypeError, match="only the core FrozenMap"):
+        base.frozen_map_json_backing(cast("base.FrozenMap[str, object]", object()))
 
 
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:

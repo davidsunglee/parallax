@@ -8,14 +8,17 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import ClassVar, Final, Literal, Self, cast
+from typing import ClassVar, Final, Literal, Self, TypeGuard, cast
 
 from parallax.core.base import (
     DocumentValue,
+    FrozenMap,
     NeutralType,
     PresentDocument,
     SqlNull,
+    adopt_frozen_map,
     detach_json_container,
+    retain_document_value,
 )
 from parallax.core.document_codec._leaf import (
     LeafEncodingError,
@@ -151,21 +154,46 @@ type RawLocatedMemberInput = SqlNull | Missing | _PresentJsonNull | DocumentValu
 """An allocation-free direct-member witness that distinguishes present JSON null."""
 
 
+def _is_document_object(value: object) -> TypeGuard[Mapping[str, object]]:
+    return isinstance(value, (dict, FrozenMap))
+
+
+def _is_document_array(value: object) -> TypeGuard[Sequence[object]]:
+    return isinstance(value, (list, tuple))
+
+
+def _isolated_document_container(value: object) -> object:
+    if type(value) is FrozenMap:
+        return cast("FrozenMap[object, object]", value)
+    if isinstance(value, tuple):
+        return retain_document_value(cast("tuple[object, ...]", value))
+    return detach_json_container(value)
+
+
+def _adopt_document_builder(value: object) -> object:
+    if isinstance(value, dict):
+        builder = cast("dict[str, object]", value)
+        for key, nested in builder.items():
+            builder[key] = _adopt_document_builder(nested)
+        return adopt_frozen_map(builder)
+    return retain_document_value(value)
+
+
 def locate_entity_member(document: DocumentValue, member: str) -> Missing | PresentDocument:
     """Locate one direct Entity member in a raw Entity document carrier."""
-    if isinstance(document, dict) and member in document:
-        return PresentDocument(document[member])
+    if _is_document_object(document) and member in document:
+        return PresentDocument(cast("DocumentValue", document[member]))
     return MISSING
 
 
 def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocatedMemberInput:
     """Locate one direct member without allocating a presence wrapper."""
-    if not isinstance(document, dict):
+    if not _is_document_object(document):
         return MISSING
     value = document.get(member, MISSING)
     if isinstance(value, Missing):
         return MISSING
-    return _PRESENT_JSON_NULL if value is None else value
+    return _PRESENT_JSON_NULL if value is None else cast("DocumentValue", value)
 
 
 def prepared_raw_member_classifier(
@@ -191,19 +219,19 @@ def prepared_raw_member_classifier(
         )
         if (
             member.multiplicity is Multiplicity.MANY
-            and isinstance(raw, list)
-            and all(isinstance(item, dict) for item in cast("list[object]", raw))
+            and _is_document_array(raw)
+            and all(_is_document_object(item) for item in raw)
         ):
             reduced: list[object] = []
             findings: list[DocumentFinding] = []
-            for index, item in enumerate(cast("list[object]", raw)):
+            for index, item in enumerate(raw):
                 value, nested = reduce_declared_members_classified(member.shape, item)
                 reduced.append(value)
                 findings.extend(
                     replace(finding, path=(member_name, index, *finding.path)) for finding in nested
                 )
             return reduced, tuple(findings)
-        if member.multiplicity is not Multiplicity.MANY and isinstance(raw, dict):
+        if member.multiplicity is not Multiplicity.MANY and _is_document_object(raw):
             value, nested_findings = reduce_declared_members_classified(member.shape, raw)
             return value, tuple(
                 replace(finding, path=(member_name, *finding.path)) for finding in nested_findings
@@ -282,12 +310,12 @@ def decode_path_classified(
 ) -> DecodedMember:
     """Classify one requested path without raising for contradictory stored state."""
     resolve(shape, path)
-    if not isinstance(document, dict):
+    if not _is_document_object(document):
         first = shape.member(path[0])
         if first is None:  # pragma: no cover - resolve proved the first segment
             raise KeyError(f"{path[0]!r} names no member of the shape")
         return _classify_member(first, MISSING, (path[0],))
-    current: dict[str, DocumentValue] = document
+    current = cast("Mapping[str, DocumentValue]", document)
     scope = shape
     for depth, name in enumerate(path):
         member = scope.member(name)
@@ -306,9 +334,9 @@ def decode_path_classified(
         if not isinstance(classified.presence, Present):
             return DecodedMember(classified.presence, classified.findings)
         value = classified.presence.value
-        if not isinstance(value, dict):  # pragma: no cover - a present One is an object
+        if not _is_document_object(value):  # pragma: no cover - a present One is an object
             return DecodedMember(UNAVAILABLE, classified.findings)
-        current = cast("dict[str, DocumentValue]", value)
+        current = cast("Mapping[str, DocumentValue]", value)
         scope = member.shape
     raise AssertionError("a classified document path is nonempty")  # pragma: no cover
 
@@ -321,13 +349,9 @@ def _classify_member(
     if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
         if isinstance(raw, Missing) or raw is None:
             return DecodedMember(Present([]))
-        if not isinstance(raw, list) or not all(
-            isinstance(item, dict) for item in cast("list[object]", raw)
-        ):
-            return DecodedMember(
-                Present([]), (DocumentFinding("many-wrong-kind", path, cast("object", raw)),)
-            )
-        return DecodedMember(Present(detach_json_container(cast("list[DocumentValue]", raw))))
+        if not _is_document_array(raw) or not all(_is_document_object(item) for item in raw):
+            return DecodedMember(Present([]), (DocumentFinding("many-wrong-kind", path, raw),))
+        return DecodedMember(Present(_isolated_document_container(raw)))
     if isinstance(raw, Missing):
         findings = (
             (DocumentFinding("required-member-absent", path, raw),) if not member.nullable else ()
@@ -339,9 +363,9 @@ def _classify_member(
         )
         return DecodedMember(NULL, findings)
     if isinstance(member, Occurrence):
-        if not isinstance(raw, dict):
+        if not _is_document_object(raw):
             return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path, raw),))
-        return DecodedMember(Present(detach_json_container(cast("dict[str, DocumentValue]", raw))))
+        return DecodedMember(Present(_isolated_document_container(raw)))
     try:
         return DecodedMember(Present(decode_leaf(member.type, raw)))
     except LeafEncodingError:
@@ -397,10 +421,10 @@ def reduce_declared_members_classified(
             reduced[member.name] = UNAVAILABLE
             continue
         if member.multiplicity is Multiplicity.MANY:
-            documents = (
-                cast("list[object]", classified.presence.value)
+            documents: Sequence[object] = (
+                cast("Sequence[object]", classified.presence.value)
                 if isinstance(classified.presence, Present)
-                else []
+                else ()
             )
             elements: list[object] = []
             for index, item in enumerate(documents):
@@ -465,7 +489,7 @@ applying one produces a document whose own shape would read it back as invalid
 stored data."""
 
 
-def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> dict[str, object]:
+def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> FrozenMap[str, object]:
     """One complete document, from ``shape`` and one presence per applicable member.
 
     The whole bind a consumer stores: an insert, a fresh Value Object column value, and
@@ -483,7 +507,7 @@ def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> dict[
         presence = values.get(member.name, MISSING)
         if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
             document[member.name] = (
-                detach_json_container(presence.value) if isinstance(presence, Present) else []
+                retain_document_value(presence.value) if isinstance(presence, Present) else ()
             )
             continue
         if isinstance(presence, Missing):
@@ -492,14 +516,16 @@ def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> dict[
             document[member.name] = None
             continue
         document[member.name] = (
-            encode_leaf(member.type, presence.value)
+            retain_document_value(encode_leaf(member.type, presence.value))
             if isinstance(member, Leaf)
-            else detach_json_container(presence.value)
+            else retain_document_value(presence.value)
         )
-    return document
+    return adopt_frozen_map(document)
 
 
-def encode_many(shape: MemberShape, elements: Sequence[Mapping[str, Presence]]) -> list[object]:
+def encode_many(
+    shape: MemberShape, elements: Sequence[Mapping[str, Presence]]
+) -> tuple[FrozenMap[str, object], ...]:
     """The one document a ``MANY`` occurrence stores: the ordered array whose elements
     are, in the sequence's own order, the :func:`encode_document` of each element's
     values against that occurrence's shape.
@@ -510,7 +536,40 @@ def encode_many(shape: MemberShape, elements: Sequence[Mapping[str, Presence]]) 
     is the one JSON structure this module would then not own. An empty sequence yields
     ``[]``.
     """
-    return [encode_document(shape, element) for element in elements]
+    return tuple(encode_document(shape, element) for element in elements)
+
+
+def encode_managed_document(
+    shape: MemberShape, values: Mapping[str, object]
+) -> FrozenMap[str, object]:
+    """Encode one managed occurrence directly into recursively immutable storage."""
+    document: dict[str, object] = {}
+    for member in shape.members:
+        if member.name not in values:
+            if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+                document[member.name] = ()
+            continue
+        value = values[member.name]
+        if value is None:
+            document[member.name] = () if _is_many(member) else None
+        elif isinstance(member, Leaf):
+            document[member.name] = retain_document_value(encode_leaf(member.type, value))
+        elif member.multiplicity is Multiplicity.MANY:
+            document[member.name] = encode_managed_many(
+                member.shape, cast("Sequence[Mapping[str, object]]", value)
+            )
+        else:
+            document[member.name] = encode_managed_document(
+                member.shape, cast("Mapping[str, object]", value)
+            )
+    return adopt_frozen_map(document)
+
+
+def encode_managed_many(
+    shape: MemberShape, elements: Sequence[Mapping[str, object]]
+) -> tuple[FrozenMap[str, object], ...]:
+    """Encode managed Many elements once, preserving their semantic order."""
+    return tuple(encode_managed_document(shape, element) for element in elements)
 
 
 def decode_path(shape: MemberShape, document: object, path: Sequence[str]) -> Presence:
@@ -542,11 +601,11 @@ def decode_path(shape: MemberShape, document: object, path: Sequence[str]) -> Pr
     if many:
         if isinstance(raw, Missing) or raw is None:
             return Present([])
-        if not isinstance(raw, list):
+        if not _is_document_array(raw):
             raise _invalid(
                 path, f"holds {raw!r}, which is not the array a `many` occurrence stores"
             )
-        return Present(detach_json_container(cast("list[object]", raw)))
+        return Present(_isolated_document_container(raw))
     if isinstance(raw, Missing):
         if holder is not None and not member.nullable:
             raise _invalid(path, "is required and its key is absent")
@@ -556,11 +615,11 @@ def decode_path(shape: MemberShape, document: object, path: Sequence[str]) -> Pr
             raise _invalid(path, "is required and its key holds JSON null")
         return NULL
     if isinstance(member, Occurrence):
-        if not isinstance(raw, dict):
+        if not _is_document_object(raw):
             raise _invalid(
                 path, f"holds {raw!r}, which is not the object a `one` occurrence stores"
             )
-        return Present(detach_json_container(cast("dict[str, object]", raw)))
+        return Present(_isolated_document_container(raw))
     try:
         return Present(decode_leaf(member.type, raw))
     except LeafEncodingError as exc:
@@ -573,7 +632,9 @@ def _invalid(path: Sequence[str], detail: str) -> ValueError:
     return ValueError(f"{'.'.join(path)!r} {detail} — invalid stored data")
 
 
-def _holder(shape: MemberShape, document: object, path: Sequence[str]) -> dict[str, object] | None:
+def _holder(
+    shape: MemberShape, document: object, path: Sequence[str]
+) -> Mapping[str, object] | None:
     """The object that would carry ``path``'s last key, or ``None`` when an ancestor
     occurrence is not present.
 
@@ -591,9 +652,9 @@ def _holder(shape: MemberShape, document: object, path: Sequence[str]) -> dict[s
     element is decoded by passing it back with the occurrence's own shape, so a path
     never addresses an array position.
     """
-    if not isinstance(document, dict):
+    if not _is_document_object(document):
         raise _invalid(path, f"is read out of {document!r}, which is not a document object")
-    current = cast("dict[str, object]", document)
+    current = document
     scope = shape
     for depth, name in enumerate(path[:-1]):
         occurrence = scope.member(name)
@@ -614,12 +675,12 @@ def _holder(shape: MemberShape, document: object, path: Sequence[str]) -> dict[s
                     else "is required and its key holds JSON null",
                 )
             return None
-        if not isinstance(held, dict):
+        if not _is_document_object(held):
             raise _invalid(
                 path[: depth + 1],
                 f"holds {held!r}, which is not the object a `one` occurrence stores",
             )
-        current = cast("dict[str, object]", held)
+        current = held
         scope = occurrence.shape
     return current
 
@@ -646,7 +707,7 @@ def comparison_text(neutral_type: NeutralType, value: object) -> str:
 
 def encode_candidate(
     shape: MemberShape, constraints: Mapping[tuple[str, ...], object]
-) -> dict[str, object]:
+) -> FrozenMap[str, object]:
     """The containment candidate a to-many equality binds: the object carrying exactly
     the constrained paths, each at its declared position under ``shape`` and spelled by
     the encoding table, and no other key.
@@ -679,11 +740,13 @@ def encode_candidate(
         nest = candidate
         for name in path[:-1]:
             nest = cast("dict[str, object]", nest.setdefault(name, {}))
-        nest[path[-1]] = encode_leaf(member.type, value)
-    return candidate
+        nest[path[-1]] = retain_document_value(encode_leaf(member.type, value))
+    return cast("FrozenMap[str, object]", _adopt_document_builder(candidate))
 
 
-def apply_patches(shape: MemberShape, document: object, patches: Sequence[DocumentPatch]) -> object:
+def apply_patches(
+    shape: MemberShape, document: object, patches: Sequence[DocumentPatch]
+) -> FrozenMap[str, object]:
     """``patches`` applied in order, left to right, each over the result of the last.
 
     Every key a patch is not told to change survives, unknown keys included. That is
@@ -703,41 +766,51 @@ def apply_patches(shape: MemberShape, document: object, patches: Sequence[Docume
     this same shape then reads back as invalid stored data, and nothing here refuses
     them.
 
-    The input document is copied before the first patch, so the result shares no
-    mutable state with it: an in-memory successor never aliases the retained
-    predecessor it was patched from.
+    The result is recursively immutable. Mutable inputs and replacement payloads
+    are retained before sharing, while already-owned subtrees may be reused.
     """
     if not patches:
         raise ValueError("a patch sequence is nonempty")
-    current = detach_json_container(document)
+    if type(document) is FrozenMap:
+        current = dict(cast("FrozenMap[str, object]", document).items())
+    elif isinstance(document, Mapping):
+        current = {
+            key: retain_document_value(nested)
+            for key, nested in cast("Mapping[str, object]", document).items()
+        }
+    else:
+        current = {}
     for patch in patches:
-        current = _apply(shape, current, patch)
-    return current
+        _apply(shape, current, patch)
+    return cast("FrozenMap[str, object]", _adopt_document_builder(current))
 
 
-def _apply(shape: MemberShape, document: object, patch: DocumentPatch) -> object:
+def _apply(shape: MemberShape, root: dict[str, object], patch: DocumentPatch) -> None:
     member = resolve(shape, patch.path)
-    root = dict(cast("dict[str, object]", document)) if isinstance(document, dict) else {}
     target = root
     for name in patch.path[:-1]:
         child = target.get(name)
-        replacement = dict(cast("dict[str, object]", child)) if isinstance(child, dict) else {}
+        if isinstance(child, dict):
+            target = cast("dict[str, object]", child)
+            continue
+        replacement = (
+            dict(cast("FrozenMap[str, object]", child).items()) if type(child) is FrozenMap else {}
+        )
         target[name] = replacement
         target = replacement
     name = patch.path[-1]
     if isinstance(patch, SetValue):
         if not isinstance(member, Occurrence):
             raise ValueError(f"{'.'.join(patch.path)!r} names a leaf; use SetLeaf")
-        target[name] = detach_json_container(patch.document)
+        target[name] = retain_document_value(patch.document)
     elif isinstance(patch.value, Missing):
         target.pop(name, None)
     elif isinstance(patch.value, ExplicitNull):
         target[name] = None
     elif isinstance(member, Leaf):
-        target[name] = encode_leaf(member.type, patch.value.value)
+        target[name] = retain_document_value(encode_leaf(member.type, patch.value.value))
     else:
         raise ValueError(f"{'.'.join(patch.path)!r} names an occurrence; use SetValue")
-    return root
 
 
 def reduce_declared_members(
@@ -790,7 +863,7 @@ def reduce_declared_members(
         elif member.multiplicity is Multiplicity.MANY:
             if raw is None:
                 values: Sequence[object] = ()
-            elif isinstance(raw, list) or (preserve_presence and isinstance(raw, tuple)):
+            elif isinstance(raw, (list, tuple)):
                 values = cast("Sequence[object]", raw)
             else:
                 raise LeafEncodingError(

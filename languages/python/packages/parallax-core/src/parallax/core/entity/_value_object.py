@@ -200,7 +200,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         del memo
         raise _use_edit(type(self), "__deepcopy__") from None
 
-    def __parallax_document__(self) -> dict[str, object]:
+    def __parallax_document__(self) -> Mapping[str, object]:
         """This value as its canonical nested document.
 
         Named for the capability rather than exported as a protocol import, so
@@ -328,7 +328,7 @@ def _member_metadata(
     return members
 
 
-def to_document(value: ValueObject | None) -> dict[str, object] | None:
+def to_document(value: ValueObject | None) -> Mapping[str, object] | None:
     """Serialize a Value Object to its canonical nested document.
 
     ``None`` passes through unchanged (an absent occurrence). Filtered by member
@@ -372,7 +372,7 @@ def _managed_document(value: ValueObject) -> dict[str, object]:
     return document
 
 
-def _document(value: ValueObject) -> dict[str, object]:
+def _document(value: ValueObject) -> Mapping[str, object]:
     shape = shape_of(type(value)).document_shape
     return encode_document(shape, _presences(value, shape))
 

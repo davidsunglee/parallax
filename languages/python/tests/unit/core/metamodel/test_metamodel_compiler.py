@@ -210,6 +210,7 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     ship_to = order.value_object("shipTo")
     bill_to = order.value_object("billTo")
     assert ship_to is not None and bill_to is not None
+    assert tuple(ship_to.attributes[:]) == tuple(ship_to.attributes)
     assert ship_to.identity == ValueObjectIdentity(_ORDER, ("shipTo",))
     assert ship_to.storage == Column("ship_to")
     assert ship_to.multiplicity is Multiplicity.MANY
@@ -248,6 +249,12 @@ def test_one_reused_shape_expands_to_distinct_occurrence_trees() -> None:
     bill_geo = bill_to.value_object("geo")
     assert ship_geo is not None and bill_geo is not None
     assert ship_geo.identity != bill_geo.identity
+    assert ship_to.document_shape is bill_to.document_shape
+    assert ship_geo.document_shape is bill_geo.document_shape
+    ship_city = ship_to.attribute("city")
+    bill_city = bill_to.attribute("city")
+    assert ship_city is not None and bill_city is not None
+    assert ship_city.definition is bill_city.definition
     assert [member.identity.name for member in ship_geo.attributes] == ["lat", "lon"]
     assert not hasattr(ship_geo, "storage")
 

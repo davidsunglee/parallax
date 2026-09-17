@@ -23,6 +23,7 @@ from parallax.core.inheritance._facet import (
     InheritanceEntityFacts,
     InheritanceFacet,
     inheritance_facet,
+    member_selection,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -174,11 +175,9 @@ def _facts(
         tag_column=_tag_column(strategy),
         tag_value=_tag_value(entity, strategy),
         persistence=_persistence(root),
-        applicable_attributes=tuple(applicable_attributes),
+        member_selection=member_selection(applicable_attributes, applicable_value_objects),
         applicable_relationships=tuple(applicable_relationships),
-        applicable_value_objects=tuple(applicable_value_objects),
-        declared_attributes=tuple(entity.declared_attributes),
-        declared_value_objects=tuple(entity.declared_value_objects),
+        declared=entity,
     )
 
 

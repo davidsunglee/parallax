@@ -37,8 +37,6 @@ Mirrors :mod:`parallax.core.entity._annotations`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core.document_codec import MemberShape
 from parallax.core.metamodel import (
@@ -48,14 +46,12 @@ from parallax.core.metamodel import (
     Metamodel,
     PrimaryKey,
     TemporalDimension,
-    ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.storage_layout import ColumnContributor, EntityLayoutView, MemberPlacement
+from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
 from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
-    "PlacedMembers",
     "assignment_member",
     "axis_columns",
     "comparison_shape",
@@ -65,7 +61,6 @@ __all__ = [
     "family_primary_key",
     "is_temporal",
     "members",
-    "placed_members",
     "slot_column",
     "tx_time_axis",
     "valid_time_axis",
@@ -226,53 +221,7 @@ def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:
     return view.applicable_document_shape
 
 
-@dataclass(frozen=True, slots=True)
-class PlacedMembers:
-    """One Entity's applicable logical members, each paired with its placement.
-
-    Attributes and Value Object occurrences stay apart because the two are
-    addressed and spelled differently, and the pair's order — every attribute,
-    then every occurrence, each in declaration order — IS the canonical logical
-    placement order a document's keys and a revising statement's assignments
-    follow. That order is semantically significant on the write side, because
-    both dialects apply their mutation expressions left to right (`m-dialect`).
-    """
-
-    attributes: tuple[tuple[AttributeMetadata, MemberPlacement], ...]
-    value_objects: tuple[tuple[ValueObjectMetadata, MemberPlacement], ...]
-
-
-def placed_members(
-    model: Metamodel, entity: EntityMetadata, layout: EntityLayoutView
-) -> PlacedMembers:
-    """Every applicable logical member of ``entity``, paired with where its Table
-    puts it.
-
-    Member Placement is the sole authority for locating a member
-    (`m-storage-layout`), and it is the only one that answers under both layouts:
-    under `Document` a member occupies no Column of its own, so a write reading
-    the Table's slots alone would not see it at all. The applicable member
-    sequences come from the Inheritance view, so an inherited member is placed
-    exactly as a locally declared one is.
-    """
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return PlacedMembers((), ())
-    return PlacedMembers(
-        tuple(
-            (attribute, placement)
-            for attribute in view.applicable_attributes
-            if (placement := layout.layout.placement(attribute.identity)) is not None
-        ),
-        tuple(
-            (occurrence, placement)
-            for occurrence in view.applicable_value_objects
-            if (placement := layout.layout.placement(occurrence.identity)) is not None
-        ),
-    )
-
-
-def members(placed: PlacedMembers) -> dict[str, tuple[str, bool]]:
+def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:
     """Map each writable member name to `(row key, is_value_object)`.
 
     The row key is the name a resolved row carries that member's value under,
@@ -281,16 +230,16 @@ def members(placed: PlacedMembers) -> dict[str, tuple[str, bool]]:
     Structured Column back out under the same name (`m-sql`), so one logical
     member is read the same way whichever place the layout put it.
 
-    Membership is ``placed``'s own: every applicable logical member of the
+    Membership is ``layout``'s own: every applicable logical member of the
     row-owning Entity, and nothing else. The framework-owned discriminator is
     not a member — a write derives it from the layout's own discriminator
     assignment rather than from row data."""
-    resolved: dict[str, tuple[str, bool]] = {
-        attribute.identity.name: (attribute.storage.name, False)
-        for attribute, _placement in placed.attributes
+    return {
+        binding.identity.name
+        if isinstance(binding, AttributeMetadata)
+        else binding.identity.path[-1]: (
+            binding.storage.name,
+            not isinstance(binding, AttributeMetadata),
+        )
+        for binding in layout.member_selection.bindings
     }
-    resolved.update(
-        (occurrence.identity.path[-1], (occurrence.storage.name, True))
-        for occurrence, _placement in placed.value_objects
-    )
-    return resolved

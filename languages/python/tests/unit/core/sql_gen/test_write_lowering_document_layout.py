@@ -22,6 +22,7 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.core.base import retain_document_value
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -151,7 +152,7 @@ def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
     (statement,) = _lower(
         KeyedWrite("update", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
     )
-    assert statement.binds == ("{tags}", JsonDocument([{"label": "member"}]), 1)
+    assert statement.binds == ("{tags}", JsonDocument(({"label": "member"},)), 1)
 
 
 def test_one_and_many_assignments_render_the_identical_statement_shape() -> None:
@@ -259,8 +260,8 @@ def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
     assert statement.sql == (
         "insert into person(id, display_name, tags) values (?, ?, ?), (?, ?, ?)"
     )
-    assert _document(statement, 2) == []
-    assert _document(statement, 5) == []
+    assert _document(statement, 2) == ()
+    assert _document(statement, 5) == ()
 
 
 def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
@@ -414,7 +415,8 @@ def test_an_assigned_many_replaces_the_predecessors_array() -> None:
 def test_a_successor_that_changes_nothing_binds_the_retained_document_itself() -> None:
     # A Bitemporal head or tail carries its predecessor's state unchanged, so it has
     # nothing to patch and the document it binds is the one the closed row held.
-    assert _successor(_DECODED, document=_STORED, origin=CarriedFrom) == _STORED
+    retained = retain_document_value(_STORED)
+    assert _successor(_DECODED, document=retained, origin=CarriedFrom) is retained
 
 
 def test_a_successor_whose_observation_retained_no_document_composes_from_members() -> None:

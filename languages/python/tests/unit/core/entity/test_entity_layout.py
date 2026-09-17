@@ -31,19 +31,18 @@ from parallax.core.entity._layout import (
     CatalogedModel,
     EntityLayout,
     LayoutCatalog,
-    ValueObjectLayout,
 )
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.inheritance import EntityMemberSelection, InheritanceEntityView, InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     FacetKey,
+    MemberShape,
     Metamodel,
     Multiplicity,
-    NestedValueObjectMetadata,
     PrimaryKey,
     RelationshipIdentity,
     ValueObjectMetadata,
@@ -82,7 +81,24 @@ class _DoctoredView:
         self, real: InheritanceEntityView, attributes: Sequence[AttributeMetadata]
     ) -> None:
         self._real = real
-        self.applicable_attributes = tuple(attributes)
+        value_objects = tuple(real.applicable_value_objects)
+        self.member_selection = EntityMemberSelection(
+            MemberShape.of(attributes, value_objects),
+            (*attributes, *value_objects),
+            len(attributes),
+        )
+
+    @property
+    def applicable_attributes(self) -> Sequence[AttributeMetadata]:
+        return self.member_selection.attributes
+
+    @property
+    def applicable_value_objects(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
+
+    @property
+    def applicable_document_shape(self) -> MemberShape:
+        return self.member_selection.shape
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._real, name)
@@ -161,6 +177,7 @@ def test_every_corpus_entity_lays_out_its_family_effective_members_in_order() ->
         occurrences = tuple(position.applicable_value_objects)
         where = (stem, identity.canonical)
         assert layout.concrete == identity, where
+        assert layout.member_selection is position.member_selection, where
         assert layout.attributes == attributes, where
         assert layout.occurrences == occurrences, where
         assert layout.attribute_count == len(attributes), where
@@ -185,17 +202,18 @@ def test_the_category_boundary_separates_attributes_from_top_level_occurrences()
     occurrences = layout.members[layout.attribute_count :]
     assert [member.name for member in cast("Any", attributes)] == ["id", "name"]
     assert [member.path for member in cast("Any", occurrences)] == [("address",)]
-    assert layout.value_objects[0].identity == occurrences[0]
+    assert layout.occurrences[0].identity == occurrences[0]
 
 
-def test_a_value_object_layout_pre_links_its_whole_nested_subtree() -> None:
+def test_an_occurrence_binding_aligns_to_its_declaration_owned_shape() -> None:
     model = corpus_model("customer")
     layout = LayoutCatalog(model).entity(_identity("Customer"))
-    (address,) = layout.value_objects
+    (address,) = layout.occurrences
     declared = _declared_occurrence(model, _identity("Customer"), "address")
     assert address.identity == declared.identity
     assert address.multiplicity is declared.multiplicity
-    _assert_pre_linked(address, declared)
+    assert address is declared
+    _assert_bound(address)
 
 
 def _declared_occurrence(
@@ -206,41 +224,28 @@ def _declared_occurrence(
     return occurrence
 
 
-def _assert_pre_linked(
-    layout: ValueObjectLayout, declared: ValueObjectMetadata | NestedValueObjectMetadata
-) -> None:
-    """``layout`` is ``declared``'s leaves then its nested occurrences, with the
-    nested arm resolved rather than looked up — all the way down."""
-    leaves = tuple(leaf.identity for leaf in declared.attributes)
-    nested = tuple(occurrence.identity for occurrence in declared.value_objects)
-    assert layout.members == (*leaves, *nested)
-    assert dict(layout.index_of) == {
-        member: position for position, member in enumerate(layout.members)
-    }
-    assert layout.nested[: len(leaves)] == (None,) * len(leaves)
-    for arm, occurrence in zip(layout.nested[len(leaves) :], declared.value_objects, strict=True):
-        assert arm is not None
-        assert arm.identity == occurrence.identity
-        assert arm.multiplicity is occurrence.multiplicity
-        _assert_pre_linked(arm, occurrence)
+def _assert_bound(declared: ValueObjectMetadata | Any) -> None:
+    assert len(declared.members) == len(declared.document_shape.members)
+    for binding, definition in zip(declared.members, declared.document_shape.members, strict=True):
+        assert binding.definition is definition
+    for occurrence in declared.value_objects:
+        _assert_bound(occurrence)
 
 
-def test_every_corpus_occurrence_pre_links_its_subtree_at_both_multiplicities() -> None:
+def test_every_corpus_occurrence_reuses_definitions_at_both_multiplicities() -> None:
     reached: set[Multiplicity] = set()
-    for stem, _model, identity, layout in _corpus_layouts():
-        for occurrence, declared in zip(layout.value_objects, layout.occurrences, strict=True):
-            assert occurrence.identity == declared.identity, (stem, identity.canonical)
-            _assert_pre_linked(occurrence, declared)
+    for _stem, _model, _identity, layout in _corpus_layouts():
+        for occurrence in layout.occurrences:
+            _assert_bound(occurrence)
             reached.update(_multiplicities(occurrence))
     assert reached == {Multiplicity.ONE, Multiplicity.MANY}
 
 
-def _multiplicities(layout: ValueObjectLayout) -> set[Multiplicity]:
-    """Every multiplicity ``layout``'s own subtree carries, itself included."""
-    found = {layout.multiplicity}
-    for arm in layout.nested:
-        if arm is not None:
-            found |= _multiplicities(arm)
+def _multiplicities(occurrence: ValueObjectMetadata | Any) -> set[Multiplicity]:
+    """Every multiplicity ``occurrence``'s own subtree carries, itself included."""
+    found = {occurrence.multiplicity}
+    for nested in occurrence.value_objects:
+        found |= _multiplicities(nested)
     return found
 
 
@@ -535,6 +540,16 @@ def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_deriv
     assert CatalogedModel(cataloged.meta).layouts is not cataloged.layouts
 
 
+def test_separate_catalogs_share_the_inheritance_owned_member_selection() -> None:
+    meta = model_of(_domain_models()["orders"])
+    one, other = CatalogedModel(meta), CatalogedModel(meta)
+    identity = _identity("Order")
+    assert (
+        one.layouts.entity(identity).member_selection
+        is other.layouts.entity(identity).member_selection
+    )
+
+
 def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derived() -> None:
     # The catalog is a function of the metadata, so it distinguishes no two
     # records the metadata does not, and comparing it by identity would make two
@@ -581,9 +596,8 @@ def test_two_members_claiming_one_position_refuse_the_whole_layout() -> None:
     model = corpus_model("orders")
     identity = _identity("Order")
     attributes = tuple(_view(model, identity).applicable_attributes)
-    doctored = _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
-    with pytest.raises(ValueError, match="two members under one identity"):
-        CatalogedModel(doctored)
+    with pytest.raises(ValueError, match="each identity one position"):
+        _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
 
 
 def test_a_family_key_the_row_does_not_express_refuses_the_whole_layout() -> None:
@@ -605,9 +619,8 @@ def test_a_refusal_is_raised_rather_than_classified_as_stored_data() -> None:
     model = corpus_model("orders")
     identity = _identity("Order")
     attributes = tuple(_view(model, identity).applicable_attributes)
-    doctored = _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
     with pytest.raises(ValueError) as excinfo:
-        CatalogedModel(doctored)
+        _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
     assert not hasattr(excinfo.value, "code")
 
 

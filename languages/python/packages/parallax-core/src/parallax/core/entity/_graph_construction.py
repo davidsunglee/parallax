@@ -104,7 +104,7 @@ from parallax.core.entity._instance_state import (
     publish,
 )
 from parallax.core.entity._instance_state import relationship as relationship_state
-from parallax.core.entity._layout import CatalogedModel, EntityLayout, ValueObjectLayout
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -112,7 +112,6 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectMetadata,
     RelationshipIdentity,
-    ValueObjectAttributeIdentity,
     ValueObjectMetadata,
 )
 
@@ -339,7 +338,7 @@ def _require_relationship_correspondence(
 
 def _require_occurrence_correspondence(
     concrete: EntityIdentity,
-    layout: ValueObjectLayout,
+    declared: ValueObjectMetadata | NestedValueObjectMetadata,
     vo_class: type,
     *,
     path: str,
@@ -347,28 +346,21 @@ def _require_occurrence_correspondence(
     """Refuse unless one occurrence's own path layout is its Value Object class's
     own laid-out order, at every containment depth.
 
-    A Value Object layout is keyed to a containment PATH and a publication plan
-    to a CLASS, so the two are checked against each other here rather than
-    conflated: one class bound at two paths is laid out once and must correspond
-    at both.
+    Accepted contextual bindings are keyed to a containment path and a
+    publication plan to a class, so the two are checked against each other here:
+    one class bound at two paths is laid out once and must correspond at both.
     """
     plan = plan_of(vo_class)
     shape = shape_of(vo_class)
-    row = tuple(
-        shape.name_to_py.get(
-            member.name if isinstance(member, ValueObjectAttributeIdentity) else member.path[-1]
-        )
-        for member in layout.members
-    )
+    row = tuple(shape.name_to_py.get(member.name) for member in declared.document_shape.members)
     if row != plan.py_names:
         raise _correspondence_refusal(
             concrete,
             f"{path} lays out members {row} and {vo_class.__name__} is laid out as {plan.py_names}",
-            identity=layout.identity,
+            identity=declared.identity,
         )
-    for position, nested in enumerate(layout.nested):
-        if nested is None:
-            continue
+    leaf_count = len(declared.attributes)
+    for position, nested in enumerate(declared.value_objects, start=leaf_count):
         py_name = cast("str", row[position])
         nested_class = shape.nested_classes.get(py_name)
         if plan.occurrences.get(position + 1) is not nested_class or nested_class is None:

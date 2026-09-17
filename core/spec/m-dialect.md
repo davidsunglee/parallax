@@ -420,6 +420,14 @@ Nothing above this seam wraps, quotes, or type-tags an assigned value: `m-sql`
 hands the seam the encoded document value and the seam decides how it reaches
 the engine, exactly as it does for the containment candidate.
 
+An encoded composite may use `m-core`'s recognized recursively immutable object
+and array carriers. The dialect classifies those carriers as composites exactly
+as it classifies parsed object and array containers, so they take the existing
+structured-document bind route; scalar and null assignments retain the existing
+JSON-text route. The dialect neither thaws an immutable composite nor treats an
+arbitrary mapping as a trusted document. Concrete adapter serialization remains
+below this pure seam.
+
 **Both forms apply left to right, so assignment order is semantically
 significant on both dialects** — the innermost Postgres call and the first
 MariaDB pair are the first assignment. The dialect does not choose that order:

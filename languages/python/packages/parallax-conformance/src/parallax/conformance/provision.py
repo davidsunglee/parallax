@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
-from parallax.core import inheritance, storage_layout
+from parallax.core import storage_layout
 from parallax.core.base import JSON, TIMESTAMP, NeutralType
 from parallax.core.db_port import DatabaseRuntime, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
@@ -33,25 +33,20 @@ from parallax.core.document_codec import (
     Presence,
     Present,
     encode_document,
-    entity_shape,
     occurrence_shape,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
-    EntityIdentity,
     Metamodel,
     Multiplicity,
     TemporalDimension,
     ValueObjectIdentity,
-    ValueObjectMetadata,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
-    DocumentPath,
     EntityLayoutView,
     RelationalDocument,
-    TableLayout,
 )
 from parallax.core.wire import WireValue, decode_wire, encode_wire
 from parallax.evolution.model_evolution import ABSENT, evolve
@@ -144,33 +139,6 @@ def _fixture_member(
     return None
 
 
-def _document_members(
-    model: Metamodel, layout: TableLayout, entity: EntityIdentity
-) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
-    """``entity``'s applicable members that live inside the shared Structured Column.
-
-    Member Placement decides residency (`m-storage-layout`), and the applicable
-    member sequences come from the Inheritance view rather than from the Entity's
-    own declarations, so an inheritance participant's inherited members reach the
-    document exactly as they reach a Column.
-    """
-    view = inheritance.view(model).entity(entity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return (), ()
-    return (
-        tuple(
-            attribute
-            for attribute in view.applicable_attributes
-            if isinstance(layout.placement(attribute.identity), DocumentPath)
-        ),
-        tuple(
-            value_object
-            for value_object in view.applicable_value_objects
-            if isinstance(layout.placement(value_object.identity), DocumentPath)
-        ),
-    )
-
-
 def fixture_document(
     shape: MemberShape, row: Mapping[str, object], *, preserve_unknown: bool = True
 ) -> object:
@@ -253,7 +221,7 @@ def _is_temporal_end(model: Metamodel, member: AttributeMetadata) -> bool:
 def _fixture_insert(
     model: Metamodel,
     view: EntityLayoutView,
-    shape: MemberShape,
+    shape: MemberShape | None,
     row: Mapping[str, object],
     dialect: Dialect,
 ) -> tuple[str, list[object]]:
@@ -267,6 +235,8 @@ def _fixture_insert(
     binds: list[object] = []
     for slot in view.columns:
         if isinstance(slot.contributor, RelationalDocument):
+            if shape is None:  # pragma: no cover - a shared document slot owns residency
+                raise ValueError(f"{view.entity.canonical}: no document resident selection")
             columns.append(dialect.quote(slot.column.name))
             binds.append(JsonDocument(fixture_document(shape, row, preserve_unknown=False)))
             continue
@@ -331,9 +301,15 @@ def fixture_statements(
         rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
         if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
             continue
-        shape = entity_shape(*_document_members(model, view.layout, entity.identity))
+        residents = view.document_residents
         statements.extend(
-            _fixture_insert(model, view, shape, cast("Mapping[str, object]", row), dialect)
+            _fixture_insert(
+                model,
+                view,
+                None if residents is None else residents.shape,
+                cast("Mapping[str, object]", row),
+                dialect,
+            )
             for row in cast("Sequence[object]", rows)
             if isinstance(row, Mapping)
         )

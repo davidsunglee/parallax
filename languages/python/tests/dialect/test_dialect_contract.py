@@ -32,6 +32,7 @@ from parallax.core.base import (
     TIMESTAMP,
     UUID,
     Decimal,
+    FrozenMap,
     PresentDocument,
 )
 from parallax.core.dialect import (
@@ -233,6 +234,22 @@ def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_j
     assert binds[3] == [{"label": "x"}]
     assert binds[5] == "null"
     assert binds[7] == "true"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_mutation_preserves_supported_frozen_composites(dialect: Dialect) -> None:
+    frozen_object = FrozenMap({"city": "Oslo"})
+    frozen_array = (FrozenMap({"label": "x"}),)
+    _, binds = dialect.document_mutation(
+        "payload",
+        [
+            DocumentValueAssignment(("address",), frozen_object),
+            DocumentValueAssignment(("tags",), frozen_array),
+        ],
+    )
+
+    assert binds[1] is frozen_object
+    assert binds[3] is frozen_array
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

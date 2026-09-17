@@ -82,7 +82,6 @@ from parallax.core.document_codec import (
     Present,
     decode_located_member_classified,
     decode_occurrence_classified,
-    entity_shape,
     locate_entity_member,
     locate_raw_entity_member,
     occurrence_shape,
@@ -118,6 +117,7 @@ from parallax.core.storage_layout import (
     ColumnTier,
     DirectColumn,
     DocumentPath,
+    EntityLayoutView,
     InheritanceDiscriminator,
     PositionBranch,
     PositionLayoutView,
@@ -137,6 +137,14 @@ def entity_view(facet: InheritanceFacet, entity: EntityIdentity) -> InheritanceE
     view = facet.entity(entity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise SqlGenError(f"{entity.canonical}: the model declares no such entity")
+    return view
+
+
+def storage_entity_view(facet: StorageLayoutFacet, entity: EntityIdentity) -> EntityLayoutView:
+    """``entity``'s prepared physical selection; accepted row owners are total."""
+    view = facet.entity(entity)
+    if view is None:  # pragma: no cover - the facet covers every accepted row owner
+        raise SqlGenError(f"{entity.canonical}: the model declares no storage layout")
     return view
 
 
@@ -1074,7 +1082,7 @@ def _structured_column_slot(layout: TableLayout) -> ColumnSlot | None:
 
 
 def document_projection(
-    layout: TableLayout,
+    view: EntityLayoutView,
     attributes: Sequence[AttributeMetadata],
     value_objects: Sequence[ValueObjectMetadata],
     *,
@@ -1099,35 +1107,34 @@ def document_projection(
     projects no document column and fans nothing out, so this is inert rather
     than conditional at the call site.
     """
-    document_slot: ColumnSlot | None = None
-    document_attributes: list[AttributeMetadata] = []
-    document_occurrences: list[ValueObjectMetadata] = []
+    residents = view.document_residents
+    if residents is None:
+        return None, None
+    selected = {
+        *(attribute.identity for attribute in attributes),
+        *(value_object.identity for value_object in value_objects),
+    }
     members: list[tuple[str, tuple[str, ...]]] = []
-    for attribute in attributes:
-        placement = layout.placement(attribute.identity)
-        if isinstance(placement, DocumentPath):
+    document_slot: ColumnSlot | None = None
+    for position, placement in zip(residents.positions, residents.placements, strict=True):
+        binding = residents.member_selection.bindings[position]
+        if binding.identity in selected:
             document_slot = placement.slot
-            document_attributes.append(attribute)
-            members.append((attribute.storage.name, placement.path))
-    for value_object in value_objects:
-        placement = layout.placement(value_object.identity)
-        if isinstance(placement, DocumentPath):
-            document_slot = placement.slot
-            document_occurrences.append(value_object)
-            members.append((value_object.storage.name, placement.path))
+            members.append((binding.storage.name, placement.path))
     if document_slot is None and observation:
-        document_slot = _structured_column_slot(layout)
+        document_slot = _structured_column_slot(view.layout)
     if document_slot is None:
         return None, None
     return (
         ProjectedColumn(document_slot.column.name, None, document=True),
-        DocumentFanOut(entity_shape(document_attributes, document_occurrences), tuple(members)),
+        DocumentFanOut(residents.shape, tuple(members)),
     )
 
 
 def _tph_document_projection(
     layout: TableLayout,
     facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
     concretes: Sequence[EntityIdentity],
     *,
     instance_form: bool,
@@ -1151,8 +1158,9 @@ def _tph_document_projection(
     fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
     for concrete in concretes:
         view = entity_view(facet, concrete)
+        storage_view = storage_entity_view(storage, concrete)
         _projected, fan_out = document_projection(
-            layout,
+            storage_view,
             view.applicable_attributes,
             view.applicable_value_objects if instance_form else (),
             observation=instance_form,
@@ -1172,13 +1180,16 @@ def _tph_document_projection(
             )
         )
     )
-    nothing = DocumentFanOut(entity_shape((), ()), (), padding)
+
+    def padded(identity: EntityIdentity, fan_out: DocumentFanOut | None) -> DocumentFanOut:
+        if fan_out is not None:
+            return replace(fan_out, padding=padding)
+        residents = storage_entity_view(storage, identity).document_residents
+        return DocumentFanOut(None if residents is None else residents.shape, (), padding)
+
     return ProjectedColumn(slot.column.name, None, document=True), SharedDocument(
         slot.column.name,
-        tuple(
-            (identity, nothing if fan_out is None else replace(fan_out, padding=padding))
-            for identity, fan_out in fan_outs
-        ),
+        tuple((identity, padded(identity, fan_out)) for identity, fan_out in fan_outs),
     )
 
 
@@ -1603,6 +1614,7 @@ def _plan_tph_read(
     document, shared = _tph_document_projection(
         layout,
         facet,
+        storage,
         position.concrete_subtypes,
         instance_form=instance_form,
         abstract_target=abstract_target,
@@ -1697,7 +1709,7 @@ def _plan_tpcs_read(
             project_discriminator=False,
         )
         document, fan_out = document_projection(
-            layout,
+            storage_entity_view(storage, concretes[0]),
             position.superset_attributes,
             position.superset_value_objects if instance_form else (),
             observation=instance_form,
@@ -1828,7 +1840,7 @@ def _plan_tpcs_read(
         layout = _table_layout(storage, facet, concrete)
         view = entity_view(facet, concrete)
         projected, fan_out = document_projection(
-            layout,
+            storage_entity_view(storage, concrete),
             view.applicable_attributes,
             view.applicable_value_objects if instance_form else (),
             observation=instance_form,
@@ -1848,19 +1860,22 @@ def _plan_tpcs_read(
             )
         )
     )
+
     # A branch storing no document of its own still pads its siblings' document
     # members, and reads the shared column the union aliased for all of them.
-    nothing = DocumentFanOut(None, (), padding)
+    def padded(identity: EntityIdentity, fan_out: DocumentFanOut | None) -> DocumentFanOut:
+        if fan_out is not None:
+            return replace(fan_out, padding=padding)
+        residents = storage_entity_view(storage, identity).document_residents
+        return DocumentFanOut(None if residents is None else residents.shape, (), padding)
+
     stages = RowStages(
         literal,
         None
         if document_column is None
         else SharedDocument(
             document_column,
-            tuple(
-                (identity, nothing if fan_out is None else replace(fan_out, padding=padding))
-                for identity, fan_out in fan_outs
-            ),
+            tuple((identity, padded(identity, fan_out)) for identity, fan_out in fan_outs),
         ),
         direct_documents(
             tuple(

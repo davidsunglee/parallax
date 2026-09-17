@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, cast
 
+from parallax.core.base import retain_document_value
 from parallax.core.unit_work.observe import PredecessorRow
 
 __all__ = [
@@ -172,6 +173,20 @@ def _freeze_column(column: ColumnSlice[object]) -> ColumnSlice[object]:
     return column if builder is None else whole(builder.build())
 
 
+def _retain_document_column(column: ColumnSlice[object]) -> ColumnSlice[object]:
+    builder: ChunkedColumnBuilder[object] | None = None
+    for index, value in enumerate(column):
+        retained = retain_document_value(value)
+        if builder is None:
+            if retained is value:
+                continue
+            builder = ChunkedColumnBuilder()
+            for prior in range(index):
+                builder.append(column[prior])
+        builder.append(retained)
+    return column if builder is None else whole(builder.build())
+
+
 @dataclass(frozen=True, slots=True)
 class PredecessorShape:
     """The member-name shape one resolving read's Predecessor Rows share.
@@ -233,7 +248,7 @@ class PredecessorColumns:
             tuple(_freeze_column(column) for column in self.value_object_columns),
         )
         if self.documents is not None:
-            object.__setattr__(self, "documents", _freeze_column(self.documents))
+            object.__setattr__(self, "documents", _retain_document_column(self.documents))
         object.__setattr__(self, "length", length)
 
     def row(self, index: int) -> PredecessorRow:

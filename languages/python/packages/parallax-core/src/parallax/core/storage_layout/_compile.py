@@ -39,6 +39,7 @@ from parallax.core.storage_layout._facet import (
     DirectColumn,
     DiscriminatorAssignment,
     DocumentPath,
+    DocumentResidentSelection,
     InheritanceDiscriminator,
     MemberPlacement,
     PositionColumn,
@@ -371,27 +372,29 @@ def _interned_ordinal_selection(
     return intern.setdefault(bits, SlotOrdinalSelection(bits))
 
 
-def _relational_document_shape(
+def _document_residents(
     inherited: InheritanceEntityView,
     layout: TableLayout,
-) -> MemberShape | None:
+) -> DocumentResidentSelection | None:
     document_slot = layout.contribution(RelationalDocument(inherited.root))
     if document_slot is None:
         return None
 
-    attributes = tuple(
-        attribute
-        for attribute in inherited.applicable_attributes
-        if isinstance((placement := layout.placement(attribute.identity)), DocumentPath)
+    selected = tuple(
+        (position, placement)
+        for position, binding in enumerate(inherited.member_selection.bindings)
+        if isinstance((placement := layout.placement(binding.identity)), DocumentPath)
         and placement.slot == document_slot
     )
-    value_objects = tuple(
-        value_object
-        for value_object in inherited.applicable_value_objects
-        if isinstance((placement := layout.placement(value_object.identity)), DocumentPath)
-        and placement.slot == document_slot
+    positions = tuple(position for position, _placement in selected)
+    return DocumentResidentSelection(
+        shape=MemberShape(
+            tuple(inherited.member_selection.shape.members[position] for position in positions)
+        ),
+        member_selection=inherited.member_selection,
+        positions=positions,
+        placements=tuple(placement for _position, placement in selected),
     )
-    return MemberShape.of(attributes, value_objects)
 
 
 def _effective_nullable(
@@ -709,7 +712,8 @@ def compile_facet(
                     root=group.root,
                     layout=layout,
                     discriminator=discriminator,
-                    relational_document_shape=_relational_document_shape(inherited, layout),
+                    member_selection=inherited.member_selection,
+                    document_residents=_document_residents(inherited, layout),
                     column_ordinals=_interned_ordinal_selection(
                         layout,
                         concrete,

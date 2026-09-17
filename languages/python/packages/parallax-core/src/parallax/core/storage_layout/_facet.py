@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard
 
+from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
@@ -29,6 +30,7 @@ __all__ = [
     "DirectColumn",
     "DiscriminatorAssignment",
     "DocumentPath",
+    "DocumentResidentSelection",
     "EntityLayoutView",
     "InheritanceDiscriminator",
     "MemberPlacement",
@@ -152,6 +154,26 @@ it. The union is closed and carries no provisional or deferred arm.
 """
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentResidentSelection:
+    """A row-owning Entity's complete selection inside its shared document."""
+
+    shape: MemberShape
+    member_selection: EntityMemberSelection
+    positions: tuple[int, ...]
+    placements: tuple[DocumentPath, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.shape.members) != len(self.positions) or len(self.positions) != len(
+            self.placements
+        ):
+            raise ValueError("document residency aligns definitions, positions, and placements")
+        if self.shape.members != tuple(
+            self.member_selection.shape.members[position] for position in self.positions
+        ):
+            raise ValueError("document residency selects definitions from its effective selection")
+
+
 class TableLayout(Protocol):
     """The complete canonical physical shape of one structural Table."""
 
@@ -162,6 +184,7 @@ class TableLayout(Protocol):
     @property
     def physical_primary_key(self) -> Sequence[ColumnSlot]: ...
     def column(self, column: Column) -> ColumnSlot | None: ...
+    def column_position(self, column: Column) -> int | None: ...
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None: ...
     def placement(self, member: MemberIdentity) -> MemberPlacement | None: ...
 
@@ -186,7 +209,9 @@ class EntityLayoutView(Protocol):
     @property
     def discriminator(self) -> DiscriminatorAssignment | None: ...
     @property
-    def relational_document_shape(self) -> MemberShape | None: ...
+    def member_selection(self) -> EntityMemberSelection: ...
+    @property
+    def document_residents(self) -> DocumentResidentSelection | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,7 +273,7 @@ class _TableLayout:
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
     _placements: Mapping[MemberIdentity, MemberPlacement] = field(repr=False, compare=False)
-    _column_index: Mapping[Column, ColumnSlot] = field(init=False, repr=False, compare=False)
+    _column_positions: Mapping[Column, int] = field(init=False, repr=False, compare=False)
     _contributor_index: Mapping[ColumnContributor, ColumnSlot] = field(
         init=False, repr=False, compare=False
     )
@@ -256,8 +281,8 @@ class _TableLayout:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "_column_index",
-            MappingProxyType({slot.column: slot for slot in self.columns}),
+            "_column_positions",
+            MappingProxyType({slot.column: position for position, slot in enumerate(self.columns)}),
         )
         object.__setattr__(
             self,
@@ -266,7 +291,11 @@ class _TableLayout:
         )
 
     def column(self, column: Column) -> ColumnSlot | None:
-        return self._column_index.get(column)
+        position = self.column_position(column)
+        return None if position is None else self.columns[position]
+
+    def column_position(self, column: Column) -> int | None:
+        return self._column_positions.get(column)
 
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None:
         return self._contributor_index.get(contributor)
@@ -301,7 +330,8 @@ class _EntityLayoutView:
     entity: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
-    relational_document_shape: MemberShape | None
+    member_selection: EntityMemberSelection
+    document_residents: DocumentResidentSelection | None
     _column_ordinals: SlotOrdinalSelection = field(repr=False)
 
     @property
@@ -356,7 +386,8 @@ class StorageLayoutEntityFacts:
     root: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
-    relational_document_shape: MemberShape | None
+    member_selection: EntityMemberSelection
+    document_residents: DocumentResidentSelection | None
     column_ordinals: SlotOrdinalSelection
 
 
@@ -404,7 +435,8 @@ class _StorageLayoutFacet:
             facts.entity,
             facts.layout,
             facts.discriminator,
-            facts.relational_document_shape,
+            facts.member_selection,
+            facts.document_residents,
             facts.column_ordinals,
         )
 

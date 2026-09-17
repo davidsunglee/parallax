@@ -77,8 +77,10 @@ cursor over its object; a `Many` has one cursor over each visited element object
 Creating a cursor neither inspects nor judges any sibling member.
 
 A `Document` is `m-core`'s portable `DocumentValue` — object, array, string,
-number, boolean, or null — and nothing else. It is not a driver value, rendered
-text, or provider-native document handle.
+number, boolean, or null — and nothing else. Its object and array nodes may be
+fresh parsed containers or recognized recursively immutable owned carriers. It
+is not an arbitrary mapping, a driver value, rendered text, or provider-native
+document handle.
 
 The raw Entity document read from a Relational Document Layout Structured Column
 is a physical carrier, not itself a logical member. Its database type guarantees
@@ -172,7 +174,10 @@ here. Members are emitted in the shape's own order, so one set of values always
 produces one document. An `Occurrence` member's value is written in place as the
 occurrence's own document, which `encode` (for a `One`) or `encodeMany` (for a
 `Many`) produced from that occurrence's shape, so one complete document is
-composed from the leaves up.
+composed from the leaves up. `encode`, `encodeMany`, and `encodeCandidate`
+return recursively immutable owned containers. They compose recognized owned
+children by reference and establish ownership of any untrusted composite leaf
+without constructing a second complete mutable output tree.
 
 `encodeMany` builds the one document a `Many` occurrence stores: the ordered JSON
 array whose elements are, in the sequence's own order, the `encode` of each
@@ -357,6 +362,13 @@ value rather than a position in a document.
 
 Every operation is a pure function of its arguments. None mutates its input
 document, and a returned document shares no mutable state with one passed in.
+`patch` returns a recursively immutable owned document. It may share untouched
+owned subtrees with its input, but it owns mutable input and replacement
+containers before sharing them. Its changed root and surviving changed
+ancestors are each constructed once as final writable storage and adopted only
+after their descendants are safe; ordered nested or overlapping patches reuse
+that storage while it survives. The immutable result contract replaces the
+former mutable-result contract; there is no parallel mutable patch operation.
 
 ## Portable leaf encodings
 
@@ -525,7 +537,10 @@ between them.
 A temporal successor is built by patching the retained raw predecessor document
 at the assigned paths alone rather than by re-encoding decoded members, so keys
 the running application does not declare survive the close-and-insert outside
-every occurrence the mutation assigned (`m-unit-work`).
+every occurrence the mutation assigned (`m-unit-work`). The predecessor is
+retained under `m-core`'s recursive ownership contract once. A successor with no
+document changes reuses that exact owned document; a changed successor shallowly
+constructs one final root and shares untouched owned subtrees.
 
 ## Managed documents and the effective change set
 
@@ -691,7 +706,8 @@ neither outcome changes this shape-aware verdict.
   document carrier, or falls back to strict decoding for requested stored state
   below a logical root.
 - Temporal observation retains the raw predecessor document unchanged and patches
-  it here to build a successor.
+  it here to build a successor. Retention establishes recursive immutable
+  ownership once; an unchanged successor reuses that document by identity.
 - Fixture provisioning and conformance table read-back build and compare
   documents here rather than each spelling a leaf themselves.
 

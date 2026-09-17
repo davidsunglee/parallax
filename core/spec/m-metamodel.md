@@ -518,6 +518,8 @@ spellings do not cross this interface.
 ```text
 MemberShape
   members: immutable sequence<DocumentMember>
+  position(MemberName) -> integer | absent
+  member(MemberName) -> DocumentMember | absent
 
 DocumentMember =
     Leaf(name: MemberName,
@@ -559,9 +561,19 @@ IndexMetadata
 A `MemberShape` is the ordered document form of accepted Metadata: canonical
 member names, declared Neutral Types, multiplicity, and nullability, and nothing
 physical. Leaves precede occurrences, and every `Occurrence.shape` is the exact
-`document_shape` held by that nested occurrence's Metadata. The Metadata Compiler
-composes each shape after its nested occurrences and retains it with the occurrence.
-`MemberName` is the canonical declared name.
+shape owned by the reusable declaration that defines that occurrence. A
+declaration composes its immutable shape child-first and each accepted occurrence
+binding references those definitions; using one declaration at several paths or
+in several model formations does not copy its `Leaf`, `Occurrence`, or nested
+shape values. Accepted bindings add contextual identities and storage facts but
+retain no declaration key or wrapper topology.
+
+Each shape retains one canonical name-to-position index over `members`.
+`position(...)` and `member(...)` are total, nonthrowing, expected-amortized O(1)
+lookups with first-declared-wins behavior; they return absent on a miss. A
+read-only name mapping may expose the same index and ordered members but may not
+retain a second name-to-member dictionary. `MemberName` is the canonical declared
+name.
 
 Only a top-level Value Object owns Storage Location. A nested occurrence and a
 Value Object Attribute cannot carry Entity-only storage, primary-key,

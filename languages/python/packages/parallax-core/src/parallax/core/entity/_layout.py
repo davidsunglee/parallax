@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
+from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -50,12 +51,9 @@ from parallax.core.metamodel import (
     MemberIdentity,
     Metamodel,
     Multiplicity,
-    NestedValueObjectMetadata,
     PrimaryKey,
     RelationshipIdentity,
     TablePerConcreteSubtype,
-    ValueObjectAttributeIdentity,
-    ValueObjectIdentity,
     ValueObjectMetadata,
 )
 from parallax.core.relationship import RelationshipMetadata
@@ -66,7 +64,6 @@ __all__ = [
     "EntityLayout",
     "LayoutCatalog",
     "NarrowableView",
-    "ValueObjectLayout",
 ]
 
 
@@ -82,24 +79,6 @@ class NarrowableView(Protocol):
     def relationship(self) -> RelationshipIdentity: ...
     @property
     def narrowed_view(self) -> str | None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ValueObjectLayout:
-    """One exact, path-specific Value Object occurrence's declaration-order tuple.
-
-    ``members`` is that occurrence's own leaves followed by its nested
-    occurrences, each under the identity it declares. ``nested`` is aligned to
-    it and pre-linked — a nested occurrence's own layout is already resolved, so
-    descending one is a pointer walk rather than a lookup — and holds ``None``
-    exactly at a leaf position.
-    """
-
-    identity: ValueObjectIdentity
-    multiplicity: Multiplicity
-    members: tuple[ValueObjectAttributeIdentity | ValueObjectIdentity, ...]
-    index_of: Mapping[ValueObjectAttributeIdentity | ValueObjectIdentity, int]
-    nested: tuple[ValueObjectLayout | None, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,18 +127,37 @@ class EntityLayout:
 
     concrete: EntityIdentity
     family: EntityIdentity
-    members: tuple[MemberIdentity, ...]
-    attribute_count: int
-    index_of: Mapping[MemberIdentity, int]
-    attributes: tuple[AttributeMetadata, ...]
-    occurrences: tuple[ValueObjectMetadata, ...]
-    value_objects: tuple[ValueObjectLayout, ...]
+    member_selection: EntityMemberSelection
     temporal_ends: frozenset[AttributeIdentity]
     relationships: tuple[RelationshipIdentity, ...]
     relationship_index: Mapping[RelationshipIdentity, int]
     to_many: frozenset[RelationshipIdentity]
     primary_key: tuple[int, ...]
     temporal_starts: tuple[int, ...] = ()
+
+    @property
+    def members(self) -> Sequence[MemberIdentity]:
+        return self.member_selection.identities
+
+    @property
+    def attribute_count(self) -> int:
+        return self.member_selection.attribute_count
+
+    @property
+    def index_of(self) -> Mapping[MemberIdentity, int]:
+        return self.member_selection.index
+
+    @property
+    def attributes(self) -> Sequence[AttributeMetadata]:
+        return self.member_selection.attributes
+
+    @property
+    def occurrences(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
+
+    @property
+    def value_objects(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
 
     def key_of(self, row: tuple[object, ...]) -> object:
         """``row``'s logical key: the raw scalar for a single-column primary key,
@@ -237,13 +235,8 @@ class LayoutCatalog:
                 f"this model declares no Entity {identity.canonical!r}, "
                 "so it lays out no row for one"
             )
-        attributes = tuple(position.applicable_attributes)
-        occurrences = tuple(position.applicable_value_objects)
-        members: tuple[MemberIdentity, ...] = (
-            *(attribute.identity for attribute in attributes),
-            *(occurrence.identity for occurrence in occurrences),
-        )
-        index_of: Mapping[MemberIdentity, int] = _positions(members, identity.canonical)
+        selection = position.member_selection
+        index_of = selection.index
         navigable = _navigable_relationships(self._model, position.ancestry)
         relationships = tuple(direction.identity for direction in navigable)
         return EntityLayout(
@@ -253,12 +246,7 @@ class LayoutCatalog:
                 if isinstance(position.strategy, TablePerConcreteSubtype)
                 else position.root
             ),
-            members=members,
-            attribute_count=len(attributes),
-            index_of=index_of,
-            attributes=attributes,
-            occurrences=occurrences,
-            value_objects=tuple(_occurrence_layout(occurrence) for occurrence in occurrences),
+            member_selection=selection,
             temporal_ends=self._temporal_ends(position.root),
             relationships=relationships,
             relationship_index=MappingProxyType(
@@ -358,43 +346,6 @@ class CatalogedModel:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "layouts", LayoutCatalog(self.meta))
-
-
-def _occurrence_layout(
-    declared: ValueObjectMetadata | NestedValueObjectMetadata,
-) -> ValueObjectLayout:
-    """``declared``'s whole pre-linked subtree, leaves before nested occurrences."""
-    members: tuple[ValueObjectAttributeIdentity | ValueObjectIdentity, ...] = (
-        *(leaf.identity for leaf in declared.attributes),
-        *(nested.identity for nested in declared.value_objects),
-    )
-    return ValueObjectLayout(
-        identity=declared.identity,
-        multiplicity=declared.multiplicity,
-        members=members,
-        index_of=_positions(members, _spelling(declared.identity)),
-        nested=(
-            *(None for _ in declared.attributes),
-            *(_occurrence_layout(nested) for nested in declared.value_objects),
-        ),
-    )
-
-
-def _positions[M](members: tuple[M, ...], holder: str) -> Mapping[M, int]:
-    """``members``' identity-to-position index, refusing one position two members
-    claim — the accepted metadata would then fix no row at all."""
-    index = {member: position for position, member in enumerate(members)}
-    if len(index) != len(members):
-        raise ValueError(
-            f"{holder} declares two members under one identity, "
-            "so its accepted metadata fixes no member row"
-        )
-    return MappingProxyType(index)
-
-
-def _spelling(identity: ValueObjectIdentity) -> str:
-    """One occurrence's canonical containment spelling, for a refusal to name."""
-    return ".".join((identity.entity.canonical, *identity.path))
 
 
 def _navigable_relationships(

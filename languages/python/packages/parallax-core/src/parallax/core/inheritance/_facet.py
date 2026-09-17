@@ -19,13 +19,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final, Protocol, TypeGuard
+from typing import Final, Protocol, TypeGuard, cast, overload
 
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
+    EntityMetadata,
     FacetKey,
     InheritanceStrategy,
+    Leaf,
+    MemberIdentity,
     MemberShape,
     Metamodel,
     PersistenceMode,
@@ -37,6 +40,7 @@ from parallax.core.metamodel import (
 __all__ = [
     "FACET_KEY",
     "INHERITANCE_MODULE",
+    "EntityMemberSelection",
     "InheritanceEntityFacts",
     "InheritanceEntityView",
     "InheritanceFacet",
@@ -100,6 +104,8 @@ class InheritanceEntityView(Protocol):
     @property
     def persistence(self) -> PersistenceMode: ...
     @property
+    def member_selection(self) -> EntityMemberSelection: ...
+    @property
     def applicable_attributes(self) -> Sequence[AttributeMetadata]: ...
     @property
     def applicable_relationships(self) -> Sequence[RelationshipDeclaration]: ...
@@ -151,11 +157,141 @@ class InheritanceEntityFacts:
     tag_column: str | None
     tag_value: str | None
     persistence: PersistenceMode
-    applicable_attributes: tuple[AttributeMetadata, ...]
+    member_selection: EntityMemberSelection
     applicable_relationships: tuple[RelationshipDeclaration, ...]
-    applicable_value_objects: tuple[ValueObjectMetadata, ...]
-    declared_attributes: tuple[AttributeMetadata, ...]
-    declared_value_objects: tuple[ValueObjectMetadata, ...]
+    declared: EntityMetadata
+
+
+type _EntityBinding = AttributeMetadata | ValueObjectMetadata
+
+
+@dataclass(frozen=True, slots=True)
+class _BindingRange[T](Sequence[T]):
+    bindings: tuple[_EntityBinding, ...]
+    start: int
+    stop: int
+
+    def __len__(self) -> int:
+        return self.stop - self.start
+
+    @overload
+    def __getitem__(self, index: int) -> T: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[T]: ...
+
+    def __getitem__(self, index: int | slice) -> T | Sequence[T]:
+        if isinstance(index, slice):
+            return cast("Sequence[T]", self.bindings[self.start : self.stop][index])
+        position = index if index >= 0 else len(self) + index
+        if position < 0 or position >= len(self):
+            raise IndexError(index)
+        return cast("T", self.bindings[self.start + position])
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        compared = cast("Sequence[object]", other)
+        return len(self) == len(compared) and all(
+            left == right for left, right in zip(self, compared, strict=True)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _BindingIdentities(Sequence[MemberIdentity]):
+    bindings: tuple[_EntityBinding, ...]
+
+    def __len__(self) -> int:
+        return len(self.bindings)
+
+    @overload
+    def __getitem__(self, index: int) -> MemberIdentity: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[MemberIdentity]: ...
+
+    def __getitem__(self, index: int | slice) -> MemberIdentity | Sequence[MemberIdentity]:
+        if isinstance(index, slice):
+            return tuple(binding.identity for binding in self.bindings[index])
+        return self.bindings[index].identity
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Sequence):
+            return False
+        compared = cast("Sequence[object]", other)
+        return len(self) == len(compared) and all(
+            left == right for left, right in zip(self, compared, strict=True)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EntityMemberSelection:
+    """One Entity's complete inheritance-effective member selection."""
+
+    shape: MemberShape
+    bindings: tuple[_EntityBinding, ...]
+    attribute_count: int
+    _position_by_identity: Mapping[MemberIdentity, int] = field(
+        init=False, repr=False, compare=False
+    )
+    _attributes: _BindingRange[AttributeMetadata] = field(init=False, repr=False, compare=False)
+    _value_objects: _BindingRange[ValueObjectMetadata] = field(
+        init=False, repr=False, compare=False
+    )
+    _identities: _BindingIdentities = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if len(self.shape.members) != len(self.bindings):
+            raise ValueError("an Entity member selection aligns every shape member to one binding")
+        positions = {binding.identity: position for position, binding in enumerate(self.bindings)}
+        if len(positions) != len(self.bindings):
+            raise ValueError("an Entity member selection assigns each identity one position")
+        object.__setattr__(self, "_position_by_identity", MappingProxyType(positions))
+        object.__setattr__(self, "_identities", _BindingIdentities(self.bindings))
+        object.__setattr__(
+            self,
+            "_attributes",
+            _BindingRange(self.bindings, 0, self.attribute_count),
+        )
+        object.__setattr__(
+            self,
+            "_value_objects",
+            _BindingRange(self.bindings, self.attribute_count, len(self.bindings)),
+        )
+
+    @property
+    def attributes(self) -> Sequence[AttributeMetadata]:
+        return self._attributes
+
+    @property
+    def value_objects(self) -> Sequence[ValueObjectMetadata]:
+        return self._value_objects
+
+    @property
+    def identities(self) -> Sequence[MemberIdentity]:
+        return self._identities
+
+    @property
+    def index(self) -> Mapping[MemberIdentity, int]:
+        return self._position_by_identity
+
+    def position(self, member: MemberIdentity) -> int:
+        return self._position_by_identity[member]
+
+    def binding(self, name: str) -> _EntityBinding | None:
+        position = self.shape.position(name)
+        return None if position is None else self.bindings[position]
+
+
+def member_selection(
+    attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
+) -> EntityMemberSelection:
+    bindings: tuple[_EntityBinding, ...] = (*attributes, *value_objects)
+    return EntityMemberSelection(
+        shape=MemberShape.of(attributes, value_objects),
+        bindings=bindings,
+        attribute_count=len(attributes),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,28 +314,15 @@ class _InheritanceEntityView:
     tag_column: str | None
     tag_value: str | None
     persistence: PersistenceMode
-    applicable_attributes: tuple[AttributeMetadata, ...]
+    member_selection: EntityMemberSelection
     applicable_relationships: tuple[RelationshipDeclaration, ...]
-    applicable_value_objects: tuple[ValueObjectMetadata, ...]
-    applicable_document_shape: MemberShape
     superset_attributes: tuple[AttributeMetadata, ...]
     superset_value_objects: tuple[ValueObjectMetadata, ...]
-    _attribute_index: Mapping[str, AttributeMetadata] = field(init=False, repr=False, compare=False)
     _relationship_index: Mapping[str, RelationshipDeclaration] = field(
-        init=False, repr=False, compare=False
-    )
-    _value_object_index: Mapping[str, ValueObjectMetadata] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_attribute_index",
-            MappingProxyType(
-                {member.identity.name: member for member in self.applicable_attributes}
-            ),
-        )
         object.__setattr__(
             self,
             "_relationship_index",
@@ -207,22 +330,35 @@ class _InheritanceEntityView:
                 {member.identity.name: member for member in self.applicable_relationships}
             ),
         )
-        object.__setattr__(
-            self,
-            "_value_object_index",
-            MappingProxyType(
-                {member.identity.path[-1]: member for member in self.applicable_value_objects}
-            ),
-        )
+
+    @property
+    def applicable_attributes(self) -> Sequence[AttributeMetadata]:
+        return self.member_selection.attributes
+
+    @property
+    def applicable_value_objects(self) -> Sequence[ValueObjectMetadata]:
+        return self.member_selection.value_objects
+
+    @property
+    def applicable_document_shape(self) -> MemberShape:
+        return self.member_selection.shape
 
     def applicable_attribute(self, name: str) -> AttributeMetadata | None:
-        return self._attribute_index.get(name)
+        binding = self.member_selection.binding(name)
+        position = self.member_selection.shape.position(name)
+        if position is None or not isinstance(self.member_selection.shape.members[position], Leaf):
+            return None
+        return cast("AttributeMetadata", binding)
 
     def applicable_relationship(self, name: str) -> RelationshipDeclaration | None:
         return self._relationship_index.get(name)
 
     def applicable_value_object(self, name: str) -> ValueObjectMetadata | None:
-        return self._value_object_index.get(name)
+        binding = self.member_selection.binding(name)
+        position = self.member_selection.shape.position(name)
+        if position is None or isinstance(self.member_selection.shape.members[position], Leaf):
+            return None
+        return cast("ValueObjectMetadata", binding)
 
 
 def _project(
@@ -248,10 +384,14 @@ def _project(
     return _InheritancePositionView(
         concrete_subtypes=effective,
         superset_attributes=tuple(
-            member for identity in contributors for member in facts[identity].declared_attributes
+            member
+            for identity in contributors
+            for member in facts[identity].declared.declared_attributes
         ),
         superset_value_objects=tuple(
-            member for identity in contributors for member in facts[identity].declared_value_objects
+            member
+            for identity in contributors
+            for member in facts[identity].declared.declared_value_objects
         ),
     )
 
@@ -269,13 +409,8 @@ def _entity_view(
         tag_column=position.tag_column,
         tag_value=position.tag_value,
         persistence=position.persistence,
-        applicable_attributes=position.applicable_attributes,
+        member_selection=position.member_selection,
         applicable_relationships=position.applicable_relationships,
-        applicable_value_objects=position.applicable_value_objects,
-        applicable_document_shape=MemberShape.of(
-            position.applicable_attributes,
-            position.applicable_value_objects,
-        ),
         superset_attributes=projection.superset_attributes,
         superset_value_objects=projection.superset_value_objects,
     )

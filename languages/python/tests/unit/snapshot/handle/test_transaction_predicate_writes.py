@@ -18,7 +18,6 @@ place to move from.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import re
 from collections.abc import Mapping
 from decimal import Decimal
@@ -46,7 +45,14 @@ from parallax.core import (
     attr,
     inheritance,
 )
-from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, InstantError, PresentDocument
+from parallax.core.base import (
+    INFINITY,
+    SQL_NULL,
+    DocumentValue,
+    FrozenMap,
+    InstantError,
+    PresentDocument,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -982,11 +988,9 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
 def test_materializing_terminate_where_document_layout_binds_a_carried_document_as_json() -> None:
     # A rectangle split's head CARRIES its predecessor's document with nothing
     # patched into it, so the value the insert binds is the retained document
-    # itself. It must reach the bind as the portable JSON value a `Document` is
-    # (`m-document-codec`): the compact columnar retention behind it seals its
-    # containers read-only, and a read-only view is not something a structured-
-    # document bind can serialize, so a retained container reaching the statement
-    # would fail the whole write rather than insert the row it carried.
+    # itself. It reaches the bind as the recursively immutable portable document
+    # retained by the compact columnar observation; the adapter owns serialization
+    # of that trusted carrier without first rebuilding a mutable document tree.
     stored: DocumentValue = {
         "route": "Oslo-Bergen",
         "charterCode": "NB-118",
@@ -1021,11 +1025,9 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     head_binds = writes[1].binds
     carried = cast("JsonDocument", head_binds[-1]).value
     assert carried == stored
-    # Equality alone does not settle it: a read-only mapping compares equal to its
-    # own contents, so a document of nothing but nested objects would pass that
-    # check while still failing the bind. Serializing is what a structured-document
-    # bind does, so serializing is what the retained document has to survive.
-    assert json.dumps(carried) == json.dumps(stored)
+    assert type(carried) is FrozenMap
+    assert type(cast("FrozenMap[str, object]", carried)["terms"]) is FrozenMap
+    assert type(cast("FrozenMap[str, object]", carried)["stops"]) is tuple
 
 
 def _position_row() -> MappingRow:

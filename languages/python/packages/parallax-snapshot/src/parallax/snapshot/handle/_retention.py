@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
+from parallax.core.base import retain_document_value
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -76,7 +77,6 @@ from parallax.snapshot.handle._family import (
     family_primary_key,
     is_temporal,
     members,
-    placed_members,
     slot_column,
     tx_time_axis,
     version_attribute,
@@ -229,7 +229,16 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
             if shape is None and pending.entity not in self._shapes:
                 shape = _observation_shape(meta, pending.entity)
                 self._shapes[pending.entity] = shape
-            retained.append(pending if shape is not None and shape.temporal else pending.node)
+            retained.append(
+                _ObservedRow(
+                    pending.node,
+                    pending.entity,
+                    pending.columns,
+                    (None if pending.document is None else retain_document_value(pending.document)),
+                )
+                if shape is not None and shape.temporal
+                else pending.node
+            )
         self._observations = retained
         self._admitted = admitted
         self._entity = entity
@@ -508,7 +517,7 @@ class _StandaloneObservedEvidence:
         self._shape = shape
         self._layout = layout
         self._member_row = member_row
-        self._document = document
+        self._document = None if document is None else retain_document_value(document)
 
     def object_key(self) -> ObjectKey:
         return self._materialized()[0]
@@ -590,7 +599,7 @@ def _observation_shape(meta: Metamodel, identity: EntityIdentity) -> _Observatio
         tx_start_column=(
             axis_columns(layout, tx_time_axis(declaring_entity))[0] if temporal else None
         ),
-        member_columns=(members(placed_members(meta, entity, layout)) if temporal else None),
+        member_columns=(members(layout) if temporal else None),
     )
 
 

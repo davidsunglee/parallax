@@ -32,7 +32,7 @@ from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import BUILTIN_MANIFEST
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import FacetKey
@@ -224,6 +224,20 @@ def test_predecessor_columns_retain_the_raw_document_against_later_mutation() ->
 
     assert retained == {"title": "Ada", "manifest": {"cargo": "timber"}}
     assert predecessors.row(0).document is retained
+
+
+def test_predecessor_columns_reuse_an_owned_document_prefix_before_first_retention() -> None:
+    owned = FrozenMap({"title": "Ada"})
+    mutable = {"title": "Grace"}
+    predecessors = _predecessor_columns(
+        [{"id": 1}, {"id": 2}],
+        documents=[owned, mutable],
+    )
+
+    mutable["title"] = "Hopper"
+
+    assert predecessors.row(0).document is owned
+    assert predecessors.row(1).document == {"title": "Grace"}
 
 
 def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:

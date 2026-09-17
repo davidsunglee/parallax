@@ -43,7 +43,7 @@ import pytest
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING
+from parallax.core.base import STRING, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
@@ -1077,11 +1077,11 @@ def _value_object(model: Metamodel, entity: str, member: str) -> ValueObjectIden
     return value_object.identity
 
 
-def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document() -> None:
+def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document() -> None:
     # A Planned Row freezes what it carries, so the occurrence arrives as a
     # read-only mapping over read-only elements. The codec READS it and builds the
-    # document, so what crosses the bind seam is a plain JSON structure the driver
-    # can serialize rather than the frozen carriers the planner held.
+    # document, so what crosses the bind seam is its own recursively immutable
+    # carrier rather than an alias to the frozen carriers the planner held.
     row = PlannedRow(
         attributes={
             _attribute(CUSTOMER, "Customer", "id"): 1,
@@ -1110,8 +1110,8 @@ def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
     )
     document = cast("JsonDocument", statement.binds[-1]).value
-    assert type(document) is dict
-    assert type(cast("dict[str, object]", document)["phones"]) is list
+    assert type(document) is FrozenMap
+    assert type(cast("FrozenMap[str, object]", document)["phones"]) is tuple
 
 
 def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:
@@ -1395,7 +1395,7 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
     )
     statement = compile_write_step(step, _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
-    assert statement.binds == (7, JsonDocument([]))
+    assert statement.binds == (7, JsonDocument(()))
 
 
 def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -> None:

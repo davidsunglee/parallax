@@ -14,7 +14,7 @@ import datetime as dt
 import enum
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self, TypeGuard, cast
 
@@ -82,6 +82,7 @@ __all__ = [
     "DocumentValue",
     "Float32",
     "Float64",
+    "FrozenMap",
     "InstantError",
     "Int32",
     "Int64",
@@ -106,12 +107,109 @@ __all__ = [
     "matches_neutral_type",
     "nearest_float_at_width",
     "normalize_instant",
+    "retain_document_value",
     "unwrap_document_read",
 ]
 
 
+class FrozenMap[K, V](Mapping[K, V]):
+    """An immutable mapping whose recursively retained values are safe to share.
+
+    Public construction owns a copy of the supplied mapping and recursively
+    retains nested mappings and sequences. Trusted core producers use the
+    module-private adoption seam after constructing final safe storage.
+    """
+
+    __slots__ = ("__values",)
+    __values: dict[K, V]
+
+    def __init__(self, source: Mapping[K, V]) -> None:
+        values = {key: cast("V", retain_document_value(value)) for key, value in source.items()}
+        object.__setattr__(self, "_FrozenMap__values", values)
+
+    def __getitem__(self, key: K) -> V:
+        return self.__values[key]
+
+    def __iter__(self) -> Iterator[K]:
+        return iter(self.__values)
+
+    def __len__(self) -> int:
+        return len(self.__values)
+
+    def __repr__(self) -> str:
+        return f"FrozenMap({self.__values!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return _document_values_equal(self, other)
+
+    def __setattr__(self, _name: str, _value: object) -> None:
+        raise TypeError("a FrozenMap is immutable")
+
+    def __delattr__(self, _name: str) -> None:
+        raise TypeError("a FrozenMap is immutable")
+
+    def __init_subclass__(cls) -> None:
+        raise TypeError("FrozenMap does not support subclassing")
+
+
+def adopt_frozen_map[K, V](values: dict[K, V]) -> FrozenMap[K, V]:
+    adopted = cast("FrozenMap[K, V]", object.__new__(FrozenMap))
+    object.__setattr__(adopted, "_FrozenMap__values", values)
+    return adopted
+
+
+def frozen_map_json_backing[K, V](value: FrozenMap[K, V]) -> dict[K, V]:
+    """Return exact carrier storage for the adapter's synchronous JSON encoder."""
+    if type(value) is not FrozenMap:
+        raise TypeError("only the core FrozenMap carrier exposes serializer backing")
+    return cast("dict[K, V]", object.__getattribute__(value, "_FrozenMap__values"))
+
+
+def _document_values_equal(left: object, right: object) -> bool:
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        left_mapping = cast("Mapping[object, object]", left)
+        right_mapping = cast("Mapping[object, object]", right)
+        return len(left_mapping) == len(right_mapping) and all(
+            key in right_mapping and _document_values_equal(value, right_mapping[key])
+            for key, value in left_mapping.items()
+        )
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        left_sequence = cast("Sequence[object]", left)
+        right_sequence = cast("Sequence[object]", right)
+        return len(left_sequence) == len(right_sequence) and all(
+            _document_values_equal(a, b) for a, b in zip(left_sequence, right_sequence, strict=True)
+        )
+    return left == right
+
+
+def retain_document_value(value: object) -> object:
+    """Recursively own document containers, reusing already-owned subtrees."""
+    if type(value) is FrozenMap:
+        return cast("FrozenMap[object, object]", value)
+    if isinstance(value, Mapping):
+        source = cast("Mapping[object, object]", value)
+        return adopt_frozen_map(
+            {key: retain_document_value(nested) for key, nested in source.items()}
+        )
+    if isinstance(value, tuple):
+        source = cast("tuple[object, ...]", value)
+        retained = tuple(retain_document_value(nested) for nested in source)
+        return source if all(a is b for a, b in zip(retained, source, strict=True)) else retained
+    if isinstance(value, list):
+        return tuple(retain_document_value(nested) for nested in cast("list[object]", value))
+    return value
+
+
 type DocumentValue = (
-    bool | int | float | str | list[DocumentValue] | dict[str, DocumentValue] | None
+    bool
+    | int
+    | float
+    | str
+    | list[DocumentValue]
+    | dict[str, DocumentValue]
+    | tuple[DocumentValue, ...]
+    | FrozenMap[str, DocumentValue]
+    | None
 )
 """A portable JSON data-model value, including bare JSON null."""
 
@@ -176,12 +274,12 @@ def is_document_value(value: object) -> TypeGuard[DocumentValue]:
         return True
     if isinstance(value, float):
         return math.isfinite(value)
-    if isinstance(value, list):
-        return all(is_document_value(item) for item in cast("list[object]", value))
-    if isinstance(value, dict):
+    if isinstance(value, (list, tuple)):
+        return all(is_document_value(item) for item in cast("Sequence[object]", value))
+    if isinstance(value, (dict, FrozenMap)):
         return all(
             isinstance(key, str) and is_document_value(item)
-            for key, item in cast("dict[object, object]", value).items()
+            for key, item in cast("Mapping[object, object]", value).items()
         )
     return False
 

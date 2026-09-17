@@ -11,10 +11,11 @@ settled, in **both** concurrency modes.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from parallax.core.base import retain_document_value
 from parallax.core.metamodel import (
     AttributeMetadata,
     NestedValueObjectMetadata,
@@ -35,10 +36,10 @@ type _Occurrence = ValueObjectMetadata | NestedValueObjectMetadata
 
 class _Layout(Protocol):
     @property
-    def attributes(self) -> tuple[AttributeMetadata, ...]: ...
+    def attributes(self) -> Sequence[AttributeMetadata]: ...
 
     @property
-    def occurrences(self) -> tuple[ValueObjectMetadata, ...]: ...
+    def occurrences(self) -> Sequence[ValueObjectMetadata]: ...
 
 
 class EntityStateRow(Mapping[str, object]):
@@ -253,6 +254,8 @@ class PredecessorRow:
         members = self.members
         if not isinstance(members, EntityStateRow):
             object.__setattr__(self, "members", EntityStateRow(dict(members)))
+        if self.document is not None:
+            object.__setattr__(self, "document", retain_document_value(self.document))
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")
 

@@ -12,7 +12,6 @@ from parallax.core.metamodel import (
     Leaf,
     MemberShape,
     NestedValueObjectMetadata,
-    NestedValueObjectOccurrenceDeclaration,
     Occurrence,
     ValueObjectMetadata,
     ValueObjectShapeDeclaration,
@@ -120,22 +119,9 @@ def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> MemberShap
     """The document shape of one reusable Value Object shape declaration.
 
     Leaves precede nested occurrences, matching the declaration's own two sequences.
+    The declaration owns this shape; access never reconstructs it.
     """
-    leaves: tuple[DocumentMember, ...] = tuple(
-        Leaf(name=attribute.name, type=attribute.type, nullable=attribute.nullable)
-        for attribute in declaration.attributes
-    )
-    nested = tuple(map(_declared_occurrence, declaration.value_objects))
-    return MemberShape(members=leaves + nested)
-
-
-def _declared_occurrence(nested: NestedValueObjectOccurrenceDeclaration) -> Occurrence:
-    return Occurrence(
-        name=nested.name,
-        multiplicity=nested.multiplicity,
-        nullable=nested.nullable,
-        shape=shape_of_declaration(nested.shape),
-    )
+    return declaration.member_shape
 
 
 def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata) -> MemberShape:
