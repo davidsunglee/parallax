@@ -1,4 +1,4 @@
-"""Document-shape vocabulary derived from accepted Metadata (m-metamodel)."""
+"""Member-shape vocabulary derived from accepted Metadata (m-metamodel)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Protocol, Self
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._values import Multiplicity
 
-__all__ = ["DocumentMember", "DocumentShape", "Leaf", "Occurrence"]
+__all__ = ["DocumentMember", "Leaf", "MemberShape", "Occurrence"]
 
 
 class _NamedIdentity(Protocol):
@@ -40,7 +40,7 @@ class _OccurrenceSource(Protocol):
     @property
     def nullable(self) -> bool: ...
     @property
-    def document_shape(self) -> DocumentShape: ...
+    def document_shape(self) -> MemberShape: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +59,7 @@ class Occurrence:
     name: str
     multiplicity: Multiplicity
     nullable: bool
-    shape: DocumentShape
+    shape: MemberShape
 
 
 type DocumentMember = Leaf | Occurrence
@@ -67,7 +67,7 @@ type DocumentMember = Leaf | Occurrence
 
 
 @dataclass(frozen=True, slots=True)
-class DocumentShape:
+class MemberShape:
     """The applicable members of one document, in canonical emission order."""
 
     members: tuple[DocumentMember, ...]

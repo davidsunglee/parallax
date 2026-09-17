@@ -76,7 +76,7 @@ from parallax.core.document_codec import (
     UNAVAILABLE,
     DecodedMember,
     DocumentFinding,
-    DocumentShape,
+    MemberShape,
     Missing,
     Occurrence,
     Present,
@@ -414,7 +414,7 @@ class DocumentFanOut:
     values.
     """
 
-    shape: DocumentShape | None
+    shape: MemberShape | None
     members: tuple[tuple[str, tuple[str, ...]], ...]
     padding: tuple[str, ...] = ()
     member_paths: Mapping[str, tuple[str, ...]] = field(init=False, compare=False, repr=False)
@@ -559,10 +559,10 @@ class DirectDocuments:
     """
 
     per_entity: tuple[
-        tuple[EntityIdentity, tuple[tuple[ValueObjectMetadata, DocumentShape], ...]], ...
+        tuple[EntityIdentity, tuple[tuple[ValueObjectMetadata, MemberShape], ...]], ...
     ]
-    by_entity: Mapping[EntityIdentity, tuple[tuple[ValueObjectMetadata, DocumentShape], ...]] = (
-        field(init=False, compare=False, repr=False)
+    by_entity: Mapping[EntityIdentity, tuple[tuple[ValueObjectMetadata, MemberShape], ...]] = field(
+        init=False, compare=False, repr=False
     )
 
     def __post_init__(self) -> None:
@@ -749,7 +749,7 @@ class RowStages:
 
 
 def _classified_entity_member(
-    shape: DocumentShape, document_read: object, path: tuple[str, ...]
+    shape: MemberShape, document_read: object, path: tuple[str, ...]
 ) -> DecodedMember:
     """Classify one direct logical Entity member from its tagged carrier."""
     if len(path) != 1:  # pragma: no cover - read projection requests direct members only
@@ -768,7 +768,7 @@ def _classified_entity_member(
 
 
 def _classified_located_entity_member(
-    shape: DocumentShape, located: object, path: tuple[str, ...]
+    shape: MemberShape, located: object, path: tuple[str, ...]
 ) -> DecodedMember:
     """Classify one direct Entity member from its located witness carrier."""
     if len(path) != 1:  # pragma: no cover - read projection requests direct members only
@@ -798,7 +798,7 @@ def _classified_located_entity_member(
 
 
 def _classified_occurrence(
-    shape: DocumentShape,
+    shape: MemberShape,
     document_read: SqlNull | PresentDocument,
     *,
     multiplicity: Multiplicity,

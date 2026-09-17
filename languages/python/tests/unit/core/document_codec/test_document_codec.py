@@ -40,9 +40,9 @@ from parallax.core.document_codec import (
     NULL,
     UNAVAILABLE,
     DecodedMember,
-    DocumentShape,
     Leaf,
     LeafEncodingError,
+    MemberShape,
     Occurrence,
     Present,
     SetLeaf,
@@ -189,7 +189,7 @@ def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> No
 
 
 def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
-    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    shape = MemberShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
     stored = encode_document(shape, {"ratio": Present(1048576.25)})
     assert stored == {"ratio": 1048576.2}
     assert decode_path(shape, stored, ("ratio",)) == Present(1048576.25)
@@ -201,7 +201,7 @@ def test_a_stored_float_that_is_not_the_shortest_number_is_invalid_stored_data()
     # leaves `0.1` and `0.10000000000000001` indistinguishable and the second
     # readable as the first. Strict Wire loading preserves the authored number
     # until the document codec resolves the declared leaf type.
-    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    shape = MemberShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
     assert decode_path(shape, {"ratio": loads("0.1")}, ("ratio",)) == Present(0.1)
     # The number, not its rendering: `20` and `20.0` are one JSON number.
     assert decode_path(shape, {"ratio": loads("20.0")}, ("ratio",)) == Present(20.0)
@@ -209,7 +209,7 @@ def test_a_stored_float_that_is_not_the_shortest_number_is_invalid_stored_data()
         decode_path(shape, {"ratio": loads("0.10000000000000001")}, ("ratio",))
     # At `float32` the canonical number is the shortest one that decodes back AT
     # THAT WIDTH, so the exact binary32 value is itself a second spelling of it.
-    narrow = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    narrow = MemberShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
     assert decode_path(narrow, {"ratio": loads("1048576.2")}, ("ratio",)) == Present(1048576.25)
     with pytest.raises(ValueError, match="invalid stored data"):
         decode_path(narrow, {"ratio": loads("1048576.25")}, ("ratio",))
@@ -219,7 +219,7 @@ def test_a_float_carrier_with_no_authored_digits_is_the_number_it_names() -> Non
     # A runtime caller's own `float` is a carrier it chose rather than a spelling
     # some writer produced, so there is no second spelling to distinguish it
     # from: it reads back as the value it names.
-    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    shape = MemberShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
     assert decode_path(shape, {"ratio": 0.1}, ("ratio",)) == Present(0.1)
 
 
@@ -229,7 +229,7 @@ def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -
     # that same number IS that spelling — though the binary float carrying either
     # holds 1000000000000000019884624838656 and equals neither rendering, which is
     # what host equality would compare and refuse the integer by.
-    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
+    shape = MemberShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
     assert decode_path(shape, {"ratio": 10**30}, ("ratio",)) == Present(1e30)
     # A number the width holds and the table does not spell stays refused: this one
     # rounds to the same binary64 and is still a second number.
@@ -237,17 +237,17 @@ def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -
         decode_path(shape, {"ratio": 10**30 + 2**40}, ("ratio",))
     # At `float32` the canonical number is routinely not the value itself, so an
     # integer spelling one reads back as the binary32 value it names.
-    narrow = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    narrow = MemberShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
     assert decode_path(narrow, {"ratio": 10**30}, ("ratio",)) == Present(1.0000000150474662e30)
 
 
-def _one_leaf(neutral_type: NeutralType) -> DocumentShape:
-    return DocumentShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
+def _one_leaf(neutral_type: NeutralType) -> MemberShape:
+    return MemberShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
 
 
 def test_classified_member_variants_report_each_detection_without_inventing_values() -> None:
-    nested = DocumentShape(members=(Leaf("required", INT32, False),))
-    shape = DocumentShape(
+    nested = MemberShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(
         members=(
             Leaf("leaf", INT32, False),
             Occurrence("one", Multiplicity.ONE, False, nested),
@@ -278,7 +278,7 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
 
 def test_raw_member_location_preserves_missing_null_and_present_states() -> None:
     classify = prepared_raw_member_classifier(
-        DocumentShape(members=(Leaf("leaf", INT32, False),)), "leaf"
+        MemberShape(members=(Leaf("leaf", INT32, False),)), "leaf"
     )
 
     assert locate_raw_entity_member([], "leaf") is MISSING
@@ -290,8 +290,8 @@ def test_raw_member_location_preserves_missing_null_and_present_states() -> None
 
 
 def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> None:
-    nested = DocumentShape(members=(Leaf("required", INT32, False),))
-    shape = DocumentShape(
+    nested = MemberShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(
         members=(
             Occurrence("one", Multiplicity.ONE, True, nested),
             Occurrence("many", Multiplicity.MANY, False, nested),
@@ -312,14 +312,14 @@ def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> Non
 
 
 def test_classified_reduction_preserves_member_names_and_integer_array_positions() -> None:
-    shape = DocumentShape(
+    shape = MemberShape(
         members=(
             Leaf("0", INT32, True),
             Occurrence(
                 "many",
                 Multiplicity.MANY,
                 False,
-                DocumentShape(members=(Leaf("12", INT32, False),)),
+                MemberShape(members=(Leaf("12", INT32, False),)),
             ),
         )
     )
@@ -331,7 +331,7 @@ def test_classified_reduction_preserves_member_names_and_integer_array_positions
 
 
 def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:
-    shape = DocumentShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(members=(Leaf("required", INT32, False),))
     absent = decode_occurrence_classified(
         shape, SQL_NULL, multiplicity=Multiplicity.ONE, nullable=False
     )
@@ -565,7 +565,7 @@ def test_stored_data_that_contradicts_its_shape_fails_the_decode() -> None:
     # declared type, a nested structure that is not the declared kind, and a
     # required path that is absent or JSON null. None of them may answer with a
     # presence, because inventing one turns corrupt storage into a plausible row.
-    required = DocumentShape(
+    required = MemberShape(
         members=(
             Leaf(name="label", type=STRING, nullable=False),
             Occurrence(
@@ -599,7 +599,7 @@ def test_a_required_intermediate_occurrence_is_a_missing_required_path() -> None
     # occurrence has no such state, so its absence or JSON null IS the missing
     # required path, reported at the ancestor's own depth rather than as the leaf
     # below it being absent.
-    shape = DocumentShape(
+    shape = MemberShape(
         members=(
             Occurrence(
                 name="origin",
@@ -690,7 +690,7 @@ def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() ->
 
 
 def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
-    wrapper = DocumentShape(
+    wrapper = MemberShape(
         (
             Occurrence(
                 name="profile",
@@ -903,14 +903,14 @@ def test_a_compiled_occurrence_yields_the_same_shape_as_its_declaration() -> Non
     (entity,) = DomainModel(Holder).entities
     (occurrence,) = entity.declared_value_objects
     assert occurrence_shape(occurrence) is occurrence.document_shape
-    assert occurrence_shape(occurrence) == DocumentShape(
+    assert occurrence_shape(occurrence) == MemberShape(
         members=(
             Leaf(name="flag", type=BOOLEAN, nullable=True),
             Occurrence(
                 name="origin",
                 multiplicity=Multiplicity.ONE,
                 nullable=True,
-                shape=DocumentShape(members=(Leaf(name="city", type=STRING, nullable=True),)),
+                shape=MemberShape(members=(Leaf(name="city", type=STRING, nullable=True),)),
             ),
         )
     )

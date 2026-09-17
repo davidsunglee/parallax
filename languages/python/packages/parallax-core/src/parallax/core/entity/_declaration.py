@@ -59,7 +59,6 @@ from parallax.core.metamodel import (
     Column,
     DerivedAxis,
     DocumentMember,
-    DocumentShape,
     EntityIdentity,
     EntityReference,
     ExactEntityReference,
@@ -67,6 +66,7 @@ from parallax.core.metamodel import (
     IndexMetadata,
     Leaf,
     Max,
+    MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     NullPlacement,
@@ -527,7 +527,7 @@ class ValueObjectShape:
     """
 
     shape: ValueObjectShapeDeclaration
-    document_shape: DocumentShape
+    document_shape: MemberShape
     name_to_py: Mapping[str, str]
     py_to_name: Mapping[str, str]
     nested_classes: Mapping[str, type]
@@ -1160,7 +1160,7 @@ def _build_value_object(
             attributes=declared_attributes,
             value_objects=declared_nested,
         ),
-        document_shape=DocumentShape(members=document_leaves + document_occurrences),
+        document_shape=MemberShape(members=document_leaves + document_occurrences),
         name_to_py=MappingProxyType(
             {canonical: py_name for py_name, canonical in py_to_name.items()}
         ),

@@ -39,13 +39,13 @@ from parallax.core.metamodel import (
     Cardinality,
     Column,
     DefiningRelationshipDeclaration,
-    DocumentShape,
     EntityIdentity,
     EntityMetadata,
     FacetKey,
     IndexIdentity,
     IndexMetadata,
     InheritanceMetadata,
+    MemberShape,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
@@ -99,7 +99,7 @@ class FakeNestedValueObject:
         self.nullable = nullable
         self.attributes = tuple(attributes)
         self.value_objects = tuple(value_objects)
-        self.document_shape = DocumentShape.of(self.attributes, self.value_objects)
+        self.document_shape = MemberShape.of(self.attributes, self.value_objects)
         self._attributes = {member.identity.name: member for member in self.attributes}
         self._value_objects = {member.identity.path[-1]: member for member in self.value_objects}
 
@@ -129,7 +129,7 @@ class FakeValueObject:
         self.nullable = nullable
         self.attributes = tuple(attributes)
         self.value_objects = tuple(value_objects)
-        self.document_shape = DocumentShape.of(self.attributes, self.value_objects)
+        self.document_shape = MemberShape.of(self.attributes, self.value_objects)
         self._attributes = {member.identity.name: member for member in self.attributes}
         self._value_objects = {member.identity.path[-1]: member for member in self.value_objects}
 

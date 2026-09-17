@@ -613,7 +613,7 @@ EntityLayoutView
   layout: TableLayout
   columns: immutable sequence<ColumnSlot>
   discriminator: DiscriminatorAssignment | absent
-  relationalDocumentShape: DocumentShape | absent
+  relationalDocumentShape: MemberShape | absent
 
 PositionColumn
   contributor: AttributeIdentity | ValueObjectIdentity

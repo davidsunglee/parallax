@@ -516,7 +516,7 @@ spellings do not cross this interface.
 ## Value Objects and indices
 
 ```text
-DocumentShape
+MemberShape
   members: immutable sequence<DocumentMember>
 
 DocumentMember =
@@ -526,7 +526,7 @@ DocumentMember =
   | Occurrence(name: MemberName,
                multiplicity: Multiplicity,
                nullable: boolean,
-               shape: DocumentShape)
+               shape: MemberShape)
 
 ValueObjectMetadata
   identity: ValueObjectIdentity                 # path length = 1
@@ -535,7 +535,7 @@ ValueObjectMetadata
   nullable: boolean
   attributes: immutable sequence<ValueObjectAttributeMetadata>
   value_objects: immutable sequence<NestedValueObjectMetadata>
-  document_shape: DocumentShape
+  document_shape: MemberShape
 
 NestedValueObjectMetadata
   identity: ValueObjectIdentity                 # path length >= 2
@@ -543,7 +543,7 @@ NestedValueObjectMetadata
   nullable: boolean
   attributes: immutable sequence<ValueObjectAttributeMetadata>
   value_objects: immutable sequence<NestedValueObjectMetadata>
-  document_shape: DocumentShape
+  document_shape: MemberShape
 
 ValueObjectAttributeMetadata
   identity: ValueObjectAttributeIdentity
@@ -556,7 +556,7 @@ IndexMetadata
   unique: boolean
 ```
 
-A `DocumentShape` is the ordered document form of accepted Metadata: canonical
+A `MemberShape` is the ordered document form of accepted Metadata: canonical
 member names, declared Neutral Types, multiplicity, and nullability, and nothing
 physical. Leaves precede occurrences, and every `Occurrence.shape` is the exact
 `document_shape` held by that nested occurrence's Metadata. The Metadata Compiler

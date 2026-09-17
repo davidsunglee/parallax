@@ -74,8 +74,8 @@ from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
-    DocumentShape,
     Leaf,
+    MemberShape,
     Occurrence,
     encode_leaf,
     entity_shape,
@@ -380,9 +380,7 @@ def _level_keys(layout: Layout, attach_key: str) -> list[object]:
     return [row[key] for row in rows]
 
 
-def _occurrence_value(
-    shape: DocumentShape, multiplicity: Multiplicity, raw: object
-) -> DocumentValue:
+def _occurrence_value(shape: MemberShape, multiplicity: Multiplicity, raw: object) -> DocumentValue:
     if multiplicity is Multiplicity.MANY:
         if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
             return cast("DocumentValue", raw)
@@ -608,7 +606,7 @@ def _discriminator(model: Metamodel, entity: EntityIdentity) -> tuple[str, str] 
     return None if assignment is None else (assignment.slot.column.name, assignment.value)
 
 
-def _leaf_types(shape: DocumentShape) -> set[str]:
+def _leaf_types(shape: MemberShape) -> set[str]:
     reached: set[str] = set()
     for member in shape.members:
         match member:

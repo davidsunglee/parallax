@@ -21,7 +21,7 @@ from pydantic._internal._model_construction import ModelMetaclass
 
 from parallax.core.document_codec import (
     NULL,
-    DocumentShape,
+    MemberShape,
     Occurrence,
     Presence,
     Present,
@@ -377,7 +377,7 @@ def _document(value: ValueObject) -> dict[str, object]:
     return encode_document(shape, _presences(value, shape))
 
 
-def _presences(value: ValueObject, shape: DocumentShape) -> dict[str, Presence]:
+def _presences(value: ValueObject, shape: MemberShape) -> dict[str, Presence]:
     """One presence per populated member, keyed by canonical name.
 
     Presence is asked of the backing one member at a time
