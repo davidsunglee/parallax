@@ -90,7 +90,7 @@ the `tests/unit/` root —
 `_authored_storage_support.py`, `_contention_support.py`,
 `_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_document_layout_support.py`, `_inheritance_family_support.py`,
-`_instance_state_support.py`, `_metamodel_support.py`,
+`_instance_state_support.py`, `_memory_gate_support.py`, `_metamodel_support.py`,
 `_pool_source_support.py`, `_predicate_acquisition_support.py`,
 `_second_dialect.py`, `_snapshot_materialization_support.py`,
 `_source_inventory_support.py`, `_stream_page_support.py`,
@@ -121,6 +121,18 @@ tools under `tools/` reach them as `tests.unit.memory_instruments`,
 `tests.unit._predicate_acquisition_support`, by putting the workspace root on
 `sys.path` themselves. Each refuses any module that did not resolve to the file
 it named.
+
+The memory gates over those same windows — `spec/memory-gates.yaml`, loaded
+through `parallax.conformance.budget.MemoryGates` — are graded by two cost
+suites beside the reading children's own: `tools/test_write_lowering_reading_gates.py`
+reads every keyed-write, predicate-acquisition, and model-preparation case
+through `write_lowering_reading.measure`, and
+`tools/test_snapshot_delivery_reading_gates.py` reads every geometry read and
+cold plan compilation through `snapshot_delivery_reading`'s readings; each
+also seeds the regressions its gates are proved to detect and pins the one
+they cannot. `_memory_gate_support.py` names which item owns which gate, and
+`test_scheduling_partition.py` grades that table against the class as a
+session collects it. Timing is asserted by neither suite.
 
 ## Fixtures
 

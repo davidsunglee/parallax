@@ -27,6 +27,7 @@ import yaml
 from check_database_access import ENTRY_POINT_FIXTURE
 from tests._support import cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
+from tests.unit import _memory_gate_support as gate_support
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
@@ -311,6 +312,23 @@ def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
     completed = _malformed_shard_session(shard)
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--shard expects I/N" in completed.stderr
+
+
+# --------------------------------------------------------------------------
+# The memory gates the class owns
+# --------------------------------------------------------------------------
+def test_every_memory_gate_is_owned_by_one_collected_cost_item() -> None:
+    # A ceiling in `spec/memory-gates.yaml` blocks only through an item CI runs
+    # in the cost class. The ownership table names each gate's item by module
+    # and function, so ownership is graded here against the class as a real
+    # session collects it — never inferred from a report member's registration
+    # — and the table is a partition: every gate claimed, none twice.
+    (cost_class,) = _selections([("cost", WHOLE_CLASS)])
+    collected = set(cost_class)
+    for owner in gate_support.OWNERS:
+        assert owner.nodeid in collected, owner.nodeid
+        assert owner.gates(), owner.nodeid
+    assert gate_support.unowned_gates() == ()
 
 
 # --------------------------------------------------------------------------

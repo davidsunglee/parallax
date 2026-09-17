@@ -26,7 +26,7 @@ from cost_report import (
     verify,
 )
 from interpreter_matrix import authority_minor, supported_minors
-from parallax.conformance.budget import BudgetContract
+from parallax.conformance.budget import BudgetContract, MemoryGate, MemoryGates
 from parallax.conformance.cost_envelope import CostReportEnvelope, validate
 from snapshot_delivery_overhead import (
     ChildReading,
@@ -440,6 +440,70 @@ def test_an_unpublished_producing_commit_is_advisory_and_a_dirty_or_stale_one_fa
         "the write-lowering envelope's workload digest is stale",
         "the snapshot-delivery and write-lowering envelopes name different commits",
     ]
+
+
+def _reading_at(member: dict[str, Any], runtime: str, workload: str, cell: str) -> dict[str, Any]:
+    return next(
+        reading
+        for reading in member["readings"]
+        if (reading.get("runtime"), reading["workload"], reading["cell"])
+        == (runtime, workload, cell)
+    )
+
+
+def _push_past_gate(reading: dict[str, Any], gate: MemoryGate) -> None:
+    value = gate.max_bytes / (1_024 if gate.unit == "KiB" else 1) + 1
+    reading["value"] = value
+    reading["samples"] = [value] * len(reading["samples"])
+
+
+# The memory gate blocks in the cost class, where the same window is read again
+# in an interpreter of its own; the verifier states a reading past it beside
+# the other advisories and never fails for it, on whichever runtime read it.
+def test_a_reading_past_its_memory_gate_is_advisory_and_never_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    contract = BudgetContract.load()
+    gates = MemoryGates.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    assert verify(document) == []
+    assert advisories(document) == []
+    write_gate = gates.gate("write-lowering", "txtime.opening.columns.typed", "retainedBytes")
+    read_gate = gates.gate("snapshot-delivery", "read-depth-1", "document.retainedKiB")
+    other_runtime = next(
+        minor for minor in supported_minors() if minor != authority_minor(contract.authority)
+    )
+    _push_past_gate(
+        _reading_at(_write_of(document), other_runtime, write_gate.workload, write_gate.cell),
+        write_gate,
+    )
+    _push_past_gate(
+        _reading_at(_snapshot_of(document), other_runtime, read_gate.workload, read_gate.cell),
+        read_gate,
+    )
+    assert verify(document) == []
+    assert advisories(document) == [
+        f"advisory: snapshot-delivery CPython {other_runtime} read-depth-1.document.retainedKiB "
+        f"is outside its memory gate ({read_gate.max_bytes + 1024} B over {read_gate.max_bytes} B; "
+        "the cost class gates it)",
+        f"advisory: write-lowering CPython {other_runtime} "
+        "txtime.opening.columns.typed.retainedBytes is outside its memory gate "
+        f"({write_gate.max_bytes + 1} B over {write_gate.max_bytes} B; the cost class gates it)",
+    ]
+    portfolio = tmp_path / "portfolio.json"
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
+    assert cost_report.main(["--verify", str(portfolio)]) == 0
+    printed = capsys.readouterr()
+    assert "is outside its memory gate" in printed.out
+    assert printed.err == ""
+    mismatched = _reading_at(_write_of(document), other_runtime, "model.prepared", "retainedBytes")
+    mismatched["unit"] = "KiB"
+    monkeypatch.setattr(cost_report, "validate_write_lowering_matrix", _no_validation)
+    assert advisories(document)[-1] == (
+        f"advisory: write-lowering CPython {other_runtime} model.prepared.retainedBytes is read "
+        "in KiB and gated in B"
+    )
 
 
 def test_is_published_asks_git_whether_the_commit_is_an_ancestor_of_head() -> None:
