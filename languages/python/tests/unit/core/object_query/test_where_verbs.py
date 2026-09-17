@@ -148,22 +148,16 @@ def test_a_nested_path_refusal_on_a_directly_built_expression_names_its_bare_ent
     assert caught.value.violations[0].location == EntityLocation(EntityIdentity(None, "Customer"))
 
 
-def test_set_on_a_top_level_value_object_serializes_to_its_document() -> None:
-    # `geo` stays unset and omitted; multiplicity-many `phones` uses its empty
-    # tuple default, serialized as the sole zero-element representation `[]`.
+def test_set_on_a_top_level_value_object_borrows_the_authored_value() -> None:
     address = vom.Address(street="1 Aurora Ave", city="Oslo")
     assignment = vom.Customer.address.set(address)
-    assert assignment.value == {"street": "1 Aurora Ave", "city": "Oslo", "phones": []}
+    assert assignment.value is address
 
 
-def test_set_on_a_many_value_object_member_serializes_to_a_document_list() -> None:
-    # The optional one `detail` stays omitted; required-many `details` defaults empty.
+def test_set_on_a_many_value_object_member_borrows_the_authored_tuple() -> None:
     tags = (sm.Tag(label="a"), sm.Tag(label="b"))
     assignment = sm.SnapOrderStatus.tags.set(tags)
-    assert assignment.value == [
-        {"label": "a", "details": []},
-        {"label": "b", "details": []},
-    ]
+    assert assignment.value is tags
 
 
 def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:

@@ -15,7 +15,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from parallax.core.base import retain_document_value
+from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
     AttributeMetadata,
     NestedValueObjectMetadata,
@@ -253,15 +253,29 @@ class PredecessorRow:
     def __post_init__(self) -> None:
         members = self.members
         if not isinstance(members, EntityStateRow):
-            object.__setattr__(self, "members", EntityStateRow(dict(members)))
-        if self.document is not None:
-            object.__setattr__(self, "document", retain_document_value(self.document))
+            owned = retain_document_value(members)
+            if not isinstance(owned, Mapping):  # pragma: no cover - mappings stay mappings
+                raise TypeError("predecessor members must be a mapping")
+            object.__setattr__(self, "members", EntityStateRow(cast("Mapping[str, object]", owned)))
+        object.__setattr__(self, "document", retain_document_value(self.document))
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")
 
     def member(self, name: str) -> object:
         """The observed value of one member, by its declared name."""
         return self.members[name]
+
+
+def adopt_predecessor_row(
+    members: dict[str, object], *, document: object | None = None
+) -> PredecessorRow:
+    """Adopt trusted final predecessor storage without another traversal."""
+    row = object.__new__(PredecessorRow)
+    object.__setattr__(row, "members", EntityStateRow(adopt_frozen_map(members)))
+    object.__setattr__(row, "document", retain_document_value(document))
+    if not row.members:
+        raise ValueError("a Predecessor Row carries the observed row's complete state")
+    return row
 
 
 @dataclass(frozen=True, slots=True)

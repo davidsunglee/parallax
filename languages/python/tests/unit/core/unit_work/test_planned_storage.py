@@ -77,6 +77,8 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.observe import adopt_predecessor_row
+from parallax.core.unit_work.planned import adopt_planned_row
 from parallax.core.unit_work.planner import (
     FamilyFacts,  # forbidden-plan-context regression only
 )
@@ -238,6 +240,20 @@ def test_predecessor_columns_reuse_an_owned_document_prefix_before_first_retenti
 
     assert predecessors.row(0).document is owned
     assert predecessors.row(1).document == {"title": "Grace"}
+
+
+def test_predecessor_row_adopts_already_owned_occurrence_values_by_identity() -> None:
+    address = FrozenMap({"city": "Oslo", "phones": ()})
+    predecessors = _predecessor_columns([{"id": 1, "address": address}], value_objects=("address",))
+
+    assert predecessors.row(0).member("address") is address
+
+
+def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
+    with pytest.raises(ValueError, match="complete state"):
+        adopt_predecessor_row({})
+    with pytest.raises(TypeError, match="final dict or mapping proxy"):
+        adopt_planned_row(cast("Any", FrozenMap({})), {})
 
 
 def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:
@@ -1095,10 +1111,10 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
                     )
 
 
-def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected() -> None:
-    # `_MaterializedTemporalSegment.assignment_row` retains the group's own
-    # authored overlay across every resolved row, so a caller reaching it
-    # through `plan.steps.segments` and mutating it in place must never
+def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() -> None:
+    # `_MaterializedTemporalSegment.assignments` retains the group's prepared
+    # Metadata-bearing assignments across every resolved row, so a caller reaching
+    # it through `plan.steps.segments` and mutating it in place must never
     # change what a subsequently retrieved step carries — a Write Plan is
     # immutable and its views are stable.
     rows = [
@@ -1150,7 +1166,7 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
     assert isinstance(before, PlannedInsert)
     segment = cast("Any", plan.steps.segments[0])
     with pytest.raises(TypeError):
-        cast("dict[str, object]", segment.assignment_row)["value"] = 777.0
+        cast("list[object]", segment.assignments)[0] = object()
     after = plan.steps[1]
     assert after == before
     (entry,) = cast("PlannedInsert", after).entries
@@ -1217,6 +1233,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
     assert isinstance(entry.origin, ChangedFrom)
     address_identity = next(iter(entry.row.value_objects))
     address = cast("Mapping[str, object]", entry.row.value_objects[address_identity])
+    assert address is group.mutation.managed_assignments[0].value
     geo = cast("Mapping[str, object]", address["geo"])
     phones = cast("Sequence[Mapping[str, object]]", address["phones"])
     predecessor_address = cast("Mapping[str, object]", entry.origin.predecessor.member("address"))

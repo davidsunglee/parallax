@@ -192,6 +192,13 @@ host-language value graph to a JSON serializer, which is what leaves a
 `decimal`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf with no defined
 storage form.
 
+Typed and serialized ingress use `m-document-codec`'s same authored-document
+interpreter. A typed frontend lends the live Value Object and its nested
+occurrences to that interpreter; it does not recursively render an intermediate
+document first. Serialized ingress supplies mapping access instead. Both paths
+therefore apply one containment walk, one required-member rule, one `many`
+normalization, and one immutable ownership boundary.
+
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
 whole column is null, not a document of nulls. A `nullable: false` `one`
 occurrence MUST be present at write time (`m-predicate` / the `rejected`

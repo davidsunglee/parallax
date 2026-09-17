@@ -46,7 +46,6 @@ from parallax.core.entity._expressions import (
     conjoin,
     judged_edit_violation,
     member_location,
-    serialize_member,
 )
 from parallax.core.entity._instance_state import (
     BackedModel,
@@ -369,7 +368,7 @@ def _edit_violations(
             continue
         violation = judged_edit_violation(
             member,
-            serialize_member(value),
+            value,
             owner=entity.canonical,
             location=member_location(member),
         )

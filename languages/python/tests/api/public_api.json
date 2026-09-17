@@ -412,8 +412,7 @@
     "sort_issues",
     "split_reference",
     "temporality_profile",
-    "value_object_metadata",
-    "vo_document_violation"
+    "value_object_metadata"
   ],
   "parallax.core.document_codec": [
     "DecodedMember",

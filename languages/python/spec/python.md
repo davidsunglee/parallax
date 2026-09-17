@@ -3905,6 +3905,12 @@ of shared edition identity.
   retained before sharing; recognized immutable untouched subtrees may be shared
   by identity. SQL lowering encodes managed occurrence values directly into this
   representation without per-element Presence maps or repeated child detaches.
+- **Authored write preparation.** Typed row derivation borrows live Value Object
+  instances and tuples. Typed and Wire ingress then supply different source and
+  leaf adapters to one private `m-document-codec` traversal, which writes directly
+  into `FrozenMap` / tuple output and records only sparse position-keyed failures.
+  Validation-only use performs the same traversal without constructing successful
+  output. No frontend renderer builds a preliminary recursive managed tree.
 - **Predecessor lifetime.** Ordinary reads consume freshly parsed,
   ownership-transferred dictionaries and lists without a freeze pass. Keyed and
   predicate-write observation establish recursive ownership exactly when a raw
@@ -4640,12 +4646,12 @@ These feature tests do not claim the deferred `benchmark` command or general
   from keeps the two as separate declaration-ordered sequences. Physical names
   never appear: the canonical-member-to-default-column rule stays authoritative,
   so `taxID` is emitted as `taxID` and its column `tax_i_d` is
-  `m-storage-layout`'s business. Every operation carries
-  **serialized** values, on both sides of the pair `authored_row` answers, so a
-  caller holding several rows of one value compares like with like. Uniformity moves no emitted bind: a primary key is
-  structurally an Attribute of a scalar type, which serialization passes through
-  by identity, so `identity_row`'s values are the ones the instance holds
-  whatever the rule says.
+  `m-storage-layout`'s business. Scalar values are borrowed unchanged. Value
+  Object values and tuples likewise remain in their live frontend carriers on
+  both sides of the pair `authored_row` answers; the shared authored-document
+  traversal prepares them once after the row reaches write ingress. A primary key
+  is structurally a scalar Attribute, so `identity_row`'s values are the ones the
+  instance holds.
 
   `authored_row` answers the identity plus every touched member at the value it
   now holds, beside those same members at the value the chain first recorded. It
@@ -5858,7 +5864,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
-| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
+| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-object-query`, `m-document-codec` | generated forbidden contracts |
 | Construction-input sentinels and the node handle (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._construction_input` | `parallax.core.entity._construction_input` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
@@ -5919,6 +5925,7 @@ parallax.core.entity._expressions --> parallax.core.predicate
 parallax.core.entity._expressions --> parallax.core.object_query
 parallax.core.entity._expressions --> parallax.core.base
 parallax.core.entity._expressions --> parallax.core.wire
+parallax.core.entity._expressions --> parallax.core.document_codec
 parallax.core.object_query._fluent --> parallax.core.base
 parallax.core.object_query._fluent --> parallax.core.metamodel
 parallax.core.object_query._fluent --> parallax.core.predicate
@@ -6221,8 +6228,11 @@ parallax.postgres --> parallax.core.dialect
   the rest of that package reaches. `parallax.core.entity._expressions` is the
   narrowing case within one package: query authoring reaches no model, so the
   values a developer composes must reach no model formation and no whole-model
-  semantic view, and the row is what proves it rather than the module docstring
-  alone. `parallax.core.entity._edit` is declared beside it as a child of the
+  semantic view. Its document-codec edge is restricted to validating one
+  retained member shape against a live authored Value Object; the codec neither
+  supplies a model view nor resolves an Entity position. The row is what proves
+  those boundaries rather than the module docstring alone.
+  `parallax.core.entity._edit` is declared beside it as a child of the
   Entity frontend, but its behavioral `m-edit` row and module-DAG edge supply its
   grants, so it has no support row or `support-scope-graph` edge. All are
   generated as ordinary contract sources, and none is a new supported import

@@ -201,7 +201,7 @@ from parallax.core.unit_work.strategy import (
     VersionArithmetic,
     capture_subject_identity,
 )
-from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes
+from parallax.core.unit_work.temporal import TemporalAxes
 from parallax.core.unit_work.uow import (
     Concurrency,
     EscapedTransactionError,
@@ -342,7 +342,6 @@ __all__ = [
     "StaleWriteError",
     "StepSegment",
     "SubjectIdentity",
-    "SuccessorRow",
     "SuccessorState",
     "Superseded",
     "SystemClock",

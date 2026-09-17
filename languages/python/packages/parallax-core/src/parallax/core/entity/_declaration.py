@@ -148,9 +148,8 @@ is never a Domain Model candidate.
 FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
 """The prefix carried by the framework's own private bindings, which no
 declaration of any kind may author: the class markers the engine puts on a
-declared class, the private slots it puts on an instance, and the
-``__parallax_document__`` and ``__parallax_managed_document__`` renderers every
-Value Object serializes itself through.
+declared class, the private slots it puts on an instance, and the document and
+authoring capabilities every Value Object exposes to framework internals.
 
 The framework's public bindings sit outside this prefix, and each is reserved by
 the rule that owns it rather than by this one: the copy verb ``edit``, the pickle
@@ -1859,8 +1858,8 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
             f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own private bindings — "
-            "its class markers, its instance slots, and the renderer a Value Object serializes "
-            "itself through — which a declaration may not bind"
+            "its class markers, its instance slots, and the document and authoring capabilities "
+            "a Value Object exposes to framework internals — which a declaration may not bind"
         )
     if py_name.startswith("model_"):
         return "the `model_*` namespace is reserved by Pydantic"

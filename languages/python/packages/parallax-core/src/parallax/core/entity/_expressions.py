@@ -69,7 +69,7 @@ so the member's existence and type are runtime questions too.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, cast
 
 from parallax.core.base import (
     ManagedValue,
@@ -77,6 +77,10 @@ from parallax.core.base import (
     String,
     coerce_neutral_input,
     matches_neutral_type,
+)
+from parallax.core.document_codec._authoring import (
+    BORROWED_SOURCE_ACCESS,
+    validate_member_authoring,
 )
 from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
@@ -148,7 +152,6 @@ __all__ = [
     "judged_edit_violation",
     "member_canonical_name",
     "member_location",
-    "serialize_member",
     "snake_to_camel",
 ]
 
@@ -213,18 +216,6 @@ def snake_to_camel(name: str) -> str:
     """
     head, *tail = name.split("_")
     return head + "".join(part[:1].upper() + part[1:] for part in tail)
-
-
-@runtime_checkable
-class _Documentable(Protocol):
-    """A value that renders itself as a managed nested document.
-
-    Value Objects satisfy this. Naming the capability structurally rather than
-    importing the frontend keeps this module free of an edge back into the
-    declaration cluster.
-    """
-
-    def __parallax_managed_document__(self) -> dict[str, object]: ...
 
 
 _BOOL_HINT = (
@@ -678,22 +669,20 @@ class AttributeExpr[E, T]:
 
         Only a top-level scalar attribute or Value Object member is assignable: a
         Value Object always binds its whole document, so there is no sparse write
-        below its boundary. A Value Object value (or a tuple of them) is rendered
-        to its canonical document here, the same translation every other write
-        input receives, and the rendered value is what the assignment rules then
-        see — so the typed path and the serialized path judge one shape.
+        below its boundary. A Value Object value stays in its live frontend
+        carrier until the shared authoring traversal prepares it, so typed and
+        serialized writes judge one structural shape without an intermediate tree.
 
         The value parameter is the member's own declared type, unlike a
         comparison's: an assignment's value genuinely IS a member value rather
-        than a wire literal. The rendered document a Value Object member equally
-        accepts is what that narrowing costs — a spelling the rules still judge
-        and the parameter no longer admits.
+        than a wire literal. A raw document a Value Object member equally accepts
+        is what that narrowing costs — a spelling the rules still judge and the
+        parameter no longer admits.
         """
         if self._path:
             raise EditError([self._nested_path_violation()]) from None
-        serialized = serialize_member(value)
-        self._reject_unassignable(serialized)
-        return AttributeAssignment(attr=self.ref, value=serialized)
+        self._reject_unassignable(value)
+        return AttributeAssignment(attr=self.ref, value=value)
 
     def _nested_path_violation(self) -> EditViolation:
         """The refusal of an assignment below a Value Object boundary.
@@ -808,7 +797,18 @@ def judged_edit_violation(
     belongs to no model position at all.
     """
     try:
-        judge_assignment(member, value)
+        known_vo_violation = (
+            validate_member_authoring(
+                member.definition,
+                value,
+                source_access=BORROWED_SOURCE_ACCESS,
+                normalize_leaf=_typed_authoring_leaf,
+                path=owner,
+            )
+            if not isinstance(member, AttributeMetadata) and value is not None
+            else None
+        )
+        judge_assignment(member, value, known_vo_violation=known_vo_violation)
     except WriteAssignmentError as error:
         return EditViolation(
             code=EDIT_CODE_BY_RULE[error.rule],
@@ -819,17 +819,11 @@ def judged_edit_violation(
     return None
 
 
-def serialize_member(value: object) -> object:
-    """Render Value Objects as managed typed-write documents."""
-    if isinstance(value, _Documentable):
-        return value.__parallax_managed_document__()
-    if isinstance(value, tuple):
-        items = cast("tuple[object, ...]", value)
-        return [
-            item.__parallax_managed_document__() if isinstance(item, _Documentable) else item
-            for item in items
-        ]
-    return value
+def _typed_authoring_leaf(
+    neutral_type: NeutralType, value: object, _path: str
+) -> tuple[object, bool]:
+    managed = coerce_neutral_input(value, neutral_type)
+    return managed, matches_neutral_type(managed, neutral_type)
 
 
 class ElementAttributeExpr[V, T]:

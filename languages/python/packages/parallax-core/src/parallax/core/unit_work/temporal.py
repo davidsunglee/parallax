@@ -25,16 +25,19 @@ deriving it identically.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core.base import INFINITY_LITERAL
+from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
 from parallax.core.unit_work.observe import PredecessorRow
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
+    InsertEntry,
     InsertOrigin,
+    PlannedValue,
+    adopt_planned_row,
 )
 from parallax.core.unit_work.strategy import (
     AuthoredFrom,
@@ -52,7 +55,6 @@ from parallax.core.unit_work.strategy import (
 
 __all__ = [
     "ResolvedSuccessor",
-    "SuccessorRow",
     "TemporalAxes",
     "bind_successor",
     "resolve_successors",
@@ -61,30 +63,16 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class TemporalAxes:
-    """The Attribute names one family's As-Of Axes bound their intervals with.
+    """The Attribute identities one family's As-Of Axes bind intervals with.
 
-    Valid-Time names are absent on a Transaction-Time-Only family, which is the
+    Valid-Time identities are absent on a Transaction-Time-Only family, which is the
     same condition that leaves a successor without a Valid-Time window.
     """
 
-    transaction_start: str
-    transaction_end: str
-    valid_start: str | None = None
-    valid_end: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SuccessorRow:
-    """One Milestone Successor resolved into its concrete row and Insert Origin.
-
-    ``members`` is Attribute-named and complete — every carried member, every
-    authored change, and every axis bound the mutation stamps — so it is both
-    the row a finalized insert writes and the predecessor a later mutation
-    observes.
-    """
-
-    origin: InsertOrigin
-    members: Mapping[str, object]
+    transaction_start: AttributeIdentity
+    transaction_end: AttributeIdentity
+    valid_start: AttributeIdentity | None = None
+    valid_end: AttributeIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,24 +161,26 @@ def bind_successor(
     axes: TemporalAxes,
     *,
     transaction_instant: object,
-    authored: Mapping[str, object],
+    attributes: dict[AttributeIdentity, PlannedValue],
+    value_objects: dict[ValueObjectIdentity, object],
     predecessor: PredecessorRow | None,
-) -> SuccessorRow:
-    """One already-resolved successor, bound against one row's own
-    predecessor and authored values.
+) -> InsertEntry:
+    """One already-resolved successor built directly into its final insert entry.
 
     Every opened row carries the fresh Transaction-Time interval
     ``[transaction_instant, infinity)``: a successor is always current when it
     is written, whatever Valid-Time window it covers.
     """
-    members = dict(_represented(successor.state, authored, predecessor))
     if successor.window is not None:
         assert axes.valid_start is not None and axes.valid_end is not None  # a windowed family
-        members[axes.valid_start] = _bind_bound(successor.window.start, axes, predecessor)
-        members[axes.valid_end] = _bind_bound(successor.window.end, axes, predecessor)
-    members[axes.transaction_start] = transaction_instant
-    members[axes.transaction_end] = INFINITY_LITERAL
-    return SuccessorRow(origin=_origin(successor.state, predecessor), members=members)
+        attributes[axes.valid_start] = _bind_bound(successor.window.start, axes, predecessor)
+        attributes[axes.valid_end] = _bind_bound(successor.window.end, axes, predecessor)
+    attributes[axes.transaction_start] = transaction_instant
+    attributes[axes.transaction_end] = INFINITY_LITERAL
+    return InsertEntry(
+        row=adopt_planned_row(attributes, value_objects),
+        origin=_origin(successor.state, predecessor),
+    )
 
 
 def _origin(state: SuccessorState, predecessor: PredecessorRow | None) -> InsertOrigin:
@@ -205,26 +195,6 @@ def _origin(state: SuccessorState, predecessor: PredecessorRow | None) -> Insert
             return ChangedFrom(predecessor=predecessor)
 
 
-def _represented(
-    state: SuccessorState, authored: Mapping[str, object], predecessor: PredecessorRow | None
-) -> Mapping[str, object]:
-    """The successor's represented state before its own axis bounds are stamped.
-
-    A changed successor overlays the authored change set on the predecessor,
-    which is why a sparse authored row still opens a complete milestone: every
-    member it does not name carries forward unchanged.
-    """
-    match state:
-        case AuthoredState():
-            return authored
-        case CarriedState():
-            assert predecessor is not None  # a carried successor observed one
-            return predecessor.members
-        case ChangedState():
-            assert predecessor is not None  # a changed successor observed one
-            return {**predecessor.members, **authored}
-
-
 def _bind_bound(
     resolved: ResolvedBound, axes: TemporalAxes, predecessor: PredecessorRow | None
 ) -> object:
@@ -233,7 +203,7 @@ def _bind_bound(
             return value
         case PredecessorStart():
             assert predecessor is not None and axes.valid_start is not None
-            return predecessor.member(axes.valid_start)
+            return predecessor.member(axes.valid_start.name)
         case PredecessorEnd():
             assert predecessor is not None and axes.valid_end is not None
-            return predecessor.member(axes.valid_end)
+            return predecessor.member(axes.valid_end.name)

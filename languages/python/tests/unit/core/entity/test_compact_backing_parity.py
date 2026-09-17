@@ -347,12 +347,10 @@ def test_a_full_row_spells_a_member_populated_as_null(build: Builder) -> None:
     }
 
 
-def test_a_full_row_renders_an_occurrence_as_its_document(build: Builder) -> None:
-    assert _codec().full_row(build(Depot, id=1, label="north", site=_site()))["site"] == {
-        "city": "Springfield",
-        "point": {"lat": 1.0},
-        "tags": [],
-    }
+def test_a_full_row_borrows_an_authored_occurrence(build: Builder) -> None:
+    site = _site()
+
+    assert _codec().full_row(build(Depot, id=1, label="north", site=site))["site"] is site
 
 
 def test_an_identity_row_reads_the_primary_key_of_either_backing(build: Builder) -> None:

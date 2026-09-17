@@ -15,6 +15,7 @@ written.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
@@ -42,7 +43,7 @@ from parallax.core.entity._edit import (
     use_edit,
 )
 from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
-from parallax.core.entity._expressions import judged_edit_violation, serialize_member
+from parallax.core.entity._expressions import judged_edit_violation
 from parallax.core.entity._instance_state import (
     BackedModel,
     is_present,
@@ -209,9 +210,20 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         """
         return _document(self)
 
-    def __parallax_managed_document__(self) -> dict[str, object]:
-        """This value as a managed typed-write document."""
-        return _managed_document(self)
+    def __parallax_authoring_names__(self) -> Iterable[str]:
+        """Canonical names this value authored, borrowed for write preparation."""
+        declared = shape_of(type(self))
+        bits = plan_of(type(self)).bits
+        return (
+            canonical
+            for py_name, canonical in declared.py_to_name.items()
+            if py_name in declared.many_py or is_present(self, bits[py_name])
+        )
+
+    def __parallax_authoring_member__(self, name: str, /) -> object:
+        """One authored member in its live frontend carrier."""
+        declared = shape_of(type(self))
+        return getattr(self, declared.name_to_py[name])
 
 
 def _use_edit(cls: type, door: str) -> EditError:
@@ -246,9 +258,9 @@ def _edit_violations(
     violation locates at the model root. Locating at a member would have to name
     an occurrence, and this door reaches none.
 
-    A nested occurrence's value is rendered to its managed document before it is
-    judged, exactly as ``Entity.edit`` renders one, so both surfaces judge one
-    shape; the edit itself still merges the caller's own live value.
+    A nested occurrence stays in its live carrier while the shared authoring
+    traversal judges it, so this surface and ``Entity.edit`` interpret one shape;
+    the edit itself still merges the caller's own live value.
     """
     members = _member_metadata(cls, shape)
     violations: list[EditViolation] = []
@@ -259,9 +271,7 @@ def _edit_violations(
                 unresolved_member_violation(py_name, owner=cls.__name__, location=MODEL_ROOT)
             )
             continue
-        violation = judged_edit_violation(
-            member, serialize_member(value), owner=cls.__name__, location=MODEL_ROOT
-        )
+        violation = judged_edit_violation(member, value, owner=cls.__name__, location=MODEL_ROOT)
         if violation is not None:
             violations.append(violation)
     return tuple(violations)
@@ -347,29 +357,6 @@ def to_document(value: ValueObject | None) -> Mapping[str, object] | None:
     if value is None:
         return None
     return _document(value)
-
-
-def _managed_document(value: ValueObject) -> dict[str, object]:
-    declared = shape_of(type(value))
-    shape = declared.document_shape
-    bits = plan_of(type(value)).bits
-    document: dict[str, object] = {}
-    for py_name, canonical in declared.py_to_name.items():
-        if py_name not in declared.many_py and not is_present(value, bits[py_name]):
-            continue
-        raw = getattr(value, py_name)
-        member = shape.member(canonical)
-        if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
-            document[canonical] = [
-                _managed_document(element) for element in cast("tuple[ValueObject, ...]", raw)
-            ]
-        elif raw is None:
-            document[canonical] = None
-        elif isinstance(member, Occurrence):
-            document[canonical] = _managed_document(cast("ValueObject", raw))
-        else:
-            document[canonical] = raw
-    return document
 
 
 def _document(value: ValueObject) -> Mapping[str, object]:

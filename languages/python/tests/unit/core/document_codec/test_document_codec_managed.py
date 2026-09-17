@@ -13,10 +13,24 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
 
-from parallax.core.base import BOOLEAN, BYTES, DATE, STRING, Decimal
+import pytest
+
+import parallax.core.document_codec._authoring as authoring
+from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    STRING,
+    Decimal,
+    FrozenMap,
+    NeutralType,
+    coerce_neutral_input,
+    matches_neutral_type,
+    retain_document_value,
+)
 from parallax.core.document_codec import (
     EffectiveChangeSet,
     Leaf,
@@ -24,6 +38,14 @@ from parallax.core.document_codec import (
     Occurrence,
     canonical_managed_document,
     classify_effective_change,
+)
+from parallax.core.document_codec._authoring import (
+    BORROWED_SOURCE_ACCESS,
+    MAPPING_SOURCE_ACCESS,
+    prepare_authoring,
+    prepare_member_authoring,
+    validate_authoring,
+    validate_member_authoring,
 )
 from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import Multiplicity
@@ -48,6 +70,181 @@ _SHAPE = MemberShape(
         Occurrence("entries", Multiplicity.MANY, False, _ENTRY),
     )
 )
+
+
+def _normalize(neutral_type: NeutralType, value: object, _path: str) -> tuple[object, bool]:
+    managed = coerce_neutral_input(value, neutral_type)
+    return retain_document_value(managed), matches_neutral_type(managed, neutral_type)
+
+
+class _Borrowed:
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self.values = values
+        self.name_reads = 0
+
+    def __parallax_authoring_names__(self) -> Iterable[str]:
+        self.name_reads += 1
+        return self.values.keys()
+
+    def __parallax_authoring_member__(self, name: str, /) -> object:
+        return self.values[name]
+
+
+def test_authoring_prepares_borrowed_and_mapping_sources_into_one_owned_tree() -> None:
+    origin = _Borrowed({"city": "Oslo", "geo": None})
+    entries = [{"kind": "home", "price": decimal.Decimal("1.20")}]
+
+    prepared = prepare_authoring(
+        _SHAPE,
+        {"flag": True, "origin": origin, "entries": entries},
+        source_access=BORROWED_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+
+    assert prepared.failures == {}
+    value = prepared.value
+    assert type(cast("object", value)) is FrozenMap
+    assert value == {
+        "flag": True,
+        "origin": {"city": "Oslo", "geo": None, "zones": ()},
+        "entries": ({"kind": "home", "price": decimal.Decimal("1.20")},),
+    }
+    assert origin.name_reads == 1
+    entries[0]["kind"] = "changed"
+    assert cast("Sequence[Mapping[str, object]]", value["entries"])[0]["kind"] == "home"
+
+
+def test_validation_only_reports_sparse_canonical_failures_without_output_construction() -> None:
+    failures = validate_authoring(
+        _SHAPE,
+        {
+            "flag": "not-bool",
+            "origin": {"city": "Oslo", "zones": None},
+            "entries": [],
+        },
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+
+    assert tuple(failures) == (0, 4)
+    assert failures[0].reason == "type-mismatch"
+    assert failures[4].reason == "value-object-missing"
+    assert failures[4].path == "zones"
+
+
+def test_validation_only_never_adopts_a_success_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_adoption(_values: object) -> object:
+        raise AssertionError("validation-only traversal constructed output")
+
+    monkeypatch.setattr(authoring, "adopt_frozen_map", reject_adoption)
+
+    failures = validate_authoring(
+        _SHAPE,
+        {"flag": True, "origin": {"city": "Oslo"}, "entries": []},
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+
+    assert failures == {}
+
+
+def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None:
+    flag = cast("Leaf", _SHAPE.members[0])
+    marker = {"computed": "server"}
+
+    assert (
+        prepare_member_authoring(
+            flag,
+            marker,
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize,
+            allow_marker=True,
+        ).value
+        == marker
+    )
+    assert (
+        validate_member_authoring(
+            flag,
+            None,
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize,
+        )
+        is None
+    )
+    assert (
+        validate_member_authoring(
+            flag,
+            marker,
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize,
+            allow_marker=True,
+        )
+        is None
+    )
+    assert (
+        validate_member_authoring(
+            flag,
+            True,
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize,
+        )
+        is None
+    )
+    failure = validate_member_authoring(
+        flag,
+        "not-boolean",
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+    assert failure is not None
+    assert failure.reason == "type-mismatch"
+
+
+def test_preparation_rejects_a_root_without_named_member_access() -> None:
+    with pytest.raises(TypeError, match="must expose named members"):
+        prepare_authoring(
+            _SHAPE,
+            object(),
+            source_access=MAPPING_SOURCE_ACCESS,
+            normalize_leaf=_normalize,
+        )
+
+
+def test_preparation_records_root_leaf_and_explicit_nested_null_failures() -> None:
+    prepared = prepare_authoring(
+        _SHAPE,
+        {
+            "flag": "not-boolean",
+            "origin": {"city": "Oslo"},
+            "entries": [],
+        },
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+    required_child = MemberShape(members=(Leaf("required", STRING, False),))
+    nested = prepare_authoring(
+        MemberShape(members=(Occurrence("child", Multiplicity.ONE, False, required_child),)),
+        {"child": {"required": None}},
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+
+    assert prepared.failures[0].reason == "type-mismatch"
+    assert nested.failures[0].path == "required"
+
+
+def test_authoring_preserves_explicit_null_many_until_policy_rejects_it() -> None:
+    prepared = prepare_authoring(
+        _SHAPE,
+        {"entries": None},
+        source_access=MAPPING_SOURCE_ACCESS,
+        normalize_leaf=_normalize,
+    )
+
+    assert prepared.value["entries"] is None
+    assert prepared.failures == {}
 
 
 def _classify(authored: dict[str, object], originals: dict[str, object]) -> EffectiveChangeSet:

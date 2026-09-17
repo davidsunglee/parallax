@@ -27,7 +27,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from psycopg import postgres
 from psycopg.abc import Buffer
@@ -45,6 +45,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.base import INFINITY as OPEN_BOUND
+from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
@@ -252,13 +253,23 @@ def _value(cls: type[Entity], key: int, label: str) -> Entity:
     )
 
 
+def _prepared_row(value: Entity) -> Mapping[str, object]:
+    authored = _CODEC.full_row(value)
+    prepared = prepare_typed_write(
+        KeyedWrite("insert", type(value).identity.name, (authored,)), CATALOG.meta
+    )
+    assert isinstance(prepared, PreparedKeyedWrite)
+    (row,) = prepared.rows
+    return row
+
+
 def _observation(
     value: Entity,
     *,
     layout: Layout,
     document_members: Sequence[str] = _CATEGORICAL_DOCUMENT_MEMBERS,
 ) -> TemporalObservation:
-    row = _CODEC.full_row(value)
+    row = _prepared_row(value)
     members: dict[str, object] = {**row, "txStart": TX_START, "txEnd": OPEN_BOUND}
     if isinstance(value, Bitemporal):
         members.update(validStart=VALID_START, validEnd=OPEN_BOUND)
@@ -267,7 +278,10 @@ def _observation(
 
 
 def _wire_rows(values: Sequence[Entity]) -> tuple[Mapping[str, object], ...]:
-    return tuple(_CODEC.full_row(value) for value in values)
+    return tuple(
+        cast("Mapping[str, object]", detach_json_container(_prepared_row(value)))
+        for value in values
+    )
 
 
 def _case(

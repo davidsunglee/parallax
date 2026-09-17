@@ -542,6 +542,29 @@ retained under `m-core`'s recursive ownership contract once. A successor with no
 document changes reuses that exact owned document; a changed successor shallowly
 constructs one final root and shares untouched owned subtrees.
 
+## Authored managed document preparation
+
+The codec owns the one structural traversal that turns an authored document into
+managed state. The traversal takes a `MemberShape`, a source-access capability,
+and a leaf normalizer. Mapping-backed Wire input and borrowed language-frontend
+values differ only in those supplied operations: occurrence recursion, required
+nested members, `many` normalization, canonical member order, immutable output,
+and structural finding paths are one implementation.
+
+Preparation writes successful output directly into the recursively owned
+`FrozenMap` / tuple representation. It performs no preliminary recursive render
+and no later deep-freeze pass. Already-owned leaves and subtrees are retained by
+identity; mutable input containers are detached once at the boundary. Root
+computed markers are admitted only when the resolved top-level Attribute role
+allows them and are never interpreted inside an occurrence.
+
+The same traversal has a validation-only mode. That mode walks and normalizes the
+same source under the same shape but constructs no success-sized document tree.
+Its evidence is sparse: only failed top-level positions are retained, keyed by
+the canonical `MemberShape` position; a nested failure carries its relative path
+inside that position. Assignment judgement and row validation consume this
+evidence and MUST NOT recursively interpret the authored document again.
+
 ## Managed documents and the effective change set
 
 A **managed document** is one whose leaves are already the host carriers of their
@@ -696,7 +719,8 @@ neither outcome changes this shape-aware verdict.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`. It also asks here
   whether an assignment changes anything — `classifyEffectiveChange` — and
-  canonicalizes the documents of the keyed rows it prepares here.
+  prepares Typed and Wire authored documents through the one structural traversal
+  above before buffering them.
 - Read materialization obtains `LocatedMemberInput` from the direct Structured
   Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
   either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`

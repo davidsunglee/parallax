@@ -189,14 +189,7 @@ class PlannedRow:
     def __post_init__(self) -> None:
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
         object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
-        if not self.attributes and not self.value_objects:
-            raise ValueError("a Planned Row carries at least one member")
-        for identity, value in self.attributes.items():
-            if isinstance(value, SelfIncrement):
-                raise ValueError(
-                    f"{identity.name}: the registry advance is computed from the stored row "
-                    "it revises, so it is a Planned Assignment and never a Planned Row cell"
-                )
+        _validate_planned_row(self.attributes, self.value_objects)
 
     @property
     def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
@@ -289,26 +282,81 @@ class PlannedAssignments:
     def __post_init__(self) -> None:
         object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
         object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
-        if not self.attributes and not self.value_objects:
-            raise ValueError("Planned Assignments name at least one member to write")
-        for identity, value in self.attributes.items():
-            if isinstance(value, MaxPlusOne):
-                raise ValueError(
-                    f"{identity.name}: the `max` allocation folds into the row an insert "
-                    "opens, so it is a Planned Row cell and never a Planned Assignment"
-                )
         object.__setattr__(
             self,
             "shape",
-            AssignmentShape(
-                attributes=tuple(self.attributes), value_objects=tuple(self.value_objects)
-            ),
+            _planned_assignment_shape(self.attributes, self.value_objects),
         )
 
     @property
     def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
         """Every member identity this step assigns, scalar and Value Object alike."""
         return frozenset(self.attributes) | frozenset(self.value_objects)
+
+
+def adopt_planned_row(
+    attributes: Mapping[AttributeIdentity, PlannedValue],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> PlannedRow:
+    """Adopt trusted final row storage without copying its shallow maps."""
+    row = object.__new__(PlannedRow)
+    object.__setattr__(row, "attributes", _adopt_mapping(attributes))
+    object.__setattr__(row, "value_objects", _adopt_mapping(value_objects))
+    _validate_planned_row(row.attributes, row.value_objects)
+    return row
+
+
+def adopt_planned_assignments(
+    attributes: Mapping[AttributeIdentity, PlannedValue],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> PlannedAssignments:
+    """Adopt trusted final assignment storage without copying its shallow maps."""
+    assignments = object.__new__(PlannedAssignments)
+    object.__setattr__(assignments, "attributes", _adopt_mapping(attributes))
+    object.__setattr__(assignments, "value_objects", _adopt_mapping(value_objects))
+    object.__setattr__(
+        assignments,
+        "shape",
+        _planned_assignment_shape(assignments.attributes, assignments.value_objects),
+    )
+    return assignments
+
+
+def _validate_planned_row(
+    attributes: Mapping[AttributeIdentity, PlannedValue],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> None:
+    if not attributes and not value_objects:
+        raise ValueError("a Planned Row carries at least one member")
+    for identity, value in attributes.items():
+        if isinstance(value, SelfIncrement):
+            raise ValueError(
+                f"{identity.name}: the registry advance is computed from the stored row "
+                "it revises, so it is a Planned Assignment and never a Planned Row cell"
+            )
+
+
+def _planned_assignment_shape(
+    attributes: Mapping[AttributeIdentity, PlannedValue],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> AssignmentShape:
+    if not attributes and not value_objects:
+        raise ValueError("Planned Assignments name at least one member to write")
+    for identity, value in attributes.items():
+        if isinstance(value, MaxPlusOne):
+            raise ValueError(
+                f"{identity.name}: the `max` allocation folds into the row an insert "
+                "opens, so it is a Planned Row cell and never a Planned Assignment"
+            )
+    return AssignmentShape(attributes=tuple(attributes), value_objects=tuple(value_objects))
+
+
+def _adopt_mapping[K, V](values: Mapping[K, V]) -> Mapping[K, V]:
+    if isinstance(values, MappingProxyType):
+        return values
+    if not isinstance(values, dict):
+        raise TypeError("trusted planned storage must be a final dict or mapping proxy")
+    return MappingProxyType(values)
 
 
 @dataclass(frozen=True, slots=True)

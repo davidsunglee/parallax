@@ -750,7 +750,6 @@ forbidden_modules = [
     "parallax.core.deep_fetch",
     "parallax.core.diagnostics",
     "parallax.core.dialect",
-    "parallax.core.document_codec",
     "parallax.core.execution_lifecycle",
     "parallax.core.execution_lifecycle.testing",
     "parallax.core.navigate",

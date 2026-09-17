@@ -175,7 +175,7 @@ from parallax.core.metamodel._values import (
     designate_framework_owned,
     inheritance_parent,
 )
-from parallax.core.metamodel._vo_document import VoDocumentViolation, vo_document_violation
+from parallax.core.metamodel._vo_document import VoDocumentViolation
 
 __all__ = [
     "APPLICATION_ASSIGNED",
@@ -318,5 +318,4 @@ __all__ = [
     "split_reference",
     "temporality_profile",
     "value_object_metadata",
-    "vo_document_violation",
 ]
