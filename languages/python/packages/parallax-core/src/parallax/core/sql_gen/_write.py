@@ -366,9 +366,7 @@ def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
     exactly as it does for a whole-document cell one clause family over.
     """
     return tuple(
-        JsonDocument(cast("object", bind))
-        if isinstance(bind, (dict, list, FrozenMap, tuple))
-        else bind
+        JsonDocument(bind) if type(bind) in (dict, list, FrozenMap, tuple) else bind
         for bind in binds
     )
 

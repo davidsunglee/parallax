@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+from collections.abc import Iterator
 from types import MappingProxyType
 from typing import cast
 
 import pytest
 
 from parallax.core import base
+
+
+class _MutableTuple(tuple[object, ...]):
+    items: list[object]
+
+    def __new__(cls, values: tuple[object, ...]) -> _MutableTuple:
+        value = super().__new__(cls, values)
+        value.items = list(values)
+        return value
+
+    def __iter__(self) -> Iterator[object]:
+        return iter(self.items)
 
 
 def test_neutral_type_set_matches_m_core() -> None:
@@ -78,6 +91,12 @@ def test_document_values_are_finite_portable_json_trees() -> None:
     assert not base.is_document_value(object())
 
 
+def test_document_membership_rejects_container_subclasses() -> None:
+    assert not base.is_document_value(type("DictSubclass", (dict,), {})({"value": 1}))
+    assert not base.is_document_value(type("ListSubclass", (list,), {})([1]))
+    assert not base.is_document_value(_MutableTuple((1,)))
+
+
 def test_document_retention_owns_mutable_descendants_and_reuses_safe_subtrees() -> None:
     safe = base.FrozenMap({"city": "Oslo"})
     nested = {"safe": safe, "items": ({"name": "Ada"},)}
@@ -92,6 +111,16 @@ def test_document_retention_owns_mutable_descendants_and_reuses_safe_subtrees() 
         cast("dict[str, object]", retained)["safe"] = {}
     with pytest.raises(TypeError):
         cast("dict[str, object]", cast("tuple[object, ...]", retained["items"])[0])["name"] = "Bo"
+
+
+def test_document_retention_copies_a_tuple_subclass_even_when_its_descendants_are_safe() -> None:
+    source = _MutableTuple((base.FrozenMap({"city": "Oslo"}),))
+
+    retained = base.retain_document_value(source)
+    source.items[0] = base.FrozenMap({"city": "Bergen"})
+
+    assert type(retained) is tuple
+    assert retained == ({"city": "Oslo"},)
 
 
 def test_a_proxy_is_retained_as_owned_storage_not_trusted_by_its_wrapper() -> None:
@@ -123,6 +152,14 @@ def test_frozen_map_is_the_exact_owned_mapping_type() -> None:
 def test_frozen_map_compares_unequal_to_a_non_mapping_without_recursing() -> None:
     assert base.FrozenMap({"city": "Oslo"}) != object()
     assert base.FrozenMap({"items": ()}) != {"items": object()}
+
+
+def test_frozen_map_does_not_execute_arbitrary_mapping_equality() -> None:
+    class MappingSubclass(dict[str, object]):
+        def items(self):
+            raise AssertionError("arbitrary mapping behavior was executed")
+
+    assert base.FrozenMap({"city": "Oslo"}) != MappingSubclass(city="Oslo")
 
 
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:

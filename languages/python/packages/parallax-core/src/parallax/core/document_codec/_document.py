@@ -156,17 +156,17 @@ type RawLocatedMemberInput = SqlNull | Missing | _PresentJsonNull | DocumentValu
 
 
 def _is_document_object(value: object) -> TypeGuard[Mapping[str, object]]:
-    return isinstance(value, (dict, FrozenMap))
+    return type(value) in (dict, FrozenMap)
 
 
 def _is_document_array(value: object) -> TypeGuard[Sequence[object]]:
-    return isinstance(value, (list, tuple))
+    return type(value) in (list, tuple)
 
 
 def _isolated_document_container(value: object) -> object:
     if type(value) is FrozenMap:
         return cast("FrozenMap[object, object]", value)
-    if isinstance(value, tuple):
+    if type(value) is tuple:
         return retain_document_value(cast("tuple[object, ...]", value))
     return detach_json_container(value)
 
