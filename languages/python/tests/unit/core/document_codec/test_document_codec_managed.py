@@ -18,9 +18,9 @@ from typing import cast
 
 from parallax.core.base import BOOLEAN, BYTES, DATE, STRING, Decimal
 from parallax.core.document_codec import (
-    DocumentShape,
     EffectiveChangeSet,
     Leaf,
+    MemberShape,
     Occurrence,
     canonical_managed_document,
     classify_effective_change,
@@ -28,17 +28,17 @@ from parallax.core.document_codec import (
 from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import Multiplicity
 
-_GEO = DocumentShape(members=(Leaf("lat", STRING, True),))
-_ZONE = DocumentShape(members=(Leaf("label", STRING, True),))
-_ORIGIN = DocumentShape(
+_GEO = MemberShape(members=(Leaf("lat", STRING, True),))
+_ZONE = MemberShape(members=(Leaf("label", STRING, True),))
+_ORIGIN = MemberShape(
     members=(
         Leaf("city", STRING, True),
         Occurrence("geo", Multiplicity.ONE, True, _GEO),
         Occurrence("zones", Multiplicity.MANY, False, _ZONE),
     )
 )
-_ENTRY = DocumentShape(members=(Leaf("kind", STRING, True), Leaf("price", Decimal(12, 2), True)))
-_SHAPE = DocumentShape(
+_ENTRY = MemberShape(members=(Leaf("kind", STRING, True), Leaf("price", Decimal(12, 2), True)))
+_SHAPE = MemberShape(
     members=(
         Leaf("flag", BOOLEAN, True),
         Leaf("amount", Decimal(12, 2), True),

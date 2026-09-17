@@ -36,8 +36,8 @@ from parallax.core.dialect import (
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
-    DocumentShape,
     Leaf,
+    MemberShape,
     Presence,
     Present,
     SetLeaf,
@@ -675,7 +675,7 @@ def _resident_count(
 
 
 def _row_document(
-    shape: DocumentShape,
+    shape: MemberShape,
     resident: _ResidentMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -708,7 +708,7 @@ def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
 
 
 def _successor_document(
-    shape: DocumentShape,
+    shape: MemberShape,
     resident: _ResidentMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -846,7 +846,7 @@ def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> obje
     return encode_document(shape, _element_presences(shape, value))
 
 
-def _element_presences(shape: DocumentShape, value: object) -> dict[str, Presence]:
+def _element_presences(shape: MemberShape, value: object) -> dict[str, Presence]:
     """One document's members as presences, keyed by canonical name.
 
     A key the input omits contributes no entry, so the codec classifies it

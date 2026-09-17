@@ -9,8 +9,8 @@ from typing import ClassVar, Final, Self
 from parallax.core.metamodel import (
     AttributeMetadata,
     DocumentMember,
-    DocumentShape,
     Leaf,
+    MemberShape,
     NestedValueObjectMetadata,
     NestedValueObjectOccurrenceDeclaration,
     Occurrence,
@@ -22,9 +22,9 @@ __all__ = [
     "MISSING",
     "NULL",
     "DocumentMember",
-    "DocumentShape",
     "ExplicitNull",
     "Leaf",
+    "MemberShape",
     "Missing",
     "Occurrence",
     "Presence",
@@ -116,7 +116,7 @@ NULL: Final[ExplicitNull] = ExplicitNull()
 MISSING: Final[Missing] = Missing()
 
 
-def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> DocumentShape:
+def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> MemberShape:
     """The document shape of one reusable Value Object shape declaration.
 
     Leaves precede nested occurrences, matching the declaration's own two sequences.
@@ -126,7 +126,7 @@ def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> DocumentSh
         for attribute in declaration.attributes
     )
     nested = tuple(map(_declared_occurrence, declaration.value_objects))
-    return DocumentShape(members=leaves + nested)
+    return MemberShape(members=leaves + nested)
 
 
 def _declared_occurrence(nested: NestedValueObjectOccurrenceDeclaration) -> Occurrence:
@@ -138,7 +138,7 @@ def _declared_occurrence(nested: NestedValueObjectOccurrenceDeclaration) -> Occu
     )
 
 
-def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata) -> DocumentShape:
+def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata) -> MemberShape:
     """The document shape held by one accepted Value Object occurrence."""
     return container.document_shape
 
@@ -146,7 +146,7 @@ def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata)
 def entity_shape(
     attributes: Sequence[AttributeMetadata],
     value_objects: Sequence[ValueObjectMetadata],
-) -> DocumentShape:
+) -> MemberShape:
     """One root document shape over the Entity members it is given.
 
     The Entity counterpart of :func:`occurrence_shape`: one root object holding
@@ -160,10 +160,10 @@ def entity_shape(
     stating a layout-neutral rule over a whole row — the effective-change
     comparison, which a placement cannot change — passes every applicable member.
     """
-    return DocumentShape.of(attributes, value_objects)
+    return MemberShape.of(attributes, value_objects)
 
 
-def resolve(shape: DocumentShape, path: Sequence[str]) -> DocumentMember:
+def resolve(shape: MemberShape, path: Sequence[str]) -> DocumentMember:
     """The member ``path`` names, walking nested occurrences by name.
 
     A path naming no member of ``shape`` is a caller error rather than an absence, so
@@ -180,7 +180,7 @@ def resolve(shape: DocumentShape, path: Sequence[str]) -> DocumentMember:
     return _named(current, path, path[-1])
 
 
-def _named(shape: DocumentShape, path: Sequence[str], name: str) -> DocumentMember:
+def _named(shape: MemberShape, path: Sequence[str], name: str) -> DocumentMember:
     member = shape.member(name)
     if member is None:
         raise KeyError(f"{'.'.join(path)!r}: {name!r} names no member of the shape")

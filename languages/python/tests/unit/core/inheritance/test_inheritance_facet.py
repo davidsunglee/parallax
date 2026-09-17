@@ -28,9 +28,9 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     ConcreteSubtype,
-    DocumentShape,
     EntityIdentity,
     ExactEntityReference,
+    MemberShape,
     Metamodel,
     Multiplicity,
     PersistenceMode,
@@ -219,7 +219,7 @@ def test_an_entity_view_holds_its_applicable_document_shape() -> None:
     model = _formed("customer")
     view = inheritance.view(model).entity(_corpus_entity("Customer"))
     assert view is not None
-    assert view.applicable_document_shape == DocumentShape.of(
+    assert view.applicable_document_shape == MemberShape.of(
         view.applicable_attributes,
         view.applicable_value_objects,
     )

@@ -55,7 +55,7 @@ MemberValue =
                      # `One`, an ordered array of objects for `Many`
 ```
 
-A `DocumentShape` is the `m-metamodel` value naming only members applicable to
+A `MemberShape` is the `m-metamodel` value naming only members applicable to
 the document being encoded or decoded. It carries no physical fact: no Column,
 dialect, or path string. `MemberName` is the canonical declared name, the same
 spelling a materialized result uses.
@@ -108,14 +108,14 @@ every depth still passes through `m-wire.encodeWire` against its declaration.
 ## Operations
 
 ```text
-encode(shape: DocumentShape,
+encode(shape: MemberShape,
        values: Mapping<MemberName, Presence>)        -> Document
 
-encodeMany(shape: DocumentShape,
+encodeMany(shape: MemberShape,
            elements: ordered sequence<
                        Mapping<MemberName, Presence>>) -> Document
 
-decode(shape: DocumentShape,
+decode(shape: MemberShape,
        document: Document,
        path: nonempty sequence<MemberName>)          -> Presence
 
@@ -150,11 +150,11 @@ StoredShapeFinding =
 comparisonText(type: NeutralType,
                value: NeutralValue)                  -> string
 
-encodeCandidate(shape: DocumentShape,
+encodeCandidate(shape: MemberShape,
                 constraints: nonempty Mapping<
                     nonempty sequence<MemberName>, NeutralValue>) -> Document
 
-patch(shape: DocumentShape,
+patch(shape: MemberShape,
       document: Document,
       patches: nonempty ordered sequence<DocumentPatch>) -> Document
 
@@ -535,10 +535,10 @@ assignment states and what a classified decode answers. Two operations read one,
 and neither decodes a leaf and neither refuses.
 
 ```text
-canonicalManagedDocument(shape: DocumentShape,
+canonicalManagedDocument(shape: MemberShape,
                          document: ManagedDocument | Null) -> ManagedDocument | Null
 
-classifyEffectiveChange(shape: DocumentShape,
+classifyEffectiveChange(shape: MemberShape,
                         authored:  Mapping<MemberName, ManagedValue | Null>,
                         originals: Mapping<MemberName, ManagedValue | Null>)
                                                            -> EffectiveChangeSet

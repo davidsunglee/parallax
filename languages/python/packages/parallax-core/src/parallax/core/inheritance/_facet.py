@@ -23,10 +23,10 @@ from typing import Final, Protocol, TypeGuard
 
 from parallax.core.metamodel import (
     AttributeMetadata,
-    DocumentShape,
     EntityIdentity,
     FacetKey,
     InheritanceStrategy,
+    MemberShape,
     Metamodel,
     PersistenceMode,
     RelationshipDeclaration,
@@ -106,7 +106,7 @@ class InheritanceEntityView(Protocol):
     @property
     def applicable_value_objects(self) -> Sequence[ValueObjectMetadata]: ...
     @property
-    def applicable_document_shape(self) -> DocumentShape: ...
+    def applicable_document_shape(self) -> MemberShape: ...
     @property
     def superset_attributes(self) -> Sequence[AttributeMetadata]: ...
     @property
@@ -181,7 +181,7 @@ class _InheritanceEntityView:
     applicable_attributes: tuple[AttributeMetadata, ...]
     applicable_relationships: tuple[RelationshipDeclaration, ...]
     applicable_value_objects: tuple[ValueObjectMetadata, ...]
-    applicable_document_shape: DocumentShape
+    applicable_document_shape: MemberShape
     superset_attributes: tuple[AttributeMetadata, ...]
     superset_value_objects: tuple[ValueObjectMetadata, ...]
     _attribute_index: Mapping[str, AttributeMetadata] = field(init=False, repr=False, compare=False)
@@ -272,7 +272,7 @@ def _entity_view(
         applicable_attributes=position.applicable_attributes,
         applicable_relationships=position.applicable_relationships,
         applicable_value_objects=position.applicable_value_objects,
-        applicable_document_shape=DocumentShape.of(
+        applicable_document_shape=MemberShape.of(
             position.applicable_attributes,
             position.applicable_value_objects,
         ),

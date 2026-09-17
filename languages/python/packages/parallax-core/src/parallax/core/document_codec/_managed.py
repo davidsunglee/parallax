@@ -22,8 +22,8 @@ from typing import TypeIs
 
 from parallax.core.document_codec._shape import (
     DocumentMember,
-    DocumentShape,
     Leaf,
+    MemberShape,
     Occurrence,
 )
 from parallax.core.metamodel import Multiplicity
@@ -53,7 +53,7 @@ class EffectiveChangeSet:
 
 
 def canonical_managed_document(
-    shape: DocumentShape, document: Mapping[str, object] | None
+    shape: MemberShape, document: Mapping[str, object] | None
 ) -> Mapping[str, object] | None:
     """``document`` reduced to the one form its shape gives its logical value.
 
@@ -87,7 +87,7 @@ def canonical_managed_document(
 
 
 def canonical_named_members(
-    shape: DocumentShape, document: Mapping[str, object] | None
+    shape: MemberShape, document: Mapping[str, object] | None
 ) -> Mapping[str, object] | None:
     """Canonicalize only the top-level members ``document`` names.
 
@@ -101,7 +101,7 @@ def canonical_named_members(
 
 
 def classify_effective_change(
-    shape: DocumentShape,
+    shape: MemberShape,
     authored: Mapping[str, object],
     originals: Mapping[str, object],
 ) -> EffectiveChangeSet:
@@ -138,7 +138,7 @@ def classify_effective_change(
 
 
 def _canonical_document(
-    shape: DocumentShape,
+    shape: MemberShape,
     document: Mapping[str, object],
     *,
     fill_missing_many: bool = True,

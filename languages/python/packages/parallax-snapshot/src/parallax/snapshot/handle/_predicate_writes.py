@@ -54,7 +54,7 @@ from parallax.core import deep_fetch, inheritance
 from parallax.core.db_port import DatabaseConnection, MappingRow
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
-    DocumentShape,
+    MemberShape,
     Occurrence,
     classify_effective_change,
     reduce_declared_members,
@@ -680,7 +680,7 @@ def _materialize_predicate_write(
 # for the whole write so every row's comparison reads the same operand.        #
 # --------------------------------------------------------------------------- #
 def _normalize_assignment_values(
-    assignments: Mapping[str, object], shape: DocumentShape
+    assignments: Mapping[str, object], shape: MemberShape
 ) -> dict[str, object]:
     """Decode each encoded occurrence assignment once into its managed value.
 
@@ -712,7 +712,7 @@ def _normalize_assignment_values(
 
 
 def _is_no_op_assignment(
-    shape: DocumentShape,
+    shape: MemberShape,
     member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
     row: MappingRow,

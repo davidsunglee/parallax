@@ -11,10 +11,10 @@ from typing import Final, Protocol, TypeGuard
 from parallax.core.metamodel import (
     AttributeIdentity,
     Column,
-    DocumentShape,
     EntityIdentity,
     FacetKey,
     MemberIdentity,
+    MemberShape,
     Metamodel,
     Table,
     ValueObjectIdentity,
@@ -186,7 +186,7 @@ class EntityLayoutView(Protocol):
     @property
     def discriminator(self) -> DiscriminatorAssignment | None: ...
     @property
-    def relational_document_shape(self) -> DocumentShape | None: ...
+    def relational_document_shape(self) -> MemberShape | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +301,7 @@ class _EntityLayoutView:
     entity: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
-    relational_document_shape: DocumentShape | None
+    relational_document_shape: MemberShape | None
     _column_ordinals: SlotOrdinalSelection = field(repr=False)
 
     @property
@@ -356,7 +356,7 @@ class StorageLayoutEntityFacts:
     root: EntityIdentity
     layout: TableLayout
     discriminator: DiscriminatorAssignment | None
-    relational_document_shape: DocumentShape | None
+    relational_document_shape: MemberShape | None
     column_ordinals: SlotOrdinalSelection
 
 

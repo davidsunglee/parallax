@@ -15,11 +15,11 @@ from parallax.core.metamodel import (
     CompiledMetadata,
     ConcreteSubtype,
     Document,
-    DocumentShape,
     EntityIdentity,
     EntityMetadata,
     FacetKey,
     MemberIdentity,
+    MemberShape,
     NestedValueObjectMetadata,
     PrimaryKey,
     Table,
@@ -374,7 +374,7 @@ def _interned_ordinal_selection(
 def _relational_document_shape(
     inherited: InheritanceEntityView,
     layout: TableLayout,
-) -> DocumentShape | None:
+) -> MemberShape | None:
     document_slot = layout.contribution(RelationalDocument(inherited.root))
     if document_slot is None:
         return None
@@ -391,7 +391,7 @@ def _relational_document_shape(
         if isinstance((placement := layout.placement(value_object.identity)), DocumentPath)
         and placement.slot == document_slot
     )
-    return DocumentShape.of(attributes, value_objects)
+    return MemberShape.of(attributes, value_objects)
 
 
 def _effective_nullable(

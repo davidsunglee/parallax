@@ -27,8 +27,8 @@ from parallax.core.db_port import DatabaseRuntime, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
     NULL,
-    DocumentShape,
     Leaf,
+    MemberShape,
     Occurrence,
     Presence,
     Present,
@@ -124,7 +124,7 @@ def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> Att
 
 def _fixture_member(
     model: Metamodel, slot: ColumnSlot
-) -> tuple[str, AttributeMetadata | DocumentShape] | None:
+) -> tuple[str, AttributeMetadata | MemberShape] | None:
     """One slot's authorable fixture member and its declared projection metadata.
 
     A framework-owned discriminator has no fixture member: its value is derived
@@ -172,7 +172,7 @@ def _document_members(
 
 
 def fixture_document(
-    shape: DocumentShape, row: Mapping[str, object], *, preserve_unknown: bool = True
+    shape: MemberShape, row: Mapping[str, object], *, preserve_unknown: bool = True
 ) -> object:
     """One fixture row's Structured Column, composed through the codec.
 
@@ -195,7 +195,7 @@ def fixture_document(
     return {**encoded, **cast("Mapping[str, object]", canonical)}
 
 
-def _fixture_values(shape: DocumentShape, row: Mapping[str, object]) -> dict[str, Presence]:
+def _fixture_values(shape: MemberShape, row: Mapping[str, object]) -> dict[str, Presence]:
     values: dict[str, Presence] = {}
     for member in shape.members:
         if member.name not in row:
@@ -253,7 +253,7 @@ def _is_temporal_end(model: Metamodel, member: AttributeMetadata) -> bool:
 def _fixture_insert(
     model: Metamodel,
     view: EntityLayoutView,
-    shape: DocumentShape,
+    shape: MemberShape,
     row: Mapping[str, object],
     dialect: Dialect,
 ) -> tuple[str, list[object]]:
@@ -283,7 +283,7 @@ def _fixture_insert(
         value = row[name]
         if value is None:
             binds.append(None)
-        elif isinstance(projection, DocumentShape):
+        elif isinstance(projection, MemberShape):
             binds.append(
                 JsonDocument(
                     fixture_document(projection, cast("Mapping[str, object]", value))

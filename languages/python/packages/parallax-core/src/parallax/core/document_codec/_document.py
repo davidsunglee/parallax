@@ -26,9 +26,9 @@ from parallax.core.document_codec._leaf import (
 from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
-    DocumentShape,
     ExplicitNull,
     Leaf,
+    MemberShape,
     Missing,
     Occurrence,
     Presence,
@@ -169,7 +169,7 @@ def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocated
 
 
 def prepared_raw_member_classifier(
-    shape: DocumentShape, member_name: str
+    shape: MemberShape, member_name: str
 ) -> Callable[[RawLocatedMemberInput], tuple[object, tuple[DocumentFinding, ...]]]:
     """Prepare classification for an allocation-free direct-member witness."""
     member = shape.member(member_name)
@@ -216,7 +216,7 @@ def prepared_raw_member_classifier(
 
 
 def decode_located_member_classified(
-    shape: DocumentShape,
+    shape: MemberShape,
     located: LocatedMemberInput,
     member_name: str,
 ) -> DecodedMember:
@@ -265,7 +265,7 @@ class _PreparedRawLeafClassifier:
 
 
 def decode_occurrence_classified(
-    shape: DocumentShape,
+    shape: MemberShape,
     located: SqlNull | PresentDocument,
     *,
     multiplicity: Multiplicity,
@@ -278,7 +278,7 @@ def decode_occurrence_classified(
 
 
 def decode_path_classified(
-    shape: DocumentShape, document: DocumentValue, path: Sequence[str]
+    shape: MemberShape, document: DocumentValue, path: Sequence[str]
 ) -> DecodedMember:
     """Classify one requested path without raising for contradictory stored state."""
     resolve(shape, path)
@@ -349,7 +349,7 @@ def _classify_member(
 
 
 def reduce_declared_members_classified(
-    shape: DocumentShape,
+    shape: MemberShape,
     document: object,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
     """Reduce one requested occurrence while returning every shape finding as data.
@@ -465,7 +465,7 @@ applying one produces a document whose own shape would read it back as invalid
 stored data."""
 
 
-def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dict[str, object]:
+def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> dict[str, object]:
     """One complete document, from ``shape`` and one presence per applicable member.
 
     The whole bind a consumer stores: an insert, a fresh Value Object column value, and
@@ -499,7 +499,7 @@ def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dic
     return document
 
 
-def encode_many(shape: DocumentShape, elements: Sequence[Mapping[str, Presence]]) -> list[object]:
+def encode_many(shape: MemberShape, elements: Sequence[Mapping[str, Presence]]) -> list[object]:
     """The one document a ``MANY`` occurrence stores: the ordered array whose elements
     are, in the sequence's own order, the :func:`encode_document` of each element's
     values against that occurrence's shape.
@@ -513,7 +513,7 @@ def encode_many(shape: DocumentShape, elements: Sequence[Mapping[str, Presence]]
     return [encode_document(shape, element) for element in elements]
 
 
-def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> Presence:
+def decode_path(shape: MemberShape, document: object, path: Sequence[str]) -> Presence:
     """One known path's presence, resolved against ``shape``.
 
     The declared Neutral Type comes from the model rather than from the caller: a leaf
@@ -573,9 +573,7 @@ def _invalid(path: Sequence[str], detail: str) -> ValueError:
     return ValueError(f"{'.'.join(path)!r} {detail} — invalid stored data")
 
 
-def _holder(
-    shape: DocumentShape, document: object, path: Sequence[str]
-) -> dict[str, object] | None:
+def _holder(shape: MemberShape, document: object, path: Sequence[str]) -> dict[str, object] | None:
     """The object that would carry ``path``'s last key, or ``None`` when an ancestor
     occurrence is not present.
 
@@ -647,7 +645,7 @@ def comparison_text(neutral_type: NeutralType, value: object) -> str:
 
 
 def encode_candidate(
-    shape: DocumentShape, constraints: Mapping[tuple[str, ...], object]
+    shape: MemberShape, constraints: Mapping[tuple[str, ...], object]
 ) -> dict[str, object]:
     """The containment candidate a to-many equality binds: the object carrying exactly
     the constrained paths, each at its declared position under ``shape`` and spelled by
@@ -685,9 +683,7 @@ def encode_candidate(
     return candidate
 
 
-def apply_patches(
-    shape: DocumentShape, document: object, patches: Sequence[DocumentPatch]
-) -> object:
+def apply_patches(shape: MemberShape, document: object, patches: Sequence[DocumentPatch]) -> object:
     """``patches`` applied in order, left to right, each over the result of the last.
 
     Every key a patch is not told to change survives, unknown keys included. That is
@@ -719,7 +715,7 @@ def apply_patches(
     return current
 
 
-def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> object:
+def _apply(shape: MemberShape, document: object, patch: DocumentPatch) -> object:
     member = resolve(shape, patch.path)
     root = dict(cast("dict[str, object]", document)) if isinstance(document, dict) else {}
     target = root
@@ -745,7 +741,7 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
 
 
 def reduce_declared_members(
-    shape: DocumentShape,
+    shape: MemberShape,
     document: object,
     *,
     preserve_presence: bool = False,

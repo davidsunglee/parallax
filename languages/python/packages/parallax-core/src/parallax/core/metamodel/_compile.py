@@ -24,7 +24,7 @@ from parallax.core.metamodel._identities import (
     ValueObjectIdentity,
 )
 from parallax.core.metamodel._issues import METAMODEL_MODULE
-from parallax.core.metamodel._shape import DocumentShape
+from parallax.core.metamodel._shape import MemberShape
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
     CompiledMetadata,
@@ -92,7 +92,7 @@ class _OccurrenceMetadata:
     nullable: bool
     attributes: tuple[ValueObjectAttributeMetadata, ...]
     value_objects: tuple[NestedValueObjectMetadata, ...]
-    document_shape: DocumentShape
+    document_shape: MemberShape
     _attribute_index: Mapping[str, ValueObjectAttributeMetadata] = field(
         init=False, repr=False, compare=False
     )
@@ -294,7 +294,7 @@ def value_object_metadata(
         nullable=occurrence.nullable,
         attributes=attributes,
         value_objects=nested,
-        document_shape=DocumentShape.of(attributes, nested),
+        document_shape=MemberShape.of(attributes, nested),
     )
 
 
@@ -312,7 +312,7 @@ def _nested_value_object_metadata(
         nullable=occurrence.nullable,
         attributes=attributes,
         value_objects=nested,
-        document_shape=DocumentShape.of(attributes, nested),
+        document_shape=MemberShape.of(attributes, nested),
     )
 
 

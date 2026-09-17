@@ -40,7 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core import inheritance, opt_lock, storage_layout
-from parallax.core.document_codec import DocumentShape
+from parallax.core.document_codec import MemberShape
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -210,7 +210,7 @@ def assignment_member(attr: str) -> str:
     return member
 
 
-def comparison_shape(model: Metamodel, entity: EntityMetadata) -> DocumentShape:
+def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:
     """``entity``'s applicable members as one document shape, for the codec's
     effective-change comparison.
 

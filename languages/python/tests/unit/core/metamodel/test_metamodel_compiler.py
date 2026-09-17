@@ -19,11 +19,11 @@ from parallax.core.metamodel import (
     Cardinality,
     Column,
     ConcreteSubtype,
-    DocumentShape,
     EntityIdentity,
     FacetKey,
     IndexIdentity,
     IndexMetadata,
+    MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     Occurrence,
@@ -227,7 +227,7 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     nested_member = ship_to.document_shape.member("geo")
     assert isinstance(nested_member, Occurrence)
     assert nested_member.shape is nested.document_shape
-    assert nested.document_shape == DocumentShape.of(nested.attributes, nested.value_objects)
+    assert nested.document_shape == MemberShape.of(nested.attributes, nested.value_objects)
 
     leaf = nested.attribute("lon")
     assert leaf is not None

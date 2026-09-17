@@ -98,7 +98,7 @@ from parallax.core.metamodel._resolve import (
     is_candidate_metamodel,
     resolve,
 )
-from parallax.core.metamodel._shape import DocumentMember, DocumentShape, Leaf, Occurrence
+from parallax.core.metamodel._shape import DocumentMember, Leaf, MemberShape, Occurrence
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
     CompiledMetadata,
@@ -226,7 +226,6 @@ __all__ = [
     "DerivedAxis",
     "Document",
     "DocumentMember",
-    "DocumentShape",
     "EntityDeclaration",
     "EntityIdentity",
     "EntityLocation",
@@ -244,6 +243,7 @@ __all__ = [
     "Leaf",
     "Max",
     "MemberIdentity",
+    "MemberShape",
     "Metamodel",
     "MetamodelIssue",
     "MetamodelMetadataCompiler",

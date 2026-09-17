@@ -624,7 +624,7 @@ InheritanceEntityView
   applicable_attributes: immutable sequence<AttributeMetadata>
   applicable_relationships: immutable sequence<RelationshipDeclaration>
   applicable_value_objects: immutable sequence<ValueObjectMetadata>
-  applicable_document_shape: DocumentShape
+  applicable_document_shape: MemberShape
   superset_attributes: immutable sequence<AttributeMetadata>
   superset_value_objects: immutable sequence<ValueObjectMetadata>
   applicable_attribute(local_name) -> AttributeMetadata | absent
