@@ -285,7 +285,7 @@ editing it would reclassify the retained capture or demand a third.
 Every ceiling is the rule's output, not an edit: the largest reading of the
 address on either runtime in the capture the file names as its basis —
 `after/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
-`test_every_memory_gate_is_the_baseline_reading_under_the_stated_rule`
+`test_every_memory_gate_is_the_basis_reading_under_the_stated_rule`
 recomputes all 154 from it. The headroom is the Budget Contract's own
 `individualMax` for a memory cell; the run-to-run agreement recorded under
 *Measured noise floor* — retained checkpoints within 2.8% and high-water marks

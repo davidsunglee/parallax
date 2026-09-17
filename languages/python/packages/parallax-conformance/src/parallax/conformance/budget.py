@@ -206,7 +206,7 @@ def reading_bytes(value: float, unit: str) -> float:
 
 
 def memory_ceiling(values: Iterable[float], unit: str, headroom: float) -> int:
-    """The gate one address's baseline readings support: the largest reading on
+    """The gate one address's basis readings support: the largest reading on
     any runtime, scaled by ``headroom`` and rounded up to a whole byte. The
     product is settled to a millionth of a byte first, so a binary fraction of
     the factor cannot round a whole-byte product up to the next byte."""

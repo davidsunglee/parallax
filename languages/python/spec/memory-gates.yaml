@@ -1,6 +1,6 @@
 # Memory gates: the blocking ceilings the cost class grades the structural
 # read and write windows against. Every gate is derived from the retained
-# baseline capture named under `basis` by one rule — the largest reading of an
+# capture named under `basis` by one rule — the largest reading of an
 # address on any supported runtime, scaled by `headroom` and rounded up to a
 # whole byte — and `tests/unit/conformance/test_budget_contract.py` recomputes
 # every entry from that capture, so no ceiling here is a transcription. Python

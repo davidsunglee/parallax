@@ -86,8 +86,8 @@ removed, and on the widest cases it is 19% to 23% of the high-water mark against
 10% headroom."""
 
 TRAVERSED_CASE: Final = "txtime.changed.document.wire"
-"""The changed Relational Document successor, whose one successor patch per row
-is the pass observation a duplicate lowering doubles."""
+"""The changed Relational Document successor, whose successor patches are the
+pass observation a duplicate lowering doubles."""
 
 
 class _Reading:
@@ -337,10 +337,11 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     # A second lowering of the settled plan allocates and frees everything the
     # first did, inside the window and before any sample: the checkpoint is
     # taken before lowering and the high-water mark is a maximum, so neither
-    # gate moves. What does move is the pass observation — one successor patch
-    # per row becomes two — and the elapsed time, both of which the report
-    # carries as advisories and nothing gates. That is the blind spot the
-    # evidence README states, pinned.
+    # gate moves. What does move is the pass observation — the successor patches
+    # per row double — and the elapsed time, both of which the report carries as
+    # advisories and nothing gates. That is the blind spot the evidence README
+    # states, pinned: the seed's effect is graded relative to the unseeded
+    # reading, never against a production count.
     unseeded = _Reading(TRAVERSED_CASE)
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(
@@ -351,7 +352,7 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     assert not _outside(TRAVERSED_CASE, RETAINED, seeded)
     assert not _outside(TRAVERSED_CASE, TRANSIENT, seeded)
     assert seeded.values[RETAINED] <= unseeded.values[RETAINED] * (1 + allowance)
-    assert seeded.calls["applyPatches"] == 2 * unseeded.calls["applyPatches"] == 2
+    assert seeded.calls["applyPatches"] == 2 * unseeded.calls["applyPatches"]
 
 
 if __name__ == "__main__":
