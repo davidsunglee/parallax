@@ -455,9 +455,9 @@ def _decoded_object_output(
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
     if document is None:
         return None, ()
-    if not isinstance(document, Mapping):
+    if not _is_document_object(document):
         return None, (DocumentFinding("one-wrong-kind", (), document),)
-    source = cast("Mapping[str, object]", document)
+    source = document
     findings: list[DocumentFinding] = []
 
     def interpreted_members() -> Iterable[object]:
