@@ -3,18 +3,22 @@
 The read and write cost evidence for the structural-metadata unification: the
 protocol every capture under this directory follows, the frozen workload
 manifest, what each window contains and excludes, and the limits of what the
-measurements can show. `before/` is the clean pre-optimization baseline; a later
-`after/` capture uses the same protocol, and every comparison between the two is
-rendered by `tools/cost_report.py --compare`.
+measurements can show. `before/` is the clean pre-optimization baseline and
+`after/` the clean capture of the unified implementation under the same
+protocol, on the same runner and interpreters; `after/comparison.md` is the
+cell-by-cell rendering of `tools/cost_report.py --compare before/portfolio.json
+after/portfolio.json`, and *After capture* below reads it.
 
-The portfolio under `before/` is the repository's canonical current cost
+The portfolio under `after/` is the repository's canonical current cost
 portfolio: the non-required `python-report-cost` CI job verifies it against the
-checked-out head, and the database-free gate recomputes its Snapshot delivery
-member's Budget Contract and workload-catalog digests from the committed inputs.
-The historical captures under `../write-lowering-envelope/` and
-`../snapshot-delivery-envelope/` keep their original names, protocols, and
-producing commits; nothing here is compared against them, because their write
-window stopped at `LoweredStatement` and their read matrix ran on one runtime.
+checked-out head, the database-free gate recomputes its Snapshot delivery
+member's Budget Contract and workload-catalog digests from the committed inputs,
+and the memory gates are derived from it. `before/` is retained unchanged as the
+comparison base and is verified by nothing. The historical captures under
+`../write-lowering-envelope/` and `../snapshot-delivery-envelope/` keep their
+original names, protocols, and producing commits; nothing here is compared
+against them, because their write window stopped at `LoweredStatement` and their
+read matrix ran on one runtime.
 
 ## Protocol
 
@@ -237,7 +241,15 @@ retained by the fixture modules and are outside every window.
   traversal that allocates and frees inside a window need not move either.
 - Pass observations (`calls.*`) count returns of named document-codec functions
   per row over the keyed-write window. They are diagnostics with units that
-  distinguish roots, nested values, and repeated calls; they gate nothing.
+  distinguish roots, nested values, and repeated calls; they gate nothing. The
+  four names were frozen with the manifest: `encodeDocument` and `encodeMany`
+  count the codec's `encode_document` and `encode_many`, which the unified
+  write path no longer reaches — it encodes managed values through
+  `encode_managed_document`, which no observation names — so those two cells
+  read zero at `after/` and say nothing about how many encodings a row pays
+  there; `applyPatches` and `detachJsonContainer` still count what they name.
+  Renaming an observed function is a protocol change that needs comparable
+  evidence on both sides, so the names stand.
 - Timing is machine- and interpreter-relative and is compared only between
   captures taken on the same runner with the same protocol.
 - Json-leaf payload size and malformed-read evidence volume are not dimensions
@@ -271,34 +283,34 @@ editing it would reclassify the retained capture or demand a third.
 ### Basis
 
 Every ceiling is the rule's output, not an edit: the largest reading of the
-address on either runtime in `before/`, scaled by **1.10** and rounded up to a
-whole byte, and
+address on either runtime in the capture the file names as its basis —
+`after/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
 `test_every_memory_gate_is_the_baseline_reading_under_the_stated_rule`
-recomputes all 154 from `before/portfolio.json`. The headroom is the Budget
-Contract's own `individualMax` for a memory cell; the run-to-run agreement
-recorded under *Measured noise floor* — retained checkpoints within 2.8% and
-high-water marks within 1% on this runner, and a further 1–3% between the two
-runtimes, which taking the larger runtime absorbs — sits inside it. A byte
-reading is a property of the interpreter's object layouts rather than of the
-runner, which is why a fixed ceiling can be graded on CI's floating runner
-label where an elapsed time cannot; the residual risk that a CPython patch
-release or a platform allocator moves a reading by more than the headroom is
-accepted, and would surface as a gate failure to be read against this basis,
-never as a ceiling to relax.
+recomputes all 154 from it. The headroom is the Budget Contract's own
+`individualMax` for a memory cell; the run-to-run agreement recorded under
+*Measured noise floor* — retained checkpoints within 2.8% and high-water marks
+within 1% on this runner, and a further 1–3% between the two runtimes, which
+taking the larger runtime absorbs — sits inside it. A byte reading is a
+property of the interpreter's object layouts rather than of the runner, which
+is why a fixed ceiling can be graded on CI's floating runner label where an
+elapsed time cannot; the residual risk that a CPython patch release or a
+platform allocator moves a reading by more than the headroom is accepted, and
+would surface as a gate failure to be read against this basis, never as a
+ceiling to relax.
 
-The baseline is the pre-unification tree, so at the tree the gates were
-introduced on most readings sit well under them: the categorical Typed
-retained checkpoints by 13–22%, the geometry inserts and changed-ancestor
-successors by up to 42%, the prepared model by 34%, while the Wire successor
-checkpoints, the geometry reads' retained pages, and the acquisition rows
-agree with the baseline within 1%. The readings above the baseline all sit
-inside the headroom: `txtime.changed.document.wire` retains 3,698–3,748 B/row
-against 3,648 (+1.4–2.7%), `bitemporal.interior.document.wire` +0.9%, the
-Columns cold-plan checkpoints +1.5%, and the `read-depth-4` and
-`read-depth-8` peaks +3.1% and +4.7%. Each is carried to Phase 5. The gates'
-sensitivity at this tree is therefore the headroom plus whatever the
-unification saved on the address, and the after-capture is the basis to
-re-derive them from under the same rule.
+The gates were first derived from `before/`, the pre-unification tree, and
+re-derived from `after/` under the same rule once that capture existed: 107 of
+the 154 ceilings fell, by up to 42% (`geometry.width-64` retained 12,780 to
+7,401 B/row, `model.prepared` 713,988 to 469,718 B), 21 were unchanged to the
+byte, and 26 rose by 0.1–5.4% because their after-reading is above the
+baseline's — `txtime.changed.document.wire` and `txtime.opening.document.wire`
+retained (+1.4%, +1.8%), the `read-depth-4` and `read-depth-8` peaks (+3.1% to
++5.4%), the Columns cold-plan checkpoints (+1.6%), and a few acquisition and
+`read-many`/`read-width` peaks within 1% — every one an address the capture
+confirmed rather than a ceiling moved to admit a reading. A gate's sensitivity
+is therefore the headroom alone at every address: a retained duplicate or a
+transient copy worth more than 10% of the reading trips it on either runtime,
+and one worth less is inside the noise the headroom absorbs.
 
 ### Scaling domains
 
@@ -315,15 +327,15 @@ separately gated.
 ### Sensitivity
 
 Each seed below is a monkeypatch inside the gate suite's child, at the seam it
-names, and is proved to trip the gate it targets. Figures are from the tree
-the gates were introduced on (2026-09-17, CPython 3.14.7, this runner) and
-are readings, not evidence.
+names, and is proved to trip the gate it targets. Figures are diagnostic
+readings taken on this runner (2026-09-17, CPython 3.14.7) at the tree
+`after/` was captured from, not evidence.
 
 | Seed | Seam | Effect | Proved on |
 |---|---|---|---|
-| A per-instruction registry keeping a detached copy of every prepared row, accumulating | `prepare_typed_write` / `prepare_wire_write` | retained +964 to +1,064 B/row on the categorical cases, +5,080 on `width-64` | the three Wire successor cases, which sit within one row of their gate |
+| A per-instruction registry keeping a detached copy of every prepared row, accumulating | `prepare_typed_write` / `prepare_wire_write` | retained +964 to +1,064 B/row on the categorical cases, +5,080 on `width-64` | the three Wire successor cases and the Typed opening Columns case: one row's duplicate is 17–35% of a categorical checkpoint, against a 10% headroom |
 | A second formed model retained beside the first | `DomainModel` formation inside the model window | retained 427 KB to 823 KB (formation is 396 KB of the 427; the catalog, codec, and planner are 31 KB) | `model.prepared` |
-| Four complete mutable copies of every document bind held across the driver dump | `serialize` | peak +4.5 to +6.2 KB per copy; one copy leaves every case inside its gate (`width-64.document` 30,306 against 33,645; `many-32.columns` 34,106 against 42,269) | the three widest cases, at four copies |
+| One complete mutable copy of every document bind held across the driver dump — the preliminary tree the immutable-serialization bridge removed | `serialize` | peak +4.5 to +6.4 KB: `width-64.document` 25,434 to 30,306 B/row, `many-32.columns` 27,746 to 34,106 | the three widest cases, at one copy: 19–23% over the reading, against a 10% headroom |
 | A resolving port keeping every row it answered | `projected_rows` | retained +1,000 to +1,160 B/row at every level | `rows-32.columns`, `rows-128.document` |
 | A key tuple sized by the row count kept per row | `projected_rows` | retained +120 B/row at 8 rows, +1,080 at 128: the per-row readings stop falling | the Columns domain's monotonicity and `rows-128.columns` |
 | A reduced dictionary kept beside every positional row | `build_positional_object` | retained +17.3 KiB at `depth-1`, +148 KiB at `sparse-64` (the full declared width), +190 KiB at `many-32` | `depth-1`, `sparse-64`, `many-32`, both layouts |
@@ -337,10 +349,8 @@ neither gate moves — while the `applyPatches` pass observation goes from one
 per row to two and the elapsed median from 227 to 270 µs/row (+19%), which the
 advisory comparison would report as `slower`, past the 5% allowance and the
 ±15% floor. A duplicate traversal that allocates and frees inside a window is
-visible only to the advisories; a transient copy under the headroom is
-invisible to the peak gate; and a retained duplicate smaller than the slack
-the unification opened under a gate is invisible to that gate until Phase 5
-re-derives it.
+visible only to the advisories, and a transient copy or retained duplicate
+worth less than the headroom is invisible to its gate.
 
 ### Ownership
 
@@ -380,7 +390,7 @@ All four members name that commit and a clean tree, and none carries an
 incomplete cell or an error. The Snapshot delivery member is `authoritative`;
 the other three are `non-authoritative` because their sampling protocols are
 their own. Every member's `uv.lock` digest matches the capture checkout. This
-is the Phase 1 baseline: it is captured once and is the comparison base for the
+is the baseline: it is captured once and is the comparison base for the
 after-capture.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
@@ -455,8 +465,8 @@ constant on every categorical and geometry case and on both runtimes — and
 `model.prepared` retains about 205 KB more. The prepared model gained six
 Transaction-Time-Only twin Entities between the two captures, which accounts
 for the model checkpoint; the constant per-row offset is coincident with that
-growth and is recorded as an observation, not attributed. Phase 5 compares
-against this capture alone.
+growth and is recorded as an observation, not attributed. The after-capture
+is compared against this capture alone.
 
 ### Keyed writes per row (`keyed-write` window)
 
@@ -607,3 +617,426 @@ transient B/projection, 45.8 KiB peak for 64 KiB, 41.4 KiB prepared set.
 transient B/projection, 50.8 KiB peak for 64 KiB, 65.6 KiB prepared set. Every
 delivery and stress ceiling other than the eighteen timing cells and the two
 scaling arms named above is within its limit.
+
+## After capture — `after/`
+
+Produced from clean commit `1636e9f0ce07` (`test(cost): gate structural memory
+against the baseline`, the tree carrying every phase of the unification and the
+memory gates) by `uv run --project languages/python python
+languages/python/tools/cost_report.py --out /tmp/cor-158-after-1636e9f0`,
+2026-09-17 06:05–07:05 EDT, on the same Mac17,4 (Apple M5, 10 cores, 32 GiB,
+macOS 26.6.2) with the same CPython 3.14.7 and 3.13.15, PostgreSQL 18.6, and
+`uv.lock` as the baseline, launched from `/bin/sh` at nice 0 as the baseline
+was, with no other measurement running; then retained here unchanged, with the
+`--compare` rendering beside it as `comparison.md`. All four members name that
+commit and a clean tree, none carries an incomplete cell or an error, and every
+one of the 1,286 Snapshot delivery and write-lowering cells the baseline read
+is paired: `--compare` reports no cell missing on either side, and its 72
+`incomparable` rows are zero-valued instance-state cells no delta can be taken
+over.
+
+| Member | Authority | Runtimes | Readings | Within | Outside |
+|---|---|---|---:|---:|---:|
+| snapshot-delivery | authoritative | 3.13, 3.14 | 324 | 72 | 18 |
+| lifecycle-overhead | non-authoritative | 3.14 | 87 | 4 | 11 |
+| instance-state | non-authoritative | 3.13, 3.14 | 624 | 4 | 4 |
+| write-lowering | non-authoritative | 3.13, 3.14 | 962 | — | — |
+
+`cost_report.py --verify after/portfolio.json` exits 0 and reports twenty
+advisories, verbatim:
+
+```text
+advisory: conventional-fanout.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: conventional-fanout.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.live.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.eager.maxMs is outside its timing ceiling
+advisory: document-heavy.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page32.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page128.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page128.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.eager.maxMs is outside its timing ceiling
+advisory: versioned-document.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.page32.maxMs is outside its timing ceiling
+advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: bitemporal-current.eagerMemory.peakKiB is outside its memory ceiling
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 37.974 KiB between memory arms
+advisory: bitemporal-current.streamedMemory.page128PeakKiB grows 23.032 KiB between memory arms
+```
+
+Seventeen timing ceilings are exceeded on the authority runtime — sixteen of
+the baseline's eighteen, with `duplicate-include.live.page32.minRootsPerSecond`
+and `versioned-document.live.page128.maxMs` back inside and
+`duplicate-include.live.eager.maxMs` newly outside — one memory ceiling is
+exceeded (`bitemporal-current.eagerMemory.peakKiB`, 428.6 KiB against 425, read
+under *Preserved delivery and stress cells* below), and two streamed-memory
+arms grow past the 16 KiB limit: the pre-existing `document-heavy` page-128
+growth, and `bitemporal-current`'s page-128 arm in place of the baseline's
+page-32 one. No reading is past its memory gate. No limit was relaxed.
+
+### Comparison with the baseline
+
+Every delta below is `after/` against `before/`, read per cell under the
+protocol: a timing delta inside roughly ±15% is noise on its own, and a timing
+claim rests on the direction agreeing across a family and both runtimes; a byte
+delta within 3% is noise. Medians are over the family's cells on one runtime;
+ranges name the extreme cells.
+
+| Family (window) | Cells per runtime | Elapsed, 3.13 | Elapsed, 3.14 | High-water | Retained |
+|---|---:|---|---|---|---|
+| Categorical keyed writes, Typed (`keyed-write`) | 10 | −11.7% (−19.5% to −5.7%) | −8.3% (−14.0% to −6.6%) | −11% (−19.4% to −7.7%) | −20% (−24.2% to −9.4%) |
+| Categorical keyed writes, Wire | 10 | −14.4% (−23.6% to −6.8%) | −13.3% (−18.4% to −6.8%) | −6% (−15.7% to −3.5%) | within noise (−5.3% to +2.8%) |
+| Geometry inserts, Typed | 18 | −9.5% (−19.6% to +8.6%) | −11.8% (−26.8% to −2.8%) | −14% (−29.0% to −6.9%) | −30% (−42.1% to −10.6%) |
+| Changed-ancestor updates, Typed | 8 | −7.6% (−11.4% to +11.6%) | −24.6% (−32.9% to −13.7%) | −11% (−28.0% to −8.0%) | −21% (−38.7% to −14.8%) |
+| Predicate acquisition (`predicate-acquisition`) | 6 | **+94%** (−15.3% to +119.2%) | **+51%** (+14.4% to +80.3%) | within noise (−2.4% to +4.2%) | within noise (−0.9% to +0.3%) |
+| Model preparation (`model-preparation`) | 1 | −16.6% | −40.0% | −33% | −34% |
+| Geometry reads (`provider-free-delivery`) | 18 | **+21%** (−8.9% to +83.5%) | **+26%** (+1.2% to +83.4%) | within noise (−0.5% to +5.4%) | identical to the byte |
+| Read-plan compilation (`read-plan-compilation`) | 6 | −16.5% (−32.8% to −7.1%) | −3.5% (−6.8% to +2.4%) | within noise | within noise (−2.5% to +1.7%) |
+| Positional-materialization stress (`positional-materialization`) | 2 | **+45%** µs/projection | **+68%** µs/projection | unchanged | unchanged |
+| Preserved live delivery, eager (`live-delivery`) | 5 | **+23%** maxMs | **+19%** maxMs | within noise except `bitemporal-current` | within noise except `bitemporal-current` |
+
+The write side is what the unification set out to change and it moved as
+designed: 80 of the 92 keyed-write cells are faster past the 5% allowance and
+10 within it, every high-water mark is lower, and every Typed checkpoint
+retains less, with the savings largest where the intermediate trees were
+largest. The read side and
+the predicate-acquisition companion, whose retained and peak readings the
+unification was to leave in place, kept them to the byte — and pay materially
+more elapsed time per root and per resolved row, on both runtimes, in every
+family. The attribution follows the per-workload conclusions.
+
+#### Categorical keyed writes
+
+All twenty cases are faster on both runtimes: Typed by 5.7–19.5%, Wire by
+6.8–23.6%, with direction agreeing across every family and both runtimes,
+which is what makes a claim of this size against the ±15% floor. The Typed
+settled checkpoint retains 9–24% less (`txtime.opening.columns.typed` 3,618 to
+2,744 B/row on 3.13): the authored value is borrowed from the instance and
+prepared once into its final immutable form, so no rendered dictionary tree
+and no frozen copy of it sit beside the managed value at settlement. The Wire
+checkpoint is unchanged within noise on seventeen cells and 3.4–5.3% smaller on
+three Columns cells on 3.14, because a Wire row's authored mapping was already
+its own carrier; what Wire saves is the high-water mark (3.5–15.7%) and the elapsed time. An
+unchanged Relational Document successor now reuses its retained predecessor by
+identity — `applyPatches` 1 to 0 and `detachJsonContainer` 16 to 0 per row on
+`txtime.unchanged.document` — and costs less than a changed one for the first
+time (3.13: 211 against 224 µs/row Typed); under Columns it still re-encodes
+each Value Object column, as the manifest states, and costs what a changed
+successor costs. The small and shallow cases regress nowhere: the smallest
+categorical case (`txtime.opening.columns.wire`, 157 µs/row on 3.13) is 9%
+faster and the shallowest geometry (`many-0`, 152 µs/row) 7–18% faster.
+
+#### Geometry inserts and changed ancestors
+
+Retained bytes at the settled checkpoint fall with the size of the value —
+10.6% at `many-0`, 32% at `depth-8`, 40% at `many-32`, 42% at `width-64` —
+because the managed value no longer coexists with a rendered and a frozen copy
+of itself, and the high-water mark falls 7–29% because the encoded document is
+composed once and serialized without a mutable copy. Elapsed time is faster
+past the 5% allowance on 40 of the 52 geometry-and-ancestor cells across the
+two runtimes and within it on 10. The two slower cells are the widest Columns
+cases on 3.13 alone — `geometry.width-64.columns` +8.6% and
+`ancestor.width-64.columns` +11.6% — both inside the noise floor, both faster
+on 3.14 (−15.2%, −13.7%) and both faster under Relational Document on 3.13
+(−4.6% and −7.0% on the twin cases), so no wide-Columns regression is claimed
+or excluded. The changed ancestor's `detachJsonContainer` count, 33 to 393 per
+row with the replaced occurrence's width, is 0: a changed successor shares the
+predecessor's untouched subtrees and builds one root. The baseline's open
+observation that wide and sparse Typed inserts ran up to 1.5x slower on 3.14
+than on 3.13 is largely resolved by the borrowed Typed access:
+the 3.14-to-3.13 ratio at `width-64.columns` is 1.07 (was 1.37), at
+`sparse-64.columns` 1.16 (was 1.49), at `width-16.columns` 1.13 (was 1.39).
+
+#### Source and managed coexistence, and serialization
+
+Peak coexistence is measured by the keyed-write high-water mark, which includes
+the source, the prepared value, the settled plan, the encoded documents, and
+psycopg's own dump buffers at once: it is lower on every one of the 92
+keyed-write cells, by 3.5–29%. The frozen-document serialization bridge — a
+per-bind standard-library `json.dumps` reading `FrozenMap` backing through a
+default hook, one callback per nested mapping — is inside every keyed-write
+elapsed reading above and is not separated from it; the whole-window result is
+faster on every case but the two 3.13 wide-Columns cells, so its per-mapping
+callback cost is at most inside those cells' noise. No serialization saving is
+claimed on its own, and the mutable-copy seed under *Sensitivity* is what the
+peak gate would see if the bridge were bypassed.
+
+#### Predicate acquisition
+
+Per-row retained and high-water readings are unchanged within noise at every
+level and under both layouts (the one cell past 3%, `rows-128.columns` peak
++4.2% on 3.13, is −0.1% on 3.14), and the per-row amortization over 8, 32, and
+128 rows that the scaling domains gate still holds. Elapsed time per resolved
+row roughly doubles on 3.13 (`rows-128.columns` 49 to 108 µs, `rows-32.document`
+57 to 110) and rises 14–80% on 3.14, on every level but one, with the largest
+rise at the largest row count — so the fixed planning cost the rows amortize is
+not what grew; the per-row work did. This companion window is the one place the
+unification made no structural removal and left a per-row structure standing:
+`EntityStateRow.__getitem__` still finds a member by scanning
+`(*layout.attributes, *layout.occurrences)` for its storage name on every
+lookup, and `row_payload` performs two such lookups per member per row. The
+regression is attributed under *Attribution diagnostics*.
+
+#### Structural retention
+
+`model.prepared` retains 34% less (649,080 to 427,016 B on 3.14) and prepares
+in 17–40% less time: one canonical `MemberShape` per declaration shared by
+reference across occurrences and models, one `EntityMemberSelection` per
+Entity referenced by the layout, row codec, storage residency, and graph
+construction, and no independent nested layout tree or duplicate name index.
+The declarations and their Value Object classes remain outside the window, as
+the manifest states.
+
+#### Geometry reads and output expansion
+
+The retained page is identical to the byte at every level under both layouts
+(`sparse-64` still retains 36 KiB for 32 roots carrying one populated leaf
+each, the O(NW) positional expansion the manifest names), and the high-water
+mark is within noise everywhere but `depth-4` (+3.1–3.3%) and `depth-8`
+(+4.4–5.4%), the two addresses whose diagnostic readings sat above the
+baseline when the gates were introduced, which the capture confirms and the
+re-derived gates now carry. Elapsed time per root is slower past the 5%
+allowance on 33 of the 36 cells: 21–37% at the shallow baseline (`depth-1`
+33.5 to 40.7 µs/root on 3.13),
+22–27% at `many-0` and `many-32`, 13–26% at the width levels, and 70–83% at
+`sparse-64` (47 to 86 µs/root), while the deepest chain is flat (`depth-8`
+−8.9% to +10.1%). The pattern — cost per declared position rather than per
+populated value, worst where declared width most exceeds populated width — is
+the read side's regression and is attributed below.
+
+#### Read-plan compilation
+
+The cold compiled plan is the same size at every level under a layout as it
+was (retained within 2.5%, the Columns-to-Document difference still 0.8 KiB),
+and compiles 7–33% faster on 3.13 and within noise on 3.14. Compiled-read
+residency now references storage's complete resident selection rather than
+building a selected-only shape, and the plan retains no more for it.
+
+#### Preserved delivery and stress cells
+
+The Budget Contract's delivery workloads read the same regression at delivery
+scale: the eager live cells are 19–23% slower at the median on both runtimes
+with direction agreeing across four of the five workloads, the paged live and
+provider-free cells are 14–15% slower on 3.13 and within noise on 3.14, and
+the positional-materialization stress cells are 33–84% slower per projection
+(`stress-columns` 6.2 to 9.5 µs/projection on 3.14) with retained and
+transient bytes per projection unchanged and the prepared set 12% smaller
+under Relational Document. Delivery memory is unchanged within noise on four
+of the five workloads; `bitemporal-current` alone retains 3.5–5.0% more
+eagerly, peaks 7.5–9.3% higher eagerly (428.6 KiB on 3.14 against a 425 KiB
+ceiling, the one memory advisory above) and 8–19% higher while streaming. No
+read-path change touched temporal materialization, and the two other
+Relational Document delivery workloads (`document-heavy`, `versioned-document`)
+did not move, so this growth is recorded as an observation, not attributed.
+
+#### Pass observations
+
+`detachJsonContainer` is 0 per row on every keyed-write case (it was 2 to 393),
+`applyPatches` is 1 on every changed Relational Document successor and 0 on
+every unchanged one (it was 1 on both), and `encodeDocument` and `encodeMany`
+read 0 everywhere for the reason stated under *Limits*: the observed names are
+functions the unified path no longer calls.
+
+### Attribution diagnostics
+
+Two regressions above are material and attributed. The readings below are
+`cProfile` and `perf_counter` diagnostics taken on this runner at the `after/`
+tree and, for comparison, at the baseline's producing commit checked out
+beside it — not evidence, and not the report's windows: 200 provider-free
+finds or 100 acquisitions in one process, warmed.
+
+**One root cause is shared.** The structural unification replaced the plain
+tuples an occurrence and an Entity layout exposed as `attributes` /
+`value_objects` / `occurrences` with `_BindingRange` views over the aligned
+binding tuple (`inheritance/_facet.py`, `metamodel/_compile.py`). The views
+implement
+`__len__` and `__getitem__` and inherit `__iter__` from `collections.abc
+.Sequence`, so iterating one costs a Python-level `__getitem__` call, a slice
+check, and two `len` calls per element where a tuple iterates in C. Every hot
+per-row loop that walks declared members iterates one of them:
+
+- the read side's Wire publication (`materialize/_wire.py` `_held_members`)
+  walks `declared.attributes` per occurrence per root — 0.05 s of the
+  baseline's 1.18 s profile of `sparse-64.document`, 0.76 s of the after
+  tree's 2.19 s, with `_BindingRange.__getitem__` called 1.27 million times;
+- the acquisition path's `EntityStateRow.__getitem__` unpacks
+  `(*layout.attributes, *layout.occurrences)` per lookup and `row_payload`
+  looks each member up twice per row — 0.39 s of the baseline's 2.03 s profile
+  of `rows-128.columns`, 2.49 s of the after tree's 5.02 s, with the
+  inheritance `_BindingRange.__getitem__` called 2.86 million times.
+
+**The read side's second cause** is the direct decode's per-position dispatch:
+the codec yields each declared position through an `interpreted_members`
+generator, one `_interpreted_member` call, and one `build_positional_object`
+comprehension step (1.25 million of each in the same profile, 0.6 s of
+`tottime` together) where the baseline's `reduce_declared_members_classified`
+and `_structure` were two tight loops over `dict.get` (0.36 s). It is per
+declared position, which is why `sparse-64` is the worst case. **The
+acquisition path's second cause** is `PredecessorRow.__post_init__` retaining
+each selected row's payload through `retain_document_value`, which walks the
+lazy `_EntityDocumentRow` views the payload holds (332,800 calls, 0.71 s,
+against the baseline's `freeze_retained_value` at 0.23 s).
+
+Giving the two `_BindingRange` views a `__iter__` over their tuple slice —
+patched in the diagnostic process only, nothing in the repository — isolates
+the shared cause (medians of nine, µs per root or per resolved row):
+
+| Cell | After tree | With a C-speed `__iter__` | Baseline, for scale |
+|---|---:|---:|---:|
+| `read-depth-1.columns` | 37.6 | 33.2 (−12%) | 31.6–33.5 |
+| `read-sparse-64.document` | 78.2 | 54.6 (−30%) | 46.0–46.9 |
+| `read-width-64.columns` | 172.4 | 147.7 (−14%) | 157.0–160.5 |
+| `read-many-32.document` | 192.9 | 162.4 (−16%) | 159.8–159.9 |
+| `acquisition.rows-128.columns` | 98.2 | 63.8 (−35%) | 49.2–66.8 |
+| `acquisition.rows-8.document` | 129.1 | 93.3 (−28%) | 77.7–98.7 |
+
+The view iteration is therefore most of the acquisition regression and roughly
+half of the read regression; what remains on the read side after it is the
+per-position dispatch, and on the acquisition side the per-row retention and
+the surviving storage-name scan. None of the three is a carrier alternative or
+a temporal optimization: the first is a Sequence view iterating through the
+ABC mixin, the second the direct decode's control-flow shape, the third an
+inventoried per-row structure the unification left standing. Whether to
+refine them is the tradeoff decision this evidence is presented for; a
+refinement changes the read and acquisition windows and needs fresh evidence
+on both sides.
+
+### Open observations
+
+- Resolved by this capture: the wide and sparse Typed inserts' 3.14 slowdown
+  (now at most 1.16x, from 1.49x); the four addresses whose diagnostic
+  readings sat above the baseline when the gates were introduced
+  (`txtime.changed.document.wire` retained, the Columns cold-plan checkpoints,
+  the `read-depth-4` and `read-depth-8` peaks) are confirmed at
+  +1.4%, +1.6%, and +3.1% to +5.4% and now carried by the re-derived gates.
+- Unchanged: the cold compiled plan is the same size at every geometry level.
+- Not attributed: `bitemporal-current`'s 3.5–19% delivery memory growth, alone
+  among the delivery workloads. The baseline's 4,184 B/row high-water offset
+  between its own two captures is superseded by this comparison, which pairs
+  the retained baseline alone.
+- Recorded, not measured separately: the frozen-document serialization
+  bridge's per-mapping callback cost, inside the keyed-write windows.
+
+### Keyed writes per row (`keyed-write` window)
+
+Median of nine samples; retained is one checkpoint after 200 warm-ups. Pass
+observations are per row on either runtime (they agree exactly).
+
+| Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B | encodeDocument / encodeMany / applyPatches / detachJsonContainer |
+|---|---:|---:|---:|---:|---:|---:|---|
+| txtime.opening.columns.typed | 168.8 | 15042 | 2744 | 193.0 | 15554 | 2900 | 0 / 0 / 0 / 0 |
+| txtime.changed.columns.typed | 204.5 | 14826 | 3710 | 222.2 | 15290 | 3906 | 0 / 0 / 0 / 0 |
+| txtime.unchanged.columns.typed | 206.5 | 14826 | 3810 | 224.7 | 15290 | 3856 | 0 / 0 / 0 / 0 |
+| plain.changed.columns.typed | 171.8 | 15138 | 3024 | 190.3 | 15666 | 3062 | 0 / 0 / 0 / 0 |
+| bitemporal.interior.columns.typed | 283.4 | 15866 | 5646 | 315.0 | 15890 | 6008 | 0 / 0 / 0 / 0 |
+| txtime.opening.columns.wire | 157.2 | 14810 | 2612 | 170.1 | 15266 | 2560 | 0 / 0 / 0 / 0 |
+| txtime.changed.columns.wire | 186.9 | 14626 | 3610 | 205.2 | 15030 | 3548 | 0 / 0 / 0 / 0 |
+| txtime.unchanged.columns.wire | 178.9 | 14626 | 3560 | 202.5 | 15030 | 3748 | 0 / 0 / 0 / 0 |
+| plain.changed.columns.wire | 154.5 | 14938 | 2824 | 166.7 | 15406 | 2854 | 0 / 0 / 0 / 0 |
+| bitemporal.interior.columns.wire | 277.2 | 15748 | 5642 | 295.5 | 15702 | 5746 | 0 / 0 / 0 / 0 |
+| txtime.opening.document.typed | 176.2 | 15042 | 2744 | 192.7 | 15554 | 2900 | 0 / 0 / 0 / 0 |
+| txtime.changed.document.typed | 224.1 | 14826 | 3710 | 239.3 | 15290 | 3856 | 0 / 0 / 1 / 0 |
+| txtime.unchanged.document.typed | 211.2 | 14826 | 3760 | 223.9 | 15290 | 3806 | 0 / 0 / 0 / 0 |
+| plain.changed.document.typed | 177.2 | 15138 | 2974 | 196.7 | 15666 | 3112 | 0 / 0 / 0 / 0 |
+| bitemporal.interior.document.typed | 287.6 | 15075 | 5696 | 331.3 | 15440 | 5908 | 0 / 0 / 1 / 0 |
+| txtime.opening.document.wire | 149.8 | 14810 | 2612 | 168.9 | 15266 | 2660 | 0 / 0 / 0 / 0 |
+| txtime.changed.document.wire | 188.0 | 14626 | 3610 | 212.5 | 15030 | 3698 | 0 / 0 / 1 / 0 |
+| txtime.unchanged.document.wire | 185.3 | 14626 | 3510 | 201.9 | 15030 | 3698 | 0 / 0 / 0 / 0 |
+| plain.changed.document.wire | 149.0 | 14938 | 2824 | 173.3 | 15406 | 2904 | 0 / 0 / 0 / 0 |
+| bitemporal.interior.document.wire | 266.8 | 14922 | 5592 | 300.2 | 15370 | 5696 | 0 / 0 / 1 / 0 |
+
+### Geometry inserts and changed-ancestor updates per row (`keyed-write` window, Typed)
+
+| Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B | encodeDocument / encodeMany / applyPatches / detachJsonContainer |
+|---|---:|---:|---:|---:|---:|---:|---|
+| geometry.depth-1.columns | 178.5 | 14690 | 2472 | 191.5 | 15186 | 2528 | 0 / 0 / 0 / 0 |
+| geometry.depth-1.document | 179.2 | 14690 | 2422 | 191.9 | 15186 | 2528 | 0 / 0 / 0 / 0 |
+| geometry.depth-4.columns | 217.7 | 15426 | 3194 | 234.5 | 15858 | 3200 | 0 / 0 / 0 / 0 |
+| geometry.depth-4.document | 213.0 | 15426 | 3194 | 234.7 | 15858 | 3200 | 0 / 0 / 0 / 0 |
+| geometry.depth-8.columns | 265.9 | 16746 | 4040 | 301.6 | 17234 | 4096 | 0 / 0 / 0 / 0 |
+| geometry.depth-8.document | 280.2 | 16746 | 4040 | 295.2 | 17234 | 4096 | 0 / 0 / 0 / 0 |
+| geometry.many-0.columns | 152.4 | 14186 | 1968 | 166.5 | 14674 | 2016 | 0 / 0 / 0 / 0 |
+| geometry.many-0.document | 145.6 | 14186 | 2018 | 165.5 | 14674 | 1966 | 0 / 0 / 0 / 0 |
+| geometry.many-8.columns | 265.2 | 16082 | 3914 | 268.6 | 16578 | 3920 | 0 / 0 / 0 / 0 |
+| geometry.many-8.document | 260.7 | 16082 | 3914 | 264.2 | 16578 | 3920 | 0 / 0 / 0 / 0 |
+| geometry.many-32.columns | 530.8 | 27242 | 9432 | 557.7 | 27746 | 9488 | 0 / 0 / 0 / 0 |
+| geometry.many-32.document | 524.4 | 27429 | 9432 | 578.2 | 27925 | 9488 | 0 / 0 / 0 / 0 |
+| geometry.width-16.columns | 266.2 | 15530 | 3312 | 301.8 | 16090 | 3368 | 0 / 0 / 0 / 0 |
+| geometry.width-16.document | 266.0 | 15530 | 3362 | 290.5 | 16090 | 3368 | 0 / 0 / 0 / 0 |
+| geometry.width-64.columns | 642.9 | 23321 | 6672 | 689.0 | 23817 | 6678 | 0 / 0 / 0 / 0 |
+| geometry.width-64.document | 647.6 | 24874 | 6722 | 708.3 | 25434 | 6728 | 0 / 0 / 0 / 0 |
+| geometry.sparse-64.columns | 239.0 | 14690 | 2522 | 277.9 | 15186 | 2528 | 0 / 0 / 0 / 0 |
+| geometry.sparse-64.document | 236.9 | 14690 | 2472 | 274.3 | 15186 | 2528 | 0 / 0 / 0 / 0 |
+| ancestor.depth-1.columns | 211.3 | 14602 | 3536 | 248.0 | 15066 | 3632 | 0 / 0 / 0 / 0 |
+| ancestor.depth-1.document | 224.6 | 14602 | 3586 | 242.6 | 15066 | 3632 | 0 / 0 / 1 / 0 |
+| ancestor.width-16.columns | 321.7 | 15442 | 4426 | 345.6 | 15970 | 4422 | 0 / 0 / 0 / 0 |
+| ancestor.width-16.document | 304.9 | 15442 | 4326 | 339.4 | 15970 | 4422 | 0 / 0 / 1 / 0 |
+| ancestor.width-64.columns | 726.3 | 25739 | 7736 | 753.2 | 26259 | 7832 | 0 / 0 / 0 / 0 |
+| ancestor.width-64.document | 648.8 | 23874 | 7736 | 712.3 | 24604 | 7932 | 0 / 0 / 1 / 0 |
+| ancestor.sparse-64.columns | 284.8 | 14602 | 3536 | 324.2 | 15066 | 3682 | 0 / 0 / 0 / 0 |
+| ancestor.sparse-64.document | 266.5 | 14552 | 3486 | 309.8 | 15066 | 3632 | 0 / 0 / 1 / 0 |
+
+### Predicate acquisition per resolved row (`predicate-acquisition` window)
+
+| Case | 3.13 µs | 3.13 peak B | 3.13 retained B | 3.14 µs | 3.14 peak B | 3.14 retained B |
+|---|---:|---:|---:|---:|---:|---:|
+| acquisition.rows-8.columns | 125.1 | 5908 | 2368 | 131.4 | 6091 | 2552 |
+| acquisition.rows-32.columns | 111.3 | 4207 | 1738 | 110.8 | 4231 | 1811 |
+| acquisition.rows-128.columns | 107.9 | 3677 | 1583 | 100.8 | 3675 | 1616 |
+| acquisition.rows-8.document | 134.5 | 7988 | 3568 | 136.7 | 8210 | 3789 |
+| acquisition.rows-32.document | 110.2 | 6272 | 2922 | 119.0 | 6332 | 3008 |
+| acquisition.rows-128.document | 104.4 | 5831 | 2768 | 109.2 | 5838 | 2808 |
+
+### Model preparation (`model-preparation` window)
+
+| Runtime | µs | peak B | retained B |
+|---|---:|---:|---:|
+| 3.13 | 3738.2 | 436760 | 415992 |
+| 3.14 | 3673.3 | 435016 | 427016 |
+
+### Geometry reads (`provider-free-delivery` window, 32 roots)
+
+| Level | Layout | 3.13 µs/root | 3.13 peak KiB | 3.13 retained KiB | 3.14 µs/root | 3.14 peak KiB | 3.14 retained KiB |
+|---|---|---:|---:|---:|---:|---:|---:|
+| depth-1 | columns | 40.71 | 109.9 | 50.8 | 42.30 | 107.7 | 51.1 |
+| depth-1 | document | 39.99 | 109.9 | 50.8 | 43.87 | 107.6 | 51.1 |
+| depth-4 | columns | 64.85 | 158.4 | 88.0 | 65.86 | 159.9 | 88.2 |
+| depth-4 | document | 60.38 | 158.4 | 88.0 | 64.23 | 158.8 | 88.2 |
+| depth-8 | columns | 86.34 | 231.7 | 137.5 | 94.49 | 236.4 | 137.7 |
+| depth-8 | document | 86.71 | 230.6 | 137.5 | 101.88 | 235.7 | 137.7 |
+| many-0 | columns | 28.58 | 67.7 | 24.1 | 30.08 | 66.6 | 24.3 |
+| many-0 | document | 29.10 | 73.4 | 24.1 | 28.16 | 72.3 | 24.3 |
+| many-8 | columns | 77.55 | 205.8 | 125.1 | 72.33 | 209.0 | 125.3 |
+| many-8 | document | 72.87 | 204.8 | 125.1 | 72.18 | 208.3 | 125.3 |
+| many-32 | columns | 210.10 | 635.3 | 428.1 | 253.33 | 639.8 | 428.3 |
+| many-32 | document | 203.78 | 635.1 | 428.1 | 208.59 | 639.4 | 428.3 |
+| width-16 | columns | 69.79 | 220.8 | 136.7 | 66.65 | 224.3 | 137.0 |
+| width-16 | document | 69.52 | 224.3 | 136.7 | 85.61 | 227.8 | 137.0 |
+| width-64 | columns | 185.60 | 763.3 | 480.2 | 201.05 | 767.2 | 480.5 |
+| width-64 | document | 184.99 | 766.9 | 480.2 | 194.02 | 770.7 | 480.5 |
+| sparse-64 | columns | 85.67 | 139.6 | 35.9 | 88.04 | 137.5 | 36.2 |
+| sparse-64 | document | 86.10 | 139.6 | 35.9 | 84.40 | 137.5 | 36.2 |
+
+### Read-plan compilation (`read-plan-compilation` window)
+
+| Level | Layout | 3.13 µs | 3.13 peak KiB | 3.13 retained KiB | 3.14 µs | 3.14 peak KiB | 3.14 retained KiB |
+|---|---|---:|---:|---:|---:|---:|---:|
+| depth-1 | columns | 111.8 | 22.85 | 14.80 | 116.6 | 23.82 | 16.19 |
+| depth-1 | document | 113.7 | 22.81 | 14.94 | 112.7 | 23.98 | 16.34 |
+| depth-8 | columns | 113.3 | 22.85 | 14.80 | 116.7 | 23.82 | 16.19 |
+| depth-8 | document | 108.0 | 22.81 | 14.94 | 116.5 | 23.98 | 16.34 |
+| width-64 | columns | 113.7 | 22.85 | 14.80 | 110.3 | 23.82 | 16.19 |
+| width-64 | document | 113.1 | 22.81 | 14.94 | 117.5 | 23.98 | 16.34 |
+
+### Preserved positional-materialization cells (authority runtime)
+
+`stress-columns`: 9.5 µs/projection, 604.4 retained B/projection, 127.3
+transient B/projection, 45.7 KiB peak for 64 KiB, 42.3 KiB prepared set.
+`stress-document`: 13.0 µs/projection, 620.4 retained B/projection, 191.3
+transient B/projection, 50.7 KiB peak for 64 KiB, 57.4 KiB prepared set. Every
+delivery and stress ceiling other than the seventeen timing cells, the one
+memory cell, and the two scaling arms named above is within its limit.

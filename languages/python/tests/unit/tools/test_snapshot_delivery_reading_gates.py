@@ -3,11 +3,11 @@
 `spec/memory-gates.yaml` holds one blocking ceiling per retained page and per
 high-water mark of every provider-free geometry read, under both layouts, and
 per retained entry and high-water mark of every cold read-plan compilation,
-derived from the retained baseline capture. Each family below reads its levels
-through the same child the report measures with — the geometry and plan
-readings of :mod:`snapshot_delivery_reading`, the identical port, roots, cache
-capacity, and warm-ups — and grades the peak and retained readings against
-their gates.
+derived from the retained capture the file names as its basis. Each family
+below reads its levels through the same child the report measures with — the
+geometry and plan readings of :mod:`snapshot_delivery_reading`, the identical
+port, roots, cache capacity, and warm-ups — and grades the peak and retained
+readings against their gates.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the positional builder as a reduced dictionary kept

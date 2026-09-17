@@ -6657,9 +6657,11 @@ locking unions retain the core refusal.
   delivery envelope that closed the current Budget Contract remains as historical
   review evidence under `languages/python/docs/snapshot-delivery-envelope/`
   (`portfolio.json` and `summary.md`). The repository's canonical current cost
-  portfolio and summary are the structural-metadata baseline under
-  `languages/python/docs/structural-metadata-envelope/before/`, named once by
-  `cost_report.CANONICAL_PORTFOLIO`; that repository role is
+  portfolio and summary are the structural-metadata after-capture under
+  `languages/python/docs/structural-metadata-envelope/after/`, named once by
+  `cost_report.CANONICAL_PORTFOLIO`; the pre-unification baseline beside it
+  under `before/` is retained unchanged as that capture's comparison base and
+  is verified by nothing. That repository role is
   independent of each member's schema-level `authority`. A database-free check
   recomputes the current portfolio's Snapshot delivery member's Budget Contract
   and workload-catalog digests from the committed inputs, so changing either
