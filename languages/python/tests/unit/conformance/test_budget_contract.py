@@ -150,8 +150,8 @@ def _basis_portfolio(gates: MemoryGates) -> Mapping[str, object]:
     )
 
 
-def _baseline_addresses(portfolio: Mapping[str, object]) -> dict[tuple[str, str, str], str]:
-    """Every byte-unit reading address of a gated window in the baseline, with its unit."""
+def _basis_addresses(portfolio: Mapping[str, object]) -> dict[tuple[str, str, str], str]:
+    """Every byte-unit reading address of a gated window in the basis capture, with its unit."""
     addresses: dict[tuple[str, str, str], str] = {}
     for member in cast("Sequence[Mapping[str, object]]", portfolio["members"]):
         for reading in cast("Sequence[Mapping[str, object]]", member["readings"]):
@@ -163,21 +163,22 @@ def _baseline_addresses(portfolio: Mapping[str, object]) -> dict[tuple[str, str,
     return addresses
 
 
-# The gates are the retained baseline's byte readings under one rule, and the
-# rule is executable: a gate edited by hand, a gate missing for a baseline
-# address, or a gate for an address the baseline never read fails here, so the
-# ceilings the cost class blocks on are never a transcription.
-def test_every_memory_gate_is_the_baseline_reading_under_the_stated_rule() -> None:
+# The gates are the byte readings of the retained capture the file names as its
+# basis under one rule, and the rule is executable: a gate edited by hand, a
+# gate missing for a basis address, or a gate for an address the basis never
+# read fails here, so the ceilings the cost class blocks on are never a
+# transcription.
+def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     gates = MemoryGates.load()
     portfolio = _basis_portfolio(gates)
     assert gates.basis_portfolio == CANONICAL_PORTFOLIO
     assert gates.headroom == 1.10
     assert gates.document() == derive_memory_gates(portfolio, gates.headroom)
-    baseline = _baseline_addresses(portfolio)
-    assert set(gates.addresses) == set(baseline)
+    basis = _basis_addresses(portfolio)
+    assert set(gates.addresses) == set(basis)
     assert len(gates.addresses) == len(set(gates.addresses)) == 154
     for gate in gates.gates:
-        assert gate.unit == baseline[(gate.subject, gate.workload, gate.cell)]
+        assert gate.unit == basis[(gate.subject, gate.workload, gate.cell)]
         assert gate.max_bytes > 0
     windows = {
         str(reading.get("window"))

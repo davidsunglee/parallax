@@ -40,10 +40,13 @@ It records 89 comparisons within and one outside, with no incomplete cells or
 errors. Nineteen of 20 streamed-memory arm-growth comparisons pass over 40 arms;
 every arm meets its absolute ceiling.
 
-The repository's canonical current cost portfolio and CI input is the later
+The repository's canonical current cost portfolio and CI input is the
+structural-metadata after-capture under
+[`../structural-metadata-envelope/after/`](../structural-metadata-envelope/after/portfolio.json),
+named once by `cost_report.CANONICAL_PORTFOLIO`. The later
 [`db56a19e` portfolio](../write-lowering-envelope/portfolio.json), which retains
-a schema-authoritative Snapshot delivery member and adds the current
-write-lowering member.
+a schema-authoritative Snapshot delivery member and adds a write-lowering
+member, is likewise retained as historical review evidence.
 
 The outside comparison is `document-heavy.live.eager.minRootsPerSecond`:
 9007.065178422185 roots/s against 9091 roots/s. The document-heavy page-128
