@@ -424,9 +424,14 @@ def test_document_classification_rejects_container_subclasses() -> None:
         multiplicity=Multiplicity.ONE,
         nullable=False,
     )
+    reduced, reduction_findings = reduce_declared_members_classified(
+        shape, dict_subclass(required=41)
+    )
 
     assert wrong_many.findings[0].code == "many-wrong-kind"
     assert wrong_one.findings[0].code == "one-wrong-kind"
+    assert reduced is None
+    assert reduction_findings[0].code == "one-wrong-kind"
 
 
 @pytest.mark.parametrize(
