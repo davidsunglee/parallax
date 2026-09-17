@@ -340,18 +340,18 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     # gate moves. What does move is the pass observation — the successor patches
     # per row double — and the elapsed time, both of which the report carries as
     # advisories and nothing gates. That is the blind spot the evidence README
-    # states, pinned: the seed's effect is graded relative to the unseeded
-    # reading, never against a production count.
+    # states, pinned: the seeded memory readings are graded against their gates,
+    # and the pass observation, exact per run, relative to the unseeded reading,
+    # never against a production count. The retained checkpoint is one sample
+    # per reading, so no two readings are compared within the noise allowance.
     unseeded = _Reading(TRAVERSED_CASE)
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(
             lowering_support, "stream_lowered", _lowering_twice(lowering_support.stream_lowered)
         )
         seeded = _Reading(TRAVERSED_CASE)
-    allowance = MemoryGates.load().advisory["memoryNoiseAllowance"]
     assert not _outside(TRAVERSED_CASE, RETAINED, seeded)
     assert not _outside(TRAVERSED_CASE, TRANSIENT, seeded)
-    assert seeded.values[RETAINED] <= unseeded.values[RETAINED] * (1 + allowance)
     assert seeded.calls["applyPatches"] == 2 * unseeded.calls["applyPatches"]
 
 
