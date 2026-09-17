@@ -57,7 +57,7 @@ module-private spelling.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal, Protocol, cast
 
@@ -86,7 +86,6 @@ from parallax.core.document_codec import (
     locate_raw_entity_member,
     occurrence_shape,
     prepared_raw_member_classifier,
-    reduce_declared_members_classified,
 )
 from parallax.core.inheritance import (
     InheritanceEntityView,
@@ -491,7 +490,12 @@ class SharedDocument:
         return entry.member_paths[key][0]
 
     def located_classifier(
-        self, resolved: EntityIdentity, key: str
+        self,
+        resolved: EntityIdentity,
+        key: str,
+        *,
+        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+        build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
         """The prepared classifier for one located shared-document member."""
         entry = self.by_entity.get(resolved)
@@ -500,10 +504,19 @@ class SharedDocument:
         path = entry.member_paths.get(key)
         if path is None:
             raise KeyError(key)
-        return cast(
-            "Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]",
-            prepared_raw_member_classifier(entry.shape, path[0]),
+        if (build_object is None) != (build_many is None):
+            raise ValueError("object and many output builders must be supplied together")
+        classifier = (
+            prepared_raw_member_classifier(entry.shape, path[0])
+            if build_object is None or build_many is None
+            else prepared_raw_member_classifier(
+                entry.shape,
+                path[0],
+                build_object=build_object,
+                build_many=build_many,
+            )
         )
+        return cast("Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]", classifier)
 
     def classify_member_from(
         self, document_read: object, resolved: EntityIdentity, key: str
@@ -604,7 +617,12 @@ class DirectDocuments:
         return value, findings
 
     def member_classifier(
-        self, resolved: EntityIdentity, key: str
+        self,
+        resolved: EntityIdentity,
+        key: str,
+        *,
+        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+        build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
         """The prepared classifier for one direct document occurrence."""
         occurrence, shape = next(
@@ -624,6 +642,8 @@ class DirectDocuments:
                 document_read,
                 multiplicity=occurrence.multiplicity,
                 nullable=occurrence.nullable,
+                build_object=build_object,
+                build_many=build_many,
             )
             findings = tuple(
                 replace(finding, path=(occurrence.identity.path[-1], *finding.path))
@@ -811,43 +831,27 @@ def _classified_occurrence(
     *,
     multiplicity: Multiplicity,
     nullable: bool,
+    build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
+    build_many: Callable[[Iterable[object]], object] | None = None,
 ) -> DecodedMember:
-    """Classify and neutral-decode one complete occurrence exactly once."""
-    raw = None if isinstance(document_read, SqlNull) else document_read.document
-    if (
-        multiplicity is Multiplicity.MANY
-        and isinstance(raw, list)
-        and all(isinstance(item, dict) for item in cast("list[object]", raw))
-    ):
-        findings: list[DocumentFinding] = []
-        reduced: list[object] = []
-        for index, item in enumerate(cast("list[object]", raw)):
-            value, nested = reduce_declared_members_classified(shape, item)
-            reduced.append(value)
-            findings.extend(replace(finding, path=(index, *finding.path)) for finding in nested)
-        return DecodedMember(Present(reduced), tuple(findings))
-    if multiplicity is not Multiplicity.MANY and isinstance(raw, dict):
-        value, one_findings = reduce_declared_members_classified(shape, raw)
-        return DecodedMember(Present(value), one_findings)
-    outer = decode_occurrence_classified(
+    """Classify and construct one complete occurrence exactly once."""
+    if (build_object is None) != (build_many is None):
+        raise ValueError("object and many output builders must be supplied together")
+    if build_object is None or build_many is None:
+        return decode_occurrence_classified(
+            shape,
+            document_read,
+            multiplicity=multiplicity,
+            nullable=nullable,
+        )
+    return decode_occurrence_classified(
         shape,
         document_read,
         multiplicity=multiplicity,
         nullable=nullable,
+        build_object=build_object,
+        build_many=build_many,
     )
-    if not isinstance(outer.presence, Present):
-        return outer
-    findings = list(outer.findings)
-    if multiplicity is Multiplicity.MANY:
-        reduced: list[object] = []
-        for index, item in enumerate(cast("list[object]", outer.presence.value)):
-            value, nested = reduce_declared_members_classified(shape, item)
-            reduced.append(value)
-            findings.extend(replace(finding, path=(index, *finding.path)) for finding in nested)
-        return DecodedMember(Present(reduced), tuple(findings))
-    value, nested = reduce_declared_members_classified(shape, outer.presence.value)
-    findings.extend(nested)
-    return DecodedMember(Present(value), tuple(findings))
 
 
 def observed_document(document_read: object) -> object | None:

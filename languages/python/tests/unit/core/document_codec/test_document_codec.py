@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import uuid
+from collections.abc import Iterable
 from typing import cast
 
 import pytest
@@ -32,6 +33,7 @@ from parallax.core.base import (
     TIMESTAMP,
     UUID,
     Decimal,
+    DocumentValue,
     NeutralType,
     PresentDocument,
 )
@@ -255,7 +257,6 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
             Occurrence("many", Multiplicity.MANY, False, nested),
         )
     )
-
     assert decode_located_member_classified(shape, SQL_NULL, "leaf").findings[0].code == (
         "required-member-absent"
     )
@@ -304,6 +305,12 @@ def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> Non
     assert decode_path_classified(shape, {"one": None}, ("one", "required")).presence is NULL
     nested_value = decode_path_classified(shape, {"one": {"required": 7}}, ("one", "required"))
     assert nested_value == DecodedMember(Present(7))
+    raw_element: dict[str, DocumentValue] = {"required": 7}
+    tuple_document = cast("DocumentValue", {"many": (raw_element,)})
+    isolated = decode_path_classified(shape, tuple_document, ("many",))
+    raw_element["required"] = 8
+    isolated_many = cast("tuple[dict[str, object], ...]", cast("Present", isolated.presence).value)
+    assert isolated_many[0]["required"] == 7
     with pytest.raises(KeyError, match="array position"):
         decode_path_classified(shape, {"many": []}, ("many", "required"))
 
@@ -329,6 +336,59 @@ def test_classified_reduction_preserves_member_names_and_integer_array_positions
     )
     assert cast("dict[str, object]", reduced)["0"] is UNAVAILABLE
     assert [finding.path for finding in findings] == [("0",), ("many", 0, "12")]
+
+
+def test_classified_decoding_constructs_positional_output_during_the_shared_walk() -> None:
+    unavailable = object()
+    element = MemberShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(
+        members=(
+            Leaf("omitted", INT32, True),
+            Leaf("bad", INT32, True),
+            Occurrence("one", Multiplicity.ONE, False, element),
+            Occurrence("many", Multiplicity.MANY, False, element),
+        )
+    )
+    stored: DocumentValue = {
+        "bad": "wrong",
+        "one": {},
+        "many": [{"required": 7}, {}],
+    }
+
+    def positional_object(
+        member_shape: MemberShape, values: Iterable[object]
+    ) -> tuple[object, ...]:
+        return tuple(
+            unavailable if value is MISSING or value is UNAVAILABLE else value
+            for _member, value in zip(member_shape.members, values, strict=True)
+        )
+
+    decoded = decode_occurrence_classified(
+        shape,
+        PresentDocument(stored),
+        multiplicity=Multiplicity.ONE,
+        nullable=False,
+        build_object=positional_object,
+        build_many=lambda values: tuple(values),
+    )
+
+    assert decoded.presence == Present(
+        (unavailable, unavailable, (unavailable,), ((7,), (unavailable,)))
+    )
+    expected_paths = [
+        ("bad",),
+        ("one", "required"),
+        ("many", 1, "required"),
+    ]
+    assert [finding.path for finding in decoded.findings] == expected_paths
+
+    reduced, mapping_findings = reduce_declared_members_classified(shape, stored)
+    assert reduced == {
+        "bad": UNAVAILABLE,
+        "one": {},
+        "many": [{"required": 7}, {}],
+    }
+    assert [finding.path for finding in mapping_findings] == expected_paths
 
 
 def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:

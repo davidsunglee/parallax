@@ -18,7 +18,7 @@ proof (`models/document-layout.yaml`).
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import pytest
 
@@ -26,6 +26,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import MemberShape
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
@@ -229,6 +230,12 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     )
     assert address_value == {"city": "Oslo", "geo": {"country": "NO"}}
     assert address_findings == ()
+
+    def object_output(_shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:
+        return tuple(values)
+
+    with pytest.raises(ValueError, match="must be supplied together"):
+        document.raw_member_classifier(person, "address", build_object=object_output)
     with pytest.raises(KeyError, match="missing"):
         document.raw_member_classifier(marker, "missing")
     with pytest.raises(KeyError, match="missing"):
@@ -254,6 +261,13 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         "city": "Oslo",
         "geo": {"country": "NO"},
     }
+    incomplete_classifier = columns.raw_member_classifier(
+        person,
+        "address",
+        build_object=object_output,
+    )
+    with pytest.raises(ValueError, match="must be supplied together"):
+        incomplete_classifier(_COLUMNS_ROW["address"])
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         classify_address({"city": "Oslo"})
     with pytest.raises(KeyError, match="missing"):

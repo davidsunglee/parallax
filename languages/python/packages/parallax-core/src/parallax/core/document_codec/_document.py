@@ -6,11 +6,12 @@ and a returned document shares no mutable state with one passed in.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import ClassVar, Final, Literal, Self, TypeGuard, cast
 
 from parallax.core.base import (
+    SQL_NULL,
     DocumentValue,
     FrozenMap,
     NeutralType,
@@ -179,6 +180,22 @@ def _adopt_document_builder(value: object) -> object:
     return retain_document_value(value)
 
 
+type _ObjectOutput = Callable[[MemberShape, Iterable[object]], object]
+type _ManyOutput = Callable[[Iterable[object]], object]
+
+
+def _mapping_output(shape: MemberShape, values: Iterable[object]) -> dict[str, object]:
+    output: dict[str, object] = {}
+    for member, value in zip(shape.members, values, strict=True):
+        if not isinstance(value, Missing):
+            output[member.name] = value
+    return output
+
+
+def _list_output(values: Iterable[object]) -> list[object]:
+    return list(values)
+
+
 def locate_entity_member(document: DocumentValue, member: str) -> Missing | PresentDocument:
     """Locate one direct Entity member in a raw Entity document carrier."""
     if _is_document_object(document) and member in document:
@@ -197,9 +214,13 @@ def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocated
 
 
 def prepared_raw_member_classifier(
-    shape: MemberShape, member_name: str
+    shape: MemberShape,
+    member_name: str,
+    *,
+    build_object: _ObjectOutput = _mapping_output,
+    build_many: _ManyOutput = _list_output,
 ) -> Callable[[RawLocatedMemberInput], tuple[object, tuple[DocumentFinding, ...]]]:
-    """Prepare classification for an allocation-free direct-member witness."""
+    """Prepare classification and final-output construction for one raw witness."""
     member = shape.member(member_name)
     if member is None:  # pragma: no cover - compiled callers resolve declared members
         raise KeyError(f"{member_name!r} names no member of the shape")
@@ -210,35 +231,25 @@ def prepared_raw_member_classifier(
     def classify_occurrence(
         located: RawLocatedMemberInput,
     ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        raw = (
-            MISSING
+        carrier = (
+            SQL_NULL
             if isinstance(located, (SqlNull, Missing))
-            else None
-            if located is _PRESENT_JSON_NULL
-            else located
-        )
-        if (
-            member.multiplicity is Multiplicity.MANY
-            and _is_document_array(raw)
-            and all(_is_document_object(item) for item in raw)
-        ):
-            reduced: list[object] = []
-            findings: list[DocumentFinding] = []
-            for index, item in enumerate(raw):
-                value, nested = reduce_declared_members_classified(member.shape, item)
-                reduced.append(value)
-                findings.extend(
-                    replace(finding, path=(member_name, index, *finding.path)) for finding in nested
-                )
-            return reduced, tuple(findings)
-        if member.multiplicity is not Multiplicity.MANY and _is_document_object(raw):
-            value, nested_findings = reduce_declared_members_classified(member.shape, raw)
-            return value, tuple(
-                replace(finding, path=(member_name, *finding.path)) for finding in nested_findings
+            else PresentDocument(
+                None if located is _PRESENT_JSON_NULL else cast("DocumentValue", located)
             )
-        classified = _classify_member(member, raw, path)
+        )
+        classified = decode_occurrence_classified(
+            member.shape,
+            carrier,
+            multiplicity=member.multiplicity,
+            nullable=member.nullable,
+            build_object=build_object,
+            build_many=build_many,
+        )
         value = classified.presence.value if isinstance(classified.presence, Present) else None
-        return value, classified.findings
+        return value, tuple(
+            replace(finding, path=(member_name, *finding.path)) for finding in classified.findings
+        )
 
     return classify_occurrence
 
@@ -298,11 +309,28 @@ def decode_occurrence_classified(
     *,
     multiplicity: Multiplicity,
     nullable: bool,
+    build_object: _ObjectOutput = _mapping_output,
+    build_many: _ManyOutput = _list_output,
 ) -> DecodedMember:
-    """Classify one top-level occurrence from its SQL-null-aware carrier."""
+    """Classify one occurrence and construct its caller-selected final output.
+
+    The two construction operations synchronously consume interpreted values in
+    canonical shape order. They choose only the output carrier; classification,
+    recursive decoding, and finding paths remain this module's one traversal.
+    """
     member = Occurrence("", multiplicity, nullable, shape)
     raw = MISSING if isinstance(located, SqlNull) else located.document
-    return _classify_member(member, raw, ())
+    classified = _classify_member(member, raw, (), isolate=False)
+    if not isinstance(classified.presence, Present):
+        return classified
+    output, findings = _decoded_occurrence_output(
+        shape,
+        classified.presence.value,
+        multiplicity,
+        build_object,
+        build_many,
+    )
+    return DecodedMember(Present(output), (*classified.findings, *findings))
 
 
 def decode_path_classified(
@@ -345,13 +373,15 @@ def _classify_member(
     member: Leaf | Occurrence,
     raw: object | Missing,
     path: tuple[DocumentPathSegment, ...],
+    *,
+    isolate: bool = True,
 ) -> DecodedMember:
     if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
         if isinstance(raw, Missing) or raw is None:
             return DecodedMember(Present([]))
         if not _is_document_array(raw) or not all(_is_document_object(item) for item in raw):
             return DecodedMember(Present([]), (DocumentFinding("many-wrong-kind", path, raw),))
-        return DecodedMember(Present(_isolated_document_container(raw)))
+        return DecodedMember(Present(_isolated_document_container(raw) if isolate else raw))
     if isinstance(raw, Missing):
         findings = (
             (DocumentFinding("required-member-absent", path, raw),) if not member.nullable else ()
@@ -365,7 +395,7 @@ def _classify_member(
     if isinstance(member, Occurrence):
         if not _is_document_object(raw):
             return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path, raw),))
-        return DecodedMember(Present(_isolated_document_container(raw)))
+        return DecodedMember(Present(_isolated_document_container(raw) if isolate else raw))
     try:
         return DecodedMember(Present(decode_leaf(member.type, raw)))
     except LeafEncodingError:
@@ -375,10 +405,14 @@ def _classify_member(
 def reduce_declared_members_classified(
     shape: MemberShape,
     document: object,
+    *,
+    build_object: _ObjectOutput = _mapping_output,
+    build_many: _ManyOutput = _list_output,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """Reduce one requested occurrence while returning every shape finding as data.
+    """Interpret one requested occurrence into caller-selected final containers.
 
-    This is the reduction a READ applies, so which members it keys is the read
+    With the default builders this is the dictionary reduction a READ applies, so
+    which members it keys is the read
     contract (`m-snapshot-read` *What a materialized value carries*) rather than an
     option: a member the document holds contributes its decoded value, a member it
     omits contributes nothing unless it is a ``many`` — whose omitted and JSON-null
@@ -388,65 +422,112 @@ def reduce_declared_members_classified(
     from a decoded one and leave that member out. Presence preservation belongs to
     the plain reduction, whose consumer is the mutation comparison's authored side.
     """
+    return _decoded_object_output(shape, document, build_object, build_many)
+
+
+def _decoded_occurrence_output(
+    shape: MemberShape,
+    raw: object,
+    multiplicity: Multiplicity,
+    build_object: _ObjectOutput,
+    build_many: _ManyOutput,
+) -> tuple[object, tuple[DocumentFinding, ...]]:
+    if multiplicity is not Multiplicity.MANY:
+        return _decoded_object_output(shape, raw, build_object, build_many)
+    findings: list[DocumentFinding] = []
+    documents = cast("Sequence[object]", raw)
+
+    def elements() -> Iterable[object]:
+        for index, document in enumerate(documents):
+            value, nested = _decoded_object_output(shape, document, build_object, build_many)
+            findings.extend(replace(finding, path=(index, *finding.path)) for finding in nested)
+            yield value
+
+    output = build_many(elements())
+    return output, tuple(findings)
+
+
+def _decoded_object_output(
+    shape: MemberShape,
+    document: object,
+    build_object: _ObjectOutput,
+    build_many: _ManyOutput,
+) -> tuple[object, tuple[DocumentFinding, ...]]:
     if document is None:
         return None, ()
     if not isinstance(document, Mapping):
         return None, (DocumentFinding("one-wrong-kind", (), document),)
     source = cast("Mapping[str, object]", document)
-    reduced: dict[str, object] = {}
     findings: list[DocumentFinding] = []
-    for member in shape.members:
-        raw = source.get(member.name, MISSING)
-        if isinstance(member, Leaf):
-            path = (member.name,)
-            if isinstance(raw, Missing):
-                if not member.nullable:
-                    findings.append(DocumentFinding("required-member-absent", path, raw))
-                continue
-            if raw is None:
-                if not member.nullable:
-                    findings.append(DocumentFinding("required-member-null", path, raw))
-                reduced[member.name] = None
-                continue
-            try:
-                reduced[member.name] = decode_canonical_wire(member.type, cast("WireValue", raw))
-            except WireDecodingError:
-                reduced[member.name] = UNAVAILABLE
-                findings.append(DocumentFinding("leaf-undecodable", path, raw))
-            continue
-        held = member.name in source
-        classified = _classify_member(member, raw, (member.name,))
-        findings.extend(classified.findings)
-        if isinstance(classified.presence, Unavailable):
-            reduced[member.name] = UNAVAILABLE
-            continue
-        if member.multiplicity is Multiplicity.MANY:
-            documents: Sequence[object] = (
-                cast("Sequence[object]", classified.presence.value)
-                if isinstance(classified.presence, Present)
-                else ()
+
+    def interpreted_members() -> Iterable[object]:
+        for member in shape.members:
+            raw = source.get(member.name, MISSING)
+            yield _interpreted_member(
+                member,
+                raw,
+                member.name in source,
+                findings,
+                build_object,
+                build_many,
             )
-            elements: list[object] = []
-            for index, item in enumerate(documents):
-                nested, nested_findings = reduce_declared_members_classified(member.shape, item)
-                elements.append(nested)
-                findings.extend(
-                    replace(finding, path=(member.name, index, *finding.path))
-                    for finding in nested_findings
-                )
-            reduced[member.name] = elements
-            continue
-        if isinstance(classified.presence, Present):
-            nested, nested_findings = reduce_declared_members_classified(
-                member.shape, classified.presence.value
-            )
-            reduced[member.name] = nested
-            findings.extend(
-                replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
-            )
-        elif held or classified.findings:
-            reduced[member.name] = None
-    return reduced, tuple(findings)
+
+    output = build_object(shape, interpreted_members())
+    return output, tuple(findings)
+
+
+def _interpreted_member(
+    member: Leaf | Occurrence,
+    raw: object | Missing,
+    held: bool,
+    findings: list[DocumentFinding],
+    build_object: _ObjectOutput,
+    build_many: _ManyOutput,
+) -> object:
+    path = (member.name,)
+    if isinstance(member, Leaf):
+        if isinstance(raw, Missing):
+            if not member.nullable:
+                findings.append(DocumentFinding("required-member-absent", path, raw))
+            return MISSING
+        if raw is None:
+            if not member.nullable:
+                findings.append(DocumentFinding("required-member-null", path, raw))
+            return None
+        try:
+            return decode_canonical_wire(member.type, cast("WireValue", raw))
+        except WireDecodingError:
+            findings.append(DocumentFinding("leaf-undecodable", path, raw))
+            return UNAVAILABLE
+    classified = _classify_member(member, raw, path, isolate=False)
+    findings.extend(classified.findings)
+    if member.multiplicity is Multiplicity.MANY:
+        documents: object = (
+            classified.presence.value if isinstance(classified.presence, Present) else ()
+        )
+        output, nested_findings = _decoded_occurrence_output(
+            member.shape,
+            documents,
+            member.multiplicity,
+            build_object,
+            build_many,
+        )
+        findings.extend(
+            replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
+        )
+        return output
+    if isinstance(classified.presence, Present):
+        output, nested_findings = _decoded_object_output(
+            member.shape,
+            classified.presence.value,
+            build_object,
+            build_many,
+        )
+        findings.extend(
+            replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
+        )
+        return output
+    return None if held or classified.findings else MISSING
 
 
 @dataclass(frozen=True, slots=True)

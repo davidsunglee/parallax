@@ -696,7 +696,6 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
 _DECLARATION_FIXED: Final = (
     "occurrence_shape",
     "decode_occurrence_classified",
-    "reduce_declared_members_classified",
 )
 """The codec entries conversion reaches only for a document its compiled read did
 not already classify. Each one's work is fixed by the occurrence's declaration,
@@ -796,7 +795,7 @@ def test_the_conforming_path_checks_only_host_checked_payload_positions(
     # temporal ends, so doubling the rows doubles them and nothing else moves.
     one = _conversion_calls(layout, OWNERS)
     twice = _conversion_calls(layout, OWNERS * 2)
-    assert [one[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
-    assert [twice[site] for site in _DECLARATION_FIXED] == [0, 0, 0]
+    assert [one[site] for site in _DECLARATION_FIXED] == [0, 0]
+    assert [twice[site] for site in _DECLARATION_FIXED] == [0, 0]
     assert one["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS)
     assert twice["admits_stored_scalar"] == _host_checked_payload_cells(layout, OWNERS * 2)
