@@ -418,13 +418,26 @@ def test_a_paired_historical_job_is_never_divided_by_a_head_only_after_run(
 # Coverage                                                                     #
 # --------------------------------------------------------------------------- #
 def test_legacy_readings_without_runtime_or_window_share_the_address_vocabulary() -> None:
+    unsampled: list[float] = []
     coverage = coverage_of(
         [
             {
                 "subject": "lifecycle-overhead",
                 "readings": [
-                    {"workload": "w", "cell": "c", "unit": "us", "value": 1.0},
-                    {"workload": "w", "cell": "c", "unit": "us", "value": 2.0},
+                    {
+                        "workload": "w",
+                        "cell": "c",
+                        "unit": "us",
+                        "value": 1.0,
+                        "samples": unsampled,
+                    },
+                    {
+                        "workload": "w",
+                        "cell": "c",
+                        "unit": "us",
+                        "value": 2.0,
+                        "samples": unsampled,
+                    },
                     {
                         "workload": "w",
                         "cell": "d",
@@ -456,6 +469,69 @@ def test_legacy_readings_without_runtime_or_window_share_the_address_vocabulary(
     assert protocol.sampling == {"timing.pairs": "3"}
     assert protocol.contract_digest == "unknown" and protocol.lock_digest == "unknown"
     assert coverage.subjects == ("lifecycle-overhead",)
+    assert coverage.disagreements == ()
+
+
+@pytest.mark.parametrize(
+    ("reading", "message"),
+    [
+        ({"workload": "w", "cell": "c", "unit": "us"}, "samples is not a list"),
+        ({"workload": "w", "cell": "c", "unit": "us", "samples": "3"}, "samples is not a list"),
+        ({"cell": "c", "unit": "us", "samples": []}, "workload None is not a non-empty string"),
+        ({"workload": "w", "unit": "us", "samples": []}, "cell None is not a non-empty string"),
+        ({"workload": "w", "cell": "c", "unit": "", "samples": []}, "unit '' is not a non-empty"),
+        ({"workload": "w", "cell": "c", "unit": "us", "samples": [], "runtime": 3.13}, "runtime"),
+    ],
+)
+def test_a_reading_without_the_schemas_address_or_samples_is_refused_not_defaulted(
+    reading: Document, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        coverage_of([{"subject": "s", "readings": [reading]}])
+    with pytest.raises(ValueError, match="s readings is not a list"):
+        coverage_of([{"subject": "s", "readings": {}}])
+    with pytest.raises(ValueError, match="subject"):
+        coverage_of([{"readings": []}])
+
+
+def test_envelopes_of_one_subject_on_one_side_must_share_a_protocol(
+    before_portfolio: Document,
+) -> None:
+    """A subject split across shards is one subject: a shard whose sampling,
+    workload digest, or commit departs from a sibling's is a protocol
+    difference of that side, never masked by the sibling that matches."""
+    members = cast("list[Document]", before_portfolio["members"])
+    snapshot = members[0]
+    first, second = deepcopy(snapshot), deepcopy(snapshot)
+    first["readings"] = snapshot["readings"][:2]
+    second["readings"] = snapshot["readings"][2:]
+    second["provenance"]["sampling"]["retainedWarmups"] = 9
+    second["provenance"]["workloadDigest"] = "f" * 64
+    second["provenance"]["commit"] = "a" * 40
+    split = coverage_of([*members[1:], first, second])
+    assert split.readings == coverage_of(members).readings
+    assert (
+        split.protocols["snapshot-delivery"] == coverage_of(members).protocols["snapshot-delivery"]
+    )
+    assert split.disagreements == (
+        f"snapshot-delivery: commit {BEFORE_COMMIT} in one envelope, {'a' * 40} in another",
+        "snapshot-delivery: workload digest "
+        f"{snapshot['provenance']['workloadDigest']} in one envelope, {'f' * 64} in another",
+        "snapshot-delivery: sampling retainedWarmups absent in one envelope, 9 in another",
+    )
+    verdict = compare_coverage(coverage_of(members), split)
+    assert verdict.equivalent and not verdict.same_protocol
+    assert verdict.protocol_differences == tuple(
+        f"after side: {found}" for found in split.disagreements
+    )
+    agreeing = coverage_of([*members[1:], first, {**second, "provenance": first["provenance"]}])
+    assert agreeing.disagreements == ()
+    assert compare_coverage(coverage_of(members), agreeing).same_protocol
+    unprovenanced = coverage_of([first, {**second, "provenance": None}])
+    assert unprovenanced.disagreements == (
+        "snapshot-delivery: one envelope carries provenance and another none",
+    )
+    assert "snapshot-delivery" in unprovenanced.protocols
 
 
 def _perturbed(portfolio: Document, change: str) -> Document:
@@ -559,7 +635,7 @@ def test_a_complete_sharded_run_reports_its_cost_from_job_durations_and_head_spa
 
 
 def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document], before_portfolio: Document
 ) -> None:
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
@@ -571,6 +647,59 @@ def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
     assert after.timing.elapsed.seconds is None
     assert after.timing.request_latency.seconds is None
     assert after.timing.setup.seconds is None
+    untimed = _after_jobs([shard.id for shard in SHARDS])
+    for job in untimed["jobs"]:
+        job["completed_at"] = None
+    nothing = _after(assembled, request, untimed)
+    assert nothing.timing.runner.seconds is None
+    assert nothing.timing.runner.note == "none of the 6 allocated jobs is timed"
+    assert nothing.longest_job.seconds is None
+    assert nothing.longest_job.note == "the longest measure job: unrecorded for shard " + ", ".join(
+        f"`{shard.id}`" for shard in SHARDS
+    )
+    assert "0.0 min" not in evidence(_before(before_portfolio), nothing).render()
+
+
+def test_a_maximum_over_shards_is_unknown_while_any_shards_contributor_is(
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+) -> None:
+    """A shard whose sidecar never arrived may have been the longest, so the
+    measurement path, the longest job, and the internal setup are unknown
+    rather than the maximum of what did arrive."""
+    request = _dispatch_request(head_commit)
+    inputs = tmp_path / "inputs"
+    for index, shard in enumerate(SHARDS):
+        spans = _spans_with_setup(shard.id, shard.subject, 30.0 * (index + 1))
+        result = ShardResult(
+            shard, MemberResult(shard.member, envelopes[shard.subject]), spans, identities()
+        )
+        write_shard(
+            result,
+            request,
+            HEAD,
+            head_commit,
+            f"pair-{shard.id}",
+            inputs / shard.id / HEAD / shard.id,
+        )
+    (inputs / SHARDS[-1].id / HEAD / SHARDS[-1].id / DURATIONS_FILE).unlink()
+    captures = discover(inputs)
+    out = tmp_path / "assembled"
+    write_assembly(assemble(captures, SHARDS, request), inputs, captures, out)
+    after = _after(out, request)
+    assert after.complete
+    assert after.timing.measurement_path.seconds is None
+    assert after.timing.measurement_path.note == (
+        f"the longest head shard collection span: unrecorded for shard `{SHARDS[-1].id}`"
+    )
+    assert after.internal_setup.seconds is None
+    assert after.internal_setup.note == f"the head sidecar is absent for shard `{SHARDS[-1].id}`"
+    assert after.modeled_serial.seconds is None
+    ids = [shard.id for shard in SHARDS]
+    jobs = _after_jobs(ids)
+    jobs["jobs"][3]["completed_at"] = None
+    partial = _after(out, request, jobs)
+    assert partial.longest_job.seconds is None
+    assert partial.longest_job.note == f"the longest measure job: unrecorded for shard `{ids[2]}`"
 
 
 def test_after_coverage_is_validated_against_its_own_plan_even_without_a_historical_comparison(
@@ -621,6 +750,53 @@ def test_a_cancelled_or_failed_measure_job_makes_the_after_evidence_insufficient
     absent = _after(assembled, request, _after_jobs([*ids[:-1], "stray"]))
     assert f"shard {ids[-1]} has no measure job in the run's jobs" in absent.problems
     assert any("'stray', which is not planned" in problem for problem in absent.problems)
+
+
+def test_every_after_job_is_cross_checked_and_the_topology_is_the_workflows(
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+) -> None:
+    """Runner minutes and elapsed consume every job of the document, so a job
+    of another attempt, a job the workflow has no job for, and a shard with
+    two jobs each make the evidence insufficient before arithmetic."""
+    request = _dispatch_request(head_commit)
+    assembled = _assembled(tmp_path, request, envelopes)
+    ids = [shard.id for shard in SHARDS]
+    jobs = _after_jobs(ids)
+    jobs["jobs"][2]["run_attempt"] = 2
+    jobs["jobs"].append(_job("400", "lint", 0.0, 9000.0, run_id=AFTER_RUN))
+    jobs["jobs"].append(deepcopy(jobs["jobs"][1]))
+    jobs["jobs"].append(_job("301", "cleanup", 2761.0, 2762.0, run_id=AFTER_RUN))
+    after = _after(assembled, request, jobs)
+    assert after.complete and not after.sufficient
+    assert f"the after job `measure ({ids[1]})` is attempt 2, not 1" in after.problems
+    assert "the after run has an unexpected job `lint`" in after.problems
+    assert f"the after run has more than one `measure ({ids[0]})` job" in after.problems
+    assert "the after run has more than one `cleanup` job" in after.problems
+    assert len(after.problems) == 4
+    cleanup_of_another_run = _after_jobs(ids)
+    cleanup_of_another_run["jobs"][-1]["run_id"] = 9
+    foreign = _after(assembled, request, cleanup_of_another_run)
+    assert foreign.problems == (f"the after job `cleanup` belongs to run 9, not {AFTER_RUN}",)
+
+
+def test_duplicate_plan_or_shard_entries_in_the_assembly_are_named_not_last_wins(
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+) -> None:
+    request = _dispatch_request(head_commit)
+    assembled = _assembled(tmp_path, request, envelopes)
+    portfolio = json.loads((assembled / "portfolio.json").read_text(encoding="utf-8"))
+    duplicate = deepcopy(portfolio["shards"][0])
+    duplicate["head"]["capture"]["commit"] = "a" * 40
+    portfolio["shards"].append(duplicate)
+    portfolio["plan"].append(deepcopy(portfolio["plan"][1]))
+    (assembled / "portfolio.json").write_text(json.dumps(portfolio), encoding="utf-8")
+    after = _after(assembled, request)
+    assert [shard.id for shard in after.shards] == [shard.id for shard in SHARDS]
+    assert after.complete and not after.sufficient
+    assert after.problems == (
+        f"the assembly's plan lists shard {SHARDS[1].id!r} more than once",
+        f"the assembly's shards lists shard {SHARDS[0].id!r} more than once",
+    )
 
 
 def test_the_measured_commit_is_the_requests_and_never_a_dispatch_runs_head_sha(
@@ -733,6 +909,7 @@ def test_the_measurement_path_reads_head_spans_and_a_missing_sidecar_is_unknown(
     assert after.timing.measurement_path.seconds == 220.0
     assert after.internal_setup.seconds == 120.0
     assert f"`{SHARDS[0].id}` 30 s" in after.internal_setup.note
+    assert "none recorded" not in after.internal_setup.note
     assert after.modeled_serial.seconds == 130.0 + 160.0 + 190.0 + 220.0
     (out / DURATIONS_FILE).unlink()
     without = _after(out, request)
@@ -784,7 +961,7 @@ def test_equivalent_coverage_under_one_protocol_yields_an_observed_historical_re
     ) in rendered
     assert (
         "| Internal setup spans | unknown (not instrumented) | "
-        "unknown (no head setup spans arrived) |"
+        "unknown (no head sidecar records a setup span) |"
     ) in rendered
     assert "Modeled serial work | not applicable (observed sequentially) | 1h 23m 20s" in rendered
 
