@@ -10,7 +10,7 @@ below — and for two of the three exclusions, in both namespaces.
 
 **The three layers, and how each is priced.** The Page and the published
 root are both alive at a point a census can be taken from outside the delivery,
-and each carries its own coefficient, so the census prices those two apart. The
+and each is a kind of its own, so the census prices those two apart. The
 Root View work between them is alive at no such point — it is built and dropped inside one
 publication — so it is priced as a PEAK instead, over a region opened at one root
 and closed at the next: how far the process rose inside that region over the
@@ -21,11 +21,12 @@ halves of the middle layer's contract are therefore read — that it does not
 survive the root it published, by the census between two roots, and that its peak
 is one root's reachable nodes rather than the Page's, by the region.
 
-**Nine readings, each its own statement.** Pages do not accumulate with
+**Eight readings, each its own statement.** Pages do not accumulate with
 the result. A delivery holds one Page and one published root at a time, and
-the survivor census says so in arithmetic rather than in prose: it is exactly
-affine in the Page's own node population and the published root's, with **no term
-in the total result size and none in how far the delivery has got**. No Python
+the survivor census says so by kind at every point of a crossed grid of page
+sizes and fan-outs: one Page, one carrier of its rows, one Root View, and
+exactly the published root's own reachable nodes, with **no term in the total
+result size and none in how far the delivery has got**. No Python
 object, reference, or reported object size anywhere in the process moves with
 either, which is the same claim taken over the whole heap instead of over the
 delivery's own survivors. Publishing one root peaks at that root's reachable node set,
@@ -53,13 +54,13 @@ about Parallax, so the price of one root comes from the retaining arm — what o
 root of THIS shape costs on THIS interpreter — and the streamed arm has to come
 in under one of them across nine times as many roots.
 
-**The census is pinned as exact counts rather than fitted, and that is what sees
-a constant.** Every byte reading in the first measurement is a DIFFERENCE — one
-result size against another, one position against another — so a Page held
-one page too long cancels out of all of them and is invisible to the instrument
-that measures bytes. The census is the reading that is not a difference: its
-coefficients are literals, every one of them names what it counts, and a second
-live Page fails it at every point of the grid.
+**The census counts kinds, and that is what sees a constant.** Every byte
+reading in the first measurement is a DIFFERENCE — one result size against
+another, one position against another — so a Page held one page too long cancels
+out of all of them and is invisible to the instrument that measures bytes. The
+census is the reading that is not a difference: it names each kind it counts and
+how many of it may be alive, and a second live Page fails it at every point of
+the grid.
 
 **The census is read five ways, and all five begin at the window's own
 survivors.** A Page or a root is a kind Parallax defines and is counted; a
@@ -86,7 +87,7 @@ every value the fixtures produce is fixed-width, because a total will move for a
 longer string as readily as for a leak. What it does not widen to is memory a
 Python object merely points at, which is the last paragraph below.
 
-**What the nine readings still do not prove.** Nothing here sees a transient
+**What the eight readings still do not prove.** Nothing here sees a transient
 smaller than the region it is allocated in — a high-water mark is a maximum, so an
 allocation that never takes the process above an earlier moment of the same
 publication is invisible however it scales, which is why the page grid the peak
@@ -419,104 +420,20 @@ def _wire_stream(database: Database, batch_size: int) -> SnapshotStream[Any]:
 
 
 class _Namespace(NamedTuple):
-    """One representation's stream, and the exact census a delivery of it leaves
-    alive at any point of itself.
-
-    The four counts are the bound restated as objects. ``fixed`` is everything
-    sized by the plan and the handle rather than by the data — the schema, the
-    layouts, the authored and validated query products, the continuation, the
-    delivery, the read composition the handle owns one of (its scope, that
-    scope's execution policy, and the executor inputs the policy was built
-    with), the read the delivery was begun as at entry (the begun read itself
-    and the adoption it took its selection through), and everything the handle
-    prepared whole at connect and retains for the delivery to be served under:
-    the selection, the Serving Model holding it, its two projections, the
-    transaction runner beside them with the one options record the root
-    retains as its transaction defaults, the write planner with the family-fact reader and
-    the settlement module it holds — one reader over the whole model, holding
-    the model and the compiled Inheritance Facet by reference and indexing
-    neither, and one settlement module holding that same reader beside the
-    concurrency, temporal, and audit strategies — and the products
-    preparation derived over every Entity of the model: the cataloged model and
-    its layout catalog with one layout per Entity, the row codec with one row
-    facts per Entity, and the graph construction with one Entity facts per
-    Entity, each binding that Entity's layout to its class's publication plan
-    through three tuples of its own. Those products are sized by the MODEL
-    rather than by the data, which is
-    what makes them fixed: a model of five Entities derives the same facts
-    whether the delivery reads two roots or two thousand.
-    ``per_page_node`` is what the sealed Page holds for each node it
-    carries, so the page term is that count times the page's own root positions
-    times one root plus its fanout. Both are counted over the roots the page
-    KEEPS: a page reads one root past its batch to prove whether another page
-    follows, and neither that root nor anything under it is converted, so it
-    leaves the census untouched at every point of the grid. ``per_page_root`` is
-    what the page holds per root POSITION rather than per node — the coordinate
-    the database evaluated for it — so its term is that count times the page size
-    alone, with no fanout in it. ``per_published_node`` is what one published root
-    graph holds for each of ITS nodes, which is the page-node product with the
-    page size taken out.
-
-    Nothing in any of the three products is the total result size, and nothing is
-    how far the delivery has got. That absence is the claim.
-    """
+    """One representation's stream: the lane's name, and the opener that begins
+    a delivery of it over a handle at a given page size."""
 
     name: str
     opener: _Opener
-    fixed: int
-    per_page_node: int
-    per_page_root: int
-    per_published_node: int
-
-    def survivors_for(self, *, batch_size: int, fanout: int) -> int:
-        nodes_per_root = 1 + fanout
-        return (
-            self.fixed
-            + self.per_page_node * batch_size * nodes_per_root
-            + self.per_page_root * batch_size
-            + self.per_published_node * nodes_per_root
-        )
 
 
-_TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=2
-)
-"""The Typed lane. Two objects per page node — the Read Origin a page retains for
-it and the Object Key that hint is filed under — one per page ROOT rather than
-per node, the coordinate the database evaluated for it, and two per published
-node, the frozen Entity instance and the node state naming what it was read
-from.
+_TYPED: Final = _Namespace("typed", _typed_stream)
+"""The Typed lane, publishing each root as the model's own Entity class with its
+included children as instances."""
 
-The root term is what makes the page's cost `O(B x T)` in the Continuation Order
-rather than in the graph below it: children have no coordinate, and a coordinate
-holds its carriers in one tuple rather than wrapping each cell. The delivery's
-own carried position is one more of them, and is fixed. That the term count `T`
-is a delivery-lifetime cost rather than a per-root one is read on its own grid
-below.
-
-One fixed object fewer than before connection lifetimes: a delivery's executor
-inputs are built from the connection the page runs on and dropped with the page,
-where a handle used to retain one for its life. What replaces it is the
-acquisition itself, and neither the context nor the scoped execution is
-Parallax-owned in this instrument — the shipped ones are, and what bounds THEM
-is that a delivery holds exactly one for its whole life however many pages it
-reads.
-
-One fixed object more with root-configured transaction defaults: the options
-record a root is connected with is retained by its transaction runner for the
-root's life — one per root, whatever the delivery reads — and a delivery opens
-no transaction, so it is fixed rather than a term."""
-
-_WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=1
-)
-"""The Wire lane. The same page terms, because retention is a property of the read
-rather than of the representation, and one object per published node: an unwound
-value tree carries its own state in the tree rather than beside it. One MORE
-fixed object than the Typed lane — the frozen sequence the published root's one
-included relationship is spelled as, which a Typed root answers from its node
-state instead. It is fixed rather than per-node because there is one of them per
-relationship the include tree names, whatever the fan-out inside it."""
+_WIRE: Final = _Namespace("wire", _wire_stream)
+"""The Wire lane, publishing the same delivery as frozen Wire nodes, the root's
+included relationship spelled as a sequence of them."""
 
 _NAMESPACES: Final = (_TYPED, _WIRE)
 
@@ -737,71 +654,6 @@ def _census(seam: Seam) -> tuple[_Live, dict[str, int]]:
     return live, counts
 
 
-_SOURCES: Final = frozenset(
-    {
-        "parallax.conformance.story_models",
-        "parallax.core.continuation",
-        "parallax.conformance.workloads",
-        "parallax.core.entity._graph_construction",
-        "parallax.core.entity._layout",
-        "parallax.core.entity._row_codec",
-        "parallax.core.metamodel._identities",
-        "parallax.core.object_query._validated",
-        "parallax.core.predicate._validated",
-        "parallax.core.temporal_read",
-        "parallax.core.unit_work.clock",
-        "parallax.core.unit_work.planner",
-        "parallax.core.unit_work.retain",
-        "parallax.core.unit_work.write_planner",
-        "parallax.core.unit_work.write_settlement",
-        "parallax.snapshot._inspection",
-        "parallax.snapshot.handle._adoption",
-        "parallax.snapshot.handle._database",
-        "parallax.snapshot.handle._options",
-        "parallax.snapshot.handle._page",
-        "parallax.snapshot.handle._planning",
-        "parallax.snapshot.handle._publication",
-        "parallax.snapshot.handle._read",
-        "parallax.snapshot.handle._read_scope",
-        "parallax.snapshot.handle._stream",
-        "parallax.snapshot.handle._transaction_runner",
-        "parallax.snapshot.materialize._page",
-        "parallax.snapshot.materialize._root",
-        "parallax.snapshot.materialize._views",
-        "parallax.snapshot.materialize._wire",
-    }
-)
-"""Where every object a running delivery leaves alive is DEFINED.
-
-Read beside the exact counts because the two see different pathologies: a count
-pins how many of a kind already here may survive, and this pins that no kind from
-anywhere else does. A Root View kept past the root it published, a whole-result
-``Snapshot``, or a collection some new module accumulated is a name absent from
-this set however few of them there are, and the counts alone would price it as
-part of a coefficient.
-
-The frontier is the interesting half. The metamodel entry is the canonical
-relationship identity shared by the validated include and its view keys. The read
-composition's entry is the one a delivery reaches back INTO for every page: it
-retains the scope the handle owns rather than callables cut from that handle, so
-the scope, its execution policy, and the executor inputs that policy holds are
-alive here as the handle's own, and the read the delivery was begun as — the
-begun read and its adoption — beside them, whatever the page size and the fanout
-are, which is why they are in ``fixed``. The entity and publication entries are
-what the handle prepared at connect and the delivery is served under: the
-selection, its Serving Model, its read and write projections, the transaction
-runner and the options record it retains as the root's defaults, and the
-layouts, row facts, and graph facts derived over every Entity of the model —
-one set per model however much is read, and therefore fixed too. There
-is no entry for a retained root-judgment module, for the eager executor's own result carrier — a
-delivery holds the page it read rather than a find's — or anything under
-``parallax.core.sql_gen``, a page being planned and compiled and the products of
-both gone by the time it is published; and none for the Wire view a Wire delivery
-was opened through, which is answered fresh per access and released as soon as
-the stream exists.
-"""
-
-
 def _published_kinds(namespace: _Namespace) -> frozenset[str]:
     """The qualified names a delivery publishes a root and its children as, taken
     from a delivery of the same query rather than imported.
@@ -872,42 +724,32 @@ def test_pages_do_not_accumulate_with_the_result() -> None:
 
 @in_a_child_interpreter
 def test_a_delivery_holds_one_page_and_one_published_root() -> None:
-    # The bound's two live layers, counted as objects at a point where both are
-    # open. One sealed Page and its rows, plus the transient Root View that
-    # publishes the current root and does not outlive that publication; and exactly one
-    # published root carrying exactly its own fanout of children — never the
-    # roots already delivered, and never the page's other roots.
+    # The bound's two live layers, counted by kind at a point where both are
+    # open, over a crossed grid of page sizes and fan-outs. One sealed Page and
+    # its rows, plus the transient Root View that publishes the current root and
+    # does not outlive that publication; and exactly one published root carrying
+    # exactly its own fanout of children — never the roots already delivered,
+    # and never the page's other roots. Counted by kind rather than as a total so
+    # a failure names what was retained, and over the grid so the root term is
+    # seen to move with the fanout alone and the page kinds with nothing at all.
     for namespace in _NAMESPACES:
         published = _published_kinds(namespace)
-        _, counts = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
-        assert counts.get(Page.__qualname__) == 1, namespace.name
-        assert counts.get(PageRows.__qualname__) == 1, namespace.name
-        assert counts.get(RootView.__qualname__) == 1, namespace.name
-        alive = sum(counts.get(kind, 0) for kind in published)
-        assert alive == 1 + _FANOUT, (namespace.name, counts)
-
-
-@in_a_child_interpreter
-def test_what_a_delivery_holds_is_the_page_and_the_root_and_not_the_result() -> None:
-    # The same sample point over a crossed grid, priced exactly. Every reading is
-    # the page term plus the root term plus what the plan and the handle cost, and
-    # the fit is stated as literals rather than solved for, so an object retained
-    # once — which no coefficient derived from these points could see — fails here
-    # too. Both terms are real: the page term moves with the page size, the root
-    # term with the fanout, and neither with anything else.
-    for namespace in _NAMESPACES:
         for batch_size in _PAGE_SIZES:
             for fanout in _FANOUTS:
-                live, _ = _census(
+                _, counts = _census(
                     _paused(namespace, _LARGE, batch_size=batch_size, fanout=fanout, at=_AT)
                 )
-                assert live.parallax > 0, (namespace.name, batch_size, fanout, live)
-                assert live.held > 0, (namespace.name, batch_size, fanout, live)
+                where = (namespace.name, batch_size, fanout, counts)
+                assert counts.get(Page.__qualname__) == 1, where
+                assert counts.get(PageRows.__qualname__) == 1, where
+                assert counts.get(RootView.__qualname__) == 1, where
+                alive = sum(counts.get(kind, 0) for kind in published)
+                assert alive == 1 + fanout, where
 
 
 @in_a_child_interpreter
 def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -> None:
-    # The two independence readings the fit above asserts by omission, taken
+    # The two independence readings the kind counts above leave implicit, taken
     # directly so a failure names which of them broke. Ten times the roots is the
     # same census; nearly twice as far into the same delivery is the same census.
     #

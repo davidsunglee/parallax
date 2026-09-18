@@ -3645,10 +3645,10 @@ of shared edition identity.
 - **The memory bound is gated as a SHAPE and reported as a number.**
   `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working set
   at `O(P_B + G_max)` with three named exclusions; this target grades that in the
-  `cost` class (§10), as nine measurements over `tests/unit/`'s memory
+  `cost` class (§10), as eight measurements over `tests/unit/`'s memory
   instruments. What is asserted there is a survivor census with no term in the
   result size and no term in how far the delivery has got, with the Page and
-  the published root counted separately and the Continuation Order's own width
+  the published root counted by kind and the Continuation Order's own width
   priced on a grid of its own — one coordinate per page ROOT whatever that width
   is, the width itself costing the plan once; the census is read five ways — over
   Parallax's own survivors, over every survivor whatever defined its type, over
