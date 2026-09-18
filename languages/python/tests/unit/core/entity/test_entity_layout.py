@@ -187,6 +187,29 @@ def test_every_corpus_entity_lays_out_its_family_effective_members_in_order() ->
         ), where
 
 
+def test_every_corpus_layout_iterates_its_member_windows_as_the_selection_binds_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(_window: object, index: object) -> object:
+        raise AssertionError(f"iteration indexed the window at {index!r}")
+
+    for stem, _model, identity, layout in _corpus_layouts():
+        where = (stem, identity.canonical)
+        bindings = layout.member_selection.bindings
+        attributes, occurrences = layout.attributes, layout.occurrences
+        monkeypatch.setattr(type(attributes), "__getitem__", refuse)
+        monkeypatch.setattr(type(occurrences), "__getitem__", refuse)
+        walked = [*attributes, *occurrences]
+        assert all(left is right for left, right in zip(walked, bindings, strict=True)), where
+        assert [binding.identity for binding in attributes] == list(
+            layout.members[: layout.attribute_count]
+        ), where
+        assert [binding.identity for binding in occurrences] == list(
+            layout.members[layout.attribute_count :]
+        ), where
+        monkeypatch.undo()
+
+
 def test_every_corpus_entitys_index_maps_each_member_to_its_own_position() -> None:
     for stem, _model, identity, layout in _corpus_layouts():
         where = (stem, identity.canonical)

@@ -236,6 +236,53 @@ def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_se
         EntityMemberSelection(MemberShape(()), selection.bindings, selection.attribute_count)
 
 
+def _member_ranges() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
+    """Every window shape one selection can hand out, each beside the bindings
+    it is expected to yield: a prefix, a suffix, the whole tuple, and nothing."""
+    customer = _view(_corpus("customer"), "Customer").member_selection
+    dog = _view(_corpus("animal"), "Dog").member_selection
+    occurrences_only = EntityMemberSelection(
+        MemberShape.of((), customer.value_objects),
+        tuple(customer.value_objects),
+        0,
+    )
+    return [
+        ("prefix", customer.attributes, customer.bindings[: customer.attribute_count]),
+        ("suffix", customer.value_objects, customer.bindings[customer.attribute_count :]),
+        ("whole", dog.attributes, dog.bindings),
+        ("empty", dog.value_objects, ()),
+        ("leading-empty", occurrences_only.attributes, ()),
+        ("trailing-whole", occurrences_only.value_objects, occurrences_only.bindings),
+    ]
+
+
+def test_every_member_window_iterates_its_own_bindings_in_order_by_identity() -> None:
+    for shape, window, expected in _member_ranges():
+        assert len(window) == len(expected), shape
+        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
+        assert [window[index] for index in range(len(window))] == list(expected), shape
+        assert [window[-1 - index] for index in range(len(window))] == list(expected)[::-1], shape
+        assert tuple(window[:]) == expected, shape
+        assert tuple(window[1:]) == expected[1:], shape
+        assert list(window) == list(window), shape
+        first, second = iter(window), iter(window)
+        interleaved = [next(iterator) for _ in expected for iterator in (first, second)]
+        assert interleaved == [binding for binding in expected for _ in (first, second)], shape
+        assert next(first, None) is None and next(second, None) is None, shape
+        assert window == expected, shape
+
+
+def test_iterating_a_member_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(_window: object, index: object) -> object:
+        raise AssertionError(f"iteration indexed the window at {index!r}")
+
+    ranges = _member_ranges()
+    for shape, window, expected in ranges:
+        monkeypatch.setattr(type(window), "__getitem__", refuse)
+        assert list(window) == list(expected), shape
+        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
+
+
 def test_an_applicable_member_is_the_ancestors_own_accepted_value() -> None:
     model = _formed("animal")
     facet = inheritance.view(model)
