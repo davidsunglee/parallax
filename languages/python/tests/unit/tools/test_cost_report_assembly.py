@@ -4,7 +4,6 @@ import contextlib
 import json
 from collections.abc import Generator, Sequence
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -34,15 +33,20 @@ from cost_report import (
 )
 from durations import Spans
 from interpreter_matrix import (
-    RuntimeIdentity,
-    RuntimeStatus,
     RuntimeUnavailable,
     supported_minors,
     write_metadata,
 )
 from parallax.conformance.budget import BudgetContract
 from snapshot_delivery_overhead import PLAN_GROUP, workload_selection
-from tests.unit.tools._cost_report_support import clean, complete_snapshot, member_envelopes
+from tests.unit.tools._cost_report_support import (
+    clean,
+    collection_spans,
+    complete_snapshot,
+    identities,
+    member_envelopes,
+    write_capture,
+)
 
 type Document = dict[str, Any]
 
@@ -66,13 +70,6 @@ def envelopes(contract: BudgetContract) -> dict[str, Document]:
     return {
         subject: clean(document, contract)
         for subject, document in member_envelopes(contract).items()
-    }
-
-
-def _identities(**versions: str) -> dict[str, RuntimeStatus]:
-    return {
-        minor: RuntimeIdentity("CPython", versions.get(minor.replace(".", "_"), f"{minor}.1"), "/p")
-        for minor in supported_minors()
     }
 
 
@@ -102,48 +99,10 @@ def _nightly_request(head: str, *, request_id: str) -> Request:
     )
 
 
-def _spans(shard_id: str, seconds: float) -> Spans:
-    elapsed = [0.0]
-    wall = datetime(2026, 9, 18, 6, 0, tzinfo=UTC)
-    spans = Spans(clock=lambda: elapsed[0], now=lambda: wall + timedelta(seconds=elapsed[0]))
-    with (
-        spans.span("collection", shard_id, shard=shard_id),
-        spans.span("member", "member", member="member"),
-    ):
-        elapsed[0] += seconds
-    return spans
-
-
-def _write(
-    root: Path,
-    artifact: str,
-    shard: Shard,
-    side: str,
-    request: Request,
-    envelope: Document | None,
-    *,
-    commit: str | None = None,
-    pair: str = "pair",
-    runtimes: dict[str, RuntimeStatus] | None = None,
-    seconds: float = 10.0,
-) -> Path:
-    measured = commit or (request.head_commit if side == HEAD else request.base_commit)
-    assert measured is not None
-    result = ShardResult(
-        shard,
-        MemberResult(shard.member, envelope, None if envelope is not None else "exit 1: gone"),
-        _spans(shard.id, seconds),
-        runtimes if runtimes is not None else _identities(),
-    )
-    out = root / artifact / side / shard.id
-    write_shard(result, request, side, measured, pair, out)
-    return out
-
-
 def _complete_pr(root: Path, request: Request, envelopes: dict[str, Document]) -> None:
     for index, shard in enumerate(SHARDS):
         for side in (BASE, HEAD):
-            _write(
+            write_capture(
                 root,
                 f"artifact-{shard.id}",
                 shard,
@@ -294,14 +253,14 @@ def test_duplicate_unexpected_and_malformed_inputs_are_failures_that_lose_nothin
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
-    _write(root, "first", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
-    _write(root, "second", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
-    _write(root, "first", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "first", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "second", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "first", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
     rogue = Shard("rogue", MEMBERS[2])
-    _write(root, "first", rogue, HEAD, request, envelopes[rogue.subject])
-    broken = _write(root, "first", WRITE, HEAD, request, envelopes[WRITE.subject])
+    write_capture(root, "first", rogue, HEAD, request, envelopes[rogue.subject])
+    broken = write_capture(root, "first", WRITE, HEAD, request, envelopes[WRITE.subject])
     (broken / CAPTURE_FILE).write_text("{", encoding="utf-8")
-    stranger = _write(
+    stranger = write_capture(
         root,
         "first",
         SNAPSHOT,
@@ -343,8 +302,8 @@ def test_a_corrupt_durations_sidecar_leaves_the_evidence_compared_and_the_timing
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
-    head = _write(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
-    base = _write(root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
+    head = write_capture(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
+    base = write_capture(root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
     (head / DURATIONS_FILE).write_text("[]", encoding="utf-8")
     (base / DURATIONS_FILE).unlink()
     assembly = assemble(discover(root), SHARDS, request)
@@ -374,13 +333,15 @@ def test_invalid_provenance_a_diagnostic_and_a_missing_envelope_are_collection_f
     dirty = deepcopy(envelopes[WRITE.subject])
     dirty["provenance"]["dirty"] = True
     dirty["authority"] = "non-authoritative"
-    _write(root, "a", WRITE, HEAD, request, dirty)
-    _write(root, "a", WRITE, BASE, request, envelopes[WRITE.subject])
-    _write(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject], commit="e" * 40)
-    _write(root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "a", WRITE, HEAD, request, dirty)
+    write_capture(root, "a", WRITE, BASE, request, envelopes[WRITE.subject])
+    write_capture(
+        root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject], commit="e" * 40
+    )
+    write_capture(root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject])
     diagnostic: Document = {"diagnostic": True, "subject": SNAPSHOT.subject, "readings": []}
-    _write(root, "a", SNAPSHOT, HEAD, request, diagnostic)
-    _write(root, "a", SNAPSHOT, BASE, request, None)
+    write_capture(root, "a", SNAPSHOT, HEAD, request, diagnostic)
+    write_capture(root, "a", SNAPSHOT, BASE, request, None)
     assembly = assemble(discover(root), SHARDS, request)
     write = _entry(assembly, WRITE)
     assert _codes(write) == [("provenance-dirty", HEAD)]
@@ -413,8 +374,8 @@ def test_each_side_is_validated_against_its_own_recorded_selection(
     sliced = clean(
         complete_snapshot(contract, workload_selection([PLAN_GROUP], contract)), contract
     )
-    _write(root, "a", plan_only, BASE, request, sliced)
-    claimed = _write(root, "a", SNAPSHOT, HEAD, request, sliced)
+    write_capture(root, "a", plan_only, BASE, request, sliced)
+    claimed = write_capture(root, "a", SNAPSHOT, HEAD, request, sliced)
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, SNAPSHOT)
     assert _codes(entry) == [("envelope-invalid", HEAD)]
@@ -423,7 +384,7 @@ def test_each_side_is_validated_against_its_own_recorded_selection(
     for path in claimed.iterdir():
         path.unlink()
     claimed.rmdir()
-    _write(root, "b", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject])
+    write_capture(root, "b", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject])
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, SNAPSHOT)
     assert _codes(entry) == [("selection-mismatch", BASE)]
@@ -443,9 +404,9 @@ def test_a_head_must_record_the_planned_selection_and_every_supported_runtime(
     sliced = clean(
         complete_snapshot(contract, workload_selection([PLAN_GROUP], contract)), contract
     )
-    _write(root, "a", plan_only, HEAD, request, sliced)
-    _write(root, "a", plan_only, BASE, request, sliced)
-    partial = _identities()
+    write_capture(root, "a", plan_only, HEAD, request, sliced)
+    write_capture(root, "a", plan_only, BASE, request, sliced)
+    partial = identities()
     del partial[supported_minors()[0]]
     narrowed = deepcopy(envelopes[WRITE.subject])
     narrowed["readings"] = [
@@ -453,8 +414,8 @@ def test_a_head_must_record_the_planned_selection_and_every_supported_runtime(
         for reading in cast("list[Document]", narrowed["readings"])
         if reading["runtime"] != supported_minors()[0]
     ]
-    _write(root, "a", WRITE, HEAD, request, narrowed, runtimes=partial)
-    _write(root, "a", WRITE, BASE, request, narrowed, runtimes=partial)
+    write_capture(root, "a", WRITE, HEAD, request, narrowed, runtimes=partial)
+    write_capture(root, "a", WRITE, BASE, request, narrowed, runtimes=partial)
     assembly = assemble(discover(root), SHARDS, request)
     snapshot = _entry(assembly, SNAPSHOT)
     assert _codes(snapshot) == [("capture-mismatch", HEAD)]
@@ -487,20 +448,20 @@ def test_only_cells_on_runtimes_with_the_same_full_interpreter_are_compared(
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
     older, newer = supported_minors()
-    _write(
+    write_capture(
         root,
         "a",
         WRITE,
         HEAD,
         request,
         envelopes[WRITE.subject],
-        runtimes=_identities(**{older.replace(".", "_"): f"{older}.99"}),
+        runtimes=identities(**{older.replace(".", "_"): f"{older}.99"}),
     )
-    _write(root, "a", WRITE, BASE, request, envelopes[WRITE.subject])
-    unknown = _identities()
+    write_capture(root, "a", WRITE, BASE, request, envelopes[WRITE.subject])
+    unknown = identities()
     unknown[newer] = RuntimeUnavailable("the identity probe printed nothing")
-    _write(root, "a", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject], runtimes=unknown)
-    _write(root, "a", SNAPSHOT, BASE, request, envelopes[SNAPSHOT.subject])
+    write_capture(root, "a", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject], runtimes=unknown)
+    write_capture(root, "a", SNAPSHOT, BASE, request, envelopes[SNAPSHOT.subject])
     assembly = assemble(discover(root), SHARDS, request)
     write = _entry(assembly, WRITE)
     assert _codes(write) == [("runtime-mismatch", BASE)]
@@ -539,15 +500,15 @@ def test_a_changed_workload_or_protocol_makes_the_whole_shard_incomparable(
     root = tmp_path / "inputs"
     other_workloads = deepcopy(envelopes[LIFECYCLE.subject])
     other_workloads["provenance"]["workloadDigest"] = "0" * 64
-    _write(root, "a", LIFECYCLE, BASE, request, other_workloads)
-    _write(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "a", LIFECYCLE, BASE, request, other_workloads)
+    write_capture(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
     other_protocol = deepcopy(envelopes[WRITE.subject])
     other_protocol["provenance"]["sampling"] = {
         **other_protocol["provenance"]["sampling"],
         "measured": 5,
     }
-    _write(root, "a", WRITE, BASE, request, other_protocol)
-    _write(root, "a", WRITE, HEAD, request, envelopes[WRITE.subject])
+    write_capture(root, "a", WRITE, BASE, request, other_protocol)
+    write_capture(root, "a", WRITE, HEAD, request, envelopes[WRITE.subject])
     assembly = assemble(discover(root), SHARDS, request)
     lifecycle = _entry(assembly, LIFECYCLE)
     assert _codes(lifecycle) == [("workload-digest-mismatch", BASE)]
@@ -565,8 +526,12 @@ def test_a_base_from_another_invocation_is_never_paired_with_the_head(
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
-    _write(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject], pair="attempt-2")
-    _write(root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject], pair="attempt-1")
+    write_capture(
+        root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject], pair="attempt-2"
+    )
+    write_capture(
+        root, "a", LIFECYCLE, BASE, request, envelopes[LIFECYCLE.subject], pair="attempt-1"
+    )
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, LIFECYCLE)
     assert _codes(entry) == [("pair-mismatch", BASE)]
@@ -583,7 +548,7 @@ def test_every_head_cell_is_named_when_the_base_is_unavailable_by_marker(
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
-    _write(root, "a", WRITE, HEAD, request, envelopes[WRITE.subject])
+    write_capture(root, "a", WRITE, HEAD, request, envelopes[WRITE.subject])
     marker = root / "a" / BASE / WRITE.id / UNAVAILABLE_FILE
     marker.parent.mkdir(parents=True)
     marker.write_text(
@@ -598,7 +563,7 @@ def test_every_head_cell_is_named_when_the_base_is_unavailable_by_marker(
         ),
         encoding="utf-8",
     )
-    _write(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
+    write_capture(root, "a", LIFECYCLE, HEAD, request, envelopes[LIFECYCLE.subject])
     assembly = assemble(discover(root), SHARDS, request)
     write = _entry(assembly, WRITE)
     assert _codes(write) == [("missing-base-support", BASE)]
@@ -649,7 +614,7 @@ def _nightly(
     root: Path, request: Request, envelopes: dict[str, Document]
 ) -> list[cost_report.ShardCapture]:
     for shard in SHARDS:
-        _write(
+        write_capture(
             root,
             "night",
             shard,
@@ -805,7 +770,7 @@ def test_history_is_refused_for_a_pull_request_and_a_stray_base_is_a_failure(
     assert not (tmp_path / "out").exists()
     nightly = _nightly_request(head_commit, request_id="night-3")
     captures = _nightly(root, nightly, envelopes)
-    _write(
+    write_capture(
         root, "stray", LIFECYCLE, BASE, nightly, envelopes[LIFECYCLE.subject], commit=head_commit
     )
     assembly = assemble(discover(root), SHARDS, nightly)
@@ -835,7 +800,7 @@ def test_a_shard_run_with_a_self_measured_base_assembles_into_same_runner_pairs(
 
     def member(shard_member: cost_report.Member, arguments: Sequence[str]) -> tuple[int, str, str]:
         metadata = Path(arguments[arguments.index(cost_report.METADATA_OPTION) + 1])
-        write_metadata(metadata, shard_member.subject, _identities())
+        write_metadata(metadata, shard_member.subject, identities())
         return (0, json.dumps(envelopes[shard_member.subject]), "")
 
     def base_tool(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:
@@ -848,8 +813,8 @@ def test_a_shard_run_with_a_self_measured_base_assembles_into_same_runner_pairs(
         result = ShardResult(
             shard,
             MemberResult(shard.member, envelopes[shard.subject]),
-            _spans(shard.id, 5.0),
-            _identities(),
+            collection_spans(shard.id, 5.0),
+            identities(),
         )
         write_shard(
             result, base_local, HEAD, head_commit, "the-base-own-pair", staging / HEAD / shard.id

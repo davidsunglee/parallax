@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -11,46 +11,63 @@ import yaml
 from cost_report import CANONICAL_PORTFOLIO
 from tests._support.repo import REPO_ROOT
 
-
-def _job() -> Any:
-    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    return workflow["jobs"]["python-report-cost"]
+VERIFY_JOB = "python-verify-cost"
 
 
-def test_advisory_verification_preserves_collection_and_upload_after_failure() -> None:
+def _workflow() -> dict[str, Any]:
+    return cast(
+        "dict[str, Any]",
+        yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")),
+    )
+
+
+def _job() -> dict[str, Any]:
+    return cast("dict[str, Any]", _workflow()["jobs"][VERIFY_JOB])
+
+
+def _steps(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {step["name"]: step for step in job["steps"] if "name" in step}
+
+
+def test_ordinary_ci_verifies_committed_evidence_and_measures_nothing() -> None:
+    workflow = _workflow()
+    assert "python-report-cost" not in workflow["jobs"]
     job = _job()
     assert job["continue-on-error"] is True
-    steps = {step["name"]: step for step in job["steps"] if "name" in step}
-    assert steps["Measure merge-base"]["if"] == (
-        "github.event_name == 'pull_request' && !cancelled()"
-    )
-    assert steps["Measure head"]["if"] == "always() && !cancelled()"
-    assert steps["Upload merge-base reports"]["if"] == (
-        "github.event_name == 'pull_request' && always()"
-    )
-    assert steps["Upload head reports"]["if"] == "always()"
-    assert steps["Render combined summary"]["if"] == "always()"
-    assert "just python-report-cost" in steps["Measure head"]["run"]
-    base = steps["Measure merge-base"]["run"]
-    assert base.count('--justfile "$RUNNER_TEMP/parallax-base/justfile"') == 2
-    assert (
-        'just --justfile "$RUNNER_TEMP/parallax-base/justfile" '
-        '--working-directory "$RUNNER_TEMP/parallax-base" --summary' in base
-    )
-    assert (
-        'just --justfile "$RUNNER_TEMP/parallax-base/justfile" '
-        '--working-directory "$RUNNER_TEMP/parallax-base" python-report-cost' in base
-    )
-    for name in ("Upload merge-base reports", "Upload head reports"):
-        assert steps[name]["uses"].startswith("actions/upload-artifact@")
+    assert "needs" not in job
+    assert list(_steps(job)) == [
+        "Identify the inspected head",
+        "Verify committed evidence against head lock",
+        "Check committed evidence against event merge lock",
+    ]
+    for step in job["steps"]:
+        script = str(step.get("run", ""))
+        assert "python-report-cost" not in script
+        assert "--shard" not in script
+        assert "--out" not in script
+        assert not str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        assert not str(step.get("uses", "")).startswith("actions/download-artifact@")
+
+
+def test_the_blocking_memory_job_is_untouched_by_the_verify_only_change() -> None:
+    cost = _workflow()["jobs"]["python-check-cost"]
+    assert cost["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"shard": ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]},
+    }
+    assert "continue-on-error" not in cost
+    assert "if" not in cost
+    (step,) = [step for step in cost["steps"] if "python-check-cost" in str(step.get("run", ""))]
+    assert step["run"] == "just python-check-cost ${{ matrix.shard }}"
 
 
 @pytest.mark.parametrize("fresh", [True, False])
 def test_head_verification_failure_still_exposes_freshness_in_summary(
     tmp_path: Path, fresh: bool
 ) -> None:
-    steps = {step["name"]: step for step in _job()["steps"] if "name" in step}
+    steps = _steps(_job())
     step = steps["Verify committed evidence against head lock"]
+    assert "if" not in step
     assert f"--verify {CANONICAL_PORTFOLIO.as_posix()}" in step["run"]
     uv = tmp_path / "uv"
     freshness = "lock freshness matches" if fresh else "stale snapshot-delivery evidence"
@@ -84,11 +101,10 @@ def test_pr_freshness_checks_event_merge_lock_without_moving_measurement_checkou
         step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")
     )
     assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
-    step = next(
-        step
-        for step in job["steps"]
-        if step.get("name") == "Check committed evidence against event merge lock"
-    )
+    assert checkout["with"]["fetch-depth"] == 0
+    identify = _steps(job)["Identify the inspected head"]
+    assert 'HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"' in identify["run"]
+    step = _steps(job)["Check committed evidence against event merge lock"]
     assert step["if"] == "github.event_name == 'pull_request' && !cancelled()"
     assert step["env"]["MERGE_SHA"] == "${{ github.sha }}"
     script = step["run"]

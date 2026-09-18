@@ -263,9 +263,18 @@ that verdict; no local aggregate reaches it.
 | `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14 runs `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main`; 3.13 runs `just python-test-dbfree` with coverage disabled to prove runtime compatibility without repeating the coverage verdict on the slower C tracer |
 | `ci` / `python-check-db` | — | `just python-check-db` on CPython 3.14 against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
 | `ci` / `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6` on CPython 3.14, one cell per shard of the class `just check` omits so the local gate stays fast; `test_scheduling_partition.py` proves the matrix expands to those six cells alone, that each runs ungated, and that their selections partition the class |
-| `ci` / `python-report-cost` | — | Non-required observation on CPython 3.14; PRs collect merge-base and head on one runner, main collects head, and both upload commit-keyed report artifacts |
+| `ci` / `python-verify-cost` | — | Non-required verification on CPython 3.14: `tools/cost_report.py --verify` over the committed `recovered/portfolio.json` against the head lock and, on pull requests, `--freshness-only` against the event-merge lock; nothing here measures |
 | `ci` / `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` on CPython 3.14, resolving the parity corpus against the minimum Pydantic release `parallax-core` declares instead of the locked one, so the seam a published value's serialization is built over is graded at both ends of the supported range |
 | `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the four jobs above still gate |
+
+Fresh cost captures are the `cost-report` workflow's, not `ci`'s; the root
+[`TESTING.md`](../../TESTING.md) maps its jobs. It drives three modes of
+`tools/cost_report.py` — `--plan`, `--shard`, and `--assemble` — through
+`tools/cost_report_adapter.py`, which pins the request from the event and
+obtains a nightly's predecessor. `tests/unit/test_cost_report_workflow.py` and
+`tests/unit/test_cost_report_ci.py` pin the two workflows' shapes, and
+`tests/unit/tools/test_cost_report_adapter.py` proves the adapter against
+temporary repositories and a fake `gh`; no test dispatches a run.
 
 The cost cells are balanced by what each cost item last cost, read from
 `tests/_support/cost_durations.json`: `--shard I/N` sorts the class's items

@@ -1,17 +1,30 @@
-"""Complete, valid member envelopes for the collector's shard and assembly
-suites, built through the members' own envelope builders from synthetic child
-readings, so no member subprocess ever runs."""
+"""Complete, valid member envelopes for the collector's shard, assembly, and
+workflow-adapter suites, built through the members' own envelope builders from
+synthetic child readings, and shard captures written from them, so no member
+subprocess ever runs."""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import lifecycle_overhead
 import write_lowering_overhead as write_report
-from cost_report import MEMBERS, Member
-from interpreter_matrix import supported_minors
+from cost_report import (
+    HEAD,
+    MEMBERS,
+    Member,
+    MemberResult,
+    Request,
+    Shard,
+    ShardResult,
+    write_shard,
+)
+from durations import Spans
+from interpreter_matrix import RuntimeIdentity, RuntimeStatus, supported_minors
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     CostReportEnvelope,
@@ -110,3 +123,54 @@ def member_envelopes(contract: BudgetContract) -> dict[str, Document]:
         else:
             envelopes[member.subject] = optional_document(member, contract)
     return envelopes
+
+
+def identities(**versions: str) -> dict[str, RuntimeStatus]:
+    """One available identity per supported minor, its full version overridden
+    by a keyword spelling the minor with an underscore."""
+    return {
+        minor: RuntimeIdentity("CPython", versions.get(minor.replace(".", "_"), f"{minor}.1"), "/p")
+        for minor in supported_minors()
+    }
+
+
+def collection_spans(shard_id: str, seconds: float) -> Spans:
+    """A collection span over one member span, ``seconds`` long, on a fake clock."""
+    elapsed = [0.0]
+    wall = datetime(2026, 9, 18, 6, 0, tzinfo=UTC)
+    spans = Spans(clock=lambda: elapsed[0], now=lambda: wall + timedelta(seconds=elapsed[0]))
+    with (
+        spans.span("collection", shard_id, shard=shard_id),
+        spans.span("member", "member", member="member"),
+    ):
+        elapsed[0] += seconds
+    return spans
+
+
+def write_capture(
+    root: Path,
+    artifact: str,
+    shard: Shard,
+    side: str,
+    request: Request,
+    envelope: Document | None,
+    *,
+    commit: str | None = None,
+    pair: str = "pair",
+    runtimes: dict[str, RuntimeStatus] | None = None,
+    seconds: float = 10.0,
+) -> Path:
+    """One side of one shard under ``root/artifact``, as a runner would have
+    written it for ``request``; the measured commit defaults to the request's
+    commit for that side."""
+    measured = commit or (request.head_commit if side == HEAD else request.base_commit)
+    assert measured is not None
+    result = ShardResult(
+        shard,
+        MemberResult(shard.member, envelope, None if envelope is not None else "exit 1: gone"),
+        collection_spans(shard.id, seconds),
+        runtimes if runtimes is not None else identities(),
+    )
+    out = root / artifact / side / shard.id
+    write_shard(result, request, side, measured, pair, out)
+    return out

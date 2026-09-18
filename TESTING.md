@@ -146,11 +146,12 @@ it locally safe.
 | `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6`, one cell per shard of the class, together the one run the command owns |
-| `python-report-cost` | — | Advisory merge-base/head cost portfolio with commit-keyed artifacts; non-required |
+| `python-verify-cost` | — | Advisory verification of the committed cost portfolio against the head lock and, on pull requests, the event-merge lock; non-required, and it measures nothing |
 | `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` |
 
-The `python-report-cost` job is advisory observation rather than a gate, and the
-last job runs a focused selector. `python-test-pydantic-floor`
+The `python-verify-cost` job is advisory verification rather than a gate — it is
+a native step over the committed evidence, not a recipe — and the last job runs
+a focused selector. `python-test-pydantic-floor`
 [`core/spec/language-testing.md`](core/spec/language-testing.md) §3 keeps out of
 every aggregate, so it is the one gate here that no local aggregate reaches and
 CI alone owns — the same division as the 3.13 `python-check-dbfree` leg, where
@@ -163,6 +164,27 @@ uses CPython 3.14 to open a lockfile-upgrade pull request that the jobs above
 then gate. The 3.13 `python-check-dbfree` leg proves runtime compatibility only;
 the 3.14 leg owns the full database-free gate and its coverage verdicts.
 Every other uv-backed CI job is also pinned to CPython 3.14.
+
+## Cost observation workflow
+
+Fresh cost captures are not CI's. `.github/workflows/cost-report.yml` takes
+them on request, and no job of it is required: it answers the `cost-report`
+label added to a pull request, a `workflow_dispatch` naming a `ref`, a `layout`
+(`sharded` or `sequential`), and an optional `request-id`, and the nightly
+schedule on `main`. Its jobs run in sequence, and every decision about what is
+measured, compared, or reported is the Python tools'; the steps pass event
+values through the environment and move files.
+
+| Job | Runs |
+|---|---|
+| `plan` | Checks out the requested commit once, and `tools/cost_report_adapter.py plan` pins the immutable `request.json` — head, a pull request's merge base, layout, workflow revision, run and attempt — and prints the shard ids the collector's `--plan` answers for that layout |
+| `measure` | One runner per shard id, `fail-fast: false`, 300 minutes each: `tools/cost_report.py --shard <id> --request request.json`, the merge base first through the base checkout's own tool and then the head on the same runner, uploaded as `cost-report-shard-<id>-attempt-<N>` whatever collection did |
+| `assemble` | Always after the requested work: this attempt's shard artifacts, each in a directory of its own, through `tools/cost_report.py --assemble`; a scheduled run first obtains the previous nightly's assembly with `tools/cost_report_adapter.py history` and compares against it cross-runner. Uploads `cost-report-assembled-attempt-<N>` and renders its summary |
+| `cleanup` | For a label request, removes the label without checking anything out; the only job holding `pull-requests: write`. A fork's token cannot remove labels, so that case is reported and a maintainer removes the label by hand and re-adds it to request another capture |
+
+A rerun is a new attempt: its artifacts carry the attempt number, and assembly
+reads that attempt alone. `just python-report-cost` remains the local
+sequential capture; the shard and assembly modes are the workflow's.
 
 ## Databases
 
