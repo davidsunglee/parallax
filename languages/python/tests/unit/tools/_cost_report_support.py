@@ -5,6 +5,7 @@ subprocess ever runs."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -16,6 +17,8 @@ import write_lowering_overhead as write_report
 from cost_report import (
     HEAD,
     MEMBERS,
+    SHARDS,
+    WORKLOAD_OPTION,
     Member,
     MemberResult,
     Request,
@@ -123,6 +126,55 @@ def member_envelopes(contract: BudgetContract) -> dict[str, Document]:
         else:
             envelopes[member.subject] = optional_document(member, contract)
     return envelopes
+
+
+def shard_envelope(
+    shard: Shard, envelopes: Mapping[str, Document], contract: BudgetContract
+) -> Document:
+    """The envelope ``shard`` collects, from ``envelopes`` keyed by subject: the
+    member's whole envelope, or for a workload shard the Snapshot envelope's
+    readings and comparisons narrowed to the shard's selection, keeping the
+    provenance and authority the whole envelope carries."""
+    document = envelopes[shard.subject]
+    if shard.workloads is None:
+        return document
+    selected = shard.selection(contract)
+    return {
+        **document,
+        "readings": [
+            reading
+            for reading in cast("list[Document]", document["readings"])
+            if selected(reading["workload"], reading["cell"])
+        ],
+        "comparisons": [
+            comparison
+            for comparison in cast("list[Document]", document["comparisons"])
+            if selected(comparison["workload"], comparison["cell"])
+        ],
+    }
+
+
+def shard_envelopes(
+    envelopes: Mapping[str, Document], contract: BudgetContract, plan: Sequence[Shard] = SHARDS
+) -> dict[str, Document]:
+    """One envelope per shard of ``plan``, keyed by shard id."""
+    return {shard.id: shard_envelope(shard, envelopes, contract) for shard in plan}
+
+
+def requested_shard(
+    member: Member, arguments: Sequence[str], plan: Sequence[Shard] = SHARDS
+) -> Shard:
+    """The shard of ``plan`` a member invocation with ``arguments`` collects."""
+    workloads = frozenset(
+        arguments[index + 1]
+        for index, argument in enumerate(arguments)
+        if argument == WORKLOAD_OPTION
+    )
+    return next(
+        shard
+        for shard in plan
+        if shard.member == member and (shard.workloads or frozenset()) == workloads
+    )
 
 
 def identities(**versions: str) -> dict[str, RuntimeStatus]:

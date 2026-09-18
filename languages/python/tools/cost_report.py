@@ -959,12 +959,34 @@ class Shard:
         }
 
 
-SHARDS: Final[tuple[Shard, ...]] = tuple(Shard(member.subject, member) for member in MEMBERS)
-"""The partition plan: one whole-member shard per member. Only the Snapshot
-member splits further, by workload, and a split is a change to this data with
-its test rather than a new recipe. A shard whose coverage changes takes a new
-id, so an old base or nightly capture of the same id can never be paired with
-different work."""
+SNAPSHOT_MEMBER: Final = next(member for member in MEMBERS if member.subject == SNAPSHOT_SUBJECT)
+
+
+def _snapshot_shard(name: str, *workloads: str) -> Shard:
+    return Shard(f"snapshot-{name}", SNAPSHOT_MEMBER, frozenset(workloads))
+
+
+SHARDS: Final[tuple[Shard, ...]] = (
+    _snapshot_shard("duplicate-include", "duplicate-include"),
+    _snapshot_shard("document-heavy", "document-heavy"),
+    _snapshot_shard("conventional-fanout", "conventional-fanout"),
+    _snapshot_shard("bitemporal-current", "bitemporal-current"),
+    _snapshot_shard("versioned-document", "versioned-document"),
+    _snapshot_shard(
+        "geometry-plan-stress", "geometry", "plan", "stress-columns", "stress-document"
+    ),
+    *(Shard(member.subject, member) for member in MEMBERS if member is not SNAPSHOT_MEMBER),
+)
+"""The partition plan, heaviest shard first so the matrix's longest job starts
+first. The Snapshot member dominates a whole-member capture (about 2.5 hours
+against 5 minutes for the next member on a hosted runner), so it is split by
+workload from its measured attribution: each of its five heavy workloads (23 to
+27 minutes summed over both supported minors) is a shard of its own, and the
+four small ones (geometry 16 minutes, the rest about a minute each) share one,
+since another runner would cost more setup than it saves. Every other member
+is one whole shard. A split is a change to this data with its test rather than
+a new recipe, and a shard whose coverage changes takes a new id, so an old base
+or nightly capture of the same id can never be paired with different work."""
 
 ALL_SHARDS: Final = "all"
 SHARD_ID_PATTERN: Final = re.compile("[a-z0-9][a-z0-9-]*")
