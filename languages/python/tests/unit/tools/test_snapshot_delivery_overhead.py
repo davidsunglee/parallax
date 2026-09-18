@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -9,14 +9,19 @@ from typing import cast
 import pytest
 
 import snapshot_delivery_overhead as report
+from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, authority_minor
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
 from parallax.conformance.cost_envelope import validate as validate_envelope
+from parallax.conformance.provision import Provisioner
+from parallax.core.metamodel import Metamodel
 from snapshot_delivery_overhead import (
+    GEOMETRY_GROUP,
     GEOMETRY_METRICS,
     LIVE_WINDOW,
+    PLAN_GROUP,
     PLAN_METRICS,
     PLAN_WINDOW,
     PROVIDER_FREE_WINDOW,
@@ -222,3 +227,102 @@ def test_selection_matches_workload_and_cell_patterns_and_defaults_to_everything
     assert chosen("plan-depth-1", "columns.elapsedUs")
     assert not chosen("plan-depth-8", "columns.elapsedUs")
     assert not chosen("read-depth-8", "document.peakKiB")
+
+
+class _FakePort:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> list[tuple[str]]:
+        del binds, document_reads
+        assert sql == "show server_version"
+        return [("18.6",)]
+
+
+class _FakeProvisioner:
+    """Records every schema reset a workload asks for and never opens anything."""
+
+    def __init__(self) -> None:
+        self.resets: list[str] = []
+        self.port = _FakePort()
+        self.connection_info = "postgresql://fake"
+
+    def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
+        del fixtures
+        self.resets.append(type(model).__name__)
+
+
+def _measured(spans: Spans | None) -> tuple[list[ChildRequest], _FakeProvisioner, Sequence[str]]:
+    contract = BudgetContract.load()
+    asked: list[ChildRequest] = []
+
+    def runner(request: ChildRequest) -> ChildReading:
+        asked.append(request)
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples)
+
+    provisioner = _FakeProvisioner()
+    envelope = report.measure(
+        contract, cast("Provisioner", provisioner), runner, ("3.13", "3.14"), spans=spans
+    )
+    validate(envelope)
+    return asked, provisioner, [f"{r.runtime} {r.workload}.{r.cell}" for r in envelope.readings]
+
+
+def test_recording_spans_changes_no_request_provisioning_or_reading() -> None:
+    plain_requests, plain_provisioner, plain_readings = _measured(None)
+    spans = Spans()
+    timed_requests, timed_provisioner, timed_readings = _measured(spans)
+    assert timed_requests == plain_requests
+    assert timed_provisioner.resets == plain_provisioner.resets
+    assert timed_readings == plain_readings
+    contract = BudgetContract.load()
+    assert len(plain_requests) == sum(
+        expected_readings(contract, cell)
+        for _runtime, _workload, cell in addresses(contract, ("3.13", "3.14"))
+    )
+    assert [(r.warmups, r.measured) for r in plain_requests] == [
+        (contract.timing_warmups, contract.timing_measured)
+    ] * len(plain_requests)
+    assert plain_provisioner.resets
+
+
+def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_provisioning() -> None:
+    contract = BudgetContract.load()
+    spans = Spans()
+    _measured(spans)
+    workload_spans = [span for span in spans.spans if span.scope == "workload"]
+    assert [(span.name, span.labels["runtime"]) for span in workload_spans] == [
+        (name, runtime)
+        for runtime in ("3.13", "3.14")
+        for name in (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP)
+    ]
+    assert all(span.labels["member"] == report.SUBJECT for span in spans.spans)
+    setup_spans = [span for span in spans.spans if span.scope == "setup"]
+    assert {span.name for span in setup_spans} == {"provision"}
+    provisioned = {(span.labels["workload"], span.labels["roots"]) for span in setup_spans}
+    live_workloads = {
+        cell.workload for cell in expanded_cells(contract) if report.needs_database(cell.path)
+    }
+    assert {workload for workload, _roots in provisioned} == live_workloads
+    assert {roots for _workload, roots in provisioned} == {
+        str(arm) for arm in contract.memory_scaling_arms
+    }
+    assert {span.scope for span in spans.spans} == {"workload", "setup"}
+    assert spans.unavailable == ()
+
+
+def test_durations_are_recorded_for_a_measurement_and_refused_beside_a_diagnostic_or_canary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for arguments in (
+        ["--diagnostic", "--durations", str(tmp_path / "d.json")],
+        ["--canary", "--durations", str(tmp_path / "d.json")],
+    ):
+        with pytest.raises(SystemExit) as refused:
+            report.main(arguments)
+        assert refused.value.code == 2
+        assert "--durations" in capsys.readouterr().err
+    assert not (tmp_path / "d.json").exists()

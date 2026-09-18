@@ -63,6 +63,7 @@ Run it through `just python-report-lifecycle-overhead`.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import logging.handlers
@@ -72,9 +73,11 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
+from pathlib import Path
 from types import TracebackType
 from typing import Final, NamedTuple
 
+from durations import Spans
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -691,11 +694,19 @@ def main(argv: list[str]) -> int:
     """Measure and emit an envelope; never judge.
 
     Exit codes: 0 — the measurement ran; 2 — usage error. There is no exit code
-    for a number that is too large, deliberately.
+    for a number that is too large, deliberately. ``--durations`` names where
+    the empty sidecar goes: every arm here is timed in-process, so the member's
+    only span is the one its collector records around it.
     """
-    if argv:
-        print("usage: python tools/lifecycle_overhead.py", file=sys.stderr)
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--durations", type=Path)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        print("usage: python tools/lifecycle_overhead.py [--durations PATH]", file=sys.stderr)
         return 2
+    if args.durations is not None:
+        Spans().write(args.durations)
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()

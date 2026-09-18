@@ -129,6 +129,7 @@ Run it through `just python-report-instance-state`.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import platform
@@ -140,6 +141,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal, NamedTuple, cast
 
+from durations import Spans
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -1215,19 +1217,40 @@ def main(argv: list[str]) -> int:
     `core/spec/language-testing.md` §2 leaves a non-blocking operation: a number
     over its target changes what the escalation block DISPLAYS and nothing else.
 
-    Takes no arguments, which is what leaves the reading itself outside this
-    module: one scenario's reading is `tools/instance_state_reading.py`, run as a
-    script by :func:`in_a_child`.
+    Takes no argument but ``--durations``, which is what leaves the reading
+    itself outside this module: one scenario's reading is
+    `tools/instance_state_reading.py`, run as a script by :func:`in_a_child`.
     """
-    if argv:
-        print("usage: python tools/instance_state_overhead.py", file=sys.stderr)
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--durations", type=Path)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        print("usage: python tools/instance_state_overhead.py [--durations PATH]", file=sys.stderr)
         return 2
+    spans = Spans()
+    try:
+        return _measured(spans)
+    finally:
+        if args.durations is not None:
+            spans.write(args.durations)
 
+
+def timed_matrix(runtimes: Sequence[str], scenarios: Sequence[Scenario], spans: Spans) -> Matrix:
+    """Every scenario on every runtime, each child inside a span of its own."""
+    matrix: Matrix = {}
+    for runtime in runtimes:
+        cells: dict[str, Cell] = {}
+        for scenario in scenarios:
+            with spans.span("scenario", scenario.name, member=SUBJECT, runtime=runtime):
+                cells[scenario.name] = in_a_child(runtime, scenario)
+        matrix[runtime] = cells
+    return matrix
+
+
+def _measured(spans: Spans) -> int:
     runtimes = supported_minors()
-    matrix: Matrix = {
-        runtime: {scenario.name: in_a_child(runtime, scenario) for scenario in REPORTED}
-        for runtime in runtimes
-    }
+    matrix = timed_matrix(runtimes, REPORTED, spans)
     absent = missing_cells(matrix, runtimes, REPORTED)
     if absent:
         print(

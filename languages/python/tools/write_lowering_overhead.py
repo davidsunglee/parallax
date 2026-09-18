@@ -23,6 +23,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
 
+from durations import Spans
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
@@ -449,6 +450,24 @@ def selected_cases(patterns: Sequence[str]) -> tuple[str, ...]:
     )
 
 
+def timed_matrix(
+    runtimes: Sequence[str],
+    cases: Sequence[str],
+    spans: Spans,
+    child: Callable[[str, str], Cell] | None = None,
+) -> Matrix:
+    """Every case on every runtime, each child inside a span of its own."""
+    take = in_a_child if child is None else child
+    matrix: Matrix = {}
+    for runtime in runtimes:
+        cells: dict[str, Cell] = {}
+        for case in cases:
+            with spans.span("case", case, member=SUBJECT, runtime=runtime, window=WINDOWS[case]):
+                cells[case] = take(runtime, case)
+        matrix[runtime] = cells
+    return matrix
+
+
 def main(argv: list[str]) -> int:
     """Spawn all children and emit one envelope; judge only completeness.
 
@@ -459,14 +478,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--diagnostic", action="store_true")
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--runtime", action="append", default=[])
+    parser.add_argument("--durations", type=Path)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         args = None
-    if args is None or ((args.case or args.runtime) and not args.diagnostic):
+    if (
+        args is None
+        or ((args.case or args.runtime) and not args.diagnostic)
+        or (args.diagnostic and args.durations is not None)
+    ):
         print(
             "usage: python tools/write_lowering_overhead.py "
-            "[--diagnostic [--case PATTERN]... [--runtime MINOR]...]",
+            "[--durations PATH | --diagnostic [--case PATTERN]... [--runtime MINOR]...]",
             file=sys.stderr,
         )
         return 2
@@ -478,10 +502,17 @@ def main(argv: list[str]) -> int:
         document = diagnostic(tuple(args.runtime) or supported_minors(), cases)
         print(json.dumps(document, indent=2, sort_keys=True))
         return 0
+    spans = Spans()
+    try:
+        return _measured(spans)
+    finally:
+        if args.durations is not None:
+            spans.write(args.durations)
+
+
+def _measured(spans: Spans) -> int:
     runtimes = supported_minors()
-    matrix: Matrix = {
-        runtime: {case: in_a_child(runtime, case) for case in CASE_NAMES} for runtime in runtimes
-    }
+    matrix = timed_matrix(runtimes, CASE_NAMES, spans)
     absent = missing_cells(matrix, runtimes, CASE_NAMES)
     if absent:
         print(

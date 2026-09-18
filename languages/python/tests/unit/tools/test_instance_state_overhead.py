@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 import instance_state_overhead as report
+from durations import Spans
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.conformance.workloads import workload_digest
@@ -208,3 +210,47 @@ def _matrix(
             for scenario in REPORTED
         }
     }
+
+
+def test_durations_time_every_scenario_child_without_changing_the_stdout_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    matrix = _matrix()
+    runtime = next(iter(matrix))
+    monkeypatch.setattr(report, "supported_minors", lambda: (runtime,))
+    asked: list[tuple[str, str]] = []
+
+    def child(selected_runtime: str, scenario: Scenario) -> report.Cell:
+        asked.append((selected_runtime, scenario.name))
+        return matrix[selected_runtime][scenario.name]
+
+    monkeypatch.setattr(report, "in_a_child", child)
+    assert report.main([]) == 0
+    plain = capsys.readouterr()
+    plain_order = list(asked)
+    asked.clear()
+    sidecar = tmp_path / "durations.json"
+    assert report.main(["--durations", str(sidecar)]) == 0
+    timed = capsys.readouterr()
+    assert asked == plain_order == [(runtime, scenario.name) for scenario in REPORTED]
+    assert timed.out == plain.out
+    assert timed.err == ""
+    validate(cast("Mapping[str, object]", json.loads(timed.out)))
+    spans = Spans.load(sidecar)
+    assert [(span.scope, span.labels["runtime"], span.name) for span in spans.spans] == [
+        ("scenario", selected_runtime, name) for selected_runtime, name in plain_order
+    ]
+    assert all(span.labels["member"] == report.SUBJECT for span in spans.spans)
+    assert spans.unavailable == ()
+
+
+def test_the_entrypoint_takes_no_argument_but_durations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert report.main(["unexpected"]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert report.main(["--durations"]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert not (tmp_path / "durations.json").exists()

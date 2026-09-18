@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 import write_lowering_overhead as report
+from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, supported_minors
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
@@ -547,3 +549,65 @@ def test_diagnostic_options_are_refused_outside_diagnostic_mode(
         "acquisition.rows-8.columns",
         "acquisition.rows-8.document",
     )
+
+
+def test_durations_time_every_child_without_changing_the_matrix_or_the_stdout_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    matrix = _matrix("3.13", "3.14")
+    monkeypatch.setattr(report, "supported_minors", lambda: ("3.13", "3.14"))
+    asked: list[tuple[str, str]] = []
+
+    def child(runtime: str, case: str) -> report.Cell:
+        asked.append((runtime, case))
+        return matrix[runtime][case]
+
+    monkeypatch.setattr(report, "in_a_child", child)
+    assert report.main([]) == 0
+    plain = capsys.readouterr()
+    plain_order = list(asked)
+    asked.clear()
+    sidecar = tmp_path / "durations.json"
+    assert report.main(["--durations", str(sidecar)]) == 0
+    timed = capsys.readouterr()
+    assert asked == plain_order
+    assert timed.out == plain.out
+    assert timed.err == ""
+    validate(cast("Mapping[str, object]", json.loads(timed.out)))
+    spans = Spans.load(sidecar)
+    assert [(span.labels["runtime"], span.name) for span in spans.spans] == plain_order
+    assert {span.scope for span in spans.spans} == {"case"}
+    assert all(
+        span.labels
+        == {"member": report.SUBJECT, "runtime": runtime, "window": report.WINDOWS[case]}
+        for span, (runtime, case) in zip(spans.spans, plain_order, strict=True)
+    )
+    assert spans.unavailable == ()
+
+
+def test_an_incomplete_matrix_still_leaves_its_durations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(report, "supported_minors", lambda: ("3.14",))
+
+    def failing_child(_runtime: str, case: str) -> report.Cell:
+        return f"{case} failed"
+
+    monkeypatch.setattr(report, "in_a_child", failing_child)
+    sidecar = tmp_path / "durations.json"
+    assert report.main(["--durations", str(sidecar)]) == 3
+    assert "the matrix is incomplete" in capsys.readouterr().err
+    assert [span.name for span in Spans.load(sidecar).spans] == list(report.CASE_NAMES)
+
+
+def test_durations_are_refused_beside_a_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sidecar = tmp_path / "durations.json"
+    assert report.main(["--diagnostic", "--durations", str(sidecar)]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert report.main(["--durations"]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert not sidecar.exists()
