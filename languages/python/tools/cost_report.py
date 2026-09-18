@@ -74,11 +74,11 @@ CANONICAL_PORTFOLIO: Final = Path(
     "languages/python/docs/structural-metadata-envelope/recovered/portfolio.json"
 )
 """The repository's current cost portfolio and CI's verification input, relative
-to the repository root. The `before/` capture beside it is the retained
-comparison base, not a verification input."""
+to the repository root. The `before/` and `after/` captures beside it are the
+retained comparison bases, not verification inputs."""
 
 EVIDENCE_DIRECTORY: Final = (WORKSPACE.parents[1] / CANONICAL_PORTFOLIO).resolve().parents[1]
-"""Where the committed captures live, the current one and its comparison base
+"""Where the committed captures live, the current one and its comparison bases
 alike. A diagnostic run is not evidence, so no path it writes may land here; a
 member script's own diagnostic is printed and writes nothing anywhere."""
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"

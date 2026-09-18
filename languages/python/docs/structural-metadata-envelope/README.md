@@ -128,12 +128,14 @@ write member's `workloadDigest` through `structural_digest()` together with the
 bytes of the three fixture modules, and the Snapshot member's through
 `workload_digest()` beside the catalog fixtures and models. Those digests name
 what was measured; they deliberately do not name the instruments that measured
-it. A capture costs about an hour of runner time and this work budgets exactly
-two — the baseline under `before/` and the after-capture beside it — so no
-instrument or harness edit made after a capture may force a third through a
-hash. Whether two captures remain comparable across such an edit is a judgement
-recorded in this README beside the captures, and where it is in doubt the
-original producing revision can be reproduced on the final runner. The levels
+it. A capture costs about an hour of runner time. The unification budgeted
+exactly two — the baseline under `before/` and the after-capture beside it —
+and the recovery capture under `recovered/` was authorized separately by the
+owner once the recovery's implementation and review had closed; under either
+budget no instrument or harness edit made after a capture may force another
+through a hash. Whether two captures remain comparable across such an edit is a
+judgement recorded in this README beside the captures, and where it is in doubt
+the original producing revision can be reproduced on the final runner. The levels
 were chosen from diagnostic trial runs on the capture runner and then frozen;
 the trials are not part of the baseline.
 
@@ -297,7 +299,7 @@ capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
 nowhere. The gates live in a file of their own rather than in
 `budget-contract.yaml` because that contract's digest is part of the
 `authority` fingerprint the baseline's Snapshot member was classified under:
-editing it would reclassify the retained capture or demand a third.
+editing it would reclassify the retained captures or demand a fresh one.
 
 ### Basis
 
@@ -421,7 +423,7 @@ incomplete cell or an error. The Snapshot delivery member is `authoritative`;
 the other three are `non-authoritative` because their sampling protocols are
 their own. Every member's `uv.lock` digest matches the capture checkout. This
 is the baseline: it is captured once and is the comparison base for the
-after-capture.
+after-capture and the recovery reference for `recovered/`.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
 |---|---|---|---:|---:|---:|
