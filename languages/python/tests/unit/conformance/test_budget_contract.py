@@ -188,6 +188,30 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert GATED_WINDOWS.issubset(windows)
 
 
+# A capture taken under the current counter vocabulary derives the same 154
+# ceilings as the retained basis whose counters carry the legacy names: the
+# rule reads byte units alone, so a renamed `calls.*` cell is neither a gate
+# nor a change to one.
+def test_the_derivation_is_indifferent_to_the_counter_vocabulary() -> None:
+    gates = MemoryGates.load()
+    portfolio = json.loads(json.dumps(_basis_portfolio(gates)))
+    renamed = {
+        "calls.encodeDocument": "calls.encodeManagedDocument",
+        "calls.encodeMany": "calls.encodeManagedMany",
+    }
+    counters = 0
+    for member in cast("Sequence[dict[str, object]]", portfolio["members"]):
+        for reading in cast("Sequence[dict[str, object]]", member["readings"]):
+            cell = str(reading["cell"])
+            if cell in renamed:
+                reading["cell"] = renamed[cell]
+                counters += 1
+    assert counters == 2 * 46 * 2
+    derived = derive_memory_gates(portfolio, gates.headroom)
+    assert derived == gates.document()
+    assert sum(len(cells) for workloads in derived.values() for cells in workloads.values()) == 154
+
+
 def test_the_derivation_rule_is_the_largest_runtime_reading_scaled_and_rounded_up() -> None:
     assert reading_bytes(1.5, "KiB") == 1_536.0
     assert reading_bytes(1_536.0, "B/row") == 1_536.0

@@ -201,18 +201,20 @@ def _spelled(address: ReadingAddress) -> str:
     return f"{prefix}{workload}.{cell}"
 
 
+def _inexact(expected: Iterable[ReadingAddress], actual: Iterable[ReadingAddress]) -> list[str]:
+    wanted = set(expected)
+    found = set(actual)
+    return [
+        *(f"missing {_spelled(address)}" for address in sorted(wanted - found)),
+        *(f"unexpected {_spelled(address)}" for address in sorted(found - wanted)),
+    ]
+
+
 def _exact(
     expected: Iterable[ReadingAddress], actual: Iterable[ReadingAddress], *, label: str
 ) -> None:
-    wanted = set(expected)
-    found = set(actual)
-    missing = wanted - found
-    extra = found - wanted
-    if missing or extra:
-        details = [
-            *(f"missing {_spelled(address)}" for address in sorted(missing)),
-            *(f"unexpected {_spelled(address)}" for address in sorted(extra)),
-        ]
+    details = _inexact(expected, actual)
+    if details:
         raise ValueError(f"{label} matrix is not exact: {', '.join(details)}")
 
 
@@ -288,13 +290,25 @@ def validate_snapshot_matrix(document: Document, contract: BudgetContract) -> No
 
 
 def validate_write_lowering_matrix(document: Document) -> None:
-    """Validate the exact runtime-by-case write matrix, its windows, and units."""
+    """Validate the exact runtime-by-case write matrix, its windows, and units.
+
+    The matrix is exact under one whole counter vocabulary: the current one a
+    child answers, or the legacy one the retained captures were taken under,
+    across every keyed-write case on every runtime. A matrix that mixes the two
+    anywhere, or carries a counter from neither, is exact under none."""
     readings = _indexed(_readings(document), label="write-lowering reading")
-    _exact(
-        write_report.expected_addresses(supported_minors()),
-        readings,
-        label="write-lowering reading",
-    )
+    runtimes = supported_minors()
+    vocabularies = {
+        name: write_report.expected_addresses(runtimes, call_names)
+        for name, call_names in write_report.CALL_VOCABULARIES.items()
+    }
+    found = frozenset(readings)
+    if found not in vocabularies.values():
+        closest, expected = min(vocabularies.items(), key=lambda item: len(item[1] ^ found))
+        raise ValueError(
+            "write-lowering reading matrix is not exact under any one counter vocabulary; "
+            f"against the {closest} vocabulary: {', '.join(_inexact(expected, found))}"
+        )
     if cast("Sequence[object]", document.get("comparisons", ())):
         raise ValueError("write-lowering evidence declares no comparisons")
     for address, reading_document in readings.items():

@@ -332,7 +332,11 @@ def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
         (_wrong_window, "reading window is not"),
         (_remove_samples, "has 0 samples, expected"),
         (_forge_value, "disagrees with its sample median"),
-        (_drop_a_runtime, "reading matrix is not exact: missing CPython"),
+        (
+            _drop_a_runtime,
+            "reading matrix is not exact under any one counter vocabulary; "
+            "against the current vocabulary: missing CPython",
+        ),
         (_add_comparison, "declares no comparisons"),
     ],
 )
@@ -343,6 +347,159 @@ def test_write_lowering_matrix_validation_rejects_semantic_forgeries(
     mutate(document)
     with pytest.raises(ValueError, match=message):
         validate_write_lowering_matrix(document)
+
+
+_RENAMED_COUNTERS = {
+    "calls.encodeDocument": "calls.encodeManagedDocument",
+    "calls.encodeMany": "calls.encodeManagedMany",
+}
+
+
+def _historical(name: str, member: str) -> dict[str, Any]:
+    path = cost_report.EVIDENCE_DIRECTORY / name / f"{member}.json"
+    return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def _counter_readings(document: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        reading
+        for reading in cast("list[dict[str, Any]]", document["readings"])
+        if str(reading["cell"]).startswith("calls.")
+    ]
+
+
+def _rename_counters(
+    document: dict[str, Any],
+    names: dict[str, str],
+    *,
+    runtime: str | None = None,
+    workload: str | None = None,
+) -> None:
+    for reading in _counter_readings(document):
+        if runtime is not None and reading["runtime"] != runtime:
+            continue
+        if workload is not None and reading["workload"] != workload:
+            continue
+        reading["cell"] = names.get(str(reading["cell"]), reading["cell"])
+
+
+def _to_legacy(document: dict[str, Any]) -> None:
+    _rename_counters(document, {new: old for old, new in _RENAMED_COUNTERS.items()})
+
+
+# The two retained captures carry the legacy counter vocabulary on every keyed
+# case and both runtimes; neither file is rewritten, and both keep verifying as
+# evidence beside a capture taken under the current vocabulary.
+def test_both_retained_historical_portfolios_verify_under_the_legacy_vocabulary() -> None:
+    for name in ("before", "after"):
+        write = _historical(name, write_report.SUBJECT)
+        validate_write_lowering_matrix(write)
+        counters = {str(reading["cell"]) for reading in _counter_readings(write)}
+        assert counters == {f"calls.{name}" for name in write_report.LEGACY_CALL_NAMES}
+        portfolio = cast(
+            "dict[str, Any]",
+            json.loads(
+                (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+        )
+        assert verify(portfolio) == []
+
+
+def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture() -> None:
+    contract = BudgetContract.load()
+    current = _complete_write(contract)
+    validate_write_lowering_matrix(current)
+    assert {str(reading["cell"]) for reading in _counter_readings(current)} == {
+        f"calls.{name}" for name in write_report.CALL_NAMES
+    }
+    legacy = deepcopy(current)
+    _to_legacy(legacy)
+    validate_write_lowering_matrix(legacy)
+    runtimes = supported_minors()
+    keyed = next(case for case, window in write_report.WINDOWS.items() if window == "keyed-write")
+    refused = "not exact under any one counter vocabulary"
+
+    one_case_legacy = deepcopy(current)
+    _rename_counters(
+        one_case_legacy, {new: old for old, new in _RENAMED_COUNTERS.items()}, workload=keyed
+    )
+    with pytest.raises(ValueError, match=f"{refused}; against the current vocabulary"):
+        validate_write_lowering_matrix(one_case_legacy)
+
+    one_runtime_legacy = deepcopy(current)
+    _rename_counters(
+        one_runtime_legacy,
+        {new: old for old, new in _RENAMED_COUNTERS.items()},
+        runtime=runtimes[0],
+    )
+    with pytest.raises(ValueError, match=refused):
+        validate_write_lowering_matrix(one_runtime_legacy)
+
+    union = deepcopy(current)
+    readings = cast("list[dict[str, Any]]", union["readings"])
+    for reading in _counter_readings(current):
+        if reading["cell"] in _RENAMED_COUNTERS.values():
+            legacy_name = next(
+                old for old, new in _RENAMED_COUNTERS.items() if new == reading["cell"]
+            )
+            readings.append({**deepcopy(reading), "cell": legacy_name})
+    with pytest.raises(ValueError, match=f"{refused}.*unexpected .*calls.encodeDocument"):
+        validate_write_lowering_matrix(union)
+
+    one_counter_short = deepcopy(current)
+    readings = cast("list[dict[str, Any]]", one_counter_short["readings"])
+    readings[:] = [
+        reading
+        for reading in readings
+        if (reading["runtime"], reading["workload"], reading["cell"])
+        != (runtimes[0], keyed, "calls.encodeManagedMany")
+    ]
+    with pytest.raises(
+        ValueError,
+        match=f"{refused}; against the current vocabulary: "
+        f"missing CPython {runtimes[0]} {keyed}.calls.encodeManagedMany$",
+    ):
+        validate_write_lowering_matrix(one_counter_short)
+
+    unknown_counter = deepcopy(current)
+    cast("list[dict[str, Any]]", unknown_counter["readings"]).append(
+        {**deepcopy(_counter_readings(current)[0]), "cell": "calls.encodeCandidate"}
+    )
+    with pytest.raises(ValueError, match=f"{refused}.*unexpected .*calls.encodeCandidate"):
+        validate_write_lowering_matrix(unknown_counter)
+
+
+def test_compare_pairs_every_unchanged_address_across_the_counter_rename() -> None:
+    after = _historical("after", "portfolio")
+    base = _portfolio(_snapshot_of(after), _write_of(after))
+    write = deepcopy(_write_of(after))
+    _rename_counters(write, _RENAMED_COUNTERS)
+    validate_write_lowering_matrix(write)
+    rendered = compare(base, _portfolio(_snapshot_of(after), write))
+    lines = rendered.splitlines()
+    keyed_cases = [case for case, window in write_report.WINDOWS.items() if window == "keyed-write"]
+    unmatched = len(keyed_cases) * len(supported_minors())
+    missing_on_head = [line for line in lines if line.endswith("| missing on head |")]
+    missing_on_base = [line for line in lines if line.endswith("| missing on base |")]
+    assert len(missing_on_head) == 2 * unmatched
+    assert len(missing_on_base) == 2 * unmatched
+    assert all(
+        "| calls.encodeDocument |" in line or "| calls.encodeMany |" in line
+        for line in missing_on_head
+    )
+    assert all(
+        "| calls.encodeManagedDocument |" in line or "| calls.encodeManagedMany |" in line
+        for line in missing_on_base
+    )
+    paired = [line for line in lines if line.startswith("| 3.1") and "missing on" not in line]
+    write_readings = cast("list[dict[str, Any]]", _write_of(after)["readings"])
+    unchanged = [r for r in write_readings if str(r["cell"]) not in _RENAMED_COUNTERS]
+    snapshot_readings = cast("list[dict[str, Any]]", _snapshot_of(after)["readings"])
+    assert len(paired) == len(unchanged) + len(snapshot_readings)
+    assert all(line.endswith(("| within noise |", "| exact |")) for line in paired)
+    assert "incomparable" not in rendered
 
 
 # --------------------------------------------------------------------------- #

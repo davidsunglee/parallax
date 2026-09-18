@@ -144,6 +144,40 @@ def test_a_changed_ancestor_patches_one_root_leaf_and_carries_every_other_member
         assert cast("Mapping[str, object]", successor)["items"] == predecessor["items"]
 
 
+def test_the_two_counter_vocabularies_differ_only_in_the_renamed_encoders() -> None:
+    assert report.CALL_VOCABULARIES == {
+        "current": report.CALL_NAMES,
+        "legacy": report.LEGACY_CALL_NAMES,
+    }
+    assert len(report.CALL_NAMES) == len(set(report.CALL_NAMES)) == 7
+    assert len(report.LEGACY_CALL_NAMES) == len(set(report.LEGACY_CALL_NAMES)) == 7
+    assert set(report.CALL_NAMES) - set(report.LEGACY_CALL_NAMES) == {
+        "encodeManagedDocument",
+        "encodeManagedMany",
+    }
+    assert set(report.LEGACY_CALL_NAMES) - set(report.CALL_NAMES) == {
+        "encodeDocument",
+        "encodeMany",
+    }
+    keyed = [case.name for case in lowering_support.CASES]
+    current = report.expected_addresses(("3.14",))
+    legacy = report.expected_addresses(("3.14",), report.LEGACY_CALL_NAMES)
+    assert current == report.expected_addresses(("3.14",), report.CALL_NAMES)
+    assert {address for address in current if not address[2].startswith("calls.")} == {
+        address for address in legacy if not address[2].startswith("calls.")
+    }
+    assert current - legacy == {
+        ("3.14", case, f"calls.{name}")
+        for case in keyed
+        for name in ("encodeManagedDocument", "encodeManagedMany")
+    }
+    assert legacy - current == {
+        ("3.14", case, f"calls.{name}")
+        for case in keyed
+        for name in ("encodeDocument", "encodeMany")
+    }
+
+
 def test_acquisition_cases_cover_every_row_level_under_both_layouts() -> None:
     assert {case.name for case in acquisition_support.CASES} == {
         f"acquisition.{level.id}.{layout}"
@@ -321,6 +355,7 @@ def test_child_output_decodes_from_its_final_line() -> None:
     assert decoded.units == 2
     assert decoded.samples["elapsedUs"] == (10.0, 12.0, 11.0) * 3
     assert decoded.retained_warmups == 200
+    assert set(decoded.calls) == set(report.CALL_NAMES)
 
 
 @pytest.mark.parametrize(
@@ -334,6 +369,9 @@ def test_child_output_decodes_from_its_final_line() -> None:
         {"samples": {"elapsedUs": [1.0], "transientBytes": [-1.0], "retainedBytes": [1.0]}},
         {"calls": {}},
         {"calls": {**dict.fromkeys(report.CALL_NAMES, 1.0), "extra": 1.0}},
+        {"calls": dict.fromkeys(report.LEGACY_CALL_NAMES, 1.0)},
+        {"calls": dict.fromkeys((*report.CALL_NAMES, *report.LEGACY_CALL_NAMES), 1.0)},
+        {"calls": {name: 1.0 for name in report.CALL_NAMES if name != "encodeManagedMany"}},
         {"warmups": report.WARMUPS + 1},
         {"retainedWarmups": 0},
         {"unexpected": True},
