@@ -276,6 +276,15 @@ obtains a nightly's predecessor. `tests/unit/test_cost_report_workflow.py` and
 `tests/unit/tools/test_cost_report_adapter.py` proves the adapter against
 temporary repositories and a fake `gh`; no test dispatches a run.
 
+`tools/cost_report_evidence.py` is the offline companion: it puts a retained
+legacy portfolio and the GitHub run and job metadata of the job that captured
+it beside a `--assemble` directory and its run's metadata, and renders the
+execution-cost table — coverage as the multiset of reading addresses and their
+sample counts, elapsed, measurement critical path, runner minutes, queue, and
+setup — with every unknown left unknown. It starts nothing and calls nothing;
+`tests/unit/tools/test_cost_report_evidence.py` drives it with fixtures of
+both formats, missing historical fields, and mismatched work.
+
 The cost cells are balanced by what each cost item last cost, read from
 `tests/_support/cost_durations.json`: `--shard I/N` sorts the class's items
 heaviest first and places each onto the lightest shard so far, so the N shards
