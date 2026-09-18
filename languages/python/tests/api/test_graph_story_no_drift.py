@@ -63,6 +63,7 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
+from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import ConnectsAsItself, body_outcome
@@ -596,10 +597,10 @@ class _RecordingDatabase(Database):
         self,
         fn: Callable[[Transaction], T],
         *,
-        retries: int | None = None,
-        concurrency: Concurrency | None = None,
-        retry_optimistic_conflicts: bool | None = None,
-        isolation: IsolationLevel | None = None,
+        max_retries: int | Omitted = OMITTED,
+        concurrency: Concurrency | Omitted = OMITTED,
+        retry_optimistic_conflicts: bool | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         def recording(tx: Transaction) -> T:
             return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))
@@ -607,7 +608,7 @@ class _RecordingDatabase(Database):
         body: Callable[[Transaction], T] = recording if self._group_finds else fn
         return super().transact(
             body,
-            retries=retries,
+            max_retries=max_retries,
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,

@@ -431,7 +431,8 @@ class _Namespace(NamedTuple):
     and the adoption it took its selection through), and everything the handle
     prepared whole at connect and retains for the delivery to be served under:
     the selection, the Serving Model holding it, its two projections, the
-    demarcation beside them, the write planner with the family-fact reader and
+    transaction runner beside them with the one options record the root
+    retains as its transaction defaults, the write planner with the family-fact reader and
     the settlement module it holds — one reader over the whole model, holding
     the model and the compiled Inheritance Facet by reference and indexing
     neither, and one settlement module holding that same reader beside the
@@ -478,7 +479,7 @@ class _Namespace(NamedTuple):
 
 
 _TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=67, per_page_node=2, per_page_root=1, per_published_node=2
+    "typed", _typed_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=2
 )
 """The Typed lane. Two objects per page node — the Read Origin a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
@@ -499,10 +500,15 @@ where a handle used to retain one for its life. What replaces it is the
 acquisition itself, and neither the context nor the scoped execution is
 Parallax-owned in this instrument — the shipped ones are, and what bounds THEM
 is that a delivery holds exactly one for its whole life however many pages it
-reads."""
+reads.
+
+One fixed object more with root-configured transaction defaults: the options
+record a root is connected with is retained by its transaction runner for the
+root's life — one per root, whatever the delivery reads — and a delivery opens
+no transaction, so it is fixed rather than a term."""
 
 _WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=1
+    "wire", _wire_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=1
 )
 """The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
@@ -751,13 +757,14 @@ _SOURCES: Final = frozenset(
         "parallax.snapshot._inspection",
         "parallax.snapshot.handle._adoption",
         "parallax.snapshot.handle._database",
-        "parallax.snapshot.handle._demarcation",
+        "parallax.snapshot.handle._options",
         "parallax.snapshot.handle._page",
         "parallax.snapshot.handle._planning",
         "parallax.snapshot.handle._publication",
         "parallax.snapshot.handle._read",
         "parallax.snapshot.handle._read_scope",
         "parallax.snapshot.handle._stream",
+        "parallax.snapshot.handle._transaction_runner",
         "parallax.snapshot.materialize._page",
         "parallax.snapshot.materialize._root",
         "parallax.snapshot.materialize._views",
@@ -782,9 +789,10 @@ alive here as the handle's own, and the read the delivery was begun as — the
 begun read and its adoption — beside them, whatever the page size and the fanout
 are, which is why they are in ``fixed``. The entity and publication entries are
 what the handle prepared at connect and the delivery is served under: the
-selection, its Serving Model, its read and write projections, the demarcation,
-and the layouts, row facts, and graph facts derived over every Entity of the
-model — one set per model however much is read, and therefore fixed too. There
+selection, its Serving Model, its read and write projections, the transaction
+runner and the options record it retains as the root's defaults, and the
+layouts, row facts, and graph facts derived over every Entity of the model —
+one set per model however much is read, and therefore fixed too. There
 is no entry for a retained root-judgment module, for the eager executor's own result carrier — a
 delivery holds the page it read rather than a find's — or anything under
 ``parallax.core.sql_gen``, a page being planned and compiled and the products of

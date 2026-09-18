@@ -33,12 +33,14 @@
 # Database Calls and appear nowhere in the stream, which is why a transaction
 # that reached the database three times reports two.
 #
-# The case declares no `when.uow`, so the invocation states the resolved DEFAULT
-# Concurrency Preference, `optimistic` (m-unit-work strategy selection), beside
-# the resolved retry policy. What it states is that PREFERENCE, not a claim that
-# every Entity took one strategy: Order and OrderItem are unversioned, so each
-# resolves to the mandatory Locking fallback, and neither insert needs an
-# observation or a gate either way.
+# The case declares no `when.uow`, so the invocation states the Database Root's
+# resolved DEFAULTS: the `optimistic` Concurrency Preference (m-unit-work
+# strategy selection), the retry policy, and the concrete Read Committed level
+# every attempt requested — an omitted level resolves to the root's default
+# rather than to no request. What it states for concurrency is that
+# PREFERENCE, not a claim that every Entity took one strategy: Order and
+# OrderItem are unversioned, so each resolves to the mandatory Locking
+# fallback, and neither insert needs an observation or a gate either way.
 model: models/orders.yaml
 tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, pre-commit]
 shape: scenario
@@ -83,6 +85,7 @@ then:
               concurrency: optimistic
               retries: 10
               retryOptimisticConflicts: false
+              isolation: read-committed
           - sequence: 2
             activity: 2
             parent: 1

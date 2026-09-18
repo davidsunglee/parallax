@@ -36,9 +36,11 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.unit_work import FixedClock
-from parallax.snapshot import connect
+from parallax.snapshot import DatabaseOptions, connect
 from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
 from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
     ConnectsAsItself,
     Read,
     RefusingAdapter,
@@ -264,7 +266,7 @@ def test_an_attempt_that_cannot_acquire_is_terminal_and_runs_no_callback() -> No
 def test_an_attempt_that_cannot_acquire_is_not_retried_however_retriable_it_looks() -> None:
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("timeout")])
     with _db(adapter) as db, pytest.raises(ExecutionFailure):
-        db.transact(lambda _tx: None, retries=5)
+        db.transact(lambda _tx: None, max_retries=5)
     assert adapter.acquisitions == 0
 
 
@@ -437,20 +439,44 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
 ) -> None:
     # A refusal on the other side of the open closes what it took, so no
     # half-composed handle is published and the runtime is not left to a caller
-    # that never received one. The refusal is injected into the demarcation the
-    # handle composes, which is work that genuinely runs after opening.
+    # that never received one. The refusal is injected into the transaction
+    # runner the handle composes, which is work that genuinely runs after
+    # opening.
     from parallax.snapshot.handle import _database as database_module
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("this handle cannot be composed")
 
-    monkeypatch.setattr(database_module, "Demarcation", refuse)
+    monkeypatch.setattr(database_module, "TransactionRunner", refuse)
     adapter = ScriptedAdapter()
 
     with pytest.raises(RuntimeError, match="cannot be composed"):
         connect(adapter, ACCOUNT, clock=FixedClock(FIXED))
 
     assert adapter.closes == 1
+
+
+def test_omitted_options_and_a_whole_record_none_are_the_built_in_record() -> None:
+    omitted = _db(ScriptedAdapter(Transact()))
+    explicit = connect(ScriptedAdapter(Transact()), ACCOUNT, options=None, clock=FixedClock(FIXED))
+    assert omitted.transact(lambda tx: tx.options) == DatabaseOptions()
+    assert explicit.transact(lambda tx: tx.options) == DatabaseOptions()
+
+
+def test_an_invalid_record_opens_no_runtime_at_all() -> None:
+    # The record refuses itself at construction, so nothing reaches `connect`;
+    # what this pins is that a caller building the record beside the call
+    # spends no runtime on it either.
+    with pytest.raises(ValueError, match="max_retries"):
+        connect(_NeverAcquires(), ACCOUNT, options=DatabaseOptions(max_retries=-1))
+
+
+def test_the_direct_constructor_takes_the_same_record() -> None:
+    adapter = ScriptedAdapter(Transact())
+    options = DatabaseOptions(isolation="serializable")
+    db = Database(adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED))
+    assert db.transact(lambda tx: tx.options) is options
+    assert adapter.calls == [BeginCall("serializable"), CommitCall()]
 
 
 def test_participating_work_answers_the_attempts_connection_without_acquiring() -> None:

@@ -3,13 +3,14 @@
 # whose engine meets the floor anyway is kept — `api-conformance` lane.
 #
 # The connection this body runs through defaults to Read Uncommitted, set before
-# the adapter took it, and the body itself names no level at all. Omitting a level
-# asks for nothing and keeps the adapter's default — but only where that default
-# is at least Read Committed, because a caller who named nothing asked for the
-# adapter's default and would otherwise silently get a weaker guarantee than the
-# vocabulary admits. The check belongs at intake, once per connection: a per-
-# boundary check would re-answer a question about the connection on every call,
-# and a silent upgrade would hide a misconfiguration the deployment owns.
+# the adapter took it, and the body itself names no level at all. The floor is a
+# property of the CONNECTION, judged before any boundary asks it for anything:
+# the invocation resolves the Database Root's own Read Committed and would
+# request it on every attempt, but a connection whose configured default is
+# weaker than the vocabulary admits is a misconfiguration the deployment owns,
+# and it is refused rather than silently upgraded. The check belongs at intake,
+# once per connection: a per-boundary check would re-answer a question about the
+# connection on every call.
 #
 # What the two engines then do is the divergence `then.outcome` carries per
 # dialect. Postgres HAS no level below Read Committed — it executes a Read

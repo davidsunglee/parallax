@@ -3,7 +3,10 @@
 Snapshot graph materialization and the developer handle over the spine. The
 package re-exports exactly the spec §8 surface: :func:`connect` (the
 composition-root entry point — application code constructs a concrete adapter
-and calls ``parallax.snapshot.connect(adapter, model)``), the preparation and
+and calls ``parallax.snapshot.connect(adapter, model)``), :class:`DatabaseOptions`
+beside it (the immutable transaction defaults a Database Root is connected
+with, the record every outer ``db.transact`` resolves its omitted keywords
+against, and what ``tx.options`` answers), the preparation and
 publication surface beside it — :func:`prepare_model`, which prepares one
 Domain Model under one Model Edition into an opaque, complete
 :class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of a
@@ -89,6 +92,7 @@ from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     WRITE_EVIDENCE_CODES,
     CheckedSnapshot,
+    DatabaseOptions,
     DeferredFeatureError,
     ExecutionFailure,
     InvalidData,
@@ -125,6 +129,7 @@ __all__ = [
     "MISSING_STORED_VALUE",
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
+    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidData",

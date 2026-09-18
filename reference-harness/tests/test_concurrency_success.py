@@ -540,3 +540,41 @@ def test_runner_assert_schema_allows_a_commit_as_a_nodes_last_step() -> None:
         }
     )
     _assert_schema(case)  # must not raise
+
+
+# --- the resolved isolation a held session opens at (m-db-port root default) --
+
+
+def test_a_declared_isolation_is_the_level_the_case_resolves() -> None:
+    case = _concurrency_case(_serializable_error_case())
+    assert case.isolation == "serializable"
+
+
+def test_an_undeclared_isolation_resolves_to_the_roots_read_committed() -> None:
+    # A transactional session stands in for a transaction a Database opens, and
+    # that transaction requests a concrete level on every attempt: the case's
+    # own, else the Database Root's built-in Read Committed — never the server's
+    # configured default.
+    raw = _serializable_error_case()
+    del raw["when"]["uow"]
+    case = _concurrency_case(raw)
+    assert case.isolation == "read-committed"
+    assert case.concurrency_mode == "optimistic"
+
+
+def test_the_retired_retries_request_key_is_refused_by_the_schema() -> None:
+    case = _serializable_error_case()
+    case["when"]["uow"]["retries"] = 2
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject the retired `retries` request key; the spelling is `maxRetries`"
+    )
+
+
+def test_the_schema_accepts_max_retries_and_refuses_a_null_option() -> None:
+    accepted = _serializable_error_case()
+    accepted["when"]["uow"]["maxRetries"] = 0
+    assert not list(_case_validator().iter_errors(accepted))
+    for field in ("maxRetries", "concurrency", "retryOptimisticConflicts", "isolation"):
+        refused = _serializable_error_case()
+        refused["when"]["uow"][field] = None
+        assert list(_case_validator().iter_errors(refused)), field

@@ -98,6 +98,97 @@ def test_an_undeclared_level_reads_as_requesting_nothing(document: dict[str, obj
     assert case_format.uow_isolation(_isolation_case(document)) is None
 
 
+# --------------------------------------------------------------------------- #
+# The sparse `db.transact` projection: only what the case authored travels.   #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"when": {}},
+        {"when": {"uow": {}}},
+    ],
+)
+def test_an_undeclared_request_projects_no_keyword(document: dict[str, object]) -> None:
+    assert case_format.transaction_keywords(_isolation_case(document)) == {}
+
+
+def test_every_authored_field_projects_under_its_python_name() -> None:
+    case = _isolation_case(
+        {
+            "when": {
+                "uow": {
+                    "maxRetries": 2,
+                    "concurrency": "locking",
+                    "retryOptimisticConflicts": True,
+                    "isolation": "repeatable-read",
+                }
+            }
+        }
+    )
+    assert case_format.transaction_keywords(case) == {
+        "max_retries": 2,
+        "concurrency": "locking",
+        "retry_optimistic_conflicts": True,
+        "isolation": "repeatable_read",
+    }
+
+
+def test_authored_zero_and_false_survive_and_absent_keys_stay_absent() -> None:
+    # `0` and `false` are values the case wrote, distinguishable from omission
+    # by presence alone: neither is dropped as falsy, and the two fields the
+    # case did not write are not filled from any default.
+    case = _isolation_case({"when": {"uow": {"maxRetries": 0, "retryOptimisticConflicts": False}}})
+    keywords = case_format.transaction_keywords(case)
+    assert keywords == {"max_retries": 0, "retry_optimistic_conflicts": False}
+    assert "concurrency" not in keywords
+    assert "isolation" not in keywords
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("maxRetries", None),
+        ("concurrency", None),
+        ("retryOptimisticConflicts", None),
+        ("isolation", None),
+        ("maxRetries", True),
+        ("maxRetries", -1),
+        ("maxRetries", "2"),
+        ("concurrency", "pessimistic"),
+        ("retryOptimisticConflicts", 1),
+        ("isolation", "read_committed"),
+    ],
+)
+def test_a_null_or_malformed_request_field_is_refused_at_ingress(field: str, value: object) -> None:
+    # Authored `null` is neither omission nor a value production admits, so the
+    # case is reported where it is read; the same refusal covers a value outside
+    # the field's type or vocabulary.
+    case = _isolation_case({"when": {"uow": {field: value}}})
+    with pytest.raises(ValueError, match=field if value is None else None):
+        case_format.transaction_keywords(case)
+
+
+def test_the_retired_retries_request_key_is_refused() -> None:
+    case = _isolation_case({"when": {"uow": {"retries": 2}}})
+    with pytest.raises(ValueError, match="retries"):
+        case_format.transaction_keywords(case)
+
+
+def test_a_non_mapping_uow_is_refused_by_name() -> None:
+    case = _isolation_case({"when": {"uow": "locking"}})
+    with pytest.raises(ValueError, match=r"when\.uow must be a mapping"):
+        case_format.transaction_keywords(case)
+
+
+def test_a_join_step_projects_through_the_same_decoder() -> None:
+    step = {"action": "join", "isolation": "serializable", "maxRetries": 0, "note": "x"}
+    assert case_format.request_keywords(step, where="join") == {
+        "isolation": "serializable",
+        "max_retries": 0,
+    }
+
+
 def test_is_module_tag_grammar() -> None:
     assert case_format.is_module_tag("m-predicate")
     assert case_format.is_module_tag("m-predicate-002")  # a case ID also matches

@@ -47,10 +47,15 @@ verbs, to ``tx.wire``'s, and to the conformance bridge alike),
 :mod:`parallax.snapshot.handle._write_inputs` (the steps the Typed sources
 themselves run — instance resolution, the source pin and identity row a value
 states, and the object a written row addresses), and
-:mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
-``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
-:mod:`parallax.snapshot.handle._database`, which imports this module, never the
-reverse.
+:mod:`parallax.snapshot.handle._predicate_writes`, and
+:mod:`parallax.snapshot.handle._options` (the resolved
+:class:`~parallax.snapshot.handle._options.DatabaseOptions` a transaction is
+handed at construction and answers as :attr:`Transaction.options`). The
+composition root and the transaction runner — ``Database``,
+``TransactionRunner``, and ``TransactionOptionConflictError`` — live in
+:mod:`parallax.snapshot.handle._database` and
+:mod:`parallax.snapshot.handle._transaction_runner`, which import this module,
+never the reverse.
 """
 
 from __future__ import annotations
@@ -102,6 +107,7 @@ from parallax.snapshot.handle._keyed_writes import (
     keyed_write,
     retained,
 )
+from parallax.snapshot.handle._options import DatabaseOptions
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
@@ -354,6 +360,7 @@ class Transaction:
         "_keyed",
         "_lifecycle",
         "_model",
+        "_options",
         "_reads",
         "_uow",
     )
@@ -367,9 +374,14 @@ class Transaction:
         attempt: TransactionAttemptActivity,
         lifecycle: InstalledLifecycle | None,
         planner: ReadPlanner,
+        options: DatabaseOptions,
     ) -> None:
         self._uow = uow
         self._conn = conn
+        # The invocation's resolved record, shared by reference across every
+        # attempt of the invocation: what a joining call is compared against,
+        # and what a caller inspects, without ambient state on either path.
+        self._options = options
         # The two projections of the one selection this attempt adopted: the
         # read projection serves every participating read, and the write
         # projection's cataloged model and codec serve every keyed verb — a
@@ -424,6 +436,17 @@ class Transaction:
         new transaction that may report another edition.
         """
         return self._edition
+
+    @property
+    def options(self) -> DatabaseOptions:
+        """The resolved options this transaction's invocation runs under: each
+        explicit ``db.transact`` keyword, else the Database Root's default.
+
+        One record for the whole invocation, so every retried attempt and every
+        joining call reads the same values; a joining call's explicit keyword is
+        compared against exactly this.
+        """
+        return self._options
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,

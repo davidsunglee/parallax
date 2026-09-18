@@ -1,10 +1,12 @@
-"""`Database` demarcation unit tests (spec §§3, 5, Docker-free fake ports).
+"""`Database` transaction runner unit tests (spec §§3, 5, Docker-free fake ports).
 
-The observable behavior of `parallax.snapshot.handle._demarcation`, driven
-entirely through the public `Database` surface: `Database.transact` composes
-the unit-of-work shell, write lowering, and the `m-auto-retry` bounded loop
-over an injected `m-db-port` — commit and abort wiring, join semantics (same
-Transaction, option conflicts, rollback-only foreclosure), withheld values on
+The observable behavior of `parallax.snapshot.handle._transaction_runner`,
+driven entirely through the public `Database` surface: `Database.transact`
+composes the unit-of-work shell, write lowering, and the `m-auto-retry` bounded
+loop over an injected `m-db-port` — commit and abort wiring, join semantics
+(same Transaction, option conflicts, rollback-only foreclosure), resolution of
+omitted options against the root's `DatabaseOptions` and inspection of the
+resolved record, withheld values on
 abort, escaped transaction references, the retry classification matrix,
 including the spec §5 requirement that a rollback-only commit refusal keeps its
 original cause's retriability, and the adoption every attempt makes from the
@@ -53,7 +55,7 @@ from parallax.core.unit_work import (
     WritePlan,
     run_unit_of_work,
 )
-from parallax.snapshot import ExecutionFailure, ServingModel, prepare_model
+from parallax.snapshot import DatabaseOptions, ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,
     Transaction,
@@ -138,9 +140,10 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
         # Explicit-and-equal to the resolved defaults: accepted, not a conflict.
         return db.transact(
             lambda _inner: "joined",
-            retries=10,
+            max_retries=10,
             concurrency="optimistic",
             retry_optimistic_conflicts=False,
+            isolation="read_committed",
         )
 
     assert db.transact(outer) == "joined"
@@ -151,15 +154,14 @@ def _must_not_run(_tx: Transaction) -> None:  # pragma: no cover - conflict fore
 
 
 _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
-    ("retries", lambda db: db.transact(_must_not_run, retries=3)),
+    ("max_retries", lambda db: db.transact(_must_not_run, max_retries=3)),
     ("concurrency", lambda db: db.transact(_must_not_run, concurrency="locking")),
     (
         "retry_optimistic_conflicts",
         lambda db: db.transact(_must_not_run, retry_optimistic_conflicts=True),
     ),
-    # The boundary these join opened with no isolation at all, so NAMING one
-    # conflicts: an already-open transaction cannot be re-opened at a level, and
-    # the sentinel says the same thing here it says for the other three.
+    # The transaction these join resolved the root's Read Committed, so NAMING
+    # a different level conflicts on the same terms as the other three.
     ("isolation", lambda db: db.transact(_must_not_run, isolation="serializable")),
 ]
 
@@ -184,12 +186,14 @@ def test_join_with_a_conflicting_explicit_option_raises(
 # --------------------------------------------------------------------------- #
 # Isolation: a closed vocabulary, refused here and mapped by the adapter.      #
 # --------------------------------------------------------------------------- #
-def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
-    # The sentinel is a request for nothing rather than a value Parallax would
-    # supply, so the boundary opens at whatever the adapter already defaults to.
+def test_an_omitted_isolation_asks_the_port_for_the_roots_read_committed() -> None:
+    # Omission resolves to the root's default, and an unconfigured root's is a
+    # concrete Read Committed: the port is asked for that level rather than for
+    # nothing, so a database configured with a stronger default still opens
+    # this boundary at the level Parallax resolved.
     port = ScriptedAdapter(Transact())
     account_db(port).transact(lambda _tx: "ok")
-    assert port.calls == [BeginCall(None), CommitCall()]
+    assert port.calls == [BeginCall("read_committed"), CommitCall()]
 
 
 @pytest.mark.parametrize("level", sorted(ISOLATION_LEVELS))
@@ -203,14 +207,16 @@ def test_every_level_of_the_vocabulary_reaches_the_port(level: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "level", ["read uncommitted", "repeatable read", "SERIALIZABLE", "", 3, None.__class__]
+    "level", ["read uncommitted", "repeatable read", "SERIALIZABLE", "", 3, None.__class__, None]
 )
 def test_a_level_outside_the_vocabulary_is_refused_before_the_port_is_asked(level: object) -> None:
     # A name outside the vocabulary names no guarantee any adapter could map, so
     # it is the caller's mistake rather than a database's refusal: raised where a
     # negative retry bound is, before anything opens. An engine's own spelling of
     # a level Parallax does carry is refused on the same terms as a level it does
-    # not — being spelled for one database is what makes it unportable.
+    # not — being spelled for one database is what makes it unportable — and so
+    # is `None`, which is an invalid value rather than a second spelling of
+    # omission.
     port = ScriptedAdapter()
     with pytest.raises(ValueError, match="isolation must be one of"):
         account_db(port).transact(_must_not_run, isolation=cast("Any", level))
@@ -434,12 +440,12 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
         # A foreign handle carrying a conflicting option: the doomed boundary
         # and the option conflict would each raise, and neither is the answer.
         with pytest.raises(TransactionOwnershipError):
-            foreign.transact(_must_not_run, retries=3)
+            foreign.transact(_must_not_run, max_retries=3)
         # Nothing beyond the outer boundary's own `begin` ever reached the port.
         assert port.calls == [BeginCall()]
         # Through the owner, the same conflicting option answers next…
-        with pytest.raises(TransactionOptionConflictError, match="retries"):
-            owner.transact(_must_not_run, retries=3)
+        with pytest.raises(TransactionOptionConflictError, match="max_retries"):
+            owner.transact(_must_not_run, max_retries=3)
         # …and with no option left to conflict, the doomed boundary answers last.
         with pytest.raises(RollbackOnlyError):
             owner.transact(_must_not_run)
@@ -462,9 +468,11 @@ def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
     with raises_contextualized(DatabaseError) as excinfo:
-        account_db(port).transact(lambda _tx: "ok", retries=2)
+        account_db(port).transact(lambda _tx: "ok", max_retries=2)
     assert port.calls.count(BeginCall()) == 3
     assert excinfo.value.is_retriable  # the surfaced error is the failure itself
+    # The core loop's own note spells the bound by its own parameter name; the
+    # public keyword that supplied the number is `max_retries`.
     assert "3 attempts (retries=2)" in "".join(excinfo.value.__notes__)
 
 
@@ -494,15 +502,79 @@ def test_non_retriable_categories_surface_after_one_attempt(category: str, nativ
 def test_retries_zero_disables_the_loop() -> None:
     port = ScriptedAdapter(Transact(commit=deadlock()))
     with raises_contextualized(DatabaseError):
-        account_db(port).transact(lambda _tx: "ok", retries=0)
+        account_db(port).transact(lambda _tx: "ok", max_retries=0)
     assert port.calls.count(BeginCall()) == 1
 
 
 def test_negative_retries_are_rejected_before_any_attempt() -> None:
     port = ScriptedAdapter()
-    with pytest.raises(ValueError, match="retries must be >= 0"):
-        account_db(port).transact(lambda _tx: "ok", retries=-1)
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        account_db(port).transact(lambda _tx: "ok", max_retries=-1)
     assert port.calls.count(BeginCall()) == 0
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value", "message"),
+    [
+        ("max_retries", True, "max_retries must be a nonnegative int"),
+        ("max_retries", 1.5, "max_retries must be a nonnegative int"),
+        ("max_retries", None, "max_retries must be a nonnegative int"),
+        ("concurrency", "pessimistic", "concurrency must be one of"),
+        ("concurrency", None, "concurrency must be one of"),
+        ("retry_optimistic_conflicts", 1, "retry_optimistic_conflicts must be a bool"),
+        ("retry_optimistic_conflicts", None, "retry_optimistic_conflicts must be a bool"),
+    ],
+)
+def test_an_explicit_value_outside_its_fields_contract_is_refused_before_any_attempt(
+    keyword: str, value: object, message: str
+) -> None:
+    # Every explicit keyword is held to its field's contract — the same one the
+    # root record enforces — and `None` is an invalid value for each rather than
+    # a second spelling of omission. Refused before anything opens, as a bad
+    # level is.
+    port = ScriptedAdapter()
+    with pytest.raises(ValueError, match=message):
+        account_db(port).transact(_must_not_run, **cast("dict[str, Any]", {keyword: value}))
+    assert port.calls == []
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value", "message"),
+    [
+        ("max_retries", True, "max_retries must be a nonnegative int"),
+        ("max_retries", -1, "max_retries must be >= 0"),
+        ("concurrency", "pessimistic", "concurrency must be one of"),
+        ("retry_optimistic_conflicts", None, "retry_optimistic_conflicts must be a bool"),
+        ("isolation", "repeatable read", "isolation must be one of"),
+    ],
+)
+def test_a_joining_call_with_an_invalid_explicit_value_is_refused_as_invalid(
+    keyword: str, value: object, message: str
+) -> None:
+    # Validation precedes every active-transaction check, so what a joining
+    # caller is told is that the value is malformed — never that it disagrees
+    # with the active transaction, and never that the join is refused on any
+    # other ground. The transaction survives because nothing entered its frame.
+    port = ScriptedAdapter(Transact())
+    db = account_db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(ValueError, match=message) as refusal:
+            db.transact(_must_not_run, **cast("dict[str, Any]", {keyword: value}))
+        assert not isinstance(refusal.value, TransactionOptionConflictError)
+        return "survived"
+
+    assert db.transact(outer) == "survived"
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+def test_the_retired_retries_keyword_is_refused() -> None:
+    # `max_retries` replaced `retries` without an alias, so the old spelling is
+    # an unknown keyword rather than a bound.
+    port = ScriptedAdapter()
+    with pytest.raises(TypeError, match="retries"):
+        account_db(port).transact(_must_not_run, retries=3)  # pyright: ignore[reportCallIssue] - the retired keyword's refusal is what this proves
+    assert port.calls == []
 
 
 def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
@@ -717,7 +789,7 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
             serving.publish(_B, expected=_A)
 
     with raises_contextualized(DatabaseError) as exhausted:
-        db.transact(body, retries=1)
+        db.transact(body, max_retries=1)
     assert exhausted.edition == "b"
     assert exhausted.value.is_retriable
 
@@ -769,8 +841,8 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
     # nothing has been adopted that a failure could be reported under.
     serving = ServingModel(_A)
     db = _serving_db(ScriptedAdapter(Transact()), serving)
-    with pytest.raises(ValueError, match="retries must be >= 0"):
-        db.transact(_must_not_run, retries=-1)
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        db.transact(_must_not_run, max_retries=-1)
     with pytest.raises(ValueError, match="isolation must be one of"):
         db.transact(_must_not_run, isolation=cast("Any", "read uncommitted"))
     foreign = _serving_db(ScriptedAdapter(), serving)
@@ -779,7 +851,7 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
         with pytest.raises(TransactionOwnershipError):
             foreign.transact(_must_not_run)
         with pytest.raises(TransactionOptionConflictError):
-            db.transact(_must_not_run, retries=3)
+            db.transact(_must_not_run, max_retries=3)
         return "survived"
 
     assert db.transact(outer) == "survived"
@@ -834,7 +906,7 @@ def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
         account_db(port).transact(
             _observe_and_update,
             concurrency="optimistic",
-            retries=2,
+            max_retries=2,
             retry_optimistic_conflicts=True,
         )
     assert port.calls.count(BeginCall()) == 3
@@ -972,3 +1044,217 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     assert (
         port.calls.count(BeginCall()) == 2
     )  # the conflicting attempt, then the retried (successful) attempt
+
+
+# --------------------------------------------------------------------------- #
+# Root defaults (spec §5): an outer invocation resolves each omitted keyword   #
+# against the root's DatabaseOptions, an explicit keyword overrides it, a join  #
+# inherits the invocation's resolved value, and `tx.options` is that record.    #
+# --------------------------------------------------------------------------- #
+_CONFIGURED = DatabaseOptions(
+    max_retries=2, concurrency="locking", retry_optimistic_conflicts=True, isolation="serializable"
+)
+
+
+def _configured_db(port: DatabaseAdapter, options: DatabaseOptions = _CONFIGURED) -> Database:
+    return Database.connect(port, ACCOUNT, options=options, clock=FixedClock(FIXED))
+
+
+def test_an_unconfigured_root_resolves_the_built_in_record() -> None:
+    port = ScriptedAdapter(Transact())
+    assert account_db(port).transact(lambda tx: tx.options) == DatabaseOptions()
+
+
+def test_omitted_keywords_resolve_to_the_roots_configured_defaults() -> None:
+    port = ScriptedAdapter(Transact())
+    db = _configured_db(port)
+    assert db.transact(lambda tx: tx.options) is _CONFIGURED
+    # Resolution reaches execution, not only inspection: the port is asked for
+    # the root's level.
+    assert port.calls == [BeginCall("serializable"), CommitCall()]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value"),
+    [
+        ("max_retries", 0),
+        ("concurrency", "optimistic"),
+        ("retry_optimistic_conflicts", False),
+        ("isolation", "repeatable_read"),
+    ],
+)
+def test_an_explicit_keyword_overrides_only_its_own_field(keyword: str, value: object) -> None:
+    port = ScriptedAdapter(Transact())
+    db = _configured_db(port)
+    resolved = db.transact(lambda tx: tx.options, **cast("dict[str, Any]", {keyword: value}))
+    assert resolved == DatabaseOptions(
+        **cast("dict[str, Any]", {**_fields(_CONFIGURED), keyword: value})
+    )
+    assert resolved is not _CONFIGURED
+
+
+def _fields(options: DatabaseOptions) -> dict[str, object]:
+    return {
+        "max_retries": options.max_retries,
+        "concurrency": options.concurrency,
+        "retry_optimistic_conflicts": options.retry_optimistic_conflicts,
+        "isolation": options.isolation,
+    }
+
+
+def test_explicit_values_equal_to_the_defaults_reuse_the_roots_record() -> None:
+    # An invocation that changes nothing allocates nothing: the root's own
+    # record is what the transaction carries.
+    port = ScriptedAdapter(Transact())
+    db = _configured_db(port)
+    resolved = db.transact(
+        lambda tx: tx.options,
+        max_retries=2,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
+    )
+    assert resolved is _CONFIGURED
+
+
+def test_two_roots_resolve_independently() -> None:
+    first = _configured_db(ScriptedAdapter(Transact()))
+    second = account_db(ScriptedAdapter(Transact()))
+    assert first.transact(lambda tx: tx.options) is _CONFIGURED
+    assert second.transact(lambda tx: tx.options) == DatabaseOptions()
+
+
+def test_every_retry_of_one_invocation_shares_one_resolved_record() -> None:
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
+    seen: list[DatabaseOptions] = []
+
+    def body(tx: Transaction) -> None:
+        seen.append(tx.options)
+
+    account_db(port).transact(body, isolation="repeatable_read", max_retries=5)
+    assert len(seen) == 3
+    assert all(options is seen[0] for options in seen)
+    assert seen[0] == DatabaseOptions(max_retries=5, isolation="repeatable_read")
+    assert port.calls.count(BeginCall("repeatable_read")) == 3
+
+
+def test_a_join_reads_the_same_transaction_and_the_same_record() -> None:
+    port = ScriptedAdapter(Transact())
+    db = _configured_db(port)
+
+    def outer(tx: Transaction) -> tuple[bool, bool]:
+        return db.transact(lambda inner: (inner is tx, inner.options is tx.options))
+
+    assert db.transact(outer) == (True, True)
+
+
+@pytest.mark.parametrize(
+    ("keyword", "equal", "different"),
+    [
+        ("max_retries", 0, 3),
+        ("concurrency", "optimistic", "locking"),
+        ("retry_optimistic_conflicts", False, True),
+        ("isolation", "repeatable_read", "serializable"),
+    ],
+)
+def test_a_join_inherits_an_outer_override_rather_than_the_roots_default(
+    keyword: str, equal: object, different: object
+) -> None:
+    # The outer call overrides the root; a join omitting the field inherits the
+    # OVERRIDE, repeating it is accepted, and naming the root's own value — or
+    # any other — is a conflict, because the root never participates in a join
+    # comparison on its own.
+    port = ScriptedAdapter(Transact())
+    db = _configured_db(port)
+    root_value = _fields(_CONFIGURED)[keyword]
+
+    def outer(tx: Transaction) -> str:
+        assert db.transact(lambda inner: inner.options) is tx.options
+        assert (
+            db.transact(lambda inner: inner.options, **cast("dict[str, Any]", {keyword: equal}))
+            is tx.options
+        )
+        with pytest.raises(TransactionOptionConflictError, match=keyword):
+            db.transact(_must_not_run, **cast("dict[str, Any]", {keyword: root_value}))
+        with pytest.raises(TransactionOptionConflictError, match=keyword):
+            db.transact(_must_not_run, **cast("dict[str, Any]", {keyword: different}))
+        return "survived"
+
+    assert db.transact(outer, **cast("dict[str, Any]", {keyword: equal})) == "survived"
+    level = "repeatable_read" if keyword == "isolation" else "serializable"
+    assert port.calls == [BeginCall(cast("IsolationLevel", level)), CommitCall()]
+
+
+def test_the_record_outlives_the_invocation_without_ambient_state() -> None:
+    port = ScriptedAdapter(Transact())
+    escaped: list[Transaction] = []
+    _configured_db(port).transact(escaped.append)
+    # No transaction is active any more, and the record is still the one the
+    # invocation resolved — read off the transaction, not off any active state.
+    assert escaped[0].options is _CONFIGURED
+
+
+def test_the_roots_bound_admits_at_most_one_more_attempt_than_it_names() -> None:
+    port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
+    with raises_contextualized(DatabaseError):
+        _configured_db(port).transact(lambda _tx: "ok")
+    assert port.calls.count(BeginCall("serializable")) == 3
+
+
+def test_a_zero_root_bound_means_one_attempt_and_an_explicit_bound_retries() -> None:
+    zero = DatabaseOptions(max_retries=0)
+    port = ScriptedAdapter(Transact(commit=deadlock()))
+    with raises_contextualized(DatabaseError):
+        _configured_db(port, zero).transact(lambda _tx: "ok")
+    assert port.calls.count(BeginCall()) == 1
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    assert _configured_db(port, zero).transact(lambda _tx: "ok", max_retries=1) == "ok"
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_the_roots_conflict_opt_in_retries_an_eligible_conflict() -> None:
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    port = ScriptedAdapter(
+        Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
+    )
+    opted_in = DatabaseOptions(retry_optimistic_conflicts=True)
+    _configured_db(port, opted_in).transact(_observe_and_update)
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_an_explicit_false_disables_the_roots_conflict_opt_in_but_not_transient_retry() -> None:
+    grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    opted_in = DatabaseOptions(retry_optimistic_conflicts=True)
+    port = ScriptedAdapter(Transact(Read(rows=grace), Write(affected=0)))
+    with raises_contextualized(OptimisticLockConflictError):
+        _configured_db(port, opted_in).transact(
+            _observe_and_update, retry_optimistic_conflicts=False
+        )
+    assert port.calls.count(BeginCall()) == 1
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
+    assert (
+        _configured_db(port, opted_in).transact(lambda _tx: "ok", retry_optimistic_conflicts=False)
+        == "ok"
+    )
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_the_roots_locking_preference_drives_the_participating_reads_lock() -> None:
+    # A root configured `locking` makes a participating read take the shared
+    # lock without the call naming a preference; an explicit `optimistic` on a
+    # versioned target takes none.
+    row = {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}
+    locking = ScriptedAdapter(Transact(Read(rows=[row])))
+    _configured_db(locking, DatabaseOptions(concurrency="locking")).transact(
+        lambda tx: tx.find(mm.Account.where(mm.Account.id == 3)).result()
+    )
+    optimistic = ScriptedAdapter(Transact(Read(rows=[row])))
+    _configured_db(optimistic, DatabaseOptions(concurrency="locking")).transact(
+        lambda tx: tx.find(mm.Account.where(mm.Account.id == 3)).result(),
+        concurrency="optimistic",
+    )
+    locked = [call.sql for call in locking.calls if isinstance(call, ReadCall)]
+    unlocked = [call.sql for call in optimistic.calls if isinstance(call, ReadCall)]
+    assert len(locked) == len(unlocked) == 1
+    assert "for share" in locked[0]
+    assert "for share" not in unlocked[0]

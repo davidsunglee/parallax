@@ -481,7 +481,7 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
                 raise
 
     with raises_contextualized(DatabaseError) as failed:
-        db.transact(body, retries=0)
+        db.transact(body, max_retries=0)
 
     assert seen == [1]
     assert failed.value is failure
@@ -512,6 +512,6 @@ def test_a_retry_redelivers_the_prefix_published_by_the_failed_attempt() -> None
             attempts.append(current)
         return current
 
-    assert account_db(port).transact(body, retries=1) == [1, 2]
+    assert account_db(port).transact(body, max_retries=1) == [1, 2]
     assert attempts == [[1], [1, 2]]
     assert delivered == [1, 1, 2]

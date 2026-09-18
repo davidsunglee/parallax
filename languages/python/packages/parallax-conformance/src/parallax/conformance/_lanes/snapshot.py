@@ -329,7 +329,7 @@ def run_scenario(
         model,
         case_document.concurrency(case),
         TemporalShadow(),
-        case_format.uow_isolation(case),
+        case_format.transaction_keywords(case),
     )
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or

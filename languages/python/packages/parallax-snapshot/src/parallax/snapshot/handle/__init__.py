@@ -24,14 +24,22 @@ live:
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
   :func:`prepare_model`: the composition root, which prepares a Domain Model of
   either provenance or takes a Serving Model as handed, and connects to it.
-- :mod:`~parallax.snapshot.handle._demarcation` —
+- :mod:`~parallax.snapshot.handle._options` — :class:`DatabaseOptions`, the
+  one record the root's transaction defaults, an outer invocation's resolved
+  options, and ``Transaction.options`` share. The module also owns the field
+  rules the record and an explicit ``db.transact`` keyword are held to, and
+  the private marker that keeps an omitted keyword distinguishable from every
+  value; neither is exported.
+- :mod:`~parallax.snapshot.handle._transaction_runner` —
   :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
   :class:`TransactionRollbackError`: the refusals of the spec §5 callback
-  demarcation (sentinel-backed options, join through the exact originating
-  ``Database`` with the option-conflict check, the ``m-auto-retry`` bounded
-  retry loop with one adoption per attempt, the injected flush executor, and
-  the one refusal that substitutes an error of its own — a rollback that did
-  not complete, whose two live errors neither alone reports).
+  demarcation (explicit options validated first and omitted ones resolved
+  against the root's defaults, join through the exact originating ``Database``
+  with the option-conflict check against the active transaction's resolved
+  record, the ``m-auto-retry`` bounded retry loop with one adoption per
+  attempt, the injected flush executor, and the one refusal that substitutes
+  an error of its own — a rollback that did not complete, whose two live
+  errors neither alone reports).
 - :mod:`~parallax.snapshot.handle._adoption` — :class:`ExecutionFailure`, the
   contextualized form every ordinary failure escaping an adopted execution
   takes: the edition that execution adopted, and the error itself as its
@@ -52,8 +60,8 @@ live:
   strategy ports, and :func:`plan_temporal_close`, the ``m-opt-lock`` conflict
   lane's standalone close probe wired with the same concurrency adapter.
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
-  developer verbs a ``db.transact`` closure drives, and the participating
-  :meth:`Transaction.find`.
+  developer verbs a ``db.transact`` closure drives, the participating
+  :meth:`Transaction.find`, and the resolved :attr:`Transaction.options`.
 - :mod:`~parallax.snapshot.handle._read_scope` — :data:`WireQuery`, the three
   spellings a Wire read accepts for one canonical Object Query, beside the read
   composition that lowers them: the private Read Scope each ``Database`` and
@@ -143,17 +151,13 @@ from __future__ import annotations
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot.handle._adoption import ExecutionFailure
 from parallax.snapshot.handle._database import Database, connect, prepare_model
-from parallax.snapshot.handle._demarcation import (
-    TransactionOptionConflictError,
-    TransactionOwnershipError,
-    TransactionRollbackError,
-)
 from parallax.snapshot.handle._errors import (
     QueryTargetError,
     SnapshotConnectionError,
     SnapshotMaterializationError,
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
+from parallax.snapshot.handle._options import DatabaseOptions
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._publication import (
     ModelSelection,
@@ -180,6 +184,11 @@ from parallax.snapshot.handle._stream import (
     SnapshotStreamStateError,
 )
 from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._transaction_runner import (
+    TransactionOptionConflictError,
+    TransactionOwnershipError,
+    TransactionRollbackError,
+)
 from parallax.snapshot.handle._wire import (
     WireChanges,
     WireDatabaseView,
@@ -210,6 +219,7 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "Database",
+    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "FindResult",

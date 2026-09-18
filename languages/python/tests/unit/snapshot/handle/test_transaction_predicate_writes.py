@@ -646,7 +646,7 @@ def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
 
     with raises_contextualized(DatabaseError) as refusal:
-        account_db(port).transact(fn, retries=0)
+        account_db(port).transact(fn, max_retries=0)
     # The resolving read is what reached the port, so the failure that escapes
     # is that read's own: a materializing predicate write issues its resolve
     # before it lowers a single statement of DML.

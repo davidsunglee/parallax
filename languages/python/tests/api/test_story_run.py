@@ -61,6 +61,7 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
+from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import (
     CollectionKinds,
@@ -198,15 +199,15 @@ class _CountingDatabase(Database):
         self,
         fn: Callable[[Transaction], T],
         *,
-        retries: int | None = None,
-        concurrency: Concurrency | None = None,
-        retry_optimistic_conflicts: bool | None = None,
-        isolation: IsolationLevel | None = None,
+        max_retries: int | Omitted = OMITTED,
+        concurrency: Concurrency | Omitted = OMITTED,
+        retry_optimistic_conflicts: bool | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         return self._counted(
             lambda: super(_CountingDatabase, self).transact(
                 fn,
-                retries=retries,
+                max_retries=max_retries,
                 concurrency=concurrency,
                 retry_optimistic_conflicts=retry_optimistic_conflicts,
                 isolation=isolation,

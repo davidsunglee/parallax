@@ -73,7 +73,9 @@ def test_boundary_case_runs_through_the_shipped_surface(
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
 
-    uow = boundary_runner.boundary_uow(case)
+    # Exactly the fields the case authored, so an omitted one reaches
+    # production omitted and is resolved there rather than restated here.
+    requests = case_format.transaction_keywords(case)
     steps = boundary_runner.boundary_steps(case)
     fault = boundary_runner.fault_kind(case)
     persistent = fault is not None and outcome != "committed"
@@ -111,13 +113,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     body = _make_body(steps, raise_after=raise_after, db=db)
 
     def run() -> Account | None:
-        return db.transact(
-            body,
-            retries=uow.retries,
-            concurrency=uow.concurrency,
-            retry_optimistic_conflicts=uow.retry_optimistic_conflicts,
-            isolation=uow.isolation,
-        )
+        return db.transact(body, **requests)
 
     if outcome == "committed":
         result = run()
@@ -189,8 +185,8 @@ def test_boundary_case_runs_through_the_shipped_surface(
     assert attempts == boundary_runner.expected_attempts(
         fault=fault,
         outcome_kind=outcome,
-        retries=uow.retries,
-        retry_optimistic_conflicts=uow.retry_optimistic_conflicts,
+        max_retries=requests.get("max_retries"),
+        retry_optimistic_conflicts=requests.get("retry_optimistic_conflicts"),
     ), case.case_id
 
     then = cast("dict[str, Any]", case_document(case)["then"])

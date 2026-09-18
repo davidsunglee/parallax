@@ -1184,7 +1184,8 @@ attribution of a shortfall to the step that caused it.
 ## Strategy selection — one preference, an effective strategy per Entity
 
 An outer unit of work resolves one **Concurrency Preference**, `locking` or
-`optimistic`, from its boundary options. Omission resolves to **`optimistic`**.
+`optimistic`, from its boundary options. Omission resolves to the Database
+Root's configured default, which itself defaults to **`optimistic`** (ADR 0065).
 A joining boundary inherits that resolved preference and may not renegotiate it.
 The preference is not itself the correctness mechanism: the Unit Work combines it
 with the target Entity's Optimistic Lock Facet to derive an **Effective
@@ -1251,15 +1252,18 @@ to a statement. A read taking the shared lock is no exception: the lock and the
 level compose, so a Locking read inside a Repeatable Read boundary both holds its
 lock and reads at the level.
 
-Omission requests nothing and keeps the adapter's own default. A joining boundary
-inherits the resolved level and may not renegotiate it, on the same terms as the
-Concurrency Preference: omitting inherits, naming the same level is accepted, and
-naming a different one is refused before the joined callback runs. Because a
-boundary opened without a level is active at none, a joining call NAMING one
-conflicts with it — an isolation is a property of a boundary only at the moment
-it opens. Levels are exact options rather than an ordered substitution rule: a
-join naming Read Committed under a Serializable boundary is a conflict, not a
-weakening the boundary already satisfies.
+Omission resolves to the Database Root's configured default, which itself
+defaults to **Read Committed** — a concrete request the boundary makes on every
+attempt, not a fallback to the adapter's own default (ADR 0065, `m-db-port`
+*Mapping obligations*). A joining boundary inherits the resolved level and may
+not renegotiate it, on the same terms as the Concurrency Preference: omitting
+inherits, naming the resolved level is accepted, and naming a different one is
+refused before the joined callback runs. The root's default never enters that
+comparison on its own: under an outer boundary that named a level, a join
+naming the root's default conflicts, because an isolation is a property of a
+boundary only at the moment it opens. Levels are exact options rather than an
+ordered substitution rule: a join naming Read Committed under a Serializable
+boundary is a conflict, not a weakening the boundary already satisfies.
 
 ## What the suite pins down
 

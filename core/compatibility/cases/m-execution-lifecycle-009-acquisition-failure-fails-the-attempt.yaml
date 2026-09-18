@@ -74,6 +74,7 @@ then:
               concurrency: optimistic
               retries: 10
               retryOptimisticConflicts: false
+              isolation: read-committed
           - sequence: 2
             activity: 2
             parent: 1

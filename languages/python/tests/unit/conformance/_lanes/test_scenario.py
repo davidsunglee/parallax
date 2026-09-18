@@ -2328,7 +2328,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             }
         },
     ]
-    context = scenario.CaseContext(serving, meta, "locking", TemporalShadow(), None)
+    context = scenario.CaseContext(serving, meta, "locking", TemporalShadow(), {})
     with pytest.raises(EngineError, match="not preceded by"):
         scenario._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             FakeWritePort(),
@@ -3978,3 +3978,35 @@ def test_a_framework_write_step_inside_a_uow_group_is_refused() -> None:
     )
     with pytest.raises(EngineError, match="choreography unit of its own"):
         scenario.run_scenario_case(case, FakeWritePort())
+
+
+# --------------------------------------------------------------------------- #
+# A conflict attempt's transaction requests: the authored preference and level, #
+# never the retry fields the authored attempts themselves spell out.            #
+# --------------------------------------------------------------------------- #
+def test_a_conflict_attempt_forwards_the_authored_preference_and_level_alone() -> None:
+    case = _synthetic_write(
+        "conflict",
+        {
+            "when": {
+                "uow": {
+                    "concurrency": "optimistic",
+                    "retryOptimisticConflicts": True,
+                    "maxRetries": 2,
+                    "isolation": "repeatable-read",
+                },
+                "write": {"id": 2, "balance": "275.00", "observedVersion": 1},
+            }
+        },
+    )
+    assert scenario._conflict_attempt_requests(case) == {  # pyright: ignore[reportPrivateUsage] - unit test drives the conflict lane's private projection directly
+        "concurrency": "optimistic",
+        "isolation": "repeatable_read",
+    }
+
+
+def test_a_conflict_attempt_omitting_every_option_requests_nothing() -> None:
+    case = _synthetic_write(
+        "conflict", {"when": {"write": {"id": 2, "balance": "275.00", "observedVersion": 1}}}
+    )
+    assert scenario._conflict_attempt_requests(case) == {}  # pyright: ignore[reportPrivateUsage] - unit test drives the conflict lane's private projection directly

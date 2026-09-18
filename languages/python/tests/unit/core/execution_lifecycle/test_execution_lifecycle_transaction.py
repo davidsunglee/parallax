@@ -182,7 +182,9 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     ]
     started = root.events[0]
     assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False), None)
+    assert started.invocation == OuterInvocation(
+        "optimistic", RetryPolicy(10, False), "read_committed"
+    )
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
 
@@ -193,7 +195,7 @@ def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
     # caller's work, so it constructs no Database Call and moves no count. The
     # proof is the whole tree rather than a count — a level that opened an
     # activity ANYWHERE would change the shape here.
-    def observed(level: IsolationLevel | None) -> list[tuple[str, int, int | None]]:
+    def observed(level: IsolationLevel) -> list[tuple[str, int, int | None]]:
         recorder = RecordingLifecycleProvider()
         port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
 
@@ -204,7 +206,7 @@ def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
         _db(port, recorder).transact(body, isolation=level)
         return _tree(_only(recorder).events)
 
-    assert observed("serializable") == observed(None)
+    assert observed("serializable") == observed("read_committed")
 
 
 def test_each_batch_names_the_trigger_that_forced_it() -> None:
@@ -229,7 +231,7 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
     recorder = RecordingLifecycleProvider()
     _db(ScriptedAdapter(Transact()), recorder).transact(
         lambda _tx: None,
-        retries=3,
+        max_retries=3,
         concurrency="locking",
         retry_optimistic_conflicts=True,
         isolation="serializable",
@@ -240,16 +242,20 @@ def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports
     assert started.invocation == OuterInvocation("locking", RetryPolicy(3, True), "serializable")
 
 
-def test_an_invocation_naming_no_level_reports_none_rather_than_a_default() -> None:
-    # The level is the one option with no resolved form here: a call naming none
-    # runs at whatever the adapter defaults to, which nothing above the port
-    # knows, so the descriptor reports absence rather than inventing that value.
+def test_an_invocation_naming_no_level_reports_the_roots_resolved_default() -> None:
+    # A public transaction always resolves a concrete level — the root's
+    # default, Read Committed on an unconfigured root — so what the descriptor
+    # reports is the level every attempt REQUESTED, never an absence: absence
+    # remains the port's own lower-level form, which no Database transaction
+    # uses.
     recorder = RecordingLifecycleProvider()
     _db(ScriptedAdapter(Transact()), recorder).transact(lambda _tx: None)
 
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False), None)
+    assert started.invocation == OuterInvocation(
+        "optimistic", RetryPolicy(10, False), "read_committed"
+    )
 
 
 def test_a_joined_invocation_states_no_level_of_its_own() -> None:
@@ -360,7 +366,7 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(lambda _tx: None, retries=2)
+        _db(port, recorder).transact(lambda _tx: None, max_retries=2)
 
     root = _only(recorder)
     outcomes = _attempt_outcomes(root)
@@ -679,7 +685,7 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
 
     with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(
-            lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result(), retries=0
+            lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result(), max_retries=0
         )
 
     root = _only(recorder)
@@ -712,7 +718,7 @@ def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names(
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(body, retries=0)
+        _db(port, recorder).transact(body, max_retries=0)
 
     root = _only(recorder)
     handled, escaping = (event for event in root.events if isinstance(event, ReadFinished))
@@ -740,7 +746,7 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(DatabaseError):
-        db.transact(lambda _outer: db.transact(inner), retries=0)
+        db.transact(lambda _outer: db.transact(inner), max_retries=0)
 
     root = _only(recorder)
     assert _tree(root.events) == [
@@ -794,7 +800,9 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
     with raises_contextualized(DatabaseError):
-        db.transact(lambda _outer: db.transact(lambda _middle: db.transact(innermost)), retries=0)
+        db.transact(
+            lambda _outer: db.transact(lambda _middle: db.transact(innermost)), max_retries=0
+        )
 
     root = _only(recorder)
     read_finished = next(event for event in root.events if isinstance(event, ReadFinished))
@@ -831,7 +839,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
         raise caught.value
 
     with raises_contextualized(DatabaseError):
-        _db(port, recorder).transact(body, retries=0)
+        _db(port, recorder).transact(body, max_retries=0)
 
     root = _only(recorder)
     failed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -882,7 +890,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
             ACCOUNT,
             clock=FixedClock(FIXED),
             lifecycle_provider=recorder,
-        ).transact(body, retries=0)
+        ).transact(body, max_retries=0)
 
     root = _only(recorder)
     first_read, later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -925,7 +933,7 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
         raise stashed.value
 
     with raises_contextualized(DatabaseError, match="the stashed failure"):
-        _db(port, recorder).transact(body, retries=0)
+        _db(port, recorder).transact(body, max_retries=0)
 
     root = _only(recorder)
     stashed_read, _later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -974,7 +982,7 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
         raise first.value
 
     with raises_contextualized(DatabaseError, match="the re-raised failure"):
-        db.transact(lambda _outer: db.transact(inner), retries=0)
+        db.transact(lambda _outer: db.transact(inner), max_retries=0)
 
     root = _only(recorder)
     joined = next(
@@ -1101,7 +1109,7 @@ def test_an_invocation_keeps_one_failed_attempt_however_many_it_retries() -> Non
             assert [index for index, held in enumerate(watched) if held() is not None] == [1]
         tx.insert(new_account())
 
-    _db(port, recorder).transact(body, retries=2)
+    _db(port, recorder).transact(body, max_retries=2)
 
     assert attempts == 3
     assert _finished(_only(recorder)) == OuterInvocationCommitted()
@@ -1239,7 +1247,7 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     db = _db(ScriptedAdapter(Transact()), recorder)
 
     with raises_contextualized(Exception, match="cannot join the active transaction"):
-        db.transact(lambda _outer: db.transact(lambda _inner: None, retries=99))
+        db.transact(lambda _outer: db.transact(lambda _inner: None, max_retries=99))
 
     root = _only(recorder)
     assert _transitions(root.events) == [
@@ -1255,7 +1263,7 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
 
 
 def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> None:
-    # `retries` is a public argument, so its bound belongs to the deterministic
+    # `max_retries` is a public argument, so its bound belongs to the deterministic
     # preflight that precedes Root Execution creation: refusing it only at the
     # retry loop would call the Provider and publish the invocation's Started and
     # Finished first, and a Provider that fails on `open` would replace the
@@ -1263,8 +1271,8 @@ def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> Non
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter()
 
-    with pytest.raises(ValueError, match="retries must be >= 0"):
-        _db(port, recorder).transact(_increase_balance, retries=-1)
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        _db(port, recorder).transact(_increase_balance, max_retries=-1)
 
     assert recorder.roots == ()
     assert port.calls == []
@@ -1300,7 +1308,7 @@ def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_las
             serving.publish(b, expected=a)
 
     with raises_contextualized(DatabaseError) as exhausted:
-        db.transact(body, retries=1)
+        db.transact(body, max_retries=1)
 
     assert seen == ["a", "b"]
     assert exhausted.edition == "b"

@@ -643,6 +643,12 @@ def names_earlier_step(source: int, step_index: int) -> bool:
     return 0 <= source < step_index
 
 
+# The Isolation Level a transactional session opens at when its case names none:
+# the Database Root's built-in default (`m-db-port`), in the core serialized
+# spelling, rather than the server's own configured default.
+DEFAULT_ISOLATION = "read-committed"
+
+
 @dataclass(frozen=True)
 class Case:
     """A parsed compatibility case bound to its model + fixtures.
@@ -723,20 +729,23 @@ class Case:
 
     @property
     def uow(self) -> dict[str, Any]:
-        """The declared unit-of-work config (m-unit-work strategy selection), or empty.
+        """The transaction options the case's outer invocation explicitly
+        requests (m-case-format ``when.uow``), or empty.
 
-        A case MAY carry a ``when.uow`` block
-        (``{"concurrency": "locking" | "optimistic"}``) declaring the Concurrency
-        Preference its golden SQL runs under. The block is DESCRIPTIVE — the
-        harness executes the authored golden SQL either way — so this accessor
-        exists for self-description / tooling, not to change execution.
+        A case MAY carry a ``when.uow`` block naming any of ``concurrency``,
+        ``maxRetries``, ``retryOptimisticConflicts``, and ``isolation``. All but
+        ``isolation`` are DESCRIPTIVE here — the harness executes the authored
+        golden SQL either way — so this accessor exists for self-description /
+        tooling; the resolved accessors below answer what each option is under
+        the Database Root's built-in defaults when the case omits it.
         """
         return self.when.get("uow", {})
 
     @property
     def concurrency_mode(self) -> str:
-        """The declared unit-of-work Concurrency Preference (``locking`` |
-        ``optimistic``, the default `m-case-format` states for the block).
+        """The unit-of-work Concurrency Preference the case runs under
+        (``locking`` | ``optimistic``): the declared one, else the Database
+        Root's built-in default `m-case-format` states for the block.
 
         A preference is not a strategy: the target Entity's Optimistic Lock Facet
         decides whether it yields Optimistic or the mandatory Locking fallback
@@ -752,14 +761,19 @@ class Case:
         return self.uow.get("concurrency", "optimistic")
 
     @property
-    def isolation(self) -> str | None:
-        """The declared portable Isolation Level (`m-db-port`), or ``None``.
+    def isolation(self) -> str:
+        """The portable Isolation Level (`m-db-port`) every transactional session
+        the case opens is opened at, in the core serialized spelling the
+        provider maps: the declared level, else the Database Root's built-in
+        default, ``read-committed``.
 
-        Unlike :attr:`concurrency_mode` this is PRESCRIPTIVE: it is the level every
-        held session the case opens is opened at, in the core serialized spelling
-        the provider maps. ``None`` requests nothing and keeps the server's default.
+        Unlike :attr:`concurrency_mode` this is PRESCRIPTIVE. Resolved here
+        rather than left to the server, because a transaction a Database opens
+        requests a concrete level on every attempt, and the harness's held
+        sessions stand in for those transactions; a standalone operation opens
+        no held session and is untouched by it.
         """
-        return self.uow.get("isolation")
+        return self.uow.get("isolation", DEFAULT_ISOLATION)
 
     @property
     def object_query(self) -> dict[str, Any]:

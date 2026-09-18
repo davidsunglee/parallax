@@ -257,8 +257,9 @@ Attribute Identity, or the Transaction-Time-derived start Attribute.
 _Avoid_: version column cache, per-subtype version, copied attribute metadata
 
 **Concurrency Preference**:
-The Unit Work's resolved `locking` or `optimistic` workflow policy. Omission
-defaults to `optimistic`; Locking forces shared-lock participation, while
+The Unit Work's resolved `locking` or `optimistic` workflow policy. An omitted
+preference resolves to the Database Root's configured default, whose built-in
+value is `optimistic`; Locking forces shared-lock participation, while
 Optimistic asks each Entity to use its optimistic key when it has one and the
 Locking fallback otherwise.
 _Avoid_: transaction-wide concurrency strategy, global lock mode, participation mode
@@ -274,8 +275,10 @@ _Avoid_: Concurrency Preference, entity override, mutation-specific mode
 The portable Read Committed, Repeatable Read, or Serializable guarantee a
 Transaction Invocation requests for every Transaction Attempt it owns, each
 defined by the anomalies it forbids and mapped by the adapter to the concrete
-database. Omission requests nothing and keeps the adapter's default; a joined
-invocation may omit or repeat the outer level but never name a different one.
+database. An omitted level resolves to the Database Root's configured default,
+whose built-in value is Read Committed, requested concretely rather than left
+to the adapter's own default; a joined invocation may omit or repeat the
+resolved level but never name a different one.
 _Avoid_: isolation string, session isolation, vendor level, transaction mode
 
 **Audit Metadata**:
@@ -299,6 +302,15 @@ _Avoid_: reflection search, stringly lookup, linear scan, exception control flow
 **Parallax Handle**:
 The configured application-side entry point for Parallax reads and for opening transactions.
 _Avoid_: client, database connection, global session, ambient context
+
+**Database Root**:
+The configured owner of one runtime: connected from adapter configuration with
+one immutable record of transaction option defaults — the retry bound, the
+Concurrency Preference, the optimistic-conflict retry opt-in, and the Isolation
+Level — that every outer Transaction Invocation resolves its omitted options
+against, and the source from which execution scopes are derived. Its defaults
+are per-call overridable and compared on a join only when explicit.
+_Avoid_: options manager, ambient default, session default, connection setting
 
 **Parallax Transaction**:
 The explicit entry point for reads, writes, and managed object graph mutation inside a transaction; it is also the scope that owns managed objects and the Identity Map.

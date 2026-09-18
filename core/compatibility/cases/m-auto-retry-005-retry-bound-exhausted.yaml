@@ -3,12 +3,12 @@
 #
 # The retry loop is BOUNDED: a failure that keeps recurring is not retried forever.
 # This case injects a `serialization-failure` on EVERY attempt under a small bound
-# (`retries: 2` — three attempts total), and asserts the transient SURFACES to the
+# (`maxRetries: 2` — three attempts total), and asserts the transient SURFACES to the
 # caller once the bound is exhausted (diagnosably — the surfaced error carries the
 # attempt count). This pins the upper boundary of the bound, the counterpart to
 # `m-auto-retry-004`'s disabled loop.
 #
-# `roundTrips: 6` is what the exhausted loop cost: `retries: 2` admits three attempts,
+# `roundTrips: 6` is what the exhausted loop cost: `maxRetries: 2` admits three attempts,
 # each an observing read plus a write that reached the database and failed. A failed
 # call counts one, and the count spans every attempt rather than the last.
 #
@@ -27,7 +27,7 @@ given:
 when:
   uow:
     concurrency: locking
-    retries: 2
+    maxRetries: 2
   boundary:
     - action: read
       note: observe the versioned row
