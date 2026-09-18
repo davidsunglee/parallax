@@ -258,14 +258,18 @@ def serialized_isolation(level: IsolationLevel) -> str:
 
 
 class TransactionKeywords(TypedDict, total=False):
-    """The ``db.transact`` keywords a case AUTHORS, and no others.
+    """The four option fields one option block AUTHORS, and no others.
 
-    A sparse projection of one `when.uow` block or one `join` step: a key is
-    present exactly when the case wrote the field, so an absent key reaches
-    production as an omitted keyword and is resolved there — against the root's
-    defaults on an outer call, against the active transaction on a join — never
-    against a default restated here. Authored ``0`` and ``false`` are present
-    values, and authored ``null`` is refused at ingress rather than carried.
+    A sparse projection of one `when.uow` block, one `join` step, or the
+    `given.databaseOptions` root block: a key is present exactly when the case
+    wrote the field. Authored ``0`` and ``false`` are present values, and
+    authored ``null`` is refused at ingress rather than carried. What an absent
+    key means is the placement's. On `when.uow` or a `join` step the projection
+    IS the ``db.transact`` request, so the omitted keyword is resolved by
+    production — against the root's defaults on an outer call, against the
+    active transaction on a join — never against a default restated here. On
+    the root block it is the sparse input :func:`database_options` fills to a
+    complete record, so the omission lands on the record's own built-in.
     """
 
     max_retries: int
@@ -283,8 +287,8 @@ _REQUEST_KEYS: Final[tuple[str, ...]] = (
 
 
 def request_keywords(request: Mapping[str, object], *, where: str) -> TransactionKeywords:
-    """The transaction keywords ``request`` authors, decoded through the case
-    format's own vocabulary functions.
+    """The option fields ``request`` authors, decoded through the case format's
+    own vocabulary functions.
 
     ``request`` is any placement that spells the four option fields — a
     `when.uow` block, a `join` step, or the `given.databaseOptions` root block —
@@ -352,7 +356,7 @@ def effective_options(case: Case) -> DatabaseOptions:
 
 
 def _option_block_keywords(case: Case, group: str, member: str) -> TransactionKeywords:
-    """The transaction keywords one option block of ``case`` authors — its
+    """The option fields one option block of ``case`` authors — its
     ``group.member`` mapping — refusing a key outside the four option keys."""
     container = case.document.get(group)
     block = (
