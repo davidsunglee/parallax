@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -41,6 +42,7 @@ from snapshot_delivery_overhead import (
     selection,
     unit,
     window_of,
+    workload_selection,
 )
 
 
@@ -253,6 +255,9 @@ class _FakeProvisioner:
         del fixtures
         self.resets.append(type(model).__name__)
 
+    def close(self) -> None:
+        self.resets.append("closed")
+
 
 def _measured(spans: Spans | None) -> tuple[list[ChildRequest], _FakeProvisioner, Sequence[str]]:
     contract = BudgetContract.load()
@@ -326,3 +331,183 @@ def test_durations_are_recorded_for_a_measurement_and_refused_beside_a_diagnosti
         assert refused.value.code == 2
         assert "--durations" in capsys.readouterr().err
     assert not (tmp_path / "d.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Workload selection: a slice of the matrix as evidence, never a diagnostic    #
+# --------------------------------------------------------------------------- #
+def test_workload_selection_names_exact_contract_ids_and_the_two_groups() -> None:
+    contract = BudgetContract.load()
+    assert workload_selection([], contract) is report.every_cell
+    first = contract.workload_ids[0]
+    chosen = workload_selection([first, PLAN_GROUP], contract)
+    assert chosen(first, "live.eager.maxMs")
+    assert not chosen(contract.workload_ids[1], "live.eager.maxMs")
+    assert all(chosen(cell.workload, cell.path) for cell in plan_cells())
+    assert not any(chosen(cell.workload, cell.path) for cell in geometry_cells())
+    geometry = workload_selection([GEOMETRY_GROUP], contract)
+    assert all(geometry(cell.workload, cell.path) for cell in geometry_cells())
+    assert not geometry(first, "live.eager.maxMs")
+    with pytest.raises(ValueError, match="unknown workload read-depth-1, unknown"):
+        workload_selection(["unknown", "read-depth-1", first], contract)
+    assert report.workload_names(contract) == (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP)
+
+
+def _measured_selection(
+    selected: report.Selection,
+) -> tuple[list[ChildRequest], _FakeProvisioner, report.CostReportEnvelope]:
+    contract = BudgetContract.load()
+    asked: list[ChildRequest] = []
+
+    def runner(request: ChildRequest) -> ChildReading:
+        asked.append(request)
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples)
+
+    provisioner = _FakeProvisioner()
+    envelope = report.measure(
+        contract, cast("Provisioner", provisioner), runner, ("3.13", "3.14"), selected=selected
+    )
+    validate(envelope)
+    return asked, provisioner, envelope
+
+
+def test_a_selected_measurement_reads_and_compares_the_selected_addresses_alone() -> None:
+    contract = BudgetContract.load()
+    first = contract.workload_ids[0]
+    chosen = workload_selection([first, GEOMETRY_GROUP], contract)
+    asked, provisioner, envelope = _measured_selection(chosen)
+    expected = report.selected_addresses(contract, ("3.13", "3.14"), chosen)
+    assert {(r.runtime, r.workload, r.cell) for r in envelope.readings} == set(expected)
+    assert envelope.incomplete == () and envelope.errors == ()
+    assert {(c.workload, c.cell) for c in envelope.comparisons} == {
+        (cell.workload, cell.path) for cell in expanded_cells(contract) if cell.workload == first
+    }
+    assert all(comparison.outcome != "unavailable" for comparison in envelope.comparisons)
+    assert {(request.workload, request.cell) for request in asked} == {
+        (workload, cell) for _runtime, workload, cell in expected
+    }
+    assert len(asked) == sum(expected_readings(contract, cell) for _r, _w, cell in expected)
+    assert provisioner.resets == [type(workloads.catalog(contract)[first].model).__name__] * (
+        len(contract.memory_scaling_arms) * 2
+    )
+    assert "provenance" in envelope.document()
+
+
+def test_a_workload_split_over_every_name_covers_the_whole_matrix_exactly_once() -> None:
+    contract = BudgetContract.load()
+    whole_requests, _provisioner, whole = _measured_selection(report.every_cell)
+    sliced: list[ChildRequest] = []
+    readings: list[tuple[str | None, str, str]] = []
+    for name in report.workload_names(contract):
+        asked, _provisioner, envelope = _measured_selection(workload_selection([name], contract))
+        sliced += asked
+        readings += [(r.runtime, r.workload, r.cell) for r in envelope.readings]
+    assert sorted(map(repr, sliced)) == sorted(map(repr, whole_requests))
+    assert sorted(readings) == sorted((r.runtime, r.workload, r.cell) for r in whole.readings)
+    assert len(readings) == len(set(readings))
+
+
+def test_selection_spans_cover_only_the_selected_workloads_and_groups() -> None:
+    contract = BudgetContract.load()
+    spans = Spans()
+    first = contract.workload_ids[-1]
+    provisioner = _FakeProvisioner()
+    report.measure(
+        contract,
+        cast("Provisioner", provisioner),
+        lambda request: ChildReading(
+            1.0, unit(request.cell), () if is_memory_cell(request.cell) else (1.0,) * 9
+        ),
+        ("3.14",),
+        spans=spans,
+        selected=workload_selection([first, PLAN_GROUP], contract),
+    )
+    assert [
+        (span.name, span.labels["runtime"]) for span in spans.spans if span.scope == "workload"
+    ] == [
+        (first, "3.14"),
+        (PLAN_GROUP, "3.14"),
+    ]
+
+
+def test_a_workload_slice_is_selected_evidence_and_never_a_diagnostic_or_canary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def never(*_arguments: object, **_options: object) -> None:
+        raise AssertionError("no measurement may start")
+
+    monkeypatch.setattr(report, "Provisioner", never)
+    for arguments in (
+        ["--diagnostic", "--workload", "plan"],
+        ["--canary", "--workload", "plan"],
+        ["--workload", "no-such-workload"],
+        ["--diagnostic", "--metadata", str(tmp_path / "m.json")],
+        ["--canary", "--metadata", str(tmp_path / "m.json")],
+    ):
+        with pytest.raises(SystemExit) as refused:
+            report.main(arguments)
+        assert refused.value.code == 2
+        assert "workload" in capsys.readouterr().err
+    assert not (tmp_path / "m.json").exists()
+
+
+def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_reading(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contract = BudgetContract.load()
+    events: list[str] = []
+    identity = json.dumps({"implementation": "CPython", "version": "3.99.1", "executable": "/p"})
+
+    def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
+        events.append(f"probe {command[-1] if command[0] == 'uv' else 'current'}")
+        assert environment["PYTHONHASHSEED"] == "0"
+        return (0, identity, "") if "uv" not in command[0] else (1, "", "no 3.13 here")
+
+    def child(request: ChildRequest) -> ChildReading:
+        events.append("child")
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples)
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "run_child", child)
+    monkeypatch.setattr(report, "Provisioner", _FakeProvisioner)
+    metadata = tmp_path / "metadata.json"
+    durations = tmp_path / "durations.json"
+    assert (
+        report.main(
+            ["--workload", PLAN_GROUP, "--metadata", str(metadata), "--durations", str(durations)]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    document = cast("dict[str, object]", json.loads(captured.out))
+    validate(document)
+    readings = cast("list[dict[str, object]]", document["readings"])
+    assert {(r["runtime"], r["workload"], r["cell"]) for r in readings} == set(
+        report.selected_addresses(
+            contract, report.supported_minors(), workload_selection([PLAN_GROUP], contract)
+        )
+    )
+    assert document["comparisons"] == []
+    assert document["incomplete"] == []
+    probes = [event for event in events if event.startswith("probe")]
+    assert len(probes) == len(report.supported_minors())
+    assert events[: len(probes)] == probes
+    recorded = json.loads(metadata.read_text(encoding="utf-8"))
+    assert recorded["subject"] == report.SUBJECT
+    statuses = {runtime: status["status"] for runtime, status in recorded["runtimes"].items()}
+    assert set(statuses) == set(report.supported_minors())
+    assert statuses[CURRENT_MINOR] == "available"
+    assert recorded["runtimes"][CURRENT_MINOR]["version"] == "3.99.1"
+    other = next(minor for minor in report.supported_minors() if minor != CURRENT_MINOR)
+    assert recorded["runtimes"][other] == {
+        "status": "unavailable",
+        "reason": "the identity probe exited 1: no 3.13 here",
+    }
+    spans = Spans.load(durations)
+    assert [span.name for span in spans.spans if span.scope == "setup"][: len(probes)] == [
+        "identity"
+    ] * len(probes)
+    assert {span.name for span in spans.spans if span.scope == "workload"} == {PLAN_GROUP}

@@ -9,7 +9,7 @@ import pytest
 
 import write_lowering_overhead as report
 from durations import Spans
-from interpreter_matrix import CURRENT_MINOR, supported_minors
+from interpreter_matrix import CURRENT_MINOR, IDENTITY_SCRIPT, supported_minors
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
@@ -611,3 +611,54 @@ def test_durations_are_refused_beside_a_diagnostic(
     assert report.main(["--durations"]) == 2
     assert "usage:" in capsys.readouterr().err
     assert not sidecar.exists()
+
+
+def test_metadata_probes_each_runtime_through_the_childs_resolution_before_any_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    matrix = _matrix("3.13", "3.14")
+    monkeypatch.setattr(report, "supported_minors", lambda: ("3.13", "3.14"))
+    events: list[str] = []
+    probed: list[tuple[list[str], dict[str, str]]] = []
+
+    def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
+        probed.append((list(command), dict(environment)))
+        events.append("probe")
+        version = "3.13.15" if command[0] == "uv" else "3.14.7"
+        identity = {"implementation": "CPython", "version": version, "executable": "/p"}
+        return (0, json.dumps(identity), "")
+
+    def child(runtime: str, case: str) -> report.Cell:
+        events.append("child")
+        return matrix[runtime][case]
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "in_a_child", child)
+    metadata = tmp_path / "metadata.json"
+    assert report.main(["--metadata", str(metadata)]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    validate(cast("Mapping[str, object]", json.loads(captured.out)))
+    assert events[:2] == ["probe", "probe"] and "probe" not in events[2:]
+    assert [command for command, _environment in probed] == [
+        report.child_command(runtime, IDENTITY_SCRIPT, ()) for runtime in ("3.13", "3.14")
+    ]
+    assert [environment for _command, environment in probed] == [
+        report.child_environment(runtime, report.ENVIRONMENT_NAMESPACE)
+        for runtime in ("3.13", "3.14")
+    ]
+    recorded = json.loads(metadata.read_text(encoding="utf-8"))
+    assert recorded["subject"] == report.SUBJECT
+    assert {r: s["version"] for r, s in recorded["runtimes"].items()} == {
+        "3.13": "3.13.15",
+        "3.14": "3.14.7",
+    }
+
+
+def test_metadata_is_refused_beside_a_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    metadata = tmp_path / "metadata.json"
+    assert report.main(["--diagnostic", "--metadata", str(metadata)]) == 2
+    assert "usage:" in capsys.readouterr().err
+    assert not metadata.exists()

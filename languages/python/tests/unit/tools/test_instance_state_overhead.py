@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -9,6 +10,7 @@ import pytest
 
 import instance_state_overhead as report
 from durations import Spans
+from interpreter_matrix import IDENTITY_SCRIPT
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.conformance.workloads import workload_digest
@@ -254,3 +256,52 @@ def test_the_entrypoint_takes_no_argument_but_durations(
     assert report.main(["--durations"]) == 2
     assert "usage:" in capsys.readouterr().err
     assert not (tmp_path / "durations.json").exists()
+
+
+def test_metadata_probes_each_runtime_through_this_reports_own_launch_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    matrix = _matrix()
+    runtime = next(iter(matrix))
+    other = "9.99"
+    monkeypatch.setattr(report, "supported_minors", lambda: (other, runtime))
+    events: list[str] = []
+    probed: list[tuple[list[str], dict[str, str]]] = []
+
+    def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
+        probed.append((list(command), dict(environment)))
+        events.append("probe")
+        if command[0] == "uv":
+            return (2, "", "no such interpreter")
+        identity = {"implementation": "CPython", "version": "3.14.7", "executable": "/p"}
+        return (0, json.dumps(identity), "")
+
+    def child(selected_runtime: str, scenario: Scenario) -> report.Cell:
+        events.append("child")
+        return matrix.get(selected_runtime, matrix[runtime])[scenario.name]
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "in_a_child", child)
+    metadata = tmp_path / "metadata.json"
+    assert report.main(["--metadata", str(metadata)]) == 0
+    assert capsys.readouterr().err == ""
+    assert events[:2] == ["probe", "probe"] and "probe" not in events[2:]
+    assert probed[0][0] == [
+        "uv",
+        "run",
+        "--frozen",
+        "--python",
+        other,
+        "python",
+        str(IDENTITY_SCRIPT),
+    ]
+    assert probed[0][1]["UV_PROJECT_ENVIRONMENT"].endswith(f"parallax-instance-state-{other}")
+    assert probed[1][0] == [sys.executable, str(IDENTITY_SCRIPT)]
+    assert "PYTHONPATH" in probed[1][1]
+    recorded = json.loads(metadata.read_text(encoding="utf-8"))
+    assert recorded["subject"] == report.SUBJECT
+    assert recorded["runtimes"][other] == {
+        "status": "unavailable",
+        "reason": "the identity probe exited 2: no such interpreter",
+    }
+    assert recorded["runtimes"][runtime]["version"] == "3.14.7"

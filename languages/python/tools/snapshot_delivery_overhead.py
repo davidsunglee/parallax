@@ -8,6 +8,11 @@ evidence beside them. The provider-free geometry read families are read the
 same way and compared against nothing. Budget outcomes are observations: an
 outside reading never changes this command's exit status. Missing or malformed
 readings are explicit incompleteness and errors.
+
+``--workload`` narrows the evidence path to named contract workloads and the
+``geometry`` and ``plan`` groups: the envelope keeps full provenance and
+completeness is judged over the addresses selected, so a slice of the matrix is
+evidence about that slice, never a diagnostic promoted to evidence.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import argparse
 import json
 import statistics
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -25,10 +30,15 @@ from typing import Any, Final, Literal, cast
 from durations import Spans
 from interpreter_matrix import (
     CURRENT_MINOR,
+    ProbeRunner,
+    RuntimeStatus,
     authority_minor,
     child_command,
     child_environment,
+    probe_runtime,
+    run_probe,
     supported_minors,
+    write_metadata,
 )
 from parallax.conformance.budget import BudgetCell, BudgetContract
 from parallax.conformance.cost_envelope import (
@@ -319,6 +329,15 @@ def addresses(contract: BudgetContract, runtimes: Sequence[str]) -> tuple[Addres
     )
 
 
+def selected_addresses(
+    contract: BudgetContract, runtimes: Sequence[str], selected: Selection
+) -> tuple[Address, ...]:
+    """The addresses among :func:`addresses` that ``selected`` keeps."""
+    return tuple(
+        address for address in addresses(contract, runtimes) if selected(address[1], address[2])
+    )
+
+
 def _collected(
     contract: BudgetContract,
     results: Mapping[Address, Sequence[ChildResult]],
@@ -354,13 +373,17 @@ def build_envelope(
     provenance: Provenance,
     results: Mapping[Address, Sequence[ChildResult]],
     runtimes: Sequence[str] = (CURRENT_MINOR,),
+    selected: Selection | None = None,
 ) -> CostReportEnvelope:
-    """Build and validate the report envelope from all attempted cells."""
-    readings, diagnostics = _collected(contract, results, addresses(contract, runtimes))
+    """Build and validate the report envelope from all attempted cells among
+    the addresses ``selected``, comparing the selected contract cells."""
+    chosen = selected if selected is not None else every_cell
+    expected = selected_addresses(contract, runtimes, chosen)
+    readings, diagnostics = _collected(contract, results, expected)
     by_address = {
         (reading.runtime or "", reading.workload, reading.cell): reading for reading in readings
     }
-    complete = not diagnostics and len(readings) == len(addresses(contract, runtimes))
+    complete = not diagnostics and len(readings) == len(expected)
     compared = authority_minor(contract.authority)
     comparisons = tuple(
         comparison(
@@ -370,6 +393,7 @@ def build_envelope(
             complete=complete,
         )
         for cell in expanded_cells(contract)
+        if chosen(cell.workload, cell.path)
     )
     envelope = CostReportEnvelope(
         SUBJECT,
@@ -450,6 +474,37 @@ def every_cell(_workload: str, _path: str) -> bool:
 
 GEOMETRY_GROUP: Final = "geometry"
 PLAN_GROUP: Final = "plan"
+WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, PLAN_GROUP)
+
+
+def workload_names(contract: BudgetContract) -> tuple[str, ...]:
+    """Every name ``--workload`` accepts: the contract's workload ids, then the
+    two groups of cells outside the contract."""
+    return (*contract.workload_ids, *WORKLOAD_GROUPS)
+
+
+def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
+    """The addresses the exact workload ``names`` cover: a contract workload id
+    selects its cells, ``geometry`` and ``plan`` select the groups outside the
+    contract, and no name at all selects every cell. An unknown name is a
+    ``ValueError`` before any work starts."""
+    active = contract if contract is not None else BudgetContract.load()
+    known = workload_names(active)
+    chosen = frozenset(names)
+    unknown = sorted(chosen - frozenset(known))
+    if unknown:
+        raise ValueError(f"unknown workload {', '.join(unknown)}; workloads are {list(known)}")
+    if not chosen:
+        return every_cell
+
+    def selected(workload: str, _path: str) -> bool:
+        if workload.startswith(GEOMETRY_PREFIX):
+            return GEOMETRY_GROUP in chosen
+        if workload.startswith(PLAN_PREFIX):
+            return PLAN_GROUP in chosen
+        return workload in chosen
+
+    return selected
 
 
 def _measure_runtime(
@@ -467,6 +522,9 @@ def _measure_runtime(
     memory_children = contract.memory_children
     scaling_arms = contract.memory_scaling_arms
     for workload_id in contract.workload_ids:
+        workload_cells = [cell for cell in cells if cell.workload == workload_id]
+        if not workload_cells:
+            continue
         with recorder.span("workload", workload_id, member=SUBJECT, runtime=runtime):
             _measure_workload(
                 contract,
@@ -475,14 +533,15 @@ def _measure_runtime(
                 runtime,
                 results,
                 workloads[workload_id],
-                [cell for cell in cells if cell.workload == workload_id],
+                workload_cells,
                 recorder,
             )
     for group, group_cells in ((GEOMETRY_GROUP, geometry_cells()), (PLAN_GROUP, plan_cells())):
+        chosen = [cell for cell in group_cells if selected(cell.workload, cell.path)]
+        if not chosen:
+            continue
         with recorder.span("workload", group, member=SUBJECT, runtime=runtime):
-            for cell in group_cells:
-                if not selected(cell.workload, cell.path):
-                    continue
+            for cell in chosen:
                 for _ in range(memory_children if is_memory_cell(cell.path) else 1):
                     results[(runtime, cell.workload, cell.path)].append(
                         runner(
@@ -582,20 +641,21 @@ def measure(
     runner: ChildRunner,
     runtimes: Sequence[str] | None = None,
     spans: Spans | None = None,
+    selected: Selection = every_cell,
 ) -> CostReportEnvelope:
-    selected = tuple(runtimes) if runtimes is not None else supported_minors()
+    chosen_runtimes = tuple(runtimes) if runtimes is not None else supported_minors()
     results: dict[Address, list[ChildResult]] = {
-        address: [] for address in addresses(contract, selected)
+        address: [] for address in selected_addresses(contract, chosen_runtimes, selected)
     }
-    for runtime in selected:
-        _measure_runtime(contract, provisioner, runner, runtime, results, spans=spans)
+    for runtime in chosen_runtimes:
+        _measure_runtime(contract, provisioner, runner, runtime, results, selected, spans)
     server_version = provisioner.port.execute("show server_version", ())[0][0]
     provenance = Provenance.capture(
         contract,
         workload_digest=workload_digest(catalog(contract)),
         postgres=_CanaryPostgres(str(server_version)),
     )
-    return build_envelope(contract, provenance, results, selected)
+    return build_envelope(contract, provenance, results, chosen_runtimes, selected)
 
 
 def selection(workloads: Sequence[str], cells: Sequence[str]) -> Selection:
@@ -668,7 +728,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--cell", action="append", default=[], help="cell pattern")
     parser.add_argument("--runtime", action="append", default=[], help="CPython minor")
     parser.add_argument(
+        "--workload",
+        action="append",
+        default=[],
+        help="an exact contract workload id, or the geometry or plan group, to measure as evidence",
+    )
+    parser.add_argument(
         "--durations", type=Path, help="where the harness writes its spans; not evidence"
+    )
+    parser.add_argument(
+        "--metadata", type=Path, help="where the runtime identities are written; not evidence"
     )
     args = parser.parse_args(argv)
     if (args.select or args.cell or args.runtime) and not args.diagnostic:
@@ -677,7 +746,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("a diagnostic run is not evidence and is printed, never written to a file")
     if args.durations is not None and (args.diagnostic or args.canary):
         parser.error("--durations records a complete measurement, never a diagnostic or canary")
+    if args.metadata is not None and (args.diagnostic or args.canary):
+        parser.error("--metadata records a complete measurement, never a diagnostic or canary")
+    if args.workload and (args.diagnostic or args.canary):
+        parser.error("--workload selects evidence, never a diagnostic or canary")
     contract = BudgetContract.load()
+    try:
+        selected = workload_selection(args.workload, contract)
+    except ValueError as error:
+        parser.error(str(error))
     if args.diagnostic:
         runtimes = tuple(args.runtime) or supported_minors()
         selected = selection(args.select, args.cell)
@@ -693,7 +770,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.canary:
         rendered = json.dumps(canary(contract, run_child).document(), indent=2, sort_keys=True)
     else:
-        envelope = _measured(contract, args.durations)
+        envelope = _measured(contract, args.durations, args.metadata, selected)
         rendered = json.dumps(envelope.document(), indent=2, sort_keys=True)
     if args.out is None:
         print(rendered)
@@ -703,13 +780,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _measured(contract: BudgetContract, durations: Path | None) -> CostReportEnvelope:
+def runtime_identities(
+    runtimes: Sequence[str], spans: Spans, probe: ProbeRunner = run_probe
+) -> dict[str, RuntimeStatus]:
+    """Each runtime's interpreter, probed once through the reading child's own
+    command and environment resolution, outside every measured window."""
+    identities: dict[str, RuntimeStatus] = {}
+    for runtime in runtimes:
+        with spans.span("setup", "identity", member=SUBJECT, runtime=runtime):
+            identities[runtime] = probe_runtime(runtime, ENVIRONMENT_NAMESPACE, probe)
+    return identities
+
+
+def _measured(
+    contract: BudgetContract,
+    durations: Path | None,
+    metadata: Path | None,
+    selected: Selection = every_cell,
+) -> CostReportEnvelope:
     spans = Spans()
     try:
+        if metadata is not None:
+            write_metadata(
+                metadata, SUBJECT, runtime_identities(supported_minors(), spans, run_probe)
+            )
         with spans.span("setup", "provisioner", member=SUBJECT):
             provisioner = Provisioner()
         try:
-            return measure(contract, provisioner, run_child, spans=spans)
+            return measure(contract, provisioner, run_child, spans=spans, selected=selected)
         finally:
             with spans.span("setup", "close", member=SUBJECT):
                 provisioner.close()

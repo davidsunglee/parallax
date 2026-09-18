@@ -18,6 +18,7 @@ from cost_report import (
     DURATIONS_FILE,
     DURATIONS_OPTION,
     MEMBERS,
+    METADATA_OPTION,
     Collection,
     Member,
     MemberResult,
@@ -313,7 +314,9 @@ class _Clocks:
 
 def _sidecar_path(arguments: Sequence[str]) -> Path:
     assert list(arguments[:1]) == [DURATIONS_OPTION]
-    assert len(arguments) == 2
+    assert list(arguments[2:3]) == [METADATA_OPTION]
+    assert len(arguments) == 4
+    assert Path(arguments[3]).parent == Path(arguments[1]).parent
     return Path(arguments[1])
 
 
