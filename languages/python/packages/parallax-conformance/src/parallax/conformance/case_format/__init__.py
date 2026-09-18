@@ -10,6 +10,7 @@ ID), per the m-case-format contract.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -21,13 +22,16 @@ import yaml
 from parallax.core.db_port import IsolationLevel
 from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
+from parallax.snapshot import DatabaseOptions
 
 __all__ = [
     "CASE_SHAPES",
     "Case",
     "SelectionFilter",
     "TransactionKeywords",
+    "database_options",
     "default_cases_dir",
+    "effective_options",
     "find_repo_root",
     "is_module_tag",
     "is_selected",
@@ -39,7 +43,6 @@ __all__ = [
     "select",
     "serialized_isolation",
     "transaction_keywords",
-    "uow_isolation",
 ]
 
 
@@ -252,22 +255,6 @@ def serialized_isolation(level: IsolationLevel) -> str:
     return _SERIALIZED_ISOLATION[level]
 
 
-def uow_isolation(case: Case) -> IsolationLevel | None:
-    """A case's declared portable Isolation Level, or ``None`` for none declared.
-
-    For the raw held sessions a two-connection choreography opens outside any
-    Database: absence applies no level statement to those sessions. A
-    transactional lane projects the same field through
-    :func:`transaction_keywords` instead, so that production resolves absence.
-    """
-    when = cast("dict[str, Any]", case.document.get("when") or {})
-    uow = cast("dict[str, Any]", when.get("uow") or {})
-    declared = uow.get("isolation")
-    if declared is None:
-        return None
-    return isolation_literal(_authored_string(declared, "when.uow.isolation"))
-
-
 class TransactionKeywords(TypedDict, total=False):
     """The ``db.transact`` keywords a case AUTHORS, and no others.
 
@@ -330,20 +317,57 @@ def transaction_keywords(case: Case) -> TransactionKeywords:
     A `when.uow` naming a key outside the four request keys is refused here, so
     a retired spelling reports the case rather than silently requesting nothing.
     """
-    when = case.document.get("when")
-    uow = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
-    if uow is None:
+    return _option_block_keywords(case, "when", "uow")
+
+
+def database_options(case: Case) -> DatabaseOptions:
+    """The record the case's Database Root is CONNECTED with: its
+    `given.databaseOptions`, decoded through the same field rules a request
+    meets, with every field the case omits at the record's own built-in default.
+
+    Configuration alone, never a resolution: what an invocation runs under is
+    production's to resolve from this record and the sparse request
+    :func:`transaction_keywords` projects, and a lane hands each to its own seam.
+    """
+    return DatabaseOptions(**_option_block_keywords(case, "given", "databaseOptions"))
+
+
+def effective_options(case: Case) -> DatabaseOptions:
+    """The options the case's OUTER invocation resolves to — each authored
+    `when.uow` field over the root record — calculated here, independently of
+    production, for what a lane must know before or after the invocation runs:
+    the strategy a golden is planned and graded under, the attempt count an
+    oracle expects, the level a raw held session stands in at.
+
+    Never an argument to ``db.transact`` or to ``connect``: a lane that fed this
+    record into production would be testing its own arithmetic. The root record
+    and the sparse request travel separately, and this is the value they meet at
+    only on the grading side.
+    """
+    return dataclasses.replace(database_options(case), **transaction_keywords(case))
+
+
+def _option_block_keywords(case: Case, group: str, member: str) -> TransactionKeywords:
+    """The transaction keywords one option block of ``case`` authors — its
+    ``group.member`` mapping — refusing a key outside the four option keys."""
+    container = case.document.get(group)
+    block = (
+        cast("Mapping[str, object]", container).get(member)
+        if isinstance(container, Mapping)
+        else None
+    )
+    if block is None:
         return {}
-    if not isinstance(uow, Mapping):
-        raise ValueError(f"{case.path.name}: when.uow must be a mapping, got {uow!r}")
-    request = cast("Mapping[str, object]", uow)
+    where = f"{case.path.name}: {group}.{member}"
+    if not isinstance(block, Mapping):
+        raise ValueError(f"{where} must be a mapping, got {block!r}")
+    request = cast("Mapping[str, object]", block)
     unknown = sorted(set(request) - set(_REQUEST_KEYS))
     if unknown:
         raise ValueError(
-            f"{case.path.name}: when.uow names no request key {unknown}; the request keys "
-            f"are {list(_REQUEST_KEYS)}"
+            f"{where} names no option key {unknown}; the option keys are {list(_REQUEST_KEYS)}"
         )
-    return request_keywords(request, where=f"{case.path.name}: when.uow")
+    return request_keywords(request, where=where)
 
 
 def _authored_string(value: object, where: str) -> str:

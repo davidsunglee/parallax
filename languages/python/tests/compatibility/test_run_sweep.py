@@ -1305,10 +1305,15 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
+    # Two raw held sessions stand in for the transactions a Database would open,
+    # so each opens at the level the case resolves for itself — the authored
+    # request over the configured root — rather than at the driver's default; no
+    # Database is composed here, so there is no root for production to resolve
+    # it against.
     run = concurrency_runner.run_rounds(
         rounds,
         lambda: profile_run.control(autocommit=False),
-        isolation=case_format.uow_isolation(case),
+        isolation=case_format.effective_options(case).isolation,
     )
 
     if case.shape == "error":

@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
     from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+    from parallax.snapshot import DatabaseOptions
     from parallax.snapshot.handle import ServingModel
 
 __all__ = [
@@ -564,6 +565,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> InterleavedExecution:
@@ -578,6 +580,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         execution = self._interleaved().open(
             self._conninfo,
             model,
+            options=options,
             clock=clock,
             lifecycle_provider=lifecycle_provider,
             on_release=self._open.discard,

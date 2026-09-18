@@ -1,8 +1,10 @@
 """`DatabaseOptions` through the shipped public surface (spec §5): the connect
 and constructor keywords a root is configured with, the transaction keywords
-that override them, `Transaction.options`, and — against a real Postgres —
-that the level a root resolves is the level a transaction runs at even where
-the database's own configured default is stronger.
+that override them, `Transaction.options`, the usage guide's own root-options
+story, and — against a real Postgres — that the level a root resolves is the
+level a transaction runs at even where the database's own configured default is
+stronger, while a standalone read or stream under a configured root opens no
+transaction at all.
 """
 
 from __future__ import annotations
@@ -10,11 +12,12 @@ from __future__ import annotations
 import dataclasses
 import inspect
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from parallax.conformance import engine, provision
+from parallax.conformance import database_options_stories, engine, provision
 from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
@@ -32,6 +35,9 @@ from parallax.snapshot import DatabaseOptions, connect
 from parallax.snapshot.handle import Database, Transaction
 
 _ACCOUNT = MODELS["account"]
+_root_options_story = (
+    database_options_stories.a_root_default_is_overridden_per_call_and_a_join_inherits_the_override
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,3 +227,45 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
         db.transact(_read_one)
     assert [entry["requested"] for entry in seen] == [level]
     assert [entry["effective"] for entry in seen] == [level.replace("_", " ")]
+
+
+def test_the_root_options_usage_guide_story_runs_against_a_real_database(
+    profile_run: Any,
+) -> None:
+    _seeded(profile_run)
+    shape = _root_options_story(profile_run.port, _ACCOUNT)
+    root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
+    assert shape.inherited == root
+    assert shape.overridden == DatabaseOptions(isolation="serializable", max_retries=2)
+    assert shape.joined == shape.overridden
+    assert shape.repeated == shape.overridden
+    assert shape.root_level_refused_on_join
+    assert shape.balance == Decimal("250.00")
+
+
+def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transaction(
+    profile_run: Any,
+) -> None:
+    # A conspicuous root: every field away from its built-in. A standalone read
+    # and a standalone stream consult none of it — neither asks the port for a
+    # boundary at all, so there is no level for the root to have supplied — and
+    # only the transaction opened beside them does.
+    _seeded(profile_run)
+    seen: list[dict[str, str | None]] = []
+    root = DatabaseOptions(
+        max_retries=0,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
+    )
+    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as db:
+        found = db.find(Account.where(Account.id == 1)).result()
+        with db.stream(Account.where(Account.id == 1), batch_size=1) as delivery:
+            streamed = list(delivery)
+        assert seen == []
+        transacted = db.transact(_read_one)
+    assert found.balance == transacted.balance
+    assert [root.balance for root in streamed] == [found.balance]
+    assert [(entry["requested"], entry["effective"]) for entry in seen] == [
+        ("serializable", "serializable")
+    ]

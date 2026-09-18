@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from parallax.core.entity import DomainModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
+    from parallax.snapshot import DatabaseOptions
     from parallax.snapshot.handle import ServingModel
 
 __all__ = [
@@ -179,12 +180,13 @@ class ProvisionedRun(ProfileRun):
         self,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> InterleavedExecution:
         """A dedicated session for one interleaved choreography, and its Database."""
         return self._provisioner.interleaved_execution(
-            model, clock=clock, lifecycle_provider=lifecycle_provider
+            model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
         )
 
     def adapter_for_session_default(  # pragma: no cover - Docker

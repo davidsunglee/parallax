@@ -1319,3 +1319,45 @@ def test_judged_assignments_reject_an_invalid_member() -> None:
             {"missing": 1},
             {"id": 1},
         )
+
+
+def test_a_snapshot_scenarios_write_step_opens_at_the_cases_root_level() -> None:
+    # The snapshot lane's own Handle serves standalone finds, which open no
+    # transaction; a `write:` step delegates to the keyed unit-of-work lane,
+    # which opens ITS own Handle for the write — and that Handle is connected
+    # with the case's root record, so the one boundary here is the write's, at
+    # the root's level, while the find before it asked for none.
+    when = {
+        "scenario": [
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                }
+            },
+            {
+                "write": [
+                    {
+                        "mutation": "update",
+                        "entity": "Order",
+                        "rows": [{"id": 1, "name": "Rewritten"}],
+                    }
+                ]
+            },
+        ]
+    }
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/orders.yaml",
+            "given": {"databaseOptions": {"isolation": "serializable"}},
+            "when": when,
+        },
+    )
+    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
+    run = _run(case, port)
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+    ]
+    assert port.levels == ["serializable"]

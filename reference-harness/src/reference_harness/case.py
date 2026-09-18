@@ -643,10 +643,19 @@ def names_earlier_step(source: int, step_index: int) -> bool:
     return 0 <= source < step_index
 
 
-# The Isolation Level a transactional session opens at when its case names none:
-# the Database Root's built-in default (`m-db-port`), in the core serialized
-# spelling, rather than the server's own configured default.
+# The Database Root's built-in transaction option defaults (`m-case-format` *Root
+# configuration*, ADR 0065), in the corpus's own spellings: what an option resolves
+# to when neither the invocation (`when.uow`) nor the root (`given.databaseOptions`)
+# names it. A held session opens at the built-in level rather than at the server's
+# own configured default, because the transaction it stands in for requests one.
+DEFAULT_CONCURRENCY = "optimistic"
 DEFAULT_ISOLATION = "read-committed"
+BUILT_IN_DATABASE_OPTIONS: dict[str, Any] = {
+    "maxRetries": 10,
+    "concurrency": DEFAULT_CONCURRENCY,
+    "retryOptimisticConflicts": False,
+    "isolation": DEFAULT_ISOLATION,
+}
 
 
 @dataclass(frozen=True)
@@ -672,9 +681,10 @@ class Case:
 
         Holds ``fixtures`` (whether to load the model's fixtures), ``apply`` (naive
         statement entries a conflict case runs verbatim before the golden write),
-        ``corrupt`` (stored state written over those fixtures), and ``fault`` (a
-        boundary case's injected fault). Absent for a case that starts from the
-        model's default fixtures and injects nothing.
+        ``corrupt`` (stored state written over those fixtures), ``fault`` (a
+        boundary case's injected fault), and ``databaseOptions`` (the root's
+        configured transaction option defaults). Absent for a case that starts
+        from the model's default fixtures, injects nothing, and configures no root.
         """
         return self.raw.get("given", {})
 
@@ -737,19 +747,48 @@ class Case:
         ``isolation`` are DESCRIPTIVE here — the harness executes the authored
         golden SQL either way — so this accessor exists for self-description /
         tooling; the resolved accessors below answer what each option is under
-        the Database Root's built-in defaults when the case omits it.
+        the root the case configures and the Database Root's built-in defaults
+        when the case omits it.
         """
         return self.when.get("uow", {})
 
     @property
+    def database_options(self) -> dict[str, Any]:
+        """The transaction option defaults the case's Database Root is configured
+        with (m-case-format ``given.databaseOptions``), or empty.
+
+        Configuration rather than a request: an option the invocation omits
+        resolves to the value here, and one omitted here resolves to the root's
+        built-in default. Read through :meth:`resolved_option` rather than
+        directly, so no consumer flattens the two placements for itself.
+        """
+        return self.given.get("databaseOptions", {})
+
+    def resolved_option(self, name: str) -> Any:
+        """The value the case's outer invocation resolves ``name`` to: the
+        explicit ``when.uow`` value, else the root's ``given.databaseOptions``
+        value, else the built-in default (`m-case-format` *Root configuration*).
+
+        The harness's one resolution rule, stated once so every seam that needs
+        an effective option — the strategy a gate is graded under, the level a
+        held session opens at — reads the same answer for the same case.
+        """
+        if name in self.uow:
+            return self.uow[name]
+        if name in self.database_options:
+            return self.database_options[name]
+        return BUILT_IN_DATABASE_OPTIONS[name]
+
+    @property
     def concurrency_mode(self) -> str:
         """The unit-of-work Concurrency Preference the case runs under
-        (``locking`` | ``optimistic``): the declared one, else the Database
-        Root's built-in default `m-case-format` states for the block.
+        (``locking`` | ``optimistic``): the declared one, else the root's
+        configured default, else the Database Root's built-in `m-case-format`
+        states for the block (:meth:`resolved_option`).
 
         A preference is not a strategy: the target Entity's Optimistic Lock Facet
         decides whether it yields Optimistic or the mandatory Locking fallback
-        (`m-unit-work` strategy selection). Gate assertions read the declared
+        (`m-unit-work` strategy selection). Gate assertions read the resolved
         preference where a versioned or temporal target makes it coincide with the
         strategy. Effective-strategy consumers combine this value with the target
         facet, so the default preference yields Locking for an unversioned,
@@ -758,14 +797,15 @@ class Case:
         Named ``concurrency_mode`` to avoid clashing with :attr:`concurrency`
         (the two-connection choreography of an error case).
         """
-        return self.uow.get("concurrency", "optimistic")
+        return self.resolved_option("concurrency")
 
     @property
     def isolation(self) -> str:
         """The portable Isolation Level (`m-db-port`) every transactional session
         the case opens is opened at, in the core serialized spelling the
-        provider maps: the declared level, else the Database Root's built-in
-        default, ``read-committed``.
+        provider maps: the declared level, else the root's configured default,
+        else the Database Root's built-in ``read-committed``
+        (:meth:`resolved_option`).
 
         Unlike :attr:`concurrency_mode` this is PRESCRIPTIVE. Resolved here
         rather than left to the server, because a transaction a Database opens
@@ -773,7 +813,7 @@ class Case:
         sessions stand in for those transactions; a standalone operation opens
         no held session and is untouched by it.
         """
-        return self.uow.get("isolation", DEFAULT_ISOLATION)
+        return self.resolved_option("isolation")
 
     @property
     def object_query(self) -> dict[str, Any]:

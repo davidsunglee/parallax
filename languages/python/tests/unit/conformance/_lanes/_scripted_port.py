@@ -61,6 +61,7 @@ class ScriptedPort(ConnectsAsItself):
         self._raise_on_read = raise_on_read
         self.reads: list[tuple[str, tuple[object, ...]]] = []
         self.writes: list[tuple[str, tuple[object, ...]]] = []
+        self.levels: list[str | None] = []
         self.closed = False
 
     def execute(
@@ -79,6 +80,7 @@ class ScriptedPort(ConnectsAsItself):
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
+        self.levels.append(isolation)
         return body_outcome(self, body)
 
     def close(self) -> None:

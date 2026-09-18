@@ -1,0 +1,172 @@
+# Boundary case (m-auto-retry x m-db-port isolation, m-case-format root
+# configuration): an explicit level at the call overrides the Database Root's
+# configured level, and it is the explicit level every attempt opens at —
+# `api-conformance` lane.
+#
+# The counterpart of `m-auto-retry-009`: the root is configured `serializable`
+# and the invocation requests `repeatable-read`. The injected `deadlock` retries
+# the closure once, and the outer invocation reports `repeatable-read` over both
+# attempts — the value it resolved to, never the root's. Under a Serializable
+# root the retried attempt would otherwise have opened at a level the case never
+# authored for it; that it does not is what the explicit request proves.
+#
+# `roundTrips: 4` is the retried pair's cost — each attempt's observing read plus
+# its write, the failed one included.
+model: models/account.yaml
+tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, isolation, transient, database-options, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: deadlock
+  databaseOptions:
+    isolation: serializable
+when:
+  uow:
+    isolation: repeatable-read
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: update
+      note: the first attempt's write raises an injected deadlock — auto-retried at the explicit level
+then:
+  outcome: committed
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: repeatable-read
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 6
+          - sequence: 16
+            activity: 9
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 17
+            activity: 10
+            parent: 9
+            acquisitionStarted: {}
+          - sequence: 18
+            activity: 10
+            parent: 9
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 19
+            activity: 11
+            parent: 9
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 20
+            activity: 12
+            parent: 11
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 21
+            activity: 12
+            parent: 11
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 22
+            activity: 11
+            parent: 9
+            readFinished: { outcome: completed }
+          - sequence: 23
+            activity: 13
+            parent: 9
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 24
+            activity: 14
+            parent: 13
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 25
+            activity: 14
+            parent: 13
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 26
+            activity: 13
+            parent: 9
+            writeBatchFinished: { outcome: completed }
+          - sequence: 27
+            activity: 15
+            parent: 9
+            releaseStarted: {}
+          - sequence: 28
+            activity: 15
+            parent: 9
+            releaseFinished: { cleanup: returned }
+          - sequence: 29
+            activity: 9
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 30
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

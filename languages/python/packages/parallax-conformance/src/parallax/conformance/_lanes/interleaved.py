@@ -307,7 +307,12 @@ def run_interleaved_scenario_case(
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
     context = CaseContext(
-        serving, model, concurrency, shadow, case_format.transaction_keywords(case)
+        serving,
+        model,
+        concurrency,
+        shadow,
+        case_format.transaction_keywords(case),
+        case_format.database_options(case),
     )
     turnstile = Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
@@ -324,7 +329,10 @@ def run_interleaved_scenario_case(
         executions: dict[str, InterleavedExecution] = {}
         for name, observed, _indices, _result in plans:
             execution = execution_factory(
-                serving, clock=FixedClock(instant), lifecycle_provider=observed.provider
+                serving,
+                options=context.options,
+                clock=FixedClock(instant),
+                lifecycle_provider=observed.provider,
             )
             stack.callback(execution.close)
             executions[name] = execution

@@ -171,13 +171,17 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 # `m-op-list`) and `m-read-lock-009` (MariaDB) stay OUT of slice
 # (`slices.md`), never reaching `_REACHABLE` at all. `-010` proves that a
 # heterogeneous TPH document predicate remains one locking outer read over the
-# cast-safe derived identity relation.
+# cast-safe derived identity relation. `-019` is the standalone read under a
+# LOCKING root (`given.databaseOptions`): it names no `when.uow`, so the read
+# lane keeps it standalone and both lanes grade the lock-free golden — the
+# root's defaults govern transactions, and this read opens none.
 _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
     {
         "m-read-lock-001",
         "m-read-lock-002",
         "m-read-lock-005",
         "m-read-lock-010",
+        "m-read-lock-019",
     }
 )
 # The descriptor default-column witness is a compile-eligible instance-form read:

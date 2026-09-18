@@ -732,6 +732,7 @@ def _step_as_read(case: Case, step_index: int) -> Case:
         {key: step[key] for key in ("objectQuery", "stream") if key in step},
         step.get("statements", []),
         row_form=_resolves_a_materializing_write(case, step_index),
+        grouped=isinstance(step.get("uow"), str),
     )
 
 
@@ -757,12 +758,28 @@ def _resolved_list_read(case: Case, step: Mapping[str, Any]) -> Case | None:
     return _as_read(case, {"objectQuery": query}, step.get("statements", []), row_form=False)
 
 
-def _as_read(case: Case, when: Mapping[str, Any], statements: Any, *, row_form: bool) -> Case:
+def _as_read(
+    case: Case,
+    when: Mapping[str, Any],
+    statements: Any,
+    *,
+    row_form: bool,
+    grouped: bool = False,
+) -> Case:
     """*case* restated as the one-read `read` case *when* and *statements* describe.
 
     A read case states its lane by WHICH result member it carries, so that is how
     this presentation states it. The member's CONTENTS are never read: what a step
     observed is graded against the step's own ``expectRows`` / ``expectGraph``.
+    Both placements a preference or level can be resolved from travel with the
+    step — the scenario's own ``when.uow`` request and its root's
+    ``given.databaseOptions`` — so the restated read resolves exactly what the
+    scenario's transaction resolves. A read case is transactional exactly when it
+    carries ``when.uow``, so a step that is ``grouped`` — inside a `uow` group's
+    transaction — carries the block whether or not the scenario authored one:
+    the group opened the transaction, and the preference it runs under is then
+    resolved from the request over the root rather than read off the block's
+    presence.
     """
     then: dict[str, Any] = {
         "statements": statements,
@@ -770,15 +787,14 @@ def _as_read(case: Case, when: Mapping[str, Any], statements: Any, *, row_form: 
     }
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
-    read_when = {**({"uow": case.uow} if "uow" in case.when else {}), **when}
-    return replace(
-        case,
-        raw=frozen_view(
-            {
-                "model": case.raw["model"],
-                "shape": "read",
-                "when": read_when,
-                "then": then,
-            }
-        ),
-    )
+    transactional = grouped or "uow" in case.when
+    read_when = {**({"uow": case.uow} if transactional else {}), **when}
+    raw: dict[str, Any] = {
+        "model": case.raw["model"],
+        "shape": "read",
+        "when": read_when,
+        "then": then,
+    }
+    if case.database_options:
+        raw["given"] = {"databaseOptions": case.database_options}
+    return replace(case, raw=frozen_view(raw))

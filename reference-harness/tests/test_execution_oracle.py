@@ -1475,9 +1475,12 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
     """Every case authoring the oracle, named: the ten `m-execution-lifecycle`
     cases, the one optimistic-lock success whose resolving read makes it the
     corpus witness for a Database Call that names no golden statement, the
-    auto-retry case whose stream is the only place one requested Isolation Level
-    is seen standing over two attempts, and the join case whose stream is the
-    only place an accepted join and a refused one are told apart."""
+    auto-retry cases whose streams are the only place one requested Isolation
+    Level is seen standing over two attempts (`-006`, and its root-configured
+    pair `-009`/`-010`) or a root's zero bound is seen ending the loop (`-007`),
+    and the join cases whose streams are the only place an accepted join and a
+    refused one are told apart (`m-unit-work-035`, and the root-configured
+    `-037` through `-041`)."""
     authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)
@@ -1489,6 +1492,9 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         assert validate_execution(case) == [], case_path.name
     assert authored == [
         "m-auto-retry-006-every-attempt-opens-at-the-requested-level.yaml",
+        "m-auto-retry-007-a-zero-retry-root-disables-the-loop.yaml",
+        "m-auto-retry-009-a-root-level-stands-over-every-attempt.yaml",
+        "m-auto-retry-010-an-explicit-level-overrides-the-root-level.yaml",
         "m-execution-lifecycle-001-standalone-read.yaml",
         "m-execution-lifecycle-002-pre-commit-batch.yaml",
         "m-execution-lifecycle-003-read-dependency.yaml",
@@ -1501,4 +1507,9 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-010-cleanup-after-commit-preserves-the-outcome.yaml",
         "m-opt-lock-006-success.yaml",
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",
+        "m-unit-work-037-a-join-inherits-every-root-configured-option.yaml",
+        "m-unit-work-038-a-join-is-held-to-the-outer-concurrency-not-the-roots.yaml",
+        "m-unit-work-039-a-join-is-held-to-the-outer-opt-in-not-the-roots.yaml",
+        "m-unit-work-040-a-join-is-held-to-the-outer-bound-not-the-roots.yaml",
+        "m-unit-work-041-a-join-is-held-to-the-outer-level-not-the-roots.yaml",
     ]

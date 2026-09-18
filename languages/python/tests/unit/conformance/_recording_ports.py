@@ -35,13 +35,16 @@ __all__ = ["FakeDbPort", "FakeWritePort", "QueueDbPort"]
 
 
 class FakeDbPort(ConnectsAsItself):
-    """An in-memory port that records executed SQL and returns canned rows."""
+    """An in-memory port that records executed SQL and returns canned rows,
+    and the level each boundary opened through it was asked for — which is
+    how a lane's routing between a standalone and a transactional read shows."""
 
     dialect: Dialect = POSTGRES
 
     def __init__(self, rows: list[MappingRow]) -> None:
         self.rows = rows
         self.executed: list[tuple[str, list[object]]] = []
+        self.levels: list[IsolationLevel | None] = []
 
     def execute(
         self,
@@ -57,7 +60,8 @@ class FakeDbPort(ConnectsAsItself):
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
+    ) -> TransactionOutcome[T]:
+        self.levels.append(isolation)
         return body_outcome(self, body)
 
 
@@ -74,7 +78,8 @@ class FakeWritePort(ConnectsAsItself):
     reports a zero-row shortfall, and a parameterized statement raises
     ``parameterized_write_failure`` after being recorded — a case's own
     bind-free ``given.apply`` writer still lands, so the failure is the
-    parameterized write's own.
+    parameterized write's own. ``levels`` records the level each boundary was
+    asked for, in the order the boundaries opened.
     """
 
     dialect: Dialect = POSTGRES
@@ -92,6 +97,7 @@ class FakeWritePort(ConnectsAsItself):
         self.reads: list[tuple[str, list[object]]] = []
         self.commits = 0
         self.rollbacks = 0
+        self.levels: list[IsolationLevel | None] = []
         self._zero_affected_for = zero_affected_for
         self._parameterized_write_failure = parameterized_write_failure
         self._read_script = None if read_script is None else list(read_script)
@@ -120,6 +126,7 @@ class FakeWritePort(ConnectsAsItself):
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
+        self.levels.append(isolation)
         outcome = body_outcome(self, body)
         if isinstance(outcome, Committed):
             self.commits += 1

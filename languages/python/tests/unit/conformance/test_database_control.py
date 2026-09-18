@@ -44,6 +44,7 @@ from parallax.core.db_port import (
     PipelineStatement,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
 from tests.unit._contention_support import observing
@@ -328,6 +329,18 @@ def test_an_execution_composes_its_own_handle_from_its_own_configuration() -> No
     assert execution.termination_ladder_trusted is True
     # A real acquisition through the composed handle's runtime, released again.
     assert execution.database.transact(lambda tx: tx.edition) is not None
+
+
+def test_an_execution_composes_its_handle_over_the_root_record_it_is_handed() -> None:
+    # The interleaved lane's one way to configure a group's root: the record
+    # reaches the composed Database, so a transaction the group opens resolves
+    # what it omits against the case's root, and an execution handed none
+    # composes the record's own defaults.
+    root = DatabaseOptions(isolation="serializable", max_retries=0)
+    execution = _execution(_FakeConnection(), options=root)
+    assert execution.database.transact(lambda tx: tx.options) is root
+    unconfigured = _execution(_FakeConnection())
+    assert unconfigured.database.transact(lambda tx: tx.options) == DatabaseOptions()
 
 
 def test_a_composition_that_refuses_the_model_opens_no_session_at_all() -> None:

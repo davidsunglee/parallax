@@ -155,7 +155,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
-from parallax.snapshot import handle
+from parallax.snapshot import DatabaseOptions, handle
 from parallax.snapshot.handle import (
     ServingModel,
     TransactionTimePinReadOnlyError,
@@ -1335,7 +1335,9 @@ def run_standalone_find(
     """
     query = step_query(step, context.model)
     observed = lifecycle.observation()
-    with handle.Database.connect(port, context.serving, lifecycle_provider=observed.provider) as db:
+    with handle.Database.connect(
+        port, context.serving, options=context.options, lifecycle_provider=observed.provider
+    ) as db:
         return (
             transact(db, lambda tx: tx.wire.find(query), **context.requests),
             observed,
@@ -1609,7 +1611,12 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     concurrency = case_document.concurrency(case)
     dialect = dialect_for(dialect_name)
     context = CaseContext(
-        serving, model, concurrency, TemporalShadow(), case_format.transaction_keywords(case)
+        serving,
+        model,
+        concurrency,
+        TemporalShadow(),
+        case_format.transaction_keywords(case),
+        case_format.database_options(case),
     )
     seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
@@ -1955,6 +1962,7 @@ def _execute_write_unit(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
+    options: DatabaseOptions,
     requests: case_format.TransactionKeywords,
     resolved: Sequence[_ResolvedWrite],
     statements: Sequence[LoweredStatement],
@@ -1964,7 +1972,8 @@ def _execute_write_unit(
     rollback: bool,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute one choreography unit's ALREADY-RESOLVED instructions through the
-    production ``db.transact`` entry point — ONE transaction,
+    production ``db.transact`` entry point — ONE transaction over a root
+    connected with ``options``, requesting exactly ``requests``,
     ``clock=FixedClock(tx_instant)``
     (ADR 0010: instants come from the Clock Strategy, never a per-operation
     override), and report the DML it ran beside the calls it cost.
@@ -2021,6 +2030,7 @@ def _execute_write_unit(
     with handle.Database.connect(
         write_adapter(port, rollback=rollback),
         serving,
+        options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as database:
@@ -2086,6 +2096,7 @@ def execute_keyed_unit(
             port,
             context.serving,
             context.model,
+            context.options,
             context.requests,
             resolved,
             statements,
@@ -2125,6 +2136,7 @@ def _run_readless_predicate_write(
     with handle.Database.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
+        options=context.options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as database:
@@ -2262,6 +2274,7 @@ def _run_materializing_pair(
     with handle.Database.connect(
         write_adapter(port, rollback=rollback),
         context.serving,
+        options=context.options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as database:
@@ -2397,13 +2410,19 @@ class CaseContext:
     otherwise), so this record can travel beside any of them.
 
     The concurrency is the preference the case's writes are PLANNED under —
-    declared, or the built-in default — and is what every lowering here reads.
-    The requests are the ``db.transact`` keywords the case AUTHORED
-    (:func:`~parallax.conformance.case_format.transaction_keywords`), carried
-    separately because an omitted field must reach production omitted rather
-    than as the planning value restated: a held group, an ungrouped unit, and a
-    standalone find all forward exactly these. Every construction states both,
-    so a field the case declared and no lane propagated cannot go invisible.
+    the one its outer invocation resolves to, from the explicit request over
+    the configured root — and is what every lowering here reads. The options
+    are the root record the case CONFIGURES
+    (:func:`~parallax.conformance.case_format.database_options`), handed to
+    every ``connect`` a lane composes for the case's own units of work; the
+    requests are the ``db.transact`` keywords the case AUTHORED
+    (:func:`~parallax.conformance.case_format.transaction_keywords`), handed to
+    every ``transact``. The two are carried separately from the planning value
+    and from each other because an omitted field must reach production omitted
+    rather than as the planning value restated: a held group, an ungrouped
+    unit, and a standalone find all connect with exactly the record and forward
+    exactly these keywords. Every construction states all three, so a field the
+    case declared and no lane propagated cannot go invisible.
     """
 
     serving: ServingModel
@@ -2411,6 +2430,7 @@ class CaseContext:
     concurrency: Concurrency
     shadow: TemporalShadow
     requests: case_format.TransactionKeywords
+    options: DatabaseOptions
 
 
 def _empty_published() -> list[handle.WireEntity]:
@@ -2751,7 +2771,9 @@ class _GroupSession:
     a runner a Handle and a dialect apart admits a group lowering in one
     connection's spelling while executing in another's, so this takes the port
     alone and OPENS the Handle over it: no caller can hand it a Handle connected
-    to some other port, and the pair it holds names one connection.
+    to some other port, and the pair it holds names one connection. The Handle
+    is connected with the case's own root record, so the group's transaction
+    resolves whatever it does not request against the root the case configured.
     """
 
     adapter: DatabaseAdapter
@@ -2771,6 +2793,7 @@ class _GroupSession:
             handle.Database.connect(
                 adapter,
                 context.serving,
+                options=context.options,
                 clock=FixedClock(instant),
                 lifecycle_provider=observation.provider,
             ),
@@ -3008,7 +3031,12 @@ def run_scenario_case(
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
     context = CaseContext(
-        serving, model, concurrency, shadow, case_format.transaction_keywords(case)
+        serving,
+        model,
+        concurrency,
+        shadow,
+        case_format.transaction_keywords(case),
+        case_format.database_options(case),
     )
     lowered: list[LoweredStep] = []
     round_trips = 0
@@ -3132,6 +3160,7 @@ def run_write_sequence_case(
         case_document.concurrency(case),
         TemporalShadow(),
         case_format.transaction_keywords(case),
+        case_format.database_options(case),
     )
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
@@ -3364,7 +3393,11 @@ def _conflict_attempt_requests(case: case_format.Case) -> case_format.Transactio
     re-execute the stale attempt inside that transaction and report the
     advance where the case grades the shortfall; the opt-in that case authors
     describes the loop the attempts spell out, and the boundary lane is where
-    production's own loop is driven from it.
+    production's own loop is driven from it. The root record a conflict case
+    configures (`given.databaseOptions`) reaches the attempt's ``connect``
+    unchanged, so a root preference or level governs the attempt exactly as an
+    authored one does; a root that opted into conflict retry would describe the
+    same authored loop, and no conflict case configures one.
     """
     authored = case_format.transaction_keywords(case)
     requests: case_format.TransactionKeywords = {}
@@ -3452,6 +3485,7 @@ def _conflict_source_nodes(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
+    options: DatabaseOptions,
     target: str,
     resolved: Sequence[_ConflictWrite],
     lifecycle: LifecycleRun,
@@ -3487,6 +3521,7 @@ def _conflict_source_nodes(
     with handle.Database.connect(
         port,
         serving,
+        options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as database:
@@ -3552,6 +3587,7 @@ def _run_conflict_write(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
+    options: DatabaseOptions,
     target: str,
     concurrency: Concurrency,
     requests: case_format.TransactionKeywords,
@@ -3561,10 +3597,11 @@ def _run_conflict_write(
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
-    ``db.transact`` — ONE transaction, an inert Clock (never consumed by a
-    non-temporal write), and exactly the options the case authored
-    (``requests``); ``concurrency`` is the planning value the emission is
-    lowered and the implied shortfall classified under.
+    ``db.transact`` — ONE transaction over a root connected with ``options``,
+    an inert Clock (never consumed by a non-temporal write), and exactly the
+    options the attempt requests (``requests``); ``concurrency`` is the
+    planning value the emission is lowered and the implied shortfall classified
+    under.
 
     Every row is written through the PUBLIC keyed Wire verb its mutation names,
     against the node ``nodes`` published for its key, so a MULTI-KEY attempt
@@ -3591,6 +3628,7 @@ def _run_conflict_write(
     with handle.Database.connect(
         port,
         serving,
+        options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     ) as database:
@@ -4157,6 +4195,7 @@ def run_conflict_case(
     lifecycle = lifecycle_run(lifecycle)
     when = case_document.when(case)
     concurrency = case_document.concurrency(case)
+    options = case_format.database_options(case)
     requests = _conflict_attempt_requests(case)
     target = _conflict_target(case, model)
     mutation = _conflict_mutation(when)
@@ -4189,6 +4228,7 @@ def run_conflict_case(
                 port,
                 serving,
                 model,
+                options,
                 target,
                 _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
                 lifecycle,
@@ -4218,6 +4258,7 @@ def run_conflict_case(
                     port,
                     serving,
                     model,
+                    options,
                     target,
                     concurrency,
                     requests,

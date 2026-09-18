@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from parallax.core.entity import DomainModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
+    from parallax.snapshot import DatabaseOptions
     from parallax.snapshot.handle import ServingModel
 
 __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
@@ -543,15 +544,17 @@ class PostgresInterleavedExecution:
         adapter: ControlledAdapter,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
         on_release: Callable[[PostgresInterleavedExecution], None] | None = None,
     ) -> None:
-        # A composition that refuses the model does so before the configuration
-        # is opened, and one that fails after opening closes the runtime it was
-        # handed — which is what retires this session, since the runtime owns it.
+        # A composition that refuses the model or the options does so before the
+        # configuration is opened, and one that fails after opening closes the
+        # runtime it was handed — which is what retires this session, since the
+        # runtime owns it.
         self._database = handle.Database.connect(
-            adapter, model, clock=clock, lifecycle_provider=lifecycle_provider
+            adapter, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
         )
         runtime = adapter.opened
         if runtime is None:  # pragma: no cover - a composed Database opened its runtime
@@ -565,6 +568,7 @@ class PostgresInterleavedExecution:
         conninfo: str,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
         on_release: Callable[[PostgresInterleavedExecution], None] | None = None,
@@ -573,6 +577,7 @@ class PostgresInterleavedExecution:
         return cls(
             ControlledAdapter(conninfo),
             model,
+            options=options,
             clock=clock,
             lifecycle_provider=lifecycle_provider,
             on_release=on_release,

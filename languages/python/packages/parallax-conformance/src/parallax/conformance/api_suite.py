@@ -23,6 +23,7 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
+    database_options_stories,
     database_pooling_stories,
     edit_runner,
     execution_lifecycle_stories,
@@ -567,6 +568,19 @@ EXAMPLES: Final[list[Example]] = [
         "m-execution-lifecycle-006",
         "A joined unit of work is observed inside the OUTER transaction attempt",
         execution_lifecycle_stories.joined_lifecycle_snippet(),
+    ),
+    # Root-configured transaction defaults (m-unit-work / m-auto-retry /
+    # m-db-port, ADR 0065): the case's own oracle states what a joining call is
+    # held to under an outer call that overrode the root, and the boundary
+    # runner grades it. What this executable story adds is the SPELLING — one
+    # `DatabaseOptions` record at `connect`, a sparse keyword on the one call
+    # that wants something else, and `tx.options` answering the resolved record
+    # inside the work. Executed against real Postgres by
+    # `tests/api/test_database_options.py`.
+    Example(
+        "m-unit-work-041",
+        "A root default is overridden per call, and a joining call inherits the override",
+        database_options_stories.root_options_snippet(),
     ),
 ]
 
@@ -1577,6 +1591,40 @@ _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON: Final[str] = (
     "did, and only an injected fault reaches that"
 )
 
+# The root-configured boundary witnesses (m-case-format *Root configuration*):
+# what each proves is what the loop DOES under a configured root — a zero root
+# bound, a root level over every attempt, a root opt-in, and each one's explicit
+# override, plus the four-field join rule under a configured root — graded by the
+# SAME case-driven boundary runner, which connects the case's root record and
+# forwards only the authored request. The developer spelling those cases share
+# is the one executable story above (`m-unit-work-041`).
+_ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "a Database Root's configured transaction default reaching the loop it governs — "
+    "a zero root bound disabling the loop, a root level requested on every attempt, a "
+    "root opt-in retrying a conflict, each one's explicit per-call override, and a "
+    "joining call held to the outer call's resolved values rather than the root's — "
+    "graded end-to-end by the case-driven boundary runner (`tests/api/test_boundary_run.py`), "
+    "which connects the REAL `db` with the case's own `DatabaseOptions` record and "
+    "forwards only the fields the case authored; the developer spelling every one of "
+    "these shares is the one root-options story the usage guide already shows "
+    "(`m-unit-work-041`), so a second narrative per configured field would repeat it"
+)
+# The read-lock module's root-configured golden witnesses: the locking stream
+# inheriting its root's preference, the explicit optimistic override of that
+# root, and the standalone read a locking root leaves untouched. Each is a SQL
+# shape the compile/run sweeps grade byte-exact and the reference harness
+# executes independently; the developer spelling — `DatabaseOptions` at
+# `connect` — is the root-options story above.
+_READ_LOCK_ROOT_GOLDEN_REASON: Final[str] = (
+    "a golden-SQL witness of a Database Root's configured `locking` preference — a "
+    "`uow` group's transactional stream inheriting the shared-lock pages, the same "
+    "stream lock-free under an explicit `optimistic` request, and a standalone read "
+    "the root's defaults never reach — graded end-to-end by the compatibility run "
+    "sweep against the authored goldens and executed independently by the reference "
+    "harness; the developer spelling is `DatabaseOptions(concurrency=...)` at "
+    "`connect`, which the root-options story already shows, and the SQL shape is "
+    "what these cases isolate"
+)
 _ISOLATION_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a portable Isolation Level's own boundary obligation — a joining call refused for "
     "naming a second level, one requested level standing over every attempt of a retried "
@@ -1658,6 +1706,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-013": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-015": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-016": _READ_LOCK_STREAM_CONTINUATION_REASON,
+    "m-read-lock-017": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-read-lock-018": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-read-lock-019": _READ_LOCK_ROOT_GOLDEN_REASON,
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
@@ -1670,6 +1721,18 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-010": _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON,
     "m-unit-work-035": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-unit-work-036": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    # -- the root-configured boundary witnesses (m-unit-work-041 is the story) - #
+    "m-auto-retry-007": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-008": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-009": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-010": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-auto-retry-011": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-opt-lock-024": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-opt-lock-025": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-037": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-038": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-039": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-040": _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #

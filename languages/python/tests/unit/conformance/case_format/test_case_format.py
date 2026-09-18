@@ -21,6 +21,7 @@ from parallax.core.wire import (
     decode_wire,
     encode_wire,
 )
+from parallax.snapshot import DatabaseOptions
 
 
 def _case(
@@ -79,23 +80,6 @@ def test_a_token_outside_the_core_vocabulary_is_refused_at_ingress(declared: str
     # make the language's identifier a second name for a core-authored token.
     with pytest.raises(ValueError, match="isolation must be one of"):
         case_format.isolation_literal(declared)
-
-
-def test_a_declared_level_is_read_off_when_uow() -> None:
-    case = _isolation_case({"when": {"uow": {"isolation": "repeatable-read"}}})
-    assert case_format.uow_isolation(case) == "repeatable_read"
-
-
-@pytest.mark.parametrize(
-    "document",
-    [
-        {},
-        {"when": {}},
-        {"when": {"uow": {"concurrency": "locking"}}},
-    ],
-)
-def test_an_undeclared_level_reads_as_requesting_nothing(document: dict[str, object]) -> None:
-    assert case_format.uow_isolation(_isolation_case(document)) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -182,11 +166,134 @@ def test_a_non_mapping_uow_is_refused_by_name() -> None:
 
 
 def test_a_join_step_projects_through_the_same_decoder() -> None:
-    step = {"action": "join", "isolation": "serializable", "maxRetries": 0, "note": "x"}
+    step = {
+        "action": "join",
+        "isolation": "serializable",
+        "maxRetries": 0,
+        "concurrency": "locking",
+        "retryOptimisticConflicts": False,
+        "note": "x",
+    }
     assert case_format.request_keywords(step, where="join") == {
         "isolation": "serializable",
         "max_retries": 0,
+        "concurrency": "locking",
+        "retry_optimistic_conflicts": False,
     }
+
+
+# --------------------------------------------------------------------------- #
+# The root record: `given.databaseOptions` alone, built-ins for the rest.      #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"given": {}},
+        {"given": {"fixtures": True}},
+        {"given": {"databaseOptions": {}}},
+        {"when": {"uow": {"isolation": "serializable", "maxRetries": 0}}},
+    ],
+)
+def test_an_unconfigured_root_is_the_records_own_defaults(document: dict[str, object]) -> None:
+    # A request under `when.uow` is not configuration: the root a case connects
+    # is built from `given.databaseOptions` alone, so an authored request never
+    # leaks into the record production resolves it against.
+    assert case_format.database_options(_isolation_case(document)) == DatabaseOptions()
+
+
+def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_in() -> None:
+    case = _isolation_case(
+        {"given": {"databaseOptions": {"maxRetries": 0, "isolation": "repeatable-read"}}}
+    )
+    assert case_format.database_options(case) == DatabaseOptions(
+        max_retries=0, isolation="repeatable_read"
+    )
+    fully = _isolation_case(
+        {
+            "given": {
+                "databaseOptions": {
+                    "maxRetries": 2,
+                    "concurrency": "locking",
+                    "retryOptimisticConflicts": True,
+                    "isolation": "serializable",
+                }
+            }
+        }
+    )
+    assert case_format.database_options(fully) == DatabaseOptions(
+        max_retries=2,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("maxRetries", None),
+        ("concurrency", None),
+        ("retryOptimisticConflicts", None),
+        ("isolation", None),
+        ("maxRetries", -1),
+        ("maxRetries", True),
+        ("concurrency", "pessimistic"),
+        ("retryOptimisticConflicts", "yes"),
+        ("isolation", "read-uncommitted"),
+    ],
+)
+def test_a_null_or_malformed_root_field_is_refused_at_ingress(field: str, value: object) -> None:
+    case = _isolation_case({"given": {"databaseOptions": {field: value}}})
+    with pytest.raises(ValueError, match=field if value is None else None):
+        case_format.database_options(case)
+
+
+def test_a_root_naming_the_retired_retries_key_or_no_mapping_is_refused() -> None:
+    with pytest.raises(ValueError, match="retries"):
+        case_format.database_options(
+            _isolation_case({"given": {"databaseOptions": {"retries": 2}}})
+        )
+    with pytest.raises(ValueError, match=r"given\.databaseOptions must be a mapping"):
+        case_format.database_options(_isolation_case({"given": {"databaseOptions": "locking"}}))
+
+
+def test_effective_options_lay_the_authored_request_over_the_root() -> None:
+    # The grading-side resolution: explicit over root over built-in, one field
+    # at a time. Neither input is changed by it — the root record still holds
+    # only what the case configured, and the request only what it authored.
+    case = _isolation_case(
+        {
+            "given": {"databaseOptions": {"maxRetries": 2, "concurrency": "locking"}},
+            "when": {"uow": {"maxRetries": 5, "isolation": "serializable"}},
+        }
+    )
+    assert case_format.effective_options(case) == DatabaseOptions(
+        max_retries=5, concurrency="locking", isolation="serializable"
+    )
+    assert case_format.database_options(case) == DatabaseOptions(
+        max_retries=2, concurrency="locking"
+    )
+    assert case_format.transaction_keywords(case) == {
+        "max_retries": 5,
+        "isolation": "serializable",
+    }
+
+
+def test_an_authored_zero_or_false_overrides_a_configured_root() -> None:
+    case = _isolation_case(
+        {
+            "given": {"databaseOptions": {"maxRetries": 3, "retryOptimisticConflicts": True}},
+            "when": {"uow": {"maxRetries": 0, "retryOptimisticConflicts": False}},
+        }
+    )
+    assert case_format.effective_options(case) == DatabaseOptions(
+        max_retries=0, retry_optimistic_conflicts=False
+    )
+
+
+def test_effective_options_of_an_unconfigured_unrequesting_case_are_the_built_ins() -> None:
+    assert case_format.effective_options(_isolation_case({})) == DatabaseOptions()
 
 
 def test_is_module_tag_grammar() -> None:

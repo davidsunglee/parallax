@@ -27,7 +27,7 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     execution_lifecycle_observation,
 )
-from parallax.conformance._mechanism import model_facts
+from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import predicate
@@ -73,6 +73,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
+from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit._metamodel_support import Declaration, attribute, source
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
@@ -2328,7 +2329,9 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             }
         },
     ]
-    context = scenario.CaseContext(serving, meta, "locking", TemporalShadow(), {})
+    context = scenario.CaseContext(
+        serving, meta, "locking", TemporalShadow(), {}, DatabaseOptions()
+    )
     with pytest.raises(EngineError, match="not preceded by"):
         scenario._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             FakeWritePort(),
@@ -4010,3 +4013,186 @@ def test_a_conflict_attempt_omitting_every_option_requests_nothing() -> None:
         "conflict", {"when": {"write": {"id": 2, "balance": "275.00", "observedVersion": 1}}}
     )
     assert scenario._conflict_attempt_requests(case) == {}  # pyright: ignore[reportPrivateUsage] - unit test drives the conflict lane's private projection directly
+
+
+# --------------------------------------------------------------------------- #
+# Root configuration (m-case-format *Root configuration*): every Handle a      #
+# scenario lane composes for the case's own units of work is connected with    #
+# the record `given.databaseOptions` states, and every transaction it opens     #
+# resolves what the request omits against that record — the held `uow` group,  #
+# the ungrouped keyed unit, the ungrouped find, the readless predicate write,  #
+# the materializing pair, and the writeSequence entry alike.                   #
+# --------------------------------------------------------------------------- #
+_CONSPICUOUS_ROOT: Final[dict[str, object]] = {
+    "maxRetries": 0,
+    "concurrency": "locking",
+    "retryOptimisticConflicts": True,
+    "isolation": "serializable",
+}
+
+
+def _rooted(case: case_format.Case, *, uow: dict[str, object] | None = None) -> case_format.Case:
+    """``case`` under a conspicuous root — every field away from its built-in —
+    with `when.uow` replaced by ``uow`` (dropped when ``None``)."""
+    document = dict(case.document)
+    given = cast("Mapping[str, Any]", document.get("given") or {})
+    document["given"] = {**given, "databaseOptions": dict(_CONSPICUOUS_ROOT)}
+    when = {k: v for k, v in cast("Mapping[str, Any]", document["when"]).items() if k != "uow"}
+    document["when"] = when if uow is None else {**when, "uow": uow}
+    return dataclasses.replace(case, document=document)
+
+
+def test_a_held_uow_group_opens_at_the_roots_level_and_plans_under_the_roots_preference() -> None:
+    # m-unit-work-005's three-step group is ONE transaction; under a locking,
+    # Serializable root that requests nothing it opens at Serializable, and the
+    # find inside it renders the shared-lock suffix the resolved preference
+    # calls for, while the versioned update is ungated — the planning value and
+    # the executed request agree because both come from the same root.
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
+    run = scenario.run_scenario_case(_rooted(_case("m-unit-work-005")), port)
+    assert port.levels == ["serializable"]
+    assert run.emissions[0].sql.endswith("for share of t0")
+    assert run.emissions[1].sql == "update account set balance = ?, version = ? where id = ?"
+
+
+def test_an_authored_request_overrides_the_root_for_the_group_it_names() -> None:
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
+    run = scenario.run_scenario_case(
+        _rooted(
+            _case("m-unit-work-005"),
+            uow={"concurrency": "optimistic", "isolation": "read-committed"},
+        ),
+        port,
+    )
+    assert port.levels == ["read_committed"]
+    assert not run.emissions[0].sql.endswith("for share of t0")
+
+
+def test_an_ungrouped_keyed_unit_and_an_ungrouped_find_each_open_at_the_roots_level() -> None:
+    # m-unit-work-001: an ungrouped insert unit and an ungrouped dependent find,
+    # each its own transaction, each resolved against the root this lane
+    # connected — two boundaries, both at the root's Serializable, and the find
+    # locking under the root's preference.
+    port = FakeWritePort(
+        find_rows=[{"id": 7, "owner": "Newton", "balance": decimal.Decimal("5.00"), "version": 1}]
+    )
+    run = scenario.run_scenario_case(_rooted(_case("m-unit-work-001")), port)
+    assert port.levels == ["serializable", "serializable"]
+    assert run.emissions[1].sql.endswith("for share of t0")
+
+
+def test_a_readless_predicate_write_opens_at_the_roots_level() -> None:
+    case = _synthetic_write(
+        "scenario",
+        {
+            "model": "models/wallet.yaml",
+            "given": {"databaseOptions": dict(_CONSPICUOUS_ROOT)},
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Wallet",
+                                "predicate": {
+                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                                },
+                            },
+                        }
+                    }
+                ]
+            },
+        },
+    )
+    port = FakeWritePort()
+    scenario.run_scenario_case(case, port)
+    assert port.levels == ["serializable"]
+
+
+def test_a_materializing_pair_opens_its_one_transaction_at_the_roots_level() -> None:
+    case = _synthetic_write(
+        "scenario",
+        {
+            "given": {"databaseOptions": dict(_CONSPICUOUS_ROOT)},
+            "when": {
+                "scenario": [
+                    {
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {
+                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                            },
+                        },
+                    },
+                    {
+                        "write": {
+                            "mutation": "delete",
+                            "target": {
+                                "entity": "Account",
+                                "predicate": {
+                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                                },
+                            },
+                        }
+                    },
+                ]
+            },
+        },
+    )
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
+    scenario.run_scenario_case(case, port)
+    assert port.levels == ["serializable"]
+
+
+def test_a_write_sequence_entry_opens_at_the_roots_level() -> None:
+    port = FakeWritePort()
+    scenario.run_write_sequence_case(_rooted(_case("m-unit-work-003")), port)
+    assert port.levels
+    assert set(port.levels) == {"serializable"}
+
+
+def test_the_case_context_carries_the_root_record_beside_the_sparse_request() -> None:
+    # The two travel apart: the record is the whole root, the request only what
+    # `when.uow` authored, and the planning preference is what the two resolve
+    # to — so neither seam can be fed the other's value.
+    case = _rooted(_case("m-unit-work-001"), uow={"maxRetries": 3})
+    serving = model_facts.case_serving_model(case)
+    context = scenario.CaseContext(
+        serving,
+        models.accepted_model_of(serving.current().model),
+        case_document.concurrency(case),
+        TemporalShadow(),
+        case_format.transaction_keywords(case),
+        case_format.database_options(case),
+    )
+    assert context.options == DatabaseOptions(
+        max_retries=0,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
+    )
+    assert context.requests == {"max_retries": 3}
+    assert context.concurrency == "locking"
+
+
+def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field() -> None:
+    # The conflict lane connects each attempt's Handle with the case's root, so
+    # a root level governs the attempt exactly as an authored one does; the
+    # authored `when.attempts` stays the loop, so no retry field reaches the
+    # call from the request whatever the root says about retries.
+    case = _rooted(
+        _load_case("m-opt-lock-006"),
+        uow={"concurrency": "optimistic", "retryOptimisticConflicts": True, "maxRetries": 3},
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    scenario.run_conflict_case(case, port)
+    assert port.levels == ["serializable"]
+    assert scenario._conflict_attempt_requests(case) == {  # pyright: ignore[reportPrivateUsage] - the lane's own projection is what this pins
+        "concurrency": "optimistic"
+    }

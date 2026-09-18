@@ -82,3 +82,11 @@ Both halves are proven again for the strategy the caller never asked for: the
 unversioned Non-Temporal fallback renders the suffix under the default
 `optimistic` preference (`m-opt-lock-023`) and that derived lock excludes a
 writer too (`m-read-lock-012`).
+
+The preference a transaction resolves may come from its Database Root rather
+than from the call (ADR 0065), and the suffix follows the resolved preference
+either way: a locking root's `uow` group renders the shared-lock pages while the
+invocation names no preference (`m-read-lock-017`), an explicit `optimistic`
+request under that root renders them lock-free (`m-read-lock-018`), and a
+standalone read under a locking root takes no lock at all, because it opens no
+transaction for the root's defaults to govern (`m-read-lock-019`).

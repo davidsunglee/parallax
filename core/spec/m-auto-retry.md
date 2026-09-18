@@ -80,3 +80,9 @@ injected transient auto-retried away, `maxRetries: 0`, bound exhaustion, the cal
 value withheld on abort) need injected faults a single-connection harness cannot
 provoke, so they are authored as **boundary** cases on the `api-conformance` lane
 and satisfied by each language's API Conformance Suite (`m-api-conformance`).
+The root-owned defaults are proven the same way, through what the loop does
+under a configured root (`m-case-format` *Root configuration*): a zero bound on
+the root disables the loop for an invocation naming none and an explicit bound
+overrides it; a root level stands over every attempt and an explicit level
+overrides it; and an explicit opt-out under an opted-in root still retries a
+transient, because the opt-in widens the retriable set without ever narrowing it.

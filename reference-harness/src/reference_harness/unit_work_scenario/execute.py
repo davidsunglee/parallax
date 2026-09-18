@@ -7,9 +7,10 @@ closes at its own declared last step. What a row-publishing step then observes i
 :mod:`.observations`'.
 
 Every session a step holds opens at the case's resolved Isolation Level — its
-declared `when.uow.isolation`, else the Database Root's built-in Read Committed
-— the provider mapping that portable level to its own engine; an ungrouped step
-on the autocommit connection is one statement and takes the server's own default.
+declared `when.uow.isolation`, else its root's `given.databaseOptions.isolation`,
+else the Database Root's built-in Read Committed — the provider mapping that
+portable level to its own engine; an ungrouped step on the autocommit connection
+is one statement and takes the server's own default.
 
 A step carrying the OPTIONAL `uow` grouping key (`m-case-format`) executes on a
 HELD session shared with every other step of the SAME label: a grouped write
