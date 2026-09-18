@@ -4208,12 +4208,33 @@ def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field
 def test_a_conflict_case_whose_root_opts_into_conflict_retry_is_refused_up_front() -> None:
     # The authored attempts ARE the loop, one production attempt each. An
     # authored opt-in is descriptive and stripped from the request, but a root
-    # opt-in reaches `connect` unchanged and would make production re-run the
-    # stale attempt inside its own transaction — so the case is refused by
-    # name before its source read, rather than run as work it never described.
-    case = _rooted(_load_case("m-opt-lock-006"))
+    # opt-in reaches `connect` unchanged and, under a positive bound, would make
+    # production re-run the stale attempt inside its own transaction — so the
+    # case is refused by name before its source read, rather than run as work
+    # it never described.
+    case = _rooted(_load_case("m-opt-lock-006"), root={**_CONSPICUOUS_ROOT, "maxRetries": 1})
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
-    with pytest.raises(EngineError, match=r"given\.databaseOptions.*optimistic-conflict retry"):
+    with pytest.raises(
+        EngineError, match=r"given\.databaseOptions.*optimistic-conflict retry under a bound of 1"
+    ):
         scenario.run_conflict_case(case, port)
     assert port.levels == []
     assert port.writes == []
+
+
+def test_a_conflict_case_whose_root_opt_in_is_bounded_at_zero_runs_its_attempt() -> None:
+    # A root that opts in and bounds re-execution at `0` cannot add an attempt:
+    # `m-auto-retry` says a zero bound disables the loop, so the opt-in is
+    # inert and the case runs as authored, one production attempt at the
+    # root's level under the optimistic preference its request authors.
+    case = _rooted(_load_case("m-opt-lock-006"), uow={"concurrency": "optimistic"})
+    assert case_format.database_options(case) == DatabaseOptions(
+        max_retries=0,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    scenario.run_conflict_case(case, port)
+    assert port.levels == ["serializable"]
+    assert len(port.writes) == 1

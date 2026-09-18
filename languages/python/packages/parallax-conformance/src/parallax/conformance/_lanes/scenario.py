@@ -3399,9 +3399,10 @@ def _conflict_attempt_requests(case: case_format.Case) -> case_format.Transactio
     production's own loop is driven from it. The root record a conflict case
     configures (`given.databaseOptions`) reaches the attempt's ``connect``
     unchanged, so a root preference or level governs the attempt exactly as an
-    authored one does — and a root that opts into conflict retry is refused
-    before any attempt runs (:func:`refuse_a_conflict_retry_opt_in`), because
-    the lane carries no authored keyword that could stand over it.
+    authored one does — and a root that opts into conflict retry under a
+    positive bound is refused before any attempt runs
+    (:func:`refuse_a_conflict_retry_opt_in`), because the lane carries no
+    authored keyword that could stand over it.
     """
     authored = case_format.transaction_keywords(case)
     requests: case_format.TransactionKeywords = {}
@@ -3416,7 +3417,8 @@ def refuse_a_conflict_retry_opt_in(
     case: case_format.Case, resolved: DatabaseOptions, placement: str
 ) -> None:
     """Refuse a case whose transactions would resolve `retryOptimisticConflicts`
-    to true on a lane that authors each attempt itself.
+    to true under a positive `maxRetries` on a lane that authors each attempt
+    itself.
 
     The conflict lane's `when.attempts` and the interleaved lane's two `uow`
     groups are the retry loop, spelled one attempt at a time and graded per
@@ -3426,16 +3428,19 @@ def refuse_a_conflict_retry_opt_in(
     one transaction this lane opened for it: hidden SQL, a second observing
     read, and an advance reported where the case grades the shortfall. A
     retried loop is a `boundary` case's to prove; here it is refused by name
-    rather than run as work the case never described. ``placement`` names
-    where the case spelled the opt-in.
+    rather than run as work the case never described. A bound of ``0`` disables
+    re-execution (`m-auto-retry`), so an opt-in the bound makes inert is
+    admitted: production classifies the conflict retriable and still surfaces
+    it after the one attempt. ``placement`` names where the case spelled the
+    opt-in.
     """
-    if not resolved.retry_optimistic_conflicts:
+    if not (resolved.retry_optimistic_conflicts and resolved.max_retries > 0):
         return
     raise EngineError(
-        f"{case.path.name}: {placement} opts into optimistic-conflict retry, which would "
-        "make production re-run a conflicting attempt inside the one transaction this lane "
-        "opens for it; the attempts this shape authors are its retry loop, and a retried "
-        "loop is a `boundary` case's to prove"
+        f"{case.path.name}: {placement} opts into optimistic-conflict retry under a bound of "
+        f"{resolved.max_retries}, so production could re-run a conflicting attempt inside the "
+        "one transaction this lane opens for it; the attempts this shape authors are its retry "
+        "loop, and a retried loop is a `boundary` case's to prove"
     )
 
 

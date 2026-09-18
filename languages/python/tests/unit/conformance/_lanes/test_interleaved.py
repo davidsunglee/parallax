@@ -512,29 +512,76 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
         )
 
 
-@pytest.mark.parametrize(
-    "placement",
-    [
-        {"given": {"databaseOptions": {"retryOptimisticConflicts": True}}},
-        {"when": {"uow": {"retryOptimisticConflicts": True}}},
-    ],
-)
-def test_an_interleaved_case_resolving_the_conflict_retry_opt_in_is_refused_up_front(
+def _with_option_placement(
     placement: Mapping[str, Mapping[str, object]],
-) -> None:
-    # Each group is one turnstile-sequenced production attempt; an opt-in the
-    # groups would resolve — spelled on the root or on the invocation — would
-    # have production re-run a conflicting group's steps against a turnstile
-    # that already passed them. Refused before either session is asked for.
+) -> case_format.Case:
+    """`m-opt-lock-012` with each block of ``placement`` merged into its document."""
     case = _own_copy(_load_case("m-opt-lock-012"))
     document = cast("dict[str, Any]", case.document)
     for group, fields in placement.items():
         document[group] = {**cast("Mapping[str, Any]", document.get(group) or {}), **fields}
+    return case
+
+
+@pytest.mark.parametrize(
+    ("placement", "bound"),
+    [
+        ({"given": {"databaseOptions": {"retryOptimisticConflicts": True}}}, 10),
+        ({"when": {"uow": {"retryOptimisticConflicts": True, "maxRetries": 1}}}, 1),
+    ],
+)
+def test_an_interleaved_case_resolving_the_conflict_retry_opt_in_is_refused_up_front(
+    placement: Mapping[str, Mapping[str, object]], bound: int
+) -> None:
+    # Each group is one turnstile-sequenced production attempt; an opt-in the
+    # groups would resolve — spelled on the root or on the invocation — under a
+    # positive bound, the built-in or an authored one, would have production
+    # re-run a conflicting group's steps against a turnstile that already
+    # passed them. Refused before either session is asked for.
+    case = _with_option_placement(placement)
     executions = _ScriptedExecutions(ScriptedPort(), ScriptedPort())
 
-    with pytest.raises(EngineError, match="optimistic-conflict retry"):
+    with pytest.raises(EngineError, match=f"optimistic-conflict retry under a bound of {bound}"):
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
     assert executions.opened == []
+
+
+@pytest.mark.parametrize(
+    "placement",
+    [
+        {"given": {"databaseOptions": {"retryOptimisticConflicts": True, "maxRetries": 0}}},
+        {"when": {"uow": {"retryOptimisticConflicts": True, "maxRetries": 0}}},
+    ],
+)
+def test_an_interleaved_case_whose_opt_in_is_bounded_at_zero_runs_each_group_once(
+    placement: Mapping[str, Mapping[str, object]],
+) -> None:
+    # An opt-in under a bound of `0` cannot add an attempt (`m-auto-retry`: a
+    # zero bound disables the loop), so the case runs as authored from either
+    # placement: the doomed group's conflict surfaces after its one attempt,
+    # and each session opens exactly one transaction.
+    case = _with_option_placement(placement)
+    row_v1: MappingRow = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
+    caller_port = ScriptedPort(read_rows=[[]])
+    ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
+    peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+    executions = _ScriptedExecutions(ours_port, peer_port)
+
+    _emissions, round_trips, conflict_actual, _rows = run_interleaved_scenario_case(
+        case, caller_port, executions
+    )
+
+    assert round_trips == 6
+    assert conflict_actual == 0
+    assert len(ours_port.levels) == 1
+    assert len(peer_port.levels) == 1
+    assert len(ours_port.writes) == 2
+    assert len(peer_port.writes) == 1
 
 
 def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> None:
