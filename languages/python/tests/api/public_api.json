@@ -491,6 +491,11 @@
     "compile_facet",
     "view"
   ],
+  "parallax.core.unit_work:EntityStateRow": [
+    "over_declared_members",
+    "over_members",
+    "remap"
+  ],
   "parallax.postgres": [
     "OnDemandOptions",
     "PoolOptions",

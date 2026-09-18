@@ -14,7 +14,15 @@ from parallax.conformance.cost_envelope import validate
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.entity import EntityRowCodec
-from parallax.core.unit_work import TemporalObservation, WritePlanner
+from parallax.core.unit_work import (
+    BufferItem,
+    EntityStateRow,
+    MaterializedWriteGroup,
+    TemporalColumns,
+    TemporalObservation,
+    UnitOfWork,
+    WritePlanner,
+)
 from parallax.snapshot.handle import build_write_planner
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
@@ -246,9 +254,19 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(acquisition_support, "AcquisitionPort", _CountingPort)
+    buffered: list[MaterializedWriteGroup] = []
+    buffer = UnitOfWork.buffer
+
+    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
+        if isinstance(instruction, MaterializedWriteGroup):
+            buffered.append(instruction)
+        buffer(uow, instruction)
+
+    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
     for case in acquisition_support.CASES:
         _CountingPort.reads = 0
         _CountingPort.delivered = 0
+        buffered.clear()
         marks: list[str] = []
         handle = acquisition_support.database(case)
         try:
@@ -263,6 +281,18 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
         assert marks == ["opened", "closed"]
         assert _CountingPort.reads == 1
         assert _CountingPort.delivered == case.rows
+        # What the window leaves buffered is one group owning every resolved
+        # row's complete predecessor columnarly, and no per-row row view.
+        (group,) = buffered
+        assert isinstance(group.observations, TemporalColumns)
+        predecessors = group.observations.predecessors
+        assert predecessors.length == case.rows
+        assert (predecessors.documents is None) == (case.layout == "columns")
+        assert not any(
+            isinstance(cell, EntityStateRow)
+            for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
+            for cell in column
+        )
         assert all(
             row["title"] != acquisition_support.ASSIGNED_TITLE
             if case.layout == "columns"

@@ -35,6 +35,8 @@ from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.metamodel import FacetKey
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
@@ -46,6 +48,7 @@ from parallax.core.unit_work import (
     ChunkedColumnBuilder,
     ColumnSlice,
     ConcurrencyStrategy,
+    EntityStateRow,
     FixedClock,
     MaterializedWriteGroup,
     MilestoneTopology,
@@ -96,6 +99,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 
@@ -299,6 +303,59 @@ def test_predecessor_columns_freezes_nested_documents_after_an_immutable_prefix(
         cast("dict[str, object]", geo)["country"] = "SE"
     with pytest.raises(TypeError):
         cast("dict[str, object]", phones[0])["number"] = "999"
+
+
+def test_predecessor_columns_own_the_state_a_declared_row_view_streams_into_them() -> None:
+    # The items a declared-name row view yields — one per canonical member,
+    # nested occurrences as shape-backed views, an unread slot as the absent
+    # marker — stream straight into the column builders, and the columns take
+    # ownership: every occurrence cell is the frozen document, no row view or
+    # nested view survives in a column, and the row materialized back is the
+    # complete predecessor by declared name with the marker where the read
+    # carried nothing.
+    layout = LayoutCatalog(document_model()).entity(PERSON)
+    values: tuple[object, ...] = (
+        7,
+        "Ada",
+        ABSENT,
+        None,
+        ("Bergen", ("NO",)),
+        (("founder",), (None,)),
+    )
+    view = EntityStateRow.over_declared_members(layout.member_selection, values, absent=ABSENT)
+    builders = {name: ChunkedColumnBuilder[object]() for name in view}
+    for name, value in view.items():
+        builders[name].append(value)
+    attributes = ("id", "displayName", "score", "joinedOn")
+    value_objects = ("address", "tags")
+    predecessors = PredecessorColumns(
+        shape=PredecessorShape(attributes=attributes, value_objects=value_objects),
+        attribute_columns=tuple(whole(builders[name].build()) for name in attributes),
+        value_object_columns=tuple(whole(builders[name].build()) for name in value_objects),
+    )
+
+    predecessor = predecessors.row(0)
+    assert predecessor.members is not view
+    assert dict(predecessor.members) == {
+        "id": 7,
+        "displayName": "Ada",
+        "score": ABSENT,
+        "joinedOn": None,
+        "address": {"city": "Bergen", "geo": {"country": "NO"}},
+        "tags": ({"label": "founder"}, {"label": None}),
+    }
+    address = predecessor.member("address")
+    assert isinstance(address, FrozenMap)
+    assert isinstance(address["geo"], FrozenMap)
+    assert all(
+        isinstance(tag, FrozenMap) for tag in cast("tuple[object, ...]", predecessor.member("tags"))
+    )
+    assert not any(
+        isinstance(cell, EntityStateRow)
+        or (isinstance(cell, Mapping) and not isinstance(cell, FrozenMap))
+        for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
+        for cell in column
+    )
 
 
 def test_predecessor_columns_refuses_misaligned_member_column_lengths() -> None:

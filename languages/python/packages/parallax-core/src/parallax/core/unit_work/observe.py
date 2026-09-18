@@ -11,14 +11,18 @@ settled, in **both** concurrency modes.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import ItemsView, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
     AttributeMetadata,
-    NestedValueObjectMetadata,
+    DocumentMember,
+    Leaf,
+    MemberShape,
+    Multiplicity,
+    Occurrence,
     ValueObjectMetadata,
 )
 
@@ -31,15 +35,17 @@ __all__ = [
 ]
 
 
-type _Occurrence = ValueObjectMetadata | NestedValueObjectMetadata
-
-
 class _Layout(Protocol):
     @property
     def attributes(self) -> Sequence[AttributeMetadata]: ...
 
     @property
     def occurrences(self) -> Sequence[ValueObjectMetadata]: ...
+
+
+class _Selection(Protocol):
+    @property
+    def shape(self) -> MemberShape: ...
 
 
 class EntityStateRow(Mapping[str, object]):
@@ -50,17 +56,25 @@ class EntityStateRow(Mapping[str, object]):
     without rebuilding or detaching every member into another row-sized
     dictionary. Nested Value Objects are exposed through mapping views over the
     same positional state.
+
+    A positional row is keyed one of two ways, fixed at construction: by each
+    member's physical storage name (:meth:`over_members`), where iteration omits
+    absent slots, or by its declared name (:meth:`over_declared_members`), where
+    every canonical position is a key and an absent slot answers the absent
+    marker rather than raising.
     """
 
-    __slots__ = ("_absent", "_layout", "_members", "_values")
+    __slots__ = ("_absent", "_layout", "_members", "_shape", "_values")
 
     _layout: _Layout | None
     _members: Mapping[str, object] | None
+    _shape: MemberShape | None
 
     def __init__(self, members: Mapping[str, object]) -> None:
         self._members = members
         self._values: tuple[object, ...] = ()
         self._layout = None
+        self._shape = None
         self._absent: object | None = None
 
     @classmethod
@@ -75,6 +89,28 @@ class EntityStateRow(Mapping[str, object]):
         row = object.__new__(cls)
         row._members = None
         row._layout = layout
+        row._shape = None
+        row._values = values
+        row._absent = absent
+        return row
+
+    @classmethod
+    def over_declared_members(
+        cls, selection: _Selection, values: tuple[object, ...], *, absent: object
+    ) -> EntityStateRow:
+        """View one positional member row through its declared member names.
+
+        The view is full-width: it holds one key per member of ``selection``'s
+        canonical shape, and a position holding ``absent`` is a present key
+        whose value is that marker.
+        """
+        shape = selection.shape
+        if len(shape.members) != len(values):
+            raise ValueError("an Entity State row selection must align with its member state")
+        row = object.__new__(cls)
+        row._members = None
+        row._layout = None
+        row._shape = shape
         row._values = values
         row._absent = absent
         return row
@@ -89,8 +125,15 @@ class EntityStateRow(Mapping[str, object]):
         return cls(_RemappedMembers(members, state))
 
     def __getitem__(self, key: str) -> object:
-        if self._members is not None:
-            return self._members[key]
+        members = self._members
+        if members is not None:
+            return members[key]
+        shape = self._shape
+        if shape is not None:
+            position = shape.position(key)
+            if position is None:
+                raise KeyError(key)
+            return _member_value(shape.members[position], self._values[position], self._absent)
         layout = cast("_Layout", self._layout)
         attributes = layout.attributes
         position = next(
@@ -104,14 +147,24 @@ class EntityStateRow(Mapping[str, object]):
         if position is None:
             raise KeyError(key)
         value = self._values[position]
-        declared = (
-            None if position < len(attributes) else layout.occurrences[position - len(attributes)]
-        )
-        return value if declared is None else _occurrence_value(value, declared, self._absent)
+        if position < len(attributes):
+            return value
+        declared = layout.occurrences[position - len(attributes)]
+        return _occurrence_value(value, declared.definition, self._absent)
+
+    def __contains__(self, key: object) -> bool:
+        shape = self._shape
+        if shape is None:
+            return super().__contains__(key)
+        return shape.position(cast("str", key)) is not None
 
     def __iter__(self) -> Iterator[str]:
-        if self._members is not None:
-            return iter(self._members)
+        members = self._members
+        if members is not None:
+            return iter(members)
+        shape = self._shape
+        if shape is not None:
+            return (member.name for member in shape.members)
         layout = cast("_Layout", self._layout)
         return (
             member.storage.name
@@ -122,7 +175,18 @@ class EntityStateRow(Mapping[str, object]):
         )
 
     def __len__(self) -> int:
-        return len(self._members) if self._members is not None else sum(1 for _key in self)
+        members = self._members
+        if members is not None:
+            return len(members)
+        if self._shape is not None:
+            return len(self._values)
+        return sum(1 for _key in self)
+
+    def items(self) -> ItemsView[str, object]:
+        shape = self._shape
+        if shape is None:
+            return super().items()
+        return _DeclaredItems(self, shape.members, self._values, self._absent)
 
 
 class _RemappedMembers(Mapping[str, object]):
@@ -152,55 +216,96 @@ class _RemappedMembers(Mapping[str, object]):
 
 
 class _EntityDocumentRow(Mapping[str, object]):
-    """A mapping view over one positional Value Object member row."""
+    """A mapping view over one positional Value Object member row.
 
-    __slots__ = ("_absent", "_declared", "_keys", "_values")
+    Keys are the shape's declared names; a position holding the absent marker
+    is no key at all, so lookup raises and iteration omits it.
+    """
 
-    _declared: tuple[_Occurrence | None, ...]
-    _keys: tuple[str, ...]
+    __slots__ = ("_absent", "_shape", "_values")
 
     def __init__(
-        self, values: tuple[object, ...], declared: _Occurrence, absent: object | None
+        self, values: tuple[object, ...], shape: MemberShape, absent: object | None
     ) -> None:
-        attributes = declared.attributes
-        occurrences = declared.value_objects
         self._values = values
-        self._declared = (
-            *((None,) * len(attributes)),
-            *occurrences,
-        )
-        self._keys = (
-            *(member.identity.name for member in attributes),
-            *(member.identity.path[-1] for member in occurrences),
-        )
+        self._shape = shape
         self._absent = absent
 
     def __getitem__(self, key: str) -> object:
-        try:
-            position = self._keys.index(key)
-        except ValueError:
-            raise KeyError(key) from None
-        value = self._values[position]
-        if value is self._absent:
+        shape = self._shape
+        position = shape.position(key)
+        if position is None:
             raise KeyError(key)
-        declared = self._declared[position]
-        return value if declared is None else _occurrence_value(value, declared, self._absent)
+        value = self._values[position]
+        absent = self._absent
+        if value is absent:
+            raise KeyError(key)
+        return _member_value(shape.members[position], value, absent)
 
     def __iter__(self) -> Iterator[str]:
+        absent = self._absent
         return (
-            key
-            for key, value in zip(self._keys, self._values, strict=True)
-            if value is not self._absent
+            member.name
+            for member, value in zip(self._shape.members, self._values, strict=True)
+            if value is not absent
         )
 
     def __len__(self) -> int:
-        return sum(1 for _key in self)
+        absent = self._absent
+        return sum(1 for value in self._values if value is not absent)
+
+    def items(self) -> ItemsView[str, object]:
+        return _DocumentItems(self, self._shape.members, self._values, self._absent)
 
 
-def _occurrence_value(value: object, declared: _Occurrence, absent: object | None) -> object:
+class _AlignedItems(ItemsView[str, object]):
+    """An items view walking canonical members beside their aligned values."""
+
+    __slots__ = ("_absent", "_aligned", "_members")
+
+    def __init__(
+        self,
+        mapping: Mapping[str, object],
+        members: tuple[DocumentMember, ...],
+        values: tuple[object, ...],
+        absent: object | None,
+    ) -> None:
+        super().__init__(mapping)
+        self._members = members
+        self._aligned = values
+        self._absent = absent
+
+
+class _DeclaredItems(_AlignedItems):
+    __slots__ = ()
+
+    def __iter__(self) -> Iterator[tuple[str, object]]:
+        absent = self._absent
+        for member, value in zip(self._members, self._aligned, strict=True):
+            yield member.name, _member_value(member, value, absent)
+
+
+class _DocumentItems(_AlignedItems):
+    __slots__ = ()
+
+    def __iter__(self) -> Iterator[tuple[str, object]]:
+        absent = self._absent
+        for member, value in zip(self._members, self._aligned, strict=True):
+            if value is not absent:
+                yield member.name, _member_value(member, value, absent)
+
+
+def _member_value(member: DocumentMember, value: object, absent: object | None) -> object:
+    if isinstance(member, Leaf):
+        return value
+    return _occurrence_value(value, member, absent)
+
+
+def _occurrence_value(value: object, declared: Occurrence, absent: object | None) -> object:
     if value is None or value is absent:
         return value
-    if declared.multiplicity.name == "MANY":
+    shape = declared.shape
+    if declared.multiplicity is Multiplicity.MANY:
         if not isinstance(value, tuple):  # pragma: no cover - accepted Page state is positional
             raise TypeError("a Many Value Object Entity State is positional")
         rows = cast("tuple[object, ...]", value)
@@ -209,11 +314,11 @@ def _occurrence_value(value: object, declared: _Occurrence, absent: object | Non
         ):
             raise TypeError("a Many Value Object Entity State is positional")
         return tuple(
-            _EntityDocumentRow(cast("tuple[object, ...]", item), declared, absent) for item in rows
+            _EntityDocumentRow(cast("tuple[object, ...]", item), shape, absent) for item in rows
         )
     if not isinstance(value, tuple):  # pragma: no cover - accepted Page state is positional
         raise TypeError("a Value Object Entity State is positional")
-    return _EntityDocumentRow(cast("tuple[object, ...]", value), declared, absent)
+    return _EntityDocumentRow(cast("tuple[object, ...]", value), shape, absent)
 
 
 @dataclass(frozen=True, slots=True)
