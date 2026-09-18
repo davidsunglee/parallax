@@ -14,31 +14,21 @@ outside-budget observation into its exit status.
 The *shape* of the bound is gated instead, in
 `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
 runs on every change through `just python-check-cost`. That suite states the bound
-as nine separate readings. Pages do not accumulate: what a delivery retains
+as eight separate readings. Pages do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
-drained, differs from the baseline by less than one retained root costs. One Page, its `PageRows`, one transient `RootView`, and one published root are
-alive at a time, counted as objects; the published root carries exactly its own
-fan-out. The survivor census over a crossed grid of page
-sizes and fan-outs is exactly
-
-```text
-survivors = fixed + per_page_node x batch_size x (1 + fanout)
-                  + per_page_root x batch_size
-                  + per_published_node x (1 + fanout)
-```
-
-with the coefficients pinned as literals — 67 / 2 / 1 / 2 in the Typed lane, 68 /
-2 / 1 / 1 in the Wire lane. The Wire lane's one extra fixed object is the frozen
-sequence its published root spells the included relationship as, which a Typed root
-answers from its node state instead; there is one per relationship the include tree
-names, whatever the fan-out inside it, which is what makes it fixed. The page-ROOT
-term is the coordinate the database evaluated for each root of the page, which is
-what a delivery advances on: it is one object per root position rather than per
-node — a child has no coordinate — and it holds its carriers in one tuple rather
-than wrapping each cell, so the page's own cost is `O(B x T)` in the Continuation
-Order rather than in the published root below it. The delivery's own carried position is one
-more of them, and is fixed. **There is
-no term in the total result size and no term in how far the delivery has got**,
+drained, differs from the baseline by less than one retained root costs. One
+Page, its `PageRows`, one transient `RootView`, and one published root are alive
+at a time, counted by kind at every point of a crossed grid of page sizes and
+fan-outs, and the published root carries exactly its own fan-out of children.
+The Continuation Order's own width is priced on a grid of its own: the
+coordinate the database evaluated for each root of the page is what a delivery
+advances on, one object per root position rather than per node — a child has no
+coordinate — holding its carriers in one tuple rather than wrapping each cell,
+so the page's own cost is `O(B x T)` in the Continuation Order rather than in the
+published root below it, while the width itself costs the plan once and the
+delivery retains three fixed coordinates whatever the page size or the width.
+**There is no term in the total result size and no term in how far the delivery
+has got**,
 and both absences are read directly as well as by omission — over every survivor
 whatever defined its type, over the references those survivors hold, and in bytes
 over the survivors and everything untracked they hold — so a delivery banking one
@@ -158,8 +148,8 @@ repository is enforced against elapsed time.
 
 **A constant.** Every byte figure here is a level, but the claim it supports is a
 difference, and a difference cannot see a Page held one page too long. The
-census in the gated suite is what sees it, which is why its coefficients are
-literals rather than a fit.
+census in the gated suite is what sees it, because it counts each kind a
+delivery may hold and how many of it may be alive.
 
 **Deep fan-out.** One include level at fan-out 5. The bound is deliberately
 `O(P_B + G_max)` rather than `O(B)` — one root with a hundred thousand line items
