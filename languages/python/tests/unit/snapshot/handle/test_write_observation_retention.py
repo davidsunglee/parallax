@@ -1,11 +1,13 @@
 """Write-observation retention unit tests (`parallax.snapshot.handle._retention`).
 
-Drives :class:`ObservedRows` and :func:`retain_evidence` directly, off
-hand-written physical-column rows rather than through a `Transaction.find`: which
-of the two mutually exclusive branches a row takes (a versioned row's observed
-version, a temporal row's whole predecessor milestone), which rows retain no
-evidence at all, what the retained state is keyed by, and what a hint carries
-when there is no state behind it.
+Drives :class:`ObservedRows`, :func:`retain_evidence`, and
+:func:`deferred_evidence` directly, off hand-written rows rather than through a
+`Transaction.find` — physical-column mappings through :meth:`observe_row`, and
+judged positional Entity State through the deferred sources: which of the two
+mutually exclusive branches a row takes (a versioned row's observed version, a
+temporal row's whole predecessor milestone), which rows retain no evidence at
+all, what the retained state is keyed by, what a hint carries when there is no
+state behind it, and that both sources retain one and the same evidence.
 
 Everything a collector holds is asserted through the Read Origins the retention
 answers, never off its own storage: the accumulator is an internal seam, and a
@@ -19,19 +21,21 @@ here is the seam itself.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
 
 from parallax.conformance import models
-from parallax.core.base import INFINITY
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.base import INFINITY, FrozenMap
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.metamodel import EntityIdentity, Leaf, MemberShape, Multiplicity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
+    EntityStateRow,
     FixedClock,
     ObservedStateKey,
     ReadOrigin,
@@ -47,10 +51,6 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._family import entity_layout, members
-from parallax.snapshot.handle._predicate_writes import (
-    _predecessor_payload,  # pyright: ignore[reportPrivateUsage] - the predicate lane's own contribution, proved to be one extraction with retention's
-)
 from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence, retain_evidence
 from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
@@ -126,6 +126,65 @@ def _standalone(model: AcceptedMetamodel, observations: ObservedRows) -> Mapping
     return retain_evidence(model, observations, ledger=None)
 
 
+def _positional(shape: MemberShape, document: Mapping[str, object]) -> tuple[object, ...]:
+    """``document`` as a Page holds it: one slot per canonical member, absent where
+    the document carries no key, nested occurrences positional in turn."""
+    row: list[object] = []
+    for member in shape.members:
+        value = document.get(member.name, ABSENT)
+        if isinstance(member, Leaf) or value is None or value is ABSENT:
+            row.append(value)
+        elif member.multiplicity is Multiplicity.MANY:
+            row.append(
+                tuple(
+                    _positional(member.shape, cast("Mapping[str, object]", element))
+                    for element in cast("Sequence[object]", value)
+                )
+            )
+        else:
+            row.append(_positional(member.shape, cast("Mapping[str, object]", value)))
+    return tuple(row)
+
+
+def _member_row(layout: EntityLayout, columns: Mapping[str, object]) -> tuple[object, ...]:
+    """The positional member row ``columns`` — keyed by physical column — decodes to."""
+    by_declared_name: dict[str, object] = {
+        member.name: columns[binding.storage.name]
+        for member, binding in zip(
+            layout.member_selection.shape.members, layout.member_selection.bindings, strict=True
+        )
+        if binding.storage.name in columns
+    }
+    return _positional(layout.member_selection.shape, by_declared_name)
+
+
+def _judged(
+    model: AcceptedMetamodel,
+    entity: EntityIdentity,
+    columns: Mapping[str, object],
+    document: object | None = None,
+    *,
+    ledger: UnitOfWork | None = None,
+    nodes: int = 1,
+) -> Mapping[int, ReadOrigin]:
+    """The sources a graph-form read retains for ``nodes`` projections of ONE row
+    whose judged, Page-owned positional state decodes ``columns``."""
+    layout = LayoutCatalog(model).entity(entity)
+    member_row = _member_row(layout, columns)
+    observations = ObservedRows()
+    for node in range(nodes):
+        observations.observe_occurrence(node, entity, document)
+    return deferred_evidence(
+        model,
+        observations,
+        lambda _node: (layout, member_row),
+        lambda _node: entity,
+        lambda _node: layout.key_of(member_row),
+        ledger=ledger,
+        pin=Pin(),
+    )
+
+
 def _hint(model: AcceptedMetamodel, observations: ObservedRows, node: int = 0) -> ReadOrigin:
     return _standalone(model, observations)[node]
 
@@ -197,25 +256,47 @@ def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_a
 def test_deferred_standalone_evidence_releases_member_state_after_materialization() -> None:
     model = _accepted("account")
     entity = corpus_entity("Account")
-    layout = LayoutCatalog(model).entity(entity)
-    columns = _account_columns()
-    member_row = tuple(columns[attribute.storage.name] for attribute in layout.attributes)
-    observations = ObservedRows()
-    observations.observe_occurrence(0, entity, None)
-    sources = deferred_evidence(
-        model,
-        observations,
-        lambda _node: (layout, member_row),
-        lambda _node: entity,
-        lambda _node: 1,
-        ledger=None,
-        pin=Pin(),
-    )
+    sources = _judged(model, entity, _account_columns())
 
     origin = sources[0]
     evidence = cast("Any", origin)._source
     assert origin.observation is not None
+    assert origin.observation.evidence == VersionObservation(observed_version=4)
     assert evidence.entity == entity
+    assert evidence._member_row == ()
+    assert evidence._shape is None
+    assert evidence._document is None
+
+
+def test_deferred_standalone_temporal_evidence_retains_its_row_view_and_owns_its_document() -> None:
+    # The standalone deferred source materializes its predecessor from the
+    # judged positional state it held, viewed by declared name, and releases
+    # that state once the evidence exists; the raw document it retains is owned
+    # once, at observation, and shared by identity into the predecessor.
+    model = _accepted("document-layout")
+    entity = corpus_entity("Voyage")
+    document: dict[str, object] = dict(_VOYAGE_DOCUMENT)
+    sources = _judged(model, entity, _voyage_columns(), document)
+    origin = sources[0]
+    evidence = cast("Any", origin)._source
+
+    assert origin.observation is not None
+    observation = origin.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    assert isinstance(observation.predecessor.members, EntityStateRow)
+    assert dict(observation.predecessor.members) == _plain(_voyage_members())
+    assert origin.observation.key == TemporalStateKey(
+        corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
+    )
+    retained = observation.predecessor.document
+    assert isinstance(retained, FrozenMap)
+    assert retained == _VOYAGE_DOCUMENT
+    document["title"] = "Southbound"
+    assert retained == _VOYAGE_DOCUMENT
+    assert evidence._member_row == ()
+    assert evidence._document is None
+    assert evidence._shape is None
+    assert origin.observation is origin.observation
 
 
 def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered() -> None:
@@ -316,33 +397,64 @@ def test_a_temporal_row_retains_its_whole_predecessor_milestone() -> None:
     assert hint.observation.key == _BALANCE_STATE
 
 
-def test_a_retained_predecessor_is_the_extraction_a_predicate_write_also_streams() -> None:
-    # A real find's Predecessor Row and the one a materializing predicate write
-    # contributes per resolved row are ONE extraction over the row's applicable
-    # members, not two that happen to agree: `retain_evidence` and
-    # `_predecessor_payload` reach the same `row_payload` rule, value-object
-    # occurrences included. Two extractions that drifted would chain successors
-    # carrying different rows forward from the same stored state.
+def _voyage_members() -> dict[str, object]:
+    """Every applicable Voyage member by DECLARED name, as `_voyage_columns` holds it."""
+    return {
+        "id": 7,
+        "title": "Northbound",
+        "crew": 12,
+        "txStart": _TX_START,
+        "txEnd": _INFINITY,
+        "manifest": {"cargo": "grain"},
+        "legs": ({"port": "Oslo"}, {"port": "Bergen"}),
+    }
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain(nested) for key, nested in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, tuple):
+        return tuple(_plain(nested) for nested in cast("tuple[object, ...]", value))
+    return value
+
+
+def test_a_physical_column_row_and_a_judged_positional_row_retain_one_predecessor() -> None:
+    # A row reaches retention in one of two namings — a physical-column mapping
+    # a fixture supplied, or the judged positional Entity State a real find's
+    # Page owns — and Voyage's storage names differ from its declared ones
+    # (`in_z` / `txStart`). Both adapt to the SAME declared-name interface
+    # before anything is read, so the object key, the observed state, every
+    # predecessor member (value-object occurrences included), and the retained
+    # document agree exactly; two paths that drifted would chain successors
+    # carrying different rows forward from one stored state.
     model = _accepted("document-layout")
-    entity = model.entity(corpus_entity("Voyage"))
-    assert entity is not None
-    layout = entity_layout(model, entity)
-    assert layout is not None
+    entity = corpus_entity("Voyage")
     columns = _voyage_columns()
 
     observations = ObservedRows()
-    observations.observe_row(0, corpus_entity("Voyage"), columns, _VOYAGE_DOCUMENT)
-    hint = _hint(model, observations)
-    assert hint.observation is not None
-    observation = hint.observation.evidence
-    assert isinstance(observation, TemporalObservation)
+    observations.observe_row(0, entity, columns, _VOYAGE_DOCUMENT)
+    physical = _hint(model, observations)
 
-    streamed = _predecessor_payload(members(layout), columns)
-    assert {"manifest", "legs"} <= streamed.keys()
-    assert dict(observation.predecessor.members) == streamed
-    # The Structured Column rides BESIDE the members either way, so the shared
-    # extraction is over the members alone.
-    assert observation.predecessor.document == _VOYAGE_DOCUMENT
+    def observe(uow: UnitOfWork) -> ReadOrigin:
+        return _judged(model, entity, columns, _VOYAGE_DOCUMENT, ledger=uow)[0]
+
+    positional = _in_transaction(model, observe)
+    standalone = _judged(model, entity, columns, _VOYAGE_DOCUMENT)[0]
+
+    for hint in (physical, positional, standalone):
+        assert hint.object_key == corpus_object_key("Voyage", ("id", 7))
+        assert hint.observation is not None
+        observation = hint.observation.evidence
+        assert isinstance(observation, TemporalObservation)
+        assert {"manifest", "legs"} <= observation.predecessor.members.keys()
+        assert _plain(dict(observation.predecessor.members)) == _voyage_members()
+        assert observation.predecessor.member("txStart") == _TX_START
+        assert hint.observation.key == TemporalStateKey(
+            corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
+        )
+        # The Structured Column rides BESIDE the members either way.
+        assert observation.predecessor.document == _VOYAGE_DOCUMENT
+        assert "charterCode" not in observation.predecessor.members
 
 
 def test_a_retained_predecessor_document_is_isolated_from_the_read_carrier() -> None:
@@ -476,6 +588,59 @@ def test_two_projections_of_one_state_share_one_retained_observation() -> None:
     observations.observe_row(1, corpus_entity("Account"), _account_columns(), None)
     hints = _standalone(_accepted("account"), observations)
     assert hints[0].observation is hints[1].observation
+
+
+def test_two_judged_projections_of_one_temporal_state_share_one_retained_observation() -> None:
+    # The same sharing over judged positional state: two projections of one
+    # Balance milestone, each viewed by declared name, answer one retained
+    # observation and one predecessor, keyed by the declared-name coordinate
+    # (`txStart` over storage `in_z`).
+    model = _accepted("balance")
+
+    def observe(uow: UnitOfWork) -> tuple[ReadOrigin, ReadOrigin]:
+        sources = _judged(model, corpus_entity("Balance"), _balance_columns(), ledger=uow, nodes=2)
+        return sources[0], sources[1]
+
+    first, second = _in_transaction(model, observe)
+    assert first.observation is not None
+    assert first.observation is second.observation
+    assert first.observation.key == _BALANCE_STATE
+    observation = first.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    assert dict(observation.predecessor.members) == {
+        "id": 1,
+        "acctNum": "A-1",
+        "value": Decimal("5.00"),
+        "txStart": _TX_START,
+        "txEnd": _INFINITY,
+    }
+
+
+def test_a_judged_subtype_row_is_keyed_by_its_own_entity_through_inherited_members() -> None:
+    # The positional twin of the physical-column proof above: `DepositRate`
+    # inherits its key and both axes from the bitemporal root `Rate`, and the
+    # declared-name view resolves each inherited member at its canonical
+    # position (`from_z` / `validStart`, `in_z` / `txStart`).
+    columns: Mapping[str, object] = {
+        "id": 1,
+        "amount": Decimal("2.50"),
+        "grade": "A",
+        "from_z": _VALID_START,
+        "thru_z": _INFINITY,
+        "in_z": _RATE_TX_START,
+        "out_z": _INFINITY,
+    }
+    hint = _judged(_accepted("rate"), corpus_entity("DepositRate"), columns)[0]
+    assert hint.object_key == corpus_object_key("DepositRate", ("id", 1))
+    assert hint.observation is not None
+    assert hint.observation.key == TemporalStateKey(
+        corpus_object_key("DepositRate", ("id", 1)),
+        Edge(tx_time=_RATE_TX_START, valid_time=_VALID_START),
+    )
+    observation = hint.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    assert observation.predecessor.member("grade") == "A"
+    assert observation.predecessor.member("validEnd") is _INFINITY
 
 
 # --------------------------------------------------------------------------- #

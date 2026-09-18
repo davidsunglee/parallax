@@ -18,8 +18,10 @@ place to move from.
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import re
-from collections.abc import Mapping
+import types
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -56,13 +58,20 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.unit_work import (
+    BufferItem,
+    EntityStateRow,
     FixedClock,
+    MaterializedWriteGroup,
     OptimisticLockConflictError,
     PredicateWrite,
     StaleWriteError,
+    TemporalColumns,
+    UnitOfWork,
     WriteRejectedError,
     instructions,
 )
@@ -89,6 +98,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
 from tests.unit._transact_support import (
@@ -1414,13 +1424,12 @@ def test_normalizing_production_encoded_assignments_yields_the_managed_compariso
         if entity.identity.name == "WhereManagedSubscriber"
     )
     shape = comparison_shape(meta, entity)
-    columns = {"details": ("details", True), "entries": ("entries", True)}
     row: MappingRow = {"details": managed, "entries": [managed]}
 
     assignments = _normalize_assignment_values({"details": encoded, "entries": [encoded]}, shape)
 
     assert assignments == {"details": managed, "entries": [managed]}
-    assert _is_no_op_assignment(shape, columns, assignments, row)
+    assert _is_no_op_assignment(shape, assignments, row)
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
@@ -1438,16 +1447,15 @@ def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds()
         if entity.identity.name == "WhereManagedSubscriber"
     )
     shape = comparison_shape(meta, entity)
-    columns = {"amount": ("amount", False), "day": ("day", False), "payload": ("payload", False)}
     stored = {"amount": Decimal("19.95"), "day": dt.date(2026, 8, 13), "payload": b"\x0a\x1b"}
     row: MappingRow = dict(stored)
 
-    assert _is_no_op_assignment(shape, columns, _normalize_assignment_values(stored, shape), row)
-    assert not _is_no_op_assignment(shape, columns, {"payload": b"\x0a\x1c"}, row)
-    assert not _is_no_op_assignment(shape, columns, {"day": dt.date(2026, 8, 14)}, row)
+    assert _is_no_op_assignment(shape, _normalize_assignment_values(stored, shape), row)
+    assert not _is_no_op_assignment(shape, {"payload": b"\x0a\x1c"}, row)
+    assert not _is_no_op_assignment(shape, {"day": dt.date(2026, 8, 14)}, row)
 
     out_of_scale: MappingRow = {"amount": Decimal("19.9501")}
-    assert not _is_no_op_assignment(shape, columns, {"amount": Decimal("19.95")}, out_of_scale)
+    assert not _is_no_op_assignment(shape, {"amount": Decimal("19.95")}, out_of_scale)
 
 
 def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
@@ -1460,16 +1468,13 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
     model = document_model()
     person = document_layout_entity(model, "Person")
     shape = comparison_shape(model, person)
-    columns = {"address": ("address", True), "tags": ("tags", True)}
     row: MappingRow = {
         "address": {"city": "Bergen", "geo": {"country": "NO"}},
         "tags": [{"label": "founder"}],
     }
 
     def no_op(assignments: Mapping[str, object]) -> bool:
-        return _is_no_op_assignment(
-            shape, columns, _normalize_assignment_values(assignments, shape), row
-        )
+        return _is_no_op_assignment(shape, _normalize_assignment_values(assignments, shape), row)
 
     assert no_op(
         {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]}
@@ -2322,3 +2327,167 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
 
     account_db(port).transact(fn)
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
+
+
+# --------------------------------------------------------------------------- #
+# What a materializing temporal resolve retains per row: the row itself,      #
+# streamed whole into the group's Predecessor Columns, and nothing else.      #
+# --------------------------------------------------------------------------- #
+def _buffered_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[MaterializedWriteGroup], list[EntityStateRow]]:
+    """Record every Materialized Write Group a unit of work buffers and every
+    declared-name row view the lane constructs, without changing either."""
+    groups: list[MaterializedWriteGroup] = []
+    views: list[EntityStateRow] = []
+    buffer = UnitOfWork.buffer
+    over_declared_members = EntityStateRow.over_declared_members
+
+    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
+        if isinstance(instruction, MaterializedWriteGroup):
+            groups.append(instruction)
+        buffer(uow, instruction)
+
+    def recording_view(
+        selection: Any, values: tuple[object, ...], *, absent: object
+    ) -> EntityStateRow:
+        view = over_declared_members(selection, values, absent=absent)
+        views.append(view)
+        return view
+
+    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
+    monkeypatch.setattr(EntityStateRow, "over_declared_members", staticmethod(recording_view))
+    return groups, views
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain(nested) for key, nested in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, tuple):
+        return tuple(_plain(nested) for nested in cast("tuple[object, ...]", value))
+    return value
+
+
+@pytest.mark.parametrize("layout", ["columns", "document"])
+def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its_columns(
+    monkeypatch: pytest.MonkeyPatch, layout: acquisition_support.Layout
+) -> None:
+    # Every resolved row of a temporal resolve contributes exactly one cell to
+    # every predecessor column — scalars, the primary key, every axis bound
+    # (declared `validStart` over storage `from_z`), and both value-object
+    # occurrences, nested `one` and `many` alike — and the group owns that state
+    # outright: the occurrence cells are the frozen documents, the raw
+    # Structured Column rides beside them under Relational Document Layout and
+    # is absent under `Columns`, and the key columns hold the same values the
+    # selected-state claims were keyed by. The declared-name view the lane read
+    # each row through is not retained anywhere in the buffered group.
+    case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
+    groups, views = _buffered_groups(monkeypatch)
+    handle = acquisition_support.database(case)
+    try:
+        acquisition_support.acquire(handle, case)
+    finally:
+        handle.close()
+
+    (group,) = groups
+    assert isinstance(group.observations, TemporalColumns)
+    predecessors = group.observations.predecessors
+    assert predecessors.length == case.rows == len(views)
+    assert [list(column) for column in group.key_columns] == [list(range(1, case.rows + 1))]
+    for index in range(case.rows):
+        key = index + 1
+        predecessor = predecessors.row(index)
+        stored = acquisition_support.stored_row(layout, key)
+        members = (
+            cast("Mapping[str, object]", stored["payload"]) if layout == "document" else stored
+        )
+        assert _plain(dict(predecessor.members)) == {
+            "id": key,
+            "title": members["title"],
+            "address": members["address"],
+            "tags": tuple(cast("Sequence[object]", members["tags"])),
+            "validStart": acquisition_support.VALID_START,
+            "validEnd": INFINITY,
+            "txStart": acquisition_support.TX_START,
+            "txEnd": INFINITY,
+        }
+        address = predecessor.member("address")
+        assert isinstance(address, FrozenMap)
+        assert isinstance(address["geo"], FrozenMap)
+        tags = predecessor.member("tags")
+        assert isinstance(tags, tuple)
+        assert all(isinstance(tag, FrozenMap) for tag in cast("tuple[object, ...]", tags))
+        if layout == "document":
+            document = predecessor.document
+            assert isinstance(document, FrozenMap)
+            assert document == stored["payload"]
+        else:
+            assert predecessor.document is None
+        assert all(predecessor.members is not view for view in views)
+    retained_cells = [
+        cell
+        for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
+        for cell in column
+    ]
+    assert retained_cells
+    assert not any(isinstance(cell, EntityStateRow) for cell in retained_cells)
+    assert not any(
+        isinstance(cell, Mapping) and not isinstance(cell, FrozenMap) for cell in retained_cells
+    )
+
+
+def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The buffered group is kept alive here past the transaction; nothing it
+    # holds — and nothing else still alive — refers to the per-row views the
+    # lane read, so those views were short-lived state-key inspection and never
+    # became a second predecessor carrier beside the columns.
+    case = acquisition_support.case_named("acquisition.rows-8.document")
+    groups, views = _buffered_groups(monkeypatch)
+    handle = acquisition_support.database(case)
+    try:
+        acquisition_support.acquire(handle, case)
+    finally:
+        handle.close()
+
+    assert len(groups) == 1 and len(views) == case.rows
+    gc.collect()
+    for view in views:
+        referrers = [
+            referrer
+            for referrer in gc.get_referrers(view)
+            if referrer is not views and not isinstance(referrer, types.FrameType)
+        ]
+        assert referrers == []
+
+
+def test_a_positional_rows_absent_marker_is_compared_as_itself_never_as_the_observed_null() -> None:
+    # A resolved row is handed to the codec's comparison whole, keyed by declared
+    # name. A member the row holds as null is the observed null and a null
+    # assignment restores it; a member the row does not carry at all is that
+    # same observed null. A position the read left ABSENT is neither: the
+    # marker is a present value the comparison weighs as itself, so a null
+    # assignment against it is a change rather than a no-op, exactly as the
+    # physical-name view answered it.
+    meta = model_of(_WHERE_VOYAGE_META)
+    entity = next(entity for entity in meta.entities if entity.identity.name == "WhereVoyage")
+    shape = comparison_shape(meta, entity)
+    layout = LayoutCatalog(meta).entity(entity.identity)
+    tx_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+    def positional(title: object) -> EntityStateRow:
+        return EntityStateRow.over_declared_members(
+            layout.member_selection, (1, title, tx_start, INFINITY, ("grain",)), absent=ABSENT
+        )
+
+    assignment = _normalize_assignment_values({"title": None}, shape)
+    assert _is_no_op_assignment(shape, assignment, positional(None))
+    assert _is_no_op_assignment(shape, assignment, {"id": 1})
+    assert not _is_no_op_assignment(shape, assignment, positional(ABSENT))
+    assert not _is_no_op_assignment(shape, assignment, positional("Coastal Run"))
+    assert _is_no_op_assignment(
+        shape,
+        _normalize_assignment_values({"manifest": {"cargo": "grain"}}, shape),
+        positional(None),
+    )

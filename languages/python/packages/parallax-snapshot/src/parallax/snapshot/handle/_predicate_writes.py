@@ -16,9 +16,10 @@ target resolves against, paired with the exact-model layouts a materializing
 write's resolving read converts its rows through. Family shape comes from the
 Inheritance, Temporal, and Optimistic Lock facets through
 :mod:`parallax.snapshot.handle._family`,
-and every physical column comes from the target's Storage Layout view, resolved
-once here and carried into the per-row column builders
-:func:`_materialize_predicate_write` streams into.
+and the target's Storage Layout view, resolved once here, names the members —
+and which of them are Value Objects — that the per-row column builders
+:func:`_materialize_predicate_write` streams each resolved row into by declared
+name.
 ``Transaction`` keeps five thin ``_where`` delegates and the Wire lane keeps its
 own five, both routing the instruction they built here, so this module buffers
 through ``uow.buffer`` directly and never reaches back into ``Transaction``.
@@ -29,8 +30,6 @@ attribute, and the layout member-to-column map),
 predicate write also runs
 (:func:`~parallax.snapshot.handle._write_inputs.reject_temporal_delete` and
 :func:`~parallax.snapshot.handle._write_inputs.validate_window`),
-:mod:`parallax.snapshot.handle._retention` (the one payload
-extraction a resolved row's Predecessor Row shares with a real find's),
 and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
 :func:`~parallax.snapshot.handle._read.publishable_rows` — the resolving
@@ -51,7 +50,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core.db_port import DatabaseConnection, MappingRow
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
     MemberShape,
@@ -74,7 +73,7 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.storage_layout import DocumentPath, EntityLayoutView
+from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
@@ -114,7 +113,6 @@ from parallax.snapshot.handle._family import (
     family_primary_key,
     is_temporal,
     members,
-    slot_column,
     version_attribute,
 )
 from parallax.snapshot.handle._materialization import Materializer, RowPublication
@@ -123,7 +121,6 @@ from parallax.snapshot.handle._read import (
     execute_read,
     publishable_rows,
 )
-from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import reject_temporal_delete, validate_window
 from parallax.snapshot.materialize import RootView
 from parallax.snapshot.materialize._page import ABSENT
@@ -494,9 +491,9 @@ def _materialize_predicate_write(
     # (`txtime_write.plan`) carries it into its chained row. It is also why
     # EVERY declared document is projected rather than only the assigned
     # ones — a carried row must keep whichever documents the assignments do
-    # NOT themselves reassign. Every target's carried state reads through the
-    # SAME Predecessor Row (`_predecessor_payload`, below); there is no
-    # separate audit-only merge.
+    # NOT themselves reassign. Every target's carried state is the resolved
+    # row itself, streamed whole into the group's Predecessor Columns (below);
+    # there is no separate audit-only merge.
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
     # elimination (below, `_is_no_op_assignment`)
@@ -531,12 +528,13 @@ def _materialize_predicate_write(
     # Row form is what answers BOTH projection needs above at once: a family
     # predicate write is rejected before SQL, so the compiled row transform is
     # the identity under `Columns` layout and the document fan-out under
-    # Relational Document Layout, and every per-row helper below reads a member
-    # by name. The fan-out drops the raw Structured Column it decoded from while
-    # the materialized row carries that document beside its values, so a temporal
-    # target's Predecessor Row retains it (`m-unit-work`) — which is what lets a
-    # successor be patched from the document the row actually held — without a
-    # second extraction that could disagree with the first.
+    # Relational Document Layout, and every per-row step below reads a member
+    # by its declared name. The fan-out drops the raw Structured Column it
+    # decoded from while the materialized row carries that document beside its
+    # values, so a temporal target's Predecessor Row retains it (`m-unit-work`)
+    # — which is what lets a successor be patched from the document the row
+    # actually held — without a second extraction that could disagree with the
+    # first.
     def resolve() -> tuple[CompiledRead, RowPublication]:
         with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
@@ -568,11 +566,16 @@ def _materialize_predicate_write(
     if not resolved:
         return
 
+    # Each resolved row is read by DECLARED member name from here on: the view
+    # is full-width over the row's canonical selection, so the comparison, the
+    # key and version reads, the column contributions, and the observed-state
+    # derivation all read the one positional state the read materialized,
+    # without a storage-name translation or a row-sized copy between them.
     def state_row(root: RootView, _position: int) -> Iterator[EntityStateRow]:
         (node,) = root.roots
         if node is not None:
-            yield EntityStateRow.over_members(
-                root.layout(node), root.member_values(node), absent=ABSENT
+            yield EntityStateRow.over_declared_members(
+                root.layout(node).member_selection, root.member_values(node), absent=ABSENT
             )
 
     rows = list(Materializer().roots(stage.page, state_row))
@@ -585,31 +588,28 @@ def _materialize_predicate_write(
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
     matched = 0
 
-    def append_key(row: MappingRow) -> None:
-        for builder, value in zip(
-            key_builders, _key_column_values(pk_attrs, layout, row), strict=True
-        ):
+    def append_key(key_values: tuple[object, ...]) -> None:
+        for builder, value in zip(key_builders, key_values, strict=True):
             builder.append(value)
 
     declaring_entity = declaring(meta, entity)
     selected: list[ObservedStateKey] = []
 
-    def select_state(row: MappingRow, observation: WriteObservation) -> None:
-        keys = zip(key_attributes, _key_column_values(pk_attrs, layout, row), strict=True)
-        object_key = ObjectKey(entity.identity, tuple(keys))
+    def select_state(key_values: tuple[object, ...], observation: WriteObservation) -> None:
+        object_key = ObjectKey(entity.identity, tuple(zip(key_attributes, key_values, strict=True)))
         selected.append(observed_state_key(object_key, observation, declaring_entity))
 
     if version_attr is not None:
+        version_member = version_attr.identity.name
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
-            if assignment_bearing and _is_no_op_assignment(
-                shape, member_columns, comparison_assignments, row
-            ):
+            if assignment_bearing and _is_no_op_assignment(shape, comparison_assignments, row):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
-            append_key(row)
-            version = cast("int", row[slot_column(layout, version_attr.identity)])
+            key_values = tuple(row[name] for name in key_attributes)
+            append_key(key_values)
+            version = cast("int", row[version_member])
             version_builder.append(version)
-            select_state(row, VersionObservation(observed_version=version))
+            select_state(key_values, VersionObservation(observed_version=version))
             matched += 1
         if matched == 0:
             return
@@ -624,35 +624,35 @@ def _materialize_predicate_write(
         _claim_selected_states(uow, selected)
         return
 
+    # The complete Predecessor Row every retained row contributes is the row
+    # itself, streamed member by member into one column per declared member
+    # (`m-unit-work` "A Predecessor Row is the complete, immutable persisted
+    # state"): every canonical position contributes exactly one cell, an
+    # absent marker included, so the columns stay aligned and the group owns
+    # the durable state. The short-lived Predecessor Row over the same view
+    # exists only to derive the observed-state key and is not retained.
     attribute_names = tuple(name for name, (_column, is_vo) in member_columns.items() if not is_vo)
     value_object_names = tuple(name for name, (_column, is_vo) in member_columns.items() if is_vo)
-    attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
-    value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
+    member_builders = {name: ChunkedColumnBuilder[object]() for name in member_columns}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     for document, row in zip(resolved, rows, strict=True):
-        if assignment_bearing and _is_no_op_assignment(
-            shape, member_columns, comparison_assignments, row
-        ):
+        if assignment_bearing and _is_no_op_assignment(shape, comparison_assignments, row):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
-        append_key(row)
-        payload = _predecessor_payload(member_columns, row)
-        for name in attribute_names:
-            attribute_builders[name].append(payload[name])
-        for name in value_object_names:
-            value_object_builders[name].append(payload[name])
+        key_values = tuple(row[name] for name in key_attributes)
+        append_key(key_values)
+        for name, value in row.items():
+            member_builders[name].append(value)
         if structured_column is not None:
             document_builder.append(document)
-        select_state(row, TemporalObservation(predecessor=PredecessorRow(payload)))
+        select_state(key_values, TemporalObservation(predecessor=PredecessorRow(row)))
         matched += 1
     if matched == 0:
         return
     predecessors = PredecessorColumns(
         shape=PredecessorShape(attributes=attribute_names, value_objects=value_object_names),
-        attribute_columns=tuple(
-            whole(attribute_builders[name].build()) for name in attribute_names
-        ),
+        attribute_columns=tuple(whole(member_builders[name].build()) for name in attribute_names),
         value_object_columns=tuple(
-            whole(value_object_builders[name].build()) for name in value_object_names
+            whole(member_builders[name].build()) for name in value_object_names
         ),
         documents=None if structured_column is None else whole(document_builder.build()),
     )
@@ -668,12 +668,12 @@ def _materialize_predicate_write(
 
 
 # --------------------------------------------------------------------------- #
-# The per-row column contributions `_materialize_predicate_write` streams into #
-# its Materialized Write Group, in the order it runs them. Each is a pure      #
-# function of one resolved row of the write's OWN resolving read — never an    #
-# implicit read of its own, and never a merged per-row dict of its own —       #
-# except `_normalize_assignment_values`, which decodes the authored side once  #
-# for the whole write so every row's comparison reads the same operand.        #
+# The per-row decision `_materialize_predicate_write` makes while streaming:  #
+# a pure function of one resolved row of the write's OWN resolving read —     #
+# never an implicit read of its own, and never a merged per-row dict of its   #
+# own — beside `_normalize_assignment_values`, which decodes the authored     #
+# side once for the whole write so every row's comparison reads the same      #
+# operand.                                                                    #
 # --------------------------------------------------------------------------- #
 def _normalize_assignment_values(
     assignments: Mapping[str, object], shape: MemberShape
@@ -709,23 +709,23 @@ def _normalize_assignment_values(
 
 def _is_no_op_assignment(
     shape: MemberShape,
-    member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
-    row: MappingRow,
+    row: Mapping[str, object],
 ) -> bool:
     """Whether ``row`` is one an assignment-bearing verb would leave unchanged
     (`m-opt-lock` per-row no-op elimination): the effective change set of these
     assignments against it is empty.
 
     The rule is the document codec's, asked here over the row's own values rather
-    than restated: this projects each assigned member's stored value out of the
-    resolved row and hands both sides to
-    :func:`~parallax.core.document_codec.classify_effective_change`. ``row`` is one
-    row of the write's own resolving read, after that read's row transform, so a
-    document-mapped member's stored value is the one the fan-out decoded in its
-    declared Neutral Type rather than a fragment of the raw Structured Column; a
-    member whose column the row does not carry is the observed null the codec's
-    own top level collapses with an explicit one.
+    than restated: the resolved row, keyed by declared member name, is handed to
+    :func:`~parallax.core.document_codec.classify_effective_change` as the
+    originals, and that classification reads only the members ``assignments``
+    names. ``row`` is one row of the write's own resolving read, after that
+    read's row transform, so a document-mapped member's stored value is the one
+    the fan-out decoded in its declared Neutral Type rather than a fragment of
+    the raw Structured Column; a member the row does not carry is the observed
+    null the codec's own top level collapses with an explicit one, and a member
+    the row carries as the absent marker compares as that marker.
 
     ``assignments`` has already crossed :func:`_normalize_assignment_values` once
     for the whole predicate write, so both sides arrive as managed values and
@@ -737,34 +737,7 @@ def _is_no_op_assignment(
     ``terminateUntil`` have no assignments to compare and therefore never call
     this — every resolved row is retained.
     """
-    originals = {member: row.get(member_columns[member][0]) for member in assignments}
-    return not classify_effective_change(shape, assignments, originals).effective
-
-
-def _key_column_values(
-    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: MappingRow
-) -> tuple[object, ...]:
-    """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
-    order — a Materialized Write Group's own per-row key-column contribution.
-    """
-    return tuple(row[slot_column(layout, attr.identity)] for attr in pk_attrs)
-
-
-def _predecessor_payload(
-    member_columns: Mapping[str, tuple[str, bool]], row: MappingRow
-) -> dict[str, object]:
-    """One resolved row's COMPLETE Predecessor Row payload — every applicable
-    member, value-object documents included.
-
-    The SAME extraction a real find's retention applies to its own rows
-    (:func:`~parallax.snapshot.handle._retention.row_payload`), applied here to a
-    materializing resolve's row-form row, so a Predecessor Row means the same
-    thing whichever read produced it (`m-unit-work` "A Predecessor Row is the
-    complete, immutable persisted state"). A materializing resolve reads the
-    CURRENT milestone by construction, so every predecessor it retains is
-    latest-pinned.
-    """
-    return row_payload(member_columns, row)
+    return not classify_effective_change(shape, assignments, row).effective
 
 
 def _claim_selected_states(uow: UnitOfWork, selected: Sequence[ObservedStateKey]) -> None:

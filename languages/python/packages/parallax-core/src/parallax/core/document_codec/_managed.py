@@ -110,10 +110,12 @@ def classify_effective_change(
 
     ``authored`` carries the explicitly assigned members alone, never the
     identity: a member no assignment names is untouched rather than compared, so
-    nothing here fills one. ``originals`` is keyed by those same names, and a name
-    it does not carry is the observed null — an absent Document Path and a stored
-    null are one logical value at this boundary, whatever the member's kind, which
-    is the collapse the encoded operations deliberately leave to a consumer.
+    nothing here fills one. ``originals`` is read by those same names and by
+    nothing else — it may carry the whole observed row, and a member ``authored``
+    does not name is never read, compared, or normalized — and a name it does
+    not carry is the observed null: an absent Document Path and a stored null
+    are one logical value at this boundary, whatever the member's kind, which is
+    the collapse the encoded operations deliberately leave to a consumer.
 
     Below that top level presence is the shape's, through
     :func:`canonical_managed_document`: an omitted declared leaf or ``one`` inside
