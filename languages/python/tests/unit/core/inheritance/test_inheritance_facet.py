@@ -234,11 +234,12 @@ def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_se
     assert selection.identities != object()
     with pytest.raises(ValueError, match="aligns every shape member"):
         EntityMemberSelection(MemberShape(()), selection.bindings, selection.attribute_count)
+    for count in (-1, len(selection.bindings) + 1):
+        with pytest.raises(ValueError, match="counts its attributes within its bindings"):
+            EntityMemberSelection(selection.shape, selection.bindings, count)
 
 
 def _member_ranges() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
-    """Every window shape one selection can hand out, each beside the bindings
-    it is expected to yield: a prefix, a suffix, the whole tuple, and nothing."""
     customer = _view(_corpus("customer"), "Customer").member_selection
     dog = _view(_corpus("animal"), "Dog").member_selection
     occurrences_only = EntityMemberSelection(

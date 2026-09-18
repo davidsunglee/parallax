@@ -239,9 +239,6 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
 
 
 def _occurrence_windows() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
-    """Every window an occurrence hands out beside the bound members it is
-    expected to yield: the leaf prefix, the nested suffix, a whole leaf-only
-    member tuple, and an occurrence with nothing nested."""
     metadata = compile_metadata(accepted(source(_model(), _peer())))
     order = metadata.entity(_ORDER)
     assert order is not None
