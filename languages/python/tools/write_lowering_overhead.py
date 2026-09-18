@@ -27,9 +27,14 @@ from durations import Spans
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
+    ProbeRunner,
+    RuntimeStatus,
     child_command,
     child_environment,
+    probe_runtime,
+    run_probe,
     supported_minors,
+    write_metadata,
 )
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
@@ -479,6 +484,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--runtime", action="append", default=[])
     parser.add_argument("--durations", type=Path)
+    parser.add_argument("--metadata", type=Path)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
@@ -486,11 +492,12 @@ def main(argv: list[str]) -> int:
     if (
         args is None
         or ((args.case or args.runtime) and not args.diagnostic)
-        or (args.diagnostic and args.durations is not None)
+        or (args.diagnostic and (args.durations is not None or args.metadata is not None))
     ):
         print(
             "usage: python tools/write_lowering_overhead.py "
-            "[--durations PATH | --diagnostic [--case PATTERN]... [--runtime MINOR]...]",
+            "[--durations PATH] [--metadata PATH] "
+            "| --diagnostic [--case PATTERN]... [--runtime MINOR]...",
             file=sys.stderr,
         )
         return 2
@@ -504,14 +511,28 @@ def main(argv: list[str]) -> int:
         return 0
     spans = Spans()
     try:
-        return _measured(spans)
+        return _measured(spans, args.metadata)
     finally:
         if args.durations is not None:
             spans.write(args.durations)
 
 
-def _measured(spans: Spans) -> int:
+def runtime_identities(
+    runtimes: Sequence[str], spans: Spans, probe: ProbeRunner = run_probe
+) -> dict[str, RuntimeStatus]:
+    """Each runtime's interpreter, probed once through the reading child's own
+    command and environment resolution, before any case is read."""
+    identities: dict[str, RuntimeStatus] = {}
+    for runtime in runtimes:
+        with spans.span("setup", "identity", member=SUBJECT, runtime=runtime):
+            identities[runtime] = probe_runtime(runtime, ENVIRONMENT_NAMESPACE, probe)
+    return identities
+
+
+def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
+    if metadata is not None:
+        write_metadata(metadata, SUBJECT, runtime_identities(runtimes, spans, run_probe))
     matrix = timed_matrix(runtimes, CASE_NAMES, spans)
     absent = missing_cells(matrix, runtimes, CASE_NAMES)
     if absent:

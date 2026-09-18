@@ -78,6 +78,7 @@ from types import TracebackType
 from typing import Final, NamedTuple
 
 from durations import Spans
+from interpreter_matrix import CURRENT_MINOR, current_identity, write_metadata
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -696,17 +697,24 @@ def main(argv: list[str]) -> int:
     Exit codes: 0 — the measurement ran; 2 — usage error. There is no exit code
     for a number that is too large, deliberately. ``--durations`` names where
     the empty sidecar goes: every arm here is timed in-process, so the member's
-    only span is the one its collector records around it.
+    only span is the one its collector records around it. ``--metadata`` names
+    where the one runtime this process is, and measures in, is recorded.
     """
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--durations", type=Path)
+    parser.add_argument("--metadata", type=Path)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
-        print("usage: python tools/lifecycle_overhead.py [--durations PATH]", file=sys.stderr)
+        print(
+            "usage: python tools/lifecycle_overhead.py [--durations PATH] [--metadata PATH]",
+            file=sys.stderr,
+        )
         return 2
     if args.durations is not None:
         Spans().write(args.durations)
+    if args.metadata is not None:
+        write_metadata(args.metadata, SUBJECT, {CURRENT_MINOR: current_identity()})
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()

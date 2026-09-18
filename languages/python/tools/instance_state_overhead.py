@@ -142,6 +142,14 @@ from pathlib import Path
 from typing import Any, Final, Literal, NamedTuple, cast
 
 from durations import Spans
+from interpreter_matrix import (
+    IDENTITY_SCRIPT,
+    ProbeRunner,
+    RuntimeStatus,
+    probe_identity,
+    run_probe,
+    write_metadata,
+)
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -478,10 +486,27 @@ def _child_environment(runtime: str) -> dict[str, str]:
 
 def _child_command(runtime: str, scenario: Scenario) -> list[str]:
     """What starts one scenario's child on ``runtime``."""
-    script = str(READING_SCRIPT)
+    return _launch(runtime, READING_SCRIPT, [scenario.name])
+
+
+def _launch(runtime: str, script: Path, arguments: Sequence[str]) -> list[str]:
     if runtime == CURRENT_MINOR:
-        return [sys.executable, script, scenario.name]
-    return ["uv", "run", "--frozen", "--python", runtime, "python", script, scenario.name]
+        return [sys.executable, str(script), *arguments]
+    return ["uv", "run", "--frozen", "--python", runtime, "python", str(script), *arguments]
+
+
+def runtime_identities(
+    runtimes: Sequence[str], spans: Spans, probe: ProbeRunner = run_probe
+) -> dict[str, RuntimeStatus]:
+    """Each runtime's interpreter, probed once through this report's own child
+    command and environment resolution, before any scenario is read."""
+    identities: dict[str, RuntimeStatus] = {}
+    for runtime in runtimes:
+        with spans.span("setup", "identity", member=SUBJECT, runtime=runtime):
+            identities[runtime] = probe_identity(
+                _launch(runtime, IDENTITY_SCRIPT, ()), _child_environment(runtime), probe
+            )
+    return identities
 
 
 def in_a_child(runtime: str, scenario: Scenario) -> Cell:
@@ -1217,20 +1242,25 @@ def main(argv: list[str]) -> int:
     `core/spec/language-testing.md` §2 leaves a non-blocking operation: a number
     over its target changes what the escalation block DISPLAYS and nothing else.
 
-    Takes no argument but ``--durations``, which is what leaves the reading
-    itself outside this module: one scenario's reading is
-    `tools/instance_state_reading.py`, run as a script by :func:`in_a_child`.
+    Takes no argument but the two sidecars, ``--durations`` and ``--metadata``,
+    which is what leaves the reading itself outside this module: one scenario's
+    reading is `tools/instance_state_reading.py`, run as a script by
+    :func:`in_a_child`.
     """
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--durations", type=Path)
+    parser.add_argument("--metadata", type=Path)
     try:
         args = parser.parse_args(argv)
     except SystemExit:
-        print("usage: python tools/instance_state_overhead.py [--durations PATH]", file=sys.stderr)
+        print(
+            "usage: python tools/instance_state_overhead.py [--durations PATH] [--metadata PATH]",
+            file=sys.stderr,
+        )
         return 2
     spans = Spans()
     try:
-        return _measured(spans)
+        return _measured(spans, args.metadata)
     finally:
         if args.durations is not None:
             spans.write(args.durations)
@@ -1248,8 +1278,10 @@ def timed_matrix(runtimes: Sequence[str], scenarios: Sequence[Scenario], spans: 
     return matrix
 
 
-def _measured(spans: Spans) -> int:
+def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
+    if metadata is not None:
+        write_metadata(metadata, SUBJECT, runtime_identities(runtimes, spans, run_probe))
     matrix = timed_matrix(runtimes, REPORTED, spans)
     absent = missing_cells(matrix, runtimes, REPORTED)
     if absent:
