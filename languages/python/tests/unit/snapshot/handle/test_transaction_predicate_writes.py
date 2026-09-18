@@ -2333,11 +2333,9 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
 # What a materializing temporal resolve retains per row: the row itself,      #
 # streamed whole into the group's Predecessor Columns, and nothing else.      #
 # --------------------------------------------------------------------------- #
-def _buffered_groups(
+def _recorded_groups_and_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[list[MaterializedWriteGroup], list[EntityStateRow]]:
-    """Record every Materialized Write Group a unit of work buffers and every
-    declared-name row view the lane constructs, without changing either."""
     groups: list[MaterializedWriteGroup] = []
     views: list[EntityStateRow] = []
     buffer = UnitOfWork.buffer
@@ -2382,7 +2380,7 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
     # selected-state claims were keyed by. The declared-name view the lane read
     # each row through is not retained anywhere in the buffered group.
     case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
-    groups, views = _buffered_groups(monkeypatch)
+    groups, views = _recorded_groups_and_views(monkeypatch)
     handle = acquisition_support.database(case)
     try:
         acquisition_support.acquire(handle, case)
@@ -2444,7 +2442,7 @@ def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
     # lane read, so those views were short-lived state-key inspection and never
     # became a second predecessor carrier beside the columns.
     case = acquisition_support.case_named("acquisition.rows-8.document")
-    groups, views = _buffered_groups(monkeypatch)
+    groups, views = _recorded_groups_and_views(monkeypatch)
     handle = acquisition_support.database(case)
     try:
         acquisition_support.acquire(handle, case)

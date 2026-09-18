@@ -259,8 +259,6 @@ class _EntityDocumentRow(Mapping[str, object]):
 
 
 class _AlignedItems(ItemsView[str, object]):
-    """An items view walking canonical members beside their aligned values."""
-
     __slots__ = ("_absent", "_aligned", "_members")
 
     def __init__(

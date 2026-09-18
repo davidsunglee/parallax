@@ -2146,8 +2146,10 @@ constructed one is a distinct object equal to the exported constant, and
 collapsing construction or a copy onto one instance would give identity a
 meaning their contract withholds from it.
 
-The public-API snapshot diffs `__all__` alone, so it observes none of this. The
-contract is graded directly instead, one case per sentinel.
+The public-API snapshot diffs each recorded module's `__all__` and, for a class
+recorded as `<module>:<Class>`, the public classmethod constructors that class
+declares; it observes none of this. The contract is graded directly instead,
+one case per sentinel.
 
 `MISSING_STORED_VALUE` is the one of these a caller holds: it travels out on
 `StoredDataIssue.stored_value` (§4 *Invalid stored data*), so it is the one whose
