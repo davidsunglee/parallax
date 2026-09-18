@@ -6,7 +6,7 @@ and a returned document shares no mutable state with one passed in.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import ClassVar, Final, Literal, Self, TypeGuard, cast
 
@@ -457,49 +457,58 @@ def _decoded_object_output(
         return None, ()
     if not _is_document_object(document):
         return None, (DocumentFinding("one-wrong-kind", (), document),)
-    source = document
     findings: list[DocumentFinding] = []
-
-    def interpreted_members() -> Iterable[object]:
-        for member in shape.members:
-            raw = source.get(member.name, MISSING)
-            yield _interpreted_member(
-                member,
-                raw,
-                member.name in source,
-                findings,
-                build_object,
-                build_many,
-            )
-
-    output = build_object(shape, interpreted_members())
+    output = build_object(
+        shape,
+        _interpreted_members(
+            shape, cast("Mapping[str, WireValue]", document), findings, build_object, build_many
+        ),
+    )
     return output, tuple(findings)
 
 
-def _interpreted_member(
-    member: Leaf | Occurrence,
+def _interpreted_members(
+    shape: MemberShape,
+    source: Mapping[str, WireValue],
+    findings: list[DocumentFinding],
+    build_object: _ObjectOutput,
+    build_many: _ManyOutput,
+) -> Iterator[object]:
+    # Paid once per declared member of every decoded object whether or not the
+    # document holds it, so a leaf is decided in place rather than per call.
+    for member in shape.members:
+        name = member.name
+        raw = source.get(name, MISSING)
+        if isinstance(member, Leaf):
+            if isinstance(raw, Missing):
+                if not member.nullable:
+                    findings.append(DocumentFinding("required-member-absent", (name,), raw))
+                yield MISSING
+            elif raw is None:
+                if not member.nullable:
+                    findings.append(DocumentFinding("required-member-null", (name,), raw))
+                yield None
+            else:
+                try:
+                    value = decode_canonical_wire(member.type, raw)
+                except WireDecodingError:
+                    findings.append(DocumentFinding("leaf-undecodable", (name,), raw))
+                    value = UNAVAILABLE
+                yield value
+        else:
+            yield _interpreted_occurrence(member, raw, source, findings, build_object, build_many)
+
+
+def _interpreted_occurrence(
+    member: Occurrence,
     raw: object | Missing,
-    held: bool,
+    source: Mapping[str, object],
     findings: list[DocumentFinding],
     build_object: _ObjectOutput,
     build_many: _ManyOutput,
 ) -> object:
-    path = (member.name,)
-    if isinstance(member, Leaf):
-        if isinstance(raw, Missing):
-            if not member.nullable:
-                findings.append(DocumentFinding("required-member-absent", path, raw))
-            return MISSING
-        if raw is None:
-            if not member.nullable:
-                findings.append(DocumentFinding("required-member-null", path, raw))
-            return None
-        try:
-            return decode_canonical_wire(member.type, cast("WireValue", raw))
-        except WireDecodingError:
-            findings.append(DocumentFinding("leaf-undecodable", path, raw))
-            return UNAVAILABLE
-    classified = _classify_member(member, raw, path, isolate=False)
+    name = member.name
+    classified = _classify_member(member, raw, (name,), isolate=False)
     findings.extend(classified.findings)
     if member.multiplicity is Multiplicity.MANY:
         documents: object = (
@@ -512,9 +521,7 @@ def _interpreted_member(
             build_object,
             build_many,
         )
-        findings.extend(
-            replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
-        )
+        findings.extend(replace(finding, path=(name, *finding.path)) for finding in nested_findings)
         return output
     if isinstance(classified.presence, Present):
         output, nested_findings = _decoded_object_output(
@@ -523,11 +530,9 @@ def _interpreted_member(
             build_object,
             build_many,
         )
-        findings.extend(
-            replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
-        )
+        findings.extend(replace(finding, path=(name, *finding.path)) for finding in nested_findings)
         return output
-    return None if held or classified.findings else MISSING
+    return None if classified.findings or name in source else MISSING
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,6 +42,7 @@ from parallax.core.document_codec import (
     NULL,
     UNAVAILABLE,
     DecodedMember,
+    DocumentFinding,
     Leaf,
     LeafEncodingError,
     MemberShape,
@@ -389,6 +390,121 @@ def test_classified_decoding_constructs_positional_output_during_the_shared_walk
         "many": [{"required": 7}, {}],
     }
     assert [finding.path for finding in mapping_findings] == expected_paths
+
+
+def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_order() -> None:
+    element = MemberShape(members=(Leaf("required", INT32, False), Leaf("optional", INT32, True)))
+    shape = MemberShape(
+        members=(
+            Leaf("omittedNullable", INT32, True),
+            Leaf("omittedRequired", INT32, False),
+            Leaf("nullNullable", INT32, True),
+            Leaf("nullRequired", INT32, False),
+            Leaf("undecodable", INT32, True),
+            Leaf("decoded", INT32, False),
+            Occurrence("omittedNullableOne", Multiplicity.ONE, True, element),
+            Occurrence("omittedRequiredOne", Multiplicity.ONE, False, element),
+            Occurrence("nullNullableOne", Multiplicity.ONE, True, element),
+            Occurrence("nullRequiredOne", Multiplicity.ONE, False, element),
+            Occurrence("wrongKindOne", Multiplicity.ONE, True, element),
+            Occurrence("presentOne", Multiplicity.ONE, False, element),
+            Occurrence("emptyMany", Multiplicity.MANY, False, element),
+            Occurrence("omittedMany", Multiplicity.MANY, False, element),
+            Occurrence("nullMany", Multiplicity.MANY, False, element),
+            Occurrence("wrongKindMany", Multiplicity.MANY, False, element),
+            Occurrence("presentMany", Multiplicity.MANY, False, element),
+        )
+    )
+    stored: DocumentValue = {
+        "nullNullable": None,
+        "nullRequired": None,
+        "undecodable": "wrong",
+        "decoded": 7,
+        "nullNullableOne": None,
+        "nullRequiredOne": None,
+        "wrongKindOne": [1],
+        "presentOne": {"required": None},
+        "emptyMany": [],
+        "nullMany": None,
+        "wrongKindMany": {"x": 1},
+        "presentMany": [{"required": 1, "optional": 2}, {}],
+    }
+    objects: list[tuple[MemberShape, tuple[object, ...]]] = []
+    manys: list[tuple[object, ...]] = []
+
+    def record_object(member_shape: MemberShape, values: Iterable[object]) -> object:
+        objects.append((member_shape, tuple(values)))
+        return ("object", len(objects) - 1)
+
+    def record_many(values: Iterable[object]) -> object:
+        manys.append(tuple(values))
+        return ("many", len(manys) - 1)
+
+    recorded = decode_occurrence_classified(
+        shape,
+        PresentDocument(stored),
+        multiplicity=Multiplicity.ONE,
+        nullable=False,
+        build_object=record_object,
+        build_many=record_many,
+    )
+    reduced, mapping_findings = reduce_declared_members_classified(shape, stored)
+
+    assert recorded.presence == Present(("object", 3))
+    assert objects[0] == (element, (None, MISSING))
+    assert objects[1] == (element, (1, 2))
+    assert objects[2] == (element, (MISSING, MISSING))
+    assert objects[3] == (
+        shape,
+        (
+            MISSING,
+            MISSING,
+            None,
+            None,
+            UNAVAILABLE,
+            7,
+            MISSING,
+            None,
+            None,
+            None,
+            None,
+            ("object", 0),
+            ("many", 0),
+            ("many", 1),
+            ("many", 2),
+            ("many", 3),
+            ("many", 4),
+        ),
+    )
+    assert manys == [(), (), (), (), (("object", 1), ("object", 2))]
+    assert recorded.findings == (
+        DocumentFinding("required-member-absent", ("omittedRequired",), MISSING),
+        DocumentFinding("required-member-null", ("nullRequired",), None),
+        DocumentFinding("leaf-undecodable", ("undecodable",), "wrong"),
+        DocumentFinding("required-member-absent", ("omittedRequiredOne",), MISSING),
+        DocumentFinding("required-member-null", ("nullRequiredOne",), None),
+        DocumentFinding("one-wrong-kind", ("wrongKindOne",), [1]),
+        DocumentFinding("required-member-null", ("presentOne", "required"), None),
+        DocumentFinding("many-wrong-kind", ("wrongKindMany",), {"x": 1}),
+        DocumentFinding("required-member-absent", ("presentMany", 1, "required"), MISSING),
+    )
+    assert mapping_findings == recorded.findings
+    assert reduced == {
+        "nullNullable": None,
+        "nullRequired": None,
+        "undecodable": UNAVAILABLE,
+        "decoded": 7,
+        "omittedRequiredOne": None,
+        "nullNullableOne": None,
+        "nullRequiredOne": None,
+        "wrongKindOne": None,
+        "presentOne": {"required": None},
+        "emptyMany": [],
+        "omittedMany": [],
+        "nullMany": [],
+        "wrongKindMany": [],
+        "presentMany": [{"required": 1, "optional": 2}, {}],
+    }
 
 
 def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:
