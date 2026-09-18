@@ -757,13 +757,53 @@ def test_a_standalone_read_under_a_locking_root_opens_no_transaction_and_takes_n
 
 
 def test_a_transactional_read_resolves_what_it_omits_against_the_case_root() -> None:
-    # An authored `concurrency` puts the read inside `db.transact`, and every
+    # An authored `when.uow` puts the read inside `db.transact`, and every
     # field the request leaves out is then production's to resolve against the
     # root this lane connected: the boundary is asked for the root's
     # Serializable, which nothing in `when.uow` named.
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
     reads.run_read_case(_rooted("m-value-object-001", uow={"concurrency": "optimistic"}), port)
     assert port.levels == ["serializable"]
+
+
+def test_a_read_carrying_an_empty_uow_block_under_a_locking_root_locks_in_both_lanes() -> None:
+    # The block's PRESENCE is the boundary and its contents are the request: a
+    # `when.uow` that requests nothing still runs the read in a transaction,
+    # whose preference production resolves against the locking root, so the
+    # executed statement carries the suffix — and the compile lane, planning
+    # under the same resolved preference, renders the same golden. The
+    # standalone sibling (`-019`) differs from this case by the block alone.
+    locking = _load_case("m-read-lock-020")
+    standalone = _load_case("m-read-lock-019")
+    assert cast("Mapping[str, Any]", locking.document["when"])["uow"] == {}
+    port = FakeDbPort(
+        [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
+    )
+    emissions, _rows, _trips = reads.run_read_case(locking, port)
+    assert port.levels == ["read_committed"]
+    assert emissions[0].sql.endswith("for share of t0")
+    compiled, _trips = reads.compile_read_case(locking, "postgres")
+    assert compiled[0].sql == emissions[0].sql
+    assert not reads.compile_read_case(standalone, "postgres")[0][0].sql.endswith("for share of t0")
+
+
+def test_an_explicit_optimistic_request_under_a_locking_root_plans_and_runs_lock_free() -> None:
+    # The override half of the same rule on the versioned Account: the request
+    # names `optimistic`, so neither lane renders the suffix the root alone
+    # would have produced.
+    locking = _load_case("m-read-lock-020")
+    when = cast("Mapping[str, Any]", locking.document["when"])
+    case = dataclasses.replace(
+        locking,
+        document={**locking.document, "when": {**when, "uow": {"concurrency": "optimistic"}}},
+    )
+    port = FakeDbPort(
+        [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
+    )
+    emissions, _rows, _trips = reads.run_read_case(case, port)
+    assert port.levels == ["read_committed"]
+    assert "for share" not in emissions[0].sql
+    assert "for share" not in reads.compile_read_case(case, "postgres")[0][0].sql
 
 
 def test_an_authored_level_overrides_the_case_roots_level_on_a_transactional_read() -> None:

@@ -1,0 +1,33 @@
+# A transactional read that names no preference inherits its Database Root's
+# locking preference: the root is configured `locking`, the read carries a
+# `when.uow` block that requests nothing, and the object find inside that unit
+# of work renders the dialect's shared-row-lock suffix (`for share of t0`) on the
+# versioned Account exactly as `m-read-lock-001`'s explicit `locking` request does
+# (m-read-lock / m-unit-work / m-case-format *Root configuration*). The block's
+# presence is the boundary and its contents are the request, so production
+# resolves the omitted preference against the root at connect rather than a
+# runner restating it. Contrast `m-read-lock-019`, the same root with no block,
+# whose standalone read takes no lock.
+model: models/account.yaml
+tags: [m-read-lock, m-opt-lock, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+shape: read
+given:
+  databaseOptions:
+    concurrency: locking
+when:
+  uow: {}
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        attr: parallax.compatibility.Account.id
+        value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+      binds: [2]
+  referenceSql: select id, owner, balance, version from account where id = 2
+  rows:
+    - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+  roundTrips: 1

@@ -147,9 +147,10 @@ def test_authored_zero_and_false_survive_and_absent_keys_stay_absent() -> None:
 def test_a_null_or_malformed_request_field_is_refused_at_ingress(field: str, value: object) -> None:
     # Authored `null` is neither omission nor a value production admits, so the
     # case is reported where it is read; the same refusal covers a value outside
-    # the field's type or vocabulary.
+    # the field's type or vocabulary, and every refusal names the placement the
+    # field was authored at.
     case = _isolation_case({"when": {"uow": {field: value}}})
-    with pytest.raises(ValueError, match=field if value is None else None):
+    with pytest.raises(ValueError, match=rf"when\.uow\.{field}"):
         case_format.transaction_keywords(case)
 
 
@@ -163,6 +164,15 @@ def test_a_non_mapping_uow_is_refused_by_name() -> None:
     case = _isolation_case({"when": {"uow": "locking"}})
     with pytest.raises(ValueError, match=r"when\.uow must be a mapping"):
         case_format.transaction_keywords(case)
+
+
+def test_a_join_steps_vocabulary_refusal_names_the_join_placement() -> None:
+    with pytest.raises(
+        ValueError, match=r"when\.boundary\[1\]\.isolation: isolation must be one of"
+    ):
+        case_format.request_keywords(
+            {"action": "join", "isolation": "read_committed"}, where="when.boundary[1]"
+        )
 
 
 def test_a_join_step_projects_through_the_same_decoder() -> None:
@@ -244,9 +254,13 @@ def test_every_configured_root_field_reaches_the_record_and_the_rest_stay_built_
     ],
 )
 def test_a_null_or_malformed_root_field_is_refused_at_ingress(field: str, value: object) -> None:
+    # The root block is decoded by the same field rules as a request, and the
+    # refusal names the ROOT placement: a malformed root field is a defect in
+    # `given.databaseOptions`, never reported as though `when.uow` spelled it.
     case = _isolation_case({"given": {"databaseOptions": {field: value}}})
-    with pytest.raises(ValueError, match=field if value is None else None):
+    with pytest.raises(ValueError, match=rf"given\.databaseOptions\.{field}") as refused:
         case_format.database_options(case)
+    assert "when.uow" not in str(refused.value)
 
 
 def test_a_root_naming_the_retired_retries_key_or_no_mapping_is_refused() -> None:

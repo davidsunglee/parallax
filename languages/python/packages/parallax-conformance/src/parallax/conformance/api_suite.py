@@ -1611,16 +1611,18 @@ _ROOT_OPTIONS_BOUNDARY_RUNNER_REASON: Final[str] = (
 )
 # The read-lock module's root-configured golden witnesses: the locking stream
 # inheriting its root's preference, the explicit optimistic override of that
-# root, and the standalone read a locking root leaves untouched. Each is a SQL
-# shape the compile/run sweeps grade byte-exact and the reference harness
-# executes independently; the developer spelling — `DatabaseOptions` at
-# `connect` — is the root-options story above.
+# root, the standalone read a locking root leaves untouched, and the
+# transactional read that inherits it. Each is a SQL shape the compile/run
+# sweeps grade byte-exact and the reference harness executes independently; the
+# developer spelling — `DatabaseOptions` at `connect` — is the root-options
+# story above.
 _READ_LOCK_ROOT_GOLDEN_REASON: Final[str] = (
     "a golden-SQL witness of a Database Root's configured `locking` preference — a "
     "`uow` group's transactional stream inheriting the shared-lock pages, the same "
-    "stream lock-free under an explicit `optimistic` request, and a standalone read "
-    "the root's defaults never reach — graded end-to-end by the compatibility run "
-    "sweep against the authored goldens and executed independently by the reference "
+    "stream lock-free under an explicit `optimistic` request, a standalone read the "
+    "root's defaults never reach, and a transactional read requesting nothing that "
+    "inherits the shared lock — graded end-to-end by the compile and run sweeps "
+    "against the authored goldens and executed independently by the reference "
     "harness; the developer spelling is `DatabaseOptions(concurrency=...)` at "
     "`connect`, which the root-options story already shows, and the SQL shape is "
     "what these cases isolate"
@@ -1709,6 +1711,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-017": _READ_LOCK_ROOT_GOLDEN_REASON,
     "m-read-lock-018": _READ_LOCK_ROOT_GOLDEN_REASON,
     "m-read-lock-019": _READ_LOCK_ROOT_GOLDEN_REASON,
+    "m-read-lock-020": _READ_LOCK_ROOT_GOLDEN_REASON,
     # -- m-unit-work: the isolation scenarios ------------------------------- #
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,

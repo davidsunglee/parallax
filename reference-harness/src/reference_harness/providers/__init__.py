@@ -209,7 +209,9 @@ class DatabaseProvider(Protocol):
     ) -> AbstractContextManager[Any]:  # pragma: no cover - protocol stub
         """Context-manage a manual-commit session for lock-contention cases.
 
-        ``isolation`` is a case's own ``when.uow.isolation`` — a portable level
+        ``isolation`` is the portable level the case RESOLVES for the session
+        (``Case.isolation``: its explicit ``when.uow.isolation``, else its root's
+        ``given.databaseOptions.isolation``, else the built-in Read Committed),
         in the core serialized spelling, or ``None`` for the server's default.
         The provider is the harness's adapter for the sessions it owns, so
         whatever its engine needs to forbid the level's anomalies happens here

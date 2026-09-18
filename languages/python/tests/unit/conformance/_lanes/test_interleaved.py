@@ -512,6 +512,31 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
         )
 
 
+@pytest.mark.parametrize(
+    "placement",
+    [
+        {"given": {"databaseOptions": {"retryOptimisticConflicts": True}}},
+        {"when": {"uow": {"retryOptimisticConflicts": True}}},
+    ],
+)
+def test_an_interleaved_case_resolving_the_conflict_retry_opt_in_is_refused_up_front(
+    placement: Mapping[str, Mapping[str, object]],
+) -> None:
+    # Each group is one turnstile-sequenced production attempt; an opt-in the
+    # groups would resolve — spelled on the root or on the invocation — would
+    # have production re-run a conflicting group's steps against a turnstile
+    # that already passed them. Refused before either session is asked for.
+    case = _own_copy(_load_case("m-opt-lock-012"))
+    document = cast("dict[str, Any]", case.document)
+    for group, fields in placement.items():
+        document[group] = {**cast("Mapping[str, Any]", document.get(group) or {}), **fields}
+    executions = _ScriptedExecutions(ScriptedPort(), ScriptedPort())
+
+    with pytest.raises(EngineError, match="optimistic-conflict retry"):
+        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+    assert executions.opened == []
+
+
 def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> None:
     # The lane never connects a Database itself; it asks the factory for one
     # per group, and what it hands the factory is the case's root record — so a
