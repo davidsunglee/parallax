@@ -1,0 +1,116 @@
+# Boundary case (m-auto-retry, m-case-format root configuration): a Database
+# Root configured with `maxRetries: 0` disables the loop for an invocation that
+# names no bound of its own — `api-conformance` lane.
+#
+# `m-auto-retry-004` disables the loop by requesting `maxRetries: 0` at the call.
+# Here the call requests nothing at all, and the same injected
+# `serialization-failure` still surfaces after the single attempt, because the
+# bound the invocation resolves to is the root's. The outer invocation reports
+# `retries: 0` although no `when.uow` named it, which is the resolution the case
+# pins: the root's record, never the built-in 10, is what an omitted bound
+# resolves to. The stream is one attempt, and the failed write finishes
+# `retryEligible: true` — the classifier's verdict under the effective policy —
+# so what stopped the loop is the bound the root supplied, not the fault's kind.
+#
+# `roundTrips: 2` is the single attempt's cost: the observing read, and the write
+# that reached the database and failed.
+model: models/account.yaml
+tags: [m-auto-retry, m-opt-lock, m-execution-lifecycle, m-api-conformance, transient, database-options, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: serialization-failure
+  databaseOptions:
+    maxRetries: 0
+when:
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: update
+      note: the write raises an injected serialization failure — with the root's bound at 0 it surfaces
+then:
+  outcome: serialization-failure
+  roundTrips: 2
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 0
+              retryOptimisticConflicts: false
+              isolation: read-committed
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 6
+          - sequence: 16
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

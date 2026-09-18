@@ -330,6 +330,7 @@ def run_scenario(
         case_document.concurrency(case),
         TemporalShadow(),
         case_format.transaction_keywords(case),
+        case_format.database_options(case),
     )
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
@@ -338,7 +339,9 @@ def run_scenario(
     seed_shadow_from_fixtures(case, model, context.shadow)
     apply_given_apply(case, port, context.shadow)
     observation = lifecycle.observation()
-    with handle.Database.connect(port, serving, lifecycle_provider=observation.provider) as db:
+    with handle.Database.connect(
+        port, serving, options=context.options, lifecycle_provider=observation.provider
+    ) as db:
         emissions: list[Emission] = []
         round_trips = 0
         results: list[_ScenarioStepResult] = []

@@ -578,3 +578,56 @@ def test_the_schema_accepts_max_retries_and_refuses_a_null_option() -> None:
         refused = _serializable_error_case()
         refused["when"]["uow"][field] = None
         assert list(_case_validator().iter_errors(refused)), field
+
+
+# --- the root's configured defaults (m-case-format *Root configuration*) ------
+
+
+def test_a_root_level_is_the_level_an_unrequesting_case_resolves() -> None:
+    # Explicit over root over built-in: a case naming no level of its own opens
+    # its held sessions at the root's, and a case naming one opens at its own
+    # whatever the root says.
+    raw = _serializable_error_case()
+    del raw["when"]["uow"]
+    raw["given"] = {"databaseOptions": {"isolation": "repeatable-read", "concurrency": "locking"}}
+    rooted = _concurrency_case(raw)
+    assert rooted.database_options == {"isolation": "repeatable-read", "concurrency": "locking"}
+    assert rooted.isolation == "repeatable-read"
+    assert rooted.concurrency_mode == "locking"
+
+    overriding = _concurrency_case(
+        {**raw, "when": {**raw["when"], "uow": {"isolation": "serializable"}}}
+    )
+    assert overriding.isolation == "serializable"
+    assert overriding.concurrency_mode == "locking"
+
+
+def test_every_option_resolves_explicit_over_root_over_built_in() -> None:
+    raw = _serializable_error_case()
+    raw["when"]["uow"] = {"maxRetries": 5, "retryOptimisticConflicts": False}
+    raw["given"] = {"databaseOptions": {"maxRetries": 2, "retryOptimisticConflicts": True}}
+    case = _concurrency_case(raw)
+    assert case.resolved_option("maxRetries") == 5
+    assert case.resolved_option("retryOptimisticConflicts") is False
+    assert case.resolved_option("concurrency") == "optimistic"
+    assert case.resolved_option("isolation") == "read-committed"
+    # An authored `0` or `false` is a value, never an omission the root fills.
+    zeroed = _concurrency_case(
+        {
+            **raw,
+            "when": {**raw["when"], "uow": {"maxRetries": 0, "retryOptimisticConflicts": False}},
+        }
+    )
+    assert zeroed.resolved_option("maxRetries") == 0
+    assert zeroed.resolved_option("retryOptimisticConflicts") is False
+
+
+def test_an_unconfigured_case_has_no_root_and_resolves_the_built_ins() -> None:
+    raw = _serializable_error_case()
+    del raw["when"]["uow"]
+    case = _concurrency_case(raw)
+    assert case.database_options == {}
+    assert case.resolved_option("maxRetries") == 10
+    assert case.resolved_option("retryOptimisticConflicts") is False
+    assert case.concurrency_mode == "optimistic"
+    assert case.isolation == "read-committed"

@@ -16,7 +16,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -46,6 +46,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
+from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, body_outcome
@@ -189,8 +190,11 @@ class _FakePort(ConnectsAsItself):
         self.ops: list[str] = []
         # One physical transaction attempt is one demarcation (`m-unit-work`),
         # so counting the boundary here is how a retry is observed at all: an
-        # invocation retains no record of what it did.
+        # invocation retains no record of what it did. The level each boundary
+        # was asked for is kept beside the count, because no lifecycle event
+        # states an attempt's own level.
         self.boundaries = 0
+        self.levels: list[str | None] = []
 
     def execute(
         self,
@@ -211,6 +215,7 @@ class _FakePort(ConnectsAsItself):
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         self.boundaries += 1
+        self.levels.append(isolation)
         return body_outcome(self, body)
 
 
@@ -482,44 +487,46 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
 class _AttemptsCase:
     fault: str | None
     outcome_kind: str
-    max_retries: int | None
-    retry_optimistic_conflicts: bool | None
+    max_retries: int
+    retry_optimistic_conflicts: bool
     expected: int
 
 
+# The oracle takes the values the outer invocation RESOLVES to, so a case that
+# omits a field reaches it as the root's built-in (10 / false) rather than as an
+# absence the oracle would have to resolve for itself.
 _ATTEMPTS_CASES: list[_AttemptsCase] = [
     # m-auto-retry-001/002: transient, first-attempt-only (don't-care), committed.
-    _AttemptsCase("serialization-failure", "committed", None, False, 2),
-    _AttemptsCase("serialization-failure", "committed", None, True, 2),
+    _AttemptsCase("serialization-failure", "committed", 10, False, 2),
+    _AttemptsCase("serialization-failure", "committed", 10, True, 2),
     # m-auto-retry-003: no fault at all.
-    _AttemptsCase(None, "committed", None, True, 1),
-    # m-auto-retry-004: maxRetries: 0 disables the loop.
+    _AttemptsCase(None, "committed", 10, True, 1),
+    # m-auto-retry-004 / -007: a zero bound, explicit or the root's, disables the loop.
     _AttemptsCase("serialization-failure", "serialization-failure", 0, False, 1),
+    # m-auto-retry-008: an explicit bound of 1 over a zero root admits the retry.
+    _AttemptsCase("serialization-failure", "committed", 1, False, 2),
     # m-auto-retry-005: persistent, bound exhausted.
     _AttemptsCase("serialization-failure", "serialization-failure", 2, False, 3),
-    # m-opt-lock-010: conflict without the opt-in — not retriable.
-    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", None, False, 1),
-    # m-opt-lock-011: conflict with the opt-in — retried to success.
-    _AttemptsCase("optimistic-lock-conflict", "committed", None, True, 2),
-    # An omitted `retryOptimisticConflicts` reaches the oracle as `None` and
-    # resolves to the same off posture an explicit `false` declares.
-    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", None, None, 1),
+    # m-opt-lock-010 / -025: conflict without the opt-in — not retriable.
+    _AttemptsCase("optimistic-lock-conflict", "optimistic-lock-conflict", 10, False, 1),
+    # m-opt-lock-011 / -024: conflict with the opt-in — retried to success.
+    _AttemptsCase("optimistic-lock-conflict", "committed", 10, True, 2),
     # m-unit-work-004: no fault, the scripted closure itself aborts.
-    _AttemptsCase(None, "aborted", None, False, 1),
+    _AttemptsCase(None, "aborted", 10, False, 1),
     # lock-wait-timeout is never retriable, opt-in or not.
-    _AttemptsCase("lock-wait-timeout", "lock-wait-timeout", None, True, 1),
+    _AttemptsCase("lock-wait-timeout", "lock-wait-timeout", 10, True, 1),
     # m-execution-lifecycle-008: a boundary that never opened is ONE attempt —
     # the one that adopted and started before the boundary was asked to begin —
     # and it is terminal however the loop is configured.
-    _AttemptsCase("isolation-setup-failure", "boundary-failed", None, False, 1),
+    _AttemptsCase("isolation-setup-failure", "boundary-failed", 10, False, 1),
     _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 1),
     # m-execution-lifecycle-009: an acquisition that granted nothing is the same
     # terminal begin failure reached one step earlier, and m-execution-lifecycle-010:
     # a release that could not relinquish changes no outcome at all, so the
     # attempt it followed commits and there is nothing to retry.
-    _AttemptsCase("connection-acquisition-failure", "boundary-failed", None, False, 1),
+    _AttemptsCase("connection-acquisition-failure", "boundary-failed", 10, False, 1),
     _AttemptsCase("connection-acquisition-failure", "boundary-failed", 5, True, 1),
-    _AttemptsCase("connection-cleanup-failure", "committed", None, False, 1),
+    _AttemptsCase("connection-cleanup-failure", "committed", 10, False, 1),
     _AttemptsCase("connection-cleanup-failure", "committed", 5, True, 1),
 ]
 
@@ -535,6 +542,118 @@ def test_expected_attempts(case: _AttemptsCase) -> None:
         )
         == case.expected
     )
+
+
+# The root-configured corpus witnesses, each as the values its outer invocation
+# resolves to and the attempt count that follows: the same resolution the
+# real-database runner grades against, read off the corpus rather than restated
+# per case in that runner.
+_ROOT_WITNESS_ATTEMPTS: dict[str, tuple[int, bool, str, str, int]] = {
+    "m-auto-retry-007": (0, False, "optimistic", "read_committed", 1),
+    "m-auto-retry-008": (1, False, "optimistic", "read_committed", 2),
+    "m-auto-retry-009": (10, False, "optimistic", "repeatable_read", 2),
+    "m-auto-retry-010": (10, False, "optimistic", "repeatable_read", 2),
+    "m-auto-retry-011": (10, False, "optimistic", "read_committed", 2),
+    "m-opt-lock-024": (10, True, "optimistic", "read_committed", 2),
+    "m-opt-lock-025": (10, False, "optimistic", "read_committed", 1),
+    "m-unit-work-037": (2, True, "locking", "repeatable_read", 1),
+    "m-unit-work-038": (10, False, "optimistic", "read_committed", 1),
+    "m-unit-work-039": (10, False, "optimistic", "read_committed", 1),
+    "m-unit-work-040": (5, False, "optimistic", "read_committed", 1),
+    "m-unit-work-041": (10, False, "optimistic", "serializable", 1),
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(_ROOT_WITNESS_ATTEMPTS))
+def test_a_root_configured_witness_resolves_its_effective_options_and_attempts(
+    case_id: str,
+) -> None:
+    case = next(c for c in case_format.load_cases() if c.case_id == case_id)
+    max_retries, opt_in, concurrency, isolation, attempts = _ROOT_WITNESS_ATTEMPTS[case_id]
+    effective = case_format.effective_options(case)
+    assert effective == DatabaseOptions(
+        max_retries=max_retries,
+        concurrency=concurrency,  # pyright: ignore[reportArgumentType] - a corpus spelling
+        retry_optimistic_conflicts=opt_in,
+        isolation=isolation,  # pyright: ignore[reportArgumentType] - a corpus spelling
+    )
+    # Neither placement was flattened into the other: the root record holds
+    # only what `given.databaseOptions` wrote, and the request only what
+    # `when.uow` wrote, so production — not the reader — meets them.
+    root = case_format.database_options(case)
+    requests = case_format.transaction_keywords(case)
+    given = cast("dict[str, Any]", case.document.get("given") or {})
+    when = cast("dict[str, Any]", case.document.get("when") or {})
+    assert (root != DatabaseOptions()) == bool(given.get("databaseOptions"))
+    assert bool(requests) == bool(when.get("uow"))
+    outcome = boundary_runner.outcome(case, POSTGRES)
+    assert outcome is not None
+    assert (
+        boundary_runner.expected_attempts(
+            fault=boundary_runner.fault_kind(case),
+            outcome_kind=outcome,
+            max_retries=effective.max_retries,
+            retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
+        )
+        == attempts
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Per-attempt port observations, driven from the corpus's own root-configured  #
+# boundary cases: the outer lifecycle event states one level for the whole     #
+# invocation, and only the port sees what each attempt asked for.              #
+# --------------------------------------------------------------------------- #
+_PER_ATTEMPT_LEVEL_CASES: tuple[str, ...] = (
+    "m-auto-retry-006",
+    "m-auto-retry-009",
+    "m-auto-retry-010",
+    "m-unit-work-037",
+    "m-unit-work-041",
+)
+
+
+@pytest.mark.parametrize("case_id", _PER_ATTEMPT_LEVEL_CASES)
+def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
+    case_id: str,
+) -> None:
+    # The runner's own two seams, over a scripted port: the root record goes to
+    # `connect` and the authored request to the call, exactly as the
+    # real-database runner hands them over. What the port then records is the
+    # level EVERY attempt was opened at — the retried attempt of a deadlock case
+    # included — and it is the level the case resolves for itself, whether that
+    # value came from the root, from the call, or from the call over the root.
+    case = next(c for c in case_format.load_cases() if c.case_id == case_id)
+    fault = boundary_runner.fault_kind(case)
+    outcome = boundary_runner.outcome(case, POSTGRES)
+    assert outcome is not None
+    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
+    db = Database.connect(
+        _faulted(port, fault=fault, persistent=outcome != "committed"),
+        _ACCOUNT,
+        options=case_format.database_options(case),
+        clock=FixedClock(_FIXED),
+    )
+    steps = boundary_runner.boundary_steps(case)
+    requests = case_format.transaction_keywords(case)
+
+    def fn(tx: Transaction) -> Any:
+        return boundary_runner.run_boundary_actions(tx, steps, database=db)
+
+    if outcome == "committed":
+        db.transact(fn, **requests)
+    else:
+        with raises_contextualized(TransactionOptionConflictError):
+            db.transact(fn, **requests)
+    effective = case_format.effective_options(case)
+    attempts = boundary_runner.expected_attempts(
+        fault=fault,
+        outcome_kind=outcome,
+        max_retries=effective.max_retries,
+        retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
+    )
+    assert port.boundaries == attempts
+    assert port.levels == [effective.isolation] * attempts
 
 
 # --------------------------------------------------------------------------- #

@@ -79,15 +79,18 @@ def write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]
 
 def concurrency(case: case_format.Case) -> Concurrency:
     """The Concurrency Preference a case's writes are PLANNED under
-    (`when.uow.concurrency`; `m-unit-work` "Strategy selection"): the declared
-    preference, or `optimistic` when the case declares none — the built-in
-    root default `m-case-format` states for the `when.uow` block.
+    (`m-unit-work` "Strategy selection"): the preference the outer invocation
+    resolves to — the declared `when.uow.concurrency`, else the root's
+    `given.databaseOptions.concurrency`, else the built-in `optimistic` —
+    calculated by :func:`~parallax.conformance.case_format.effective_options`.
 
     A planning value, never a request: the lanes lower and grade against it,
     and forward only what the case authored
     (:func:`~parallax.conformance.case_format.transaction_keywords`) to
-    ``db.transact``, so an omitted preference is resolved by production rather
-    than restated as though the case had asked for it.
+    ``db.transact`` over a root connected with the case's own record
+    (:func:`~parallax.conformance.case_format.database_options`), so an omitted
+    preference is resolved by production rather than restated as though the
+    case had asked for it.
 
     A preference is not a strategy: what each step's own Entity participates
     under is derived from this value and that Entity's Optimistic Lock Facet, so
@@ -96,14 +99,7 @@ def concurrency(case: case_format.Case) -> Concurrency:
     the preference explicitly (`m-case-format`); `when.uow` is schema-legal on
     writeSequence shape (`compatibility-case.schema.json`'s writeSequence
     `propertyNames` admits `uow` alongside `writeSequence`)."""
-    raw = case.document.get("when")
-    if isinstance(raw, Mapping):
-        uow = cast("Mapping[str, object]", raw).get("uow")
-        if isinstance(uow, Mapping):
-            value = cast("Mapping[str, object]", uow).get("concurrency")
-            if value == "locking":
-                return "locking"
-    return "optimistic"
+    return case_format.effective_options(case).concurrency
 
 
 def batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:

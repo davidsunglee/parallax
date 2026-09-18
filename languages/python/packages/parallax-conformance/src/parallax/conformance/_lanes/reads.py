@@ -82,14 +82,22 @@ def case_database(
     *,
     clock: Clock | None = None,
 ) -> handle.Database:
-    """A Handle connected from ``port`` serving ``case``'s model under its edition.
+    """A Handle connected from ``port`` serving ``case``'s model under its edition,
+    configured with the case's own root record
+    (:func:`~parallax.conformance.case_format.database_options`).
 
     The caller owns what comes back: a Handle opens a runtime of its own, so
     every lane below composes one inside a ``with`` and the runtime is closed
-    where the case that needed it ends.
+    where the case that needed it ends. The root's defaults govern only the
+    transactions a lane opens through it; a standalone read or stream stays the
+    standalone operation it is under any root.
     """
     return handle.Database.connect(
-        port, case_serving_model(case), clock=clock, lifecycle_provider=lifecycle
+        port,
+        case_serving_model(case),
+        options=case_format.database_options(case),
+        clock=clock,
+        lifecycle_provider=lifecycle,
     )
 
 

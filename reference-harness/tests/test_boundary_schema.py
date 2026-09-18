@@ -17,6 +17,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from reference_harness.corpus_yaml import read_corpus_yaml
 from reference_harness.schemas import build_registry, load_schemas
 
 _SCHEMA_PATH = (
@@ -173,3 +174,87 @@ def test_schema_rejects_zero_round_trips_where_one_dialect_opened_its_boundary()
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject zero round trips where a named dialect's boundary opened"
     )
+
+
+# --- root configuration and the four-field join (m-case-format *Root configuration*)
+
+_OPTION_FIELDS = ("maxRetries", "concurrency", "retryOptimisticConflicts", "isolation")
+_A_VALUE = {
+    "maxRetries": 2,
+    "concurrency": "locking",
+    "retryOptimisticConflicts": True,
+    "isolation": "serializable",
+}
+
+
+def test_schema_accepts_a_root_configuring_every_option() -> None:
+    case = _valid_boundary_case()
+    case["given"] = {"databaseOptions": dict(_A_VALUE)}
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_accepts_a_root_on_a_read_case() -> None:
+    # Root configuration belongs to every shape that opens a unit of work
+    # through a root, so unlike `fault` and `sessionDefault` it is not confined
+    # to the boundary shape: the corpus's own standalone-read witness carries one.
+    case = read_corpus_yaml(
+        _SCHEMA_PATH.parents[1]
+        / "compatibility"
+        / "cases"
+        / "m-read-lock-019-a-standalone-read-under-a-locking-root-takes-no-lock.yaml"
+    )
+    assert case["given"] == {"databaseOptions": {"concurrency": "locking"}}
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_a_null_root_field_and_the_retired_retries_key() -> None:
+    for field in _OPTION_FIELDS:
+        case = _valid_boundary_case()
+        case["given"] = {"databaseOptions": {field: None}}
+        assert list(_case_validator().iter_errors(case)), field
+    retired = _valid_boundary_case()
+    retired["given"] = {"databaseOptions": {"retries": 2}}
+    assert list(_case_validator().iter_errors(retired)), (
+        "Schema should reject the retired `retries` key on the root; the spelling is `maxRetries`"
+    )
+
+
+def test_schema_rejects_a_root_field_outside_its_type_bound_or_vocabulary() -> None:
+    for field, value in (
+        ("maxRetries", -1),
+        ("maxRetries", "2"),
+        ("concurrency", "pessimistic"),
+        ("retryOptimisticConflicts", "yes"),
+        ("isolation", "read-uncommitted"),
+    ):
+        case = _valid_boundary_case()
+        case["given"] = {"databaseOptions": {field: value}}
+        assert list(_case_validator().iter_errors(case)), (field, value)
+
+
+def test_schema_accepts_a_join_step_naming_all_four_options() -> None:
+    case = _valid_boundary_case()
+    case["when"]["boundary"] = [{"action": "read"}, {"action": "join", **_A_VALUE}]
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_a_null_join_option() -> None:
+    for field in _OPTION_FIELDS:
+        case = _valid_boundary_case()
+        case["when"]["boundary"] = [{"action": "join", field: None}]
+        assert list(_case_validator().iter_errors(case)), field
+
+
+def test_schema_rejects_every_option_on_an_action_that_opens_no_boundary() -> None:
+    """Only a `join` opens a boundary, so only a `join` may name an option for one."""
+    for action in ("read", "create", "update", "terminate", "delete"):
+        for field in _OPTION_FIELDS:
+            case = _valid_boundary_case()
+            case["when"]["boundary"] = [{"action": action, field: _A_VALUE[field]}]
+            assert list(_case_validator().iter_errors(case)), (action, field)
+
+
+def test_schema_rejects_the_retired_retries_key_on_a_join() -> None:
+    case = _valid_boundary_case()
+    case["when"]["boundary"] = [{"action": "join", "retries": 2}]
+    assert list(_case_validator().iter_errors(case))

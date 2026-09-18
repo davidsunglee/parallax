@@ -25,7 +25,7 @@ from parallax.conformance._lanes.interleaved import run_interleaved_scenario_cas
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import Dialect
-from parallax.snapshot import handle
+from parallax.snapshot import DatabaseOptions, handle
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._wire_value_support import wire_value
@@ -75,17 +75,19 @@ class _ScriptedExecution:
         port: ScriptedPort,
         model: Any,
         *,
+        options: DatabaseOptions | None = None,
         clock: Any = None,
         lifecycle_provider: Any = None,
         trusted: bool = True,
     ) -> None:
         self.port = port
+        self.options = options
         self.trusted = trusted
         self.closed = False
         self.cancel_calls = 0
         self.terminate_calls = 0
         self._database = handle.Database.connect(
-            port, model, clock=clock, lifecycle_provider=lifecycle_provider
+            port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
         )
 
     @property
@@ -132,13 +134,21 @@ class _ScriptedExecutions:
         self._refuse_at = refuse_at
         self.opened: list[_ScriptedExecution] = []
 
-    def __call__(self, model: Any, *, clock: Any = None, lifecycle_provider: Any = None) -> Any:
+    def __call__(
+        self,
+        model: Any,
+        *,
+        options: DatabaseOptions | None = None,
+        clock: Any = None,
+        lifecycle_provider: Any = None,
+    ) -> Any:
         index = len(self.opened)
         if index == self._refuse_at:
             raise RuntimeError("this session could not be opened")
         execution = _ScriptedExecution(
             self._ports[index],
             model,
+            options=options,
             clock=clock,
             lifecycle_provider=lifecycle_provider,
             trusted=self._trusted[index],
@@ -500,3 +510,39 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
         run_interleaved_scenario_case(
             case, ScriptedPort(), _ScriptedExecutions(ScriptedPort(), ScriptedPort())
         )
+
+
+def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> None:
+    # The lane never connects a Database itself; it asks the factory for one
+    # per group, and what it hands the factory is the case's root record — so a
+    # root the case configures reaches both dedicated sessions' Handles, and
+    # each group's transaction opens at the root's level while the request
+    # carries only what `when.uow` authored.
+    case = _load_case("m-opt-lock-012")
+    document = dict(case.document)
+    document["given"] = {
+        **cast("Mapping[str, Any]", document.get("given") or {}),
+        "databaseOptions": {"isolation": "serializable", "maxRetries": 0},
+    }
+    rooted = dataclasses.replace(case, document=document)
+    row_v1: MappingRow = {
+        "id": 2,
+        "owner": "Linus",
+        "balance": decimal.Decimal("250.00"),
+        "version": 1,
+    }
+    caller_port = ScriptedPort(read_rows=[[]])
+    ours_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
+    peer_port = ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+    executions = _ScriptedExecutions(ours_port, peer_port)
+
+    run_interleaved_scenario_case(rooted, caller_port, executions)
+
+    expected = case_format.database_options(rooted)
+    assert expected == DatabaseOptions(isolation="serializable", max_retries=0)
+    assert [execution.options for execution in executions.opened] == [expected, expected]
+    assert ours_port.levels == ["serializable"]
+    assert peer_port.levels == ["serializable"]
+    # The trailing ungrouped verify find runs on the caller's port through a
+    # Handle of its own, connected with the same root.
+    assert caller_port.levels == ["serializable"]

@@ -322,14 +322,17 @@ def run_rounds(
     m-read-lock behavioral matrix and `m-db-error`'s own five two-session
     error cases; `m-case-format` "Error cases" / "concurrencySuccess").
 
-    ``isolation`` is the portable Isolation Level a case declares in
-    `when.uow.isolation`, spelled for this engine and applied to BOTH sessions
-    as the SQL-standard `SET TRANSACTION ISOLATION LEVEL` — deliberately the
-    very FIRST statement either session issues (before even the lock-contention
-    GUCs), since a peer session's whole choreography is ONE continuous
-    transaction and that verb is only legal as a transaction's own first
-    statement. ``None`` (a case declaring no level) issues no statement at all
-    and keeps the driver's own default.
+    ``isolation`` is the portable Isolation Level the case resolves — its
+    `when.uow.isolation`, else its root's `given.databaseOptions.isolation`,
+    else Read Committed, the value
+    :func:`~parallax.conformance.case_format.effective_options` calculates —
+    spelled for this engine and applied to BOTH sessions as the SQL-standard
+    `SET TRANSACTION ISOLATION LEVEL` — deliberately the very FIRST statement
+    either session issues (before even the lock-contention GUCs), since a peer
+    session's whole choreography is ONE continuous transaction and that verb is
+    only legal as a transaction's own first statement. ``None`` issues no
+    statement at all and keeps the driver's own default, for a caller that
+    stands in for no transaction.
 
     Opens exactly two sessions via ``control_factory`` (never constructs a
     connection itself) with INCREMENTAL protection (`contextlib.ExitStack`):

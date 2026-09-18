@@ -1,0 +1,174 @@
+# Boundary case (m-auto-retry x m-db-port isolation, m-case-format root
+# configuration): a Database Root's configured level is the level a retried
+# invocation reports and every one of its attempts opens at, while the invocation
+# names no level of its own — `api-conformance` lane.
+#
+# `m-auto-retry-006` requests `repeatable-read` at the call. Here the root is
+# configured with it and the call carries no `when.uow` at all; an injected
+# `deadlock` makes the first attempt's write fail retriably, the closure runs
+# twice, and the stream states ONE outer invocation carrying
+# `isolation: repeatable-read` over TWO attempts, neither restating a level. The
+# level in that event is resolved, not requested: nothing in the case asked for
+# it at the call, so its presence there is the root's record reaching the
+# invocation. That each attempt opens at it follows from the request being the
+# invocation's, and each language's suite observes the port's per-attempt
+# request beside this stream, since no lifecycle event states an attempt's level.
+#
+# `roundTrips: 4` is the retried pair's cost — each attempt's observing read plus
+# its write, the failed one included.
+model: models/account.yaml
+tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, isolation, transient, database-options, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: deadlock
+  databaseOptions:
+    isolation: repeatable-read
+when:
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: update
+      note: the first attempt's write raises an injected deadlock — auto-retried at the root's level
+then:
+  outcome: committed
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: repeatable-read
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 6
+          - sequence: 16
+            activity: 9
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 17
+            activity: 10
+            parent: 9
+            acquisitionStarted: {}
+          - sequence: 18
+            activity: 10
+            parent: 9
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 19
+            activity: 11
+            parent: 9
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 20
+            activity: 12
+            parent: 11
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 21
+            activity: 12
+            parent: 11
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 22
+            activity: 11
+            parent: 9
+            readFinished: { outcome: completed }
+          - sequence: 23
+            activity: 13
+            parent: 9
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 24
+            activity: 14
+            parent: 13
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 25
+            activity: 14
+            parent: 13
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 26
+            activity: 13
+            parent: 9
+            writeBatchFinished: { outcome: completed }
+          - sequence: 27
+            activity: 15
+            parent: 9
+            releaseStarted: {}
+          - sequence: 28
+            activity: 15
+            parent: 9
+            releaseFinished: { cleanup: returned }
+          - sequence: 29
+            activity: 9
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 30
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

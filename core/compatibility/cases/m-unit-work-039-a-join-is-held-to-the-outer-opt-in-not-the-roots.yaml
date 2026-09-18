@@ -1,0 +1,123 @@
+# Boundary case (m-unit-work join rule, m-case-format root configuration): a
+# joining call is held to the optimistic-conflict opt-in the OUTER invocation
+# resolved, and the root's own value is a conflict where the outer call overrode
+# it — `api-conformance` lane.
+#
+# The root is configured `retryOptimisticConflicts: true` and the outer call
+# requests `false`, so the outer invocation reports `false`. The first join
+# names nothing and inherits; the second names `false` — the outer value — and is
+# accepted; the third names `true`, the root's value, and is refused before its
+# callback runs. An explicit `false` is a value a join is held to exactly as an
+# explicit `true` would be: the comparison is on presence, never on truth.
+#
+# Two joined invocations, activities 6 and 7, and no third; the refused join
+# leaves no activity, and `roundTrips: 1` is the observing read alone.
+model: models/account.yaml
+tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+given:
+  databaseOptions:
+    retryOptimisticConflicts: true
+when:
+  uow:
+    retryOptimisticConflicts: false
+  boundary:
+    - action: read
+      note: the outer body observes the row it will write
+    - action: join
+      note: a joining call naming nothing inherits every value the transaction resolved
+    - action: update
+      note: the joined body buffers a write onto the shared unit of work
+    - action: join
+      retryOptimisticConflicts: false
+      note: a joining call repeating the outer invocation's resolved opt-out is accepted
+    - action: join
+      retryOptimisticConflicts: true
+      note: a joining call naming the root's opt-in is refused — the outer call overrode it
+then:
+  outcome: option-conflict
+  roundTrips: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: read-committed
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 10
+            activity: 7
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 11
+            activity: 7
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: callback
+              retryEligible: false
+              attribution: caused
+              cause: 7
+          - sequence: 16
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

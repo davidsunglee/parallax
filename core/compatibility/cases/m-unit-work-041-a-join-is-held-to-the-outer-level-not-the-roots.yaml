@@ -1,0 +1,125 @@
+# Boundary case (m-unit-work join rule, m-db-port isolation, m-case-format root
+# configuration): a joining call is held to the Isolation Level the OUTER
+# invocation resolved, and the root's own level is a conflict where the outer
+# call overrode it — `api-conformance` lane.
+#
+# The root is configured `repeatable-read` and the outer call requests
+# `serializable`, so the outer invocation reports `serializable` and every
+# attempt opens at it. The first join names nothing and inherits the override;
+# the second names `serializable` and is accepted; the third names
+# `repeatable-read`, the root's level, and is refused before its callback runs.
+# `m-unit-work-035` states the same rule with no root in play; what this case
+# adds is that the root's level is no more acceptable to a join than any other
+# level the transaction did not open at.
+#
+# Two joined invocations, activities 6 and 7, and no third; the refused join
+# leaves no activity, and `roundTrips: 1` is the observing read alone.
+model: models/account.yaml
+tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+given:
+  databaseOptions:
+    isolation: repeatable-read
+when:
+  uow:
+    isolation: serializable
+  boundary:
+    - action: read
+      note: the outer body observes the row it will write
+    - action: join
+      note: a joining call naming nothing inherits every value the transaction resolved
+    - action: update
+      note: the joined body buffers a write onto the shared unit of work
+    - action: join
+      isolation: serializable
+      note: a joining call repeating the outer invocation's resolved level is accepted
+    - action: join
+      isolation: repeatable-read
+      note: a joining call naming the root's level is refused — the outer call overrode it
+then:
+  outcome: option-conflict
+  roundTrips: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: serializable
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: account}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 10
+            activity: 7
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 11
+            activity: 7
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: callback
+              retryEligible: false
+              attribution: caused
+              cause: 7
+          - sequence: 16
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

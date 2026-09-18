@@ -45,6 +45,8 @@ _HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary.yaml"
 _MILESTONE_EDGE_PINS = "m-snapshot-read-037-stream-milestone-edge-pins.yaml"
 _TABLELESS_POSITION = "m-inheritance-136-tpcs-union-vo-projection.yaml"
 _LOCKING_CONTINUATION = "m-read-lock-016-locking-stream-two-arm-continuation.yaml"
+_ROOT_LOCKING_CONTINUATION = "m-read-lock-017-locking-root-stream-inherits-the-shared-lock.yaml"
+_ROOT_OVERRIDDEN_CONTINUATION = "m-read-lock-018-explicit-optimistic-overrides-a-locking-root.yaml"
 
 _TYPED_COORDINATES = (
     (
@@ -571,6 +573,31 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
     monkeypatch.setattr(stream_oracle, "_stream_page", lambda *_args, **_kwargs: next(pages))
 
     stream_oracle.deliver_stream(case, ScriptedReads(results=[]), "then.statements")
+
+
+@pytest.mark.parametrize(
+    ("name", "locking"),
+    [(_ROOT_LOCKING_CONTINUATION, True), (_ROOT_OVERRIDDEN_CONTINUATION, False)],
+)
+def test_a_grouped_stream_resolves_its_preference_from_the_root_through_the_step_adapter(
+    corpus_case: CaseLoader, name: str, locking: bool
+) -> None:
+    # The Scenario's step-to-read adapter is the one indirect path a root travels
+    # in this oracle: the grouped step names no `when.uow` of its own, so the
+    # preference the locking wrapper is graded under is resolved from the case's
+    # `given.databaseOptions` — `locking` for the inheriting delivery, and the
+    # explicit `optimistic` request over that same root for its counterpart —
+    # never read off the presence of a request block the step never carried.
+    case = copy.deepcopy(corpus_case(name))
+    assert case.concurrency_mode == ("locking" if locking else "optimistic")
+    assert case.database_options == {"concurrency": "locking"}
+    rows = _rows(_ACCOUNTS, 1, 2, 3)
+    reads = ScriptedReads(results=[rows, _rows(_ACCOUNTS, 3), rows])
+
+    ScenarioRowObservations(case).assert_step(0, reads)
+
+    assert len(reads.calls) == 3
+    assert all(("for share of t0" in sql) == locking for sql, _binds in reads.calls[:2])
 
 
 def test_a_default_unversioned_continuation_uses_the_locking_wrapper_oracle(

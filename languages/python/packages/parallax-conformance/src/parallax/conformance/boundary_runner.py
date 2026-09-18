@@ -3,19 +3,21 @@
 A `boundary` case (`m-auto-retry` / `m-opt-lock`, `m-case-format` "Boundary
 cases") proves a unit-of-work loop-mechanics branch a single-connection
 harness cannot provoke: it carries no golden SQL, only a portable
-`when.boundary` action list, an OPTIONAL `given.fault` and `given.sessionDefault`,
-its authored transaction options (`when.uow`), and the portable `then.outcome`. This module
-hosts the machinery ONE parametrized runner drives against EVERY reachable
-boundary case — never a per-case hand function (the hand-mirroring this runner
-exists to end):
+`when.boundary` action list, an OPTIONAL `given.fault`, `given.sessionDefault`,
+and `given.databaseOptions`, its authored transaction options (`when.uow`), and
+the portable `then.outcome`. This module hosts the machinery ONE parametrized
+runner drives against EVERY reachable boundary case — never a per-case hand
+function (the hand-mirroring this runner exists to end):
 
 - :func:`boundary_steps` parses a case's own `when.boundary`, projecting each
   `join` step's authored options through the case format's own
   :func:`~parallax.conformance.case_format.request_keywords` (the outer
   invocation's `when.uow` is projected by
-  :func:`~parallax.conformance.case_format.transaction_keywords` beside it),
-  and :func:`outcome` resolves a `then.outcome` that differs by engine against
-  the dialect actually running.
+  :func:`~parallax.conformance.case_format.transaction_keywords` beside it, and
+  the root the runner connects is
+  :func:`~parallax.conformance.case_format.database_options`'), and
+  :func:`outcome` resolves a `then.outcome` that differs by engine against the
+  dialect actually running.
 - :func:`run_boundary_actions` is the ONE deterministic action -> verb
   mapping every boundary case shares (every corpus witness targets
   `models/account.yaml`'s versioned `Account` row).
@@ -33,7 +35,10 @@ exists to end):
   lifetime to fail.
 - :func:`expected_attempts` derives the authored attempt count from the
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
-  from (never a per-case hand table).
+  from (never a per-case hand table), given the values the case's outer
+  invocation resolves to
+  (:func:`~parallax.conformance.case_format.effective_options`) — a
+  calculation the oracle makes for itself and never feeds back into the call.
 
 Exercised by the real-database suite (`tests/api/test_boundary_run.py`, over
 the shipped `parallax-postgres` adapter) and, DB-free, by unit
@@ -667,8 +672,8 @@ def expected_attempts(
     *,
     fault: str | None,
     outcome_kind: str,
-    max_retries: int | None,
-    retry_optimistic_conflicts: bool | None,
+    max_retries: int,
+    retry_optimistic_conflicts: bool,
 ) -> int:
     """The authored attempt count (`m-auto-retry.md` / `m-opt-lock.md`'s own
     retriability rules, never a per-case hand table): no fault surfaces or
@@ -692,10 +697,11 @@ def expected_attempts(
     :data:`_FAULTS` rather than tested here, so one kind's declaration answers
     the injection point and the count together.
 
-    This is the ONE place the retry defaults an omitting case inherits are
-    restated, because an oracle needs the resolved numbers: a ``None`` bound
-    means the built-in 10 (`m-auto-retry.md` "The bound is configurable with a
-    default of 10") and an absent opt-in means off (`m-opt-lock.md`).
+    ``max_retries`` and ``retry_optimistic_conflicts`` are the values the outer
+    invocation RESOLVES to — the authored request over the configured root,
+    :func:`~parallax.conformance.case_format.effective_options` — because an
+    oracle needs the resolved numbers; production resolves the same two from the
+    root record and the sparse request it was actually handed.
     """
     if fault is None:
         return 1
@@ -703,13 +709,10 @@ def expected_attempts(
     if kind.seam != "work":
         return 1
     retriable = (
-        bool(retry_optimistic_conflicts)
-        if kind.retriable == "opt_in"
-        else kind.retriable == "always"
+        retry_optimistic_conflicts if kind.retriable == "opt_in" else kind.retriable == "always"
     )
     if not retriable:
         return 1
-    bound = max_retries if max_retries is not None else 10
     if outcome_kind == "committed":
-        return 1 if bound < 1 else 2
-    return bound + 1
+        return 1 if max_retries < 1 else 2
+    return max_retries + 1

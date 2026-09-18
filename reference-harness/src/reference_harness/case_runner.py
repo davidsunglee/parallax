@@ -2755,7 +2755,7 @@ def _error_has_golden(case: Case, dialect: str) -> bool:
 def _assert_commit_is_a_nodes_last_step(case: Case) -> None:
     """Guard: a node's ``kind: commit`` step is the LAST step that node declares.
 
-    A held session is opened once, at the case's declared isolation, and stays one
+    A held session is opened once, at the case's resolved isolation, and stays one
     transaction for the whole choreography; committing ends it. A step after the
     commit would run in a second transaction the case never described — at a level
     nothing states and with locks the first one released — so which transaction a
@@ -2879,9 +2879,10 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     blocks nothing mid-round and detects the cycle at COMMIT, while reaching it by
     turning the reads into shared locks (MariaDB Serializable) leaves the crossed
     writes waiting on each other and refuses in that round exactly as ordinary
-    contention does. Such
-    a case declares ``when.uow.isolation`` (the level both sessions open at,
-    applied by the provider) and AUTHORS the commits as a final round of
+    contention does. Such a case declares ``when.uow.isolation`` or a root level
+    under ``given.databaseOptions`` (the level both sessions open at, applied by
+    the provider; ``case.isolation`` resolves the two) and AUTHORS the commits
+    as a final round of
     ``kind: commit`` steps, so the moment each transaction ends is part of the
     choreography rather than a mode the runner infers. A commit-time raise is
     that node's contention signal exactly as a mid-round raise is.

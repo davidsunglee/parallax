@@ -1,0 +1,51 @@
+# An explicit `optimistic` request overrides a locking Database Root: the same
+# transactional stream as `m-read-lock-017`, under the same `locking` root, opens
+# lock-free pages because the invocation named its own preference (m-read-lock /
+# m-unit-work / m-case-format). Account declares a version, so `optimistic`
+# resolves to the Optimistic strategy rather than the unversioned Locking fallback,
+# and neither page carries a lock clause — the contrast that tells inheritance
+# from the root apart from a lock that would have been taken regardless. Page 1
+# publishes accounts 1 and 2, page 2 seeks from account 2 and returns account 3
+# alone; the two-arm PostgreSQL continuation and MariaDB's one-arm form are those
+# of any optimistic stream.
+model: models/account.yaml
+tags: [m-read-lock, m-opt-lock, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, database-options, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the continuing page binds the primary key of the root the first page delivered last"
+given:
+  fixtures: true
+  databaseOptions:
+    concurrency: locking
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: optimistic-stream
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
+      stream:
+        batchSize: 2
+      roundTrips: 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+          binds: [3]
+        - sql:
+            postgres: select u.id, u.owner, u.balance, u.version, u.parallax_seek_0 from ((select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and (t0.id > ? or t0.id is null) order by t0.id asc limit ?) union all (select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id is null order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id >= ? and t0.id > ? order by t0.id asc limit ?
+          binds:
+            postgres: [2, 2, 3, 3, 3]
+            mariadb: [2, 2, 3]
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+then:
+  roundTrips: 2

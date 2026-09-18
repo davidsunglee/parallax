@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`, and the Database Root's configured `databaseOptions`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["tags", "shape"],
@@ -548,10 +548,33 @@
       }
     },
     "given": {
-      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
+      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, any injected fault, and the transaction option defaults the Database Root the case runs through is configured with. Optional — a case that starts from the model's default fixtures, injects nothing, and configures no root omits `given` entirely.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "databaseOptions": {
+          "description": "The transaction option defaults the Database Root every unit of work of this case runs through is CONFIGURED with at connect (m-unit-work strategy selection, m-auto-retry, m-opt-lock, m-db-port; ADR 0065): the same four fields `when.uow` requests, under the same definitions. A field the case omits here is the root's built-in default — `maxRetries` 10, `concurrency` `optimistic`, `retryOptimisticConflicts` false, `isolation` `read-committed` — and no field may be null. Configuration is not a request: an outer invocation resolves each option as its own explicit `when.uow` value, else this root value; a joining call inherits the ACTIVE transaction's resolved value and never compares against this record on its own. A runner that opens no transaction at all — a standalone read or stream — carries it nowhere: a locking root does not turn a standalone read into a locking one. Admitted on every shape, because every shape that opens a unit of work does so through a root.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "concurrency": {
+              "description": "The root's default Concurrency Preference, resolved by every outer invocation that names none of its own.",
+              "$ref": "#/$defs/transactionOptions/concurrency"
+            },
+            "maxRetries": {
+              "description": "The root's default retry bound, resolved by every outer invocation that names none of its own; `0` disables the loop for every such invocation.",
+              "$ref": "#/$defs/transactionOptions/maxRetries"
+            },
+            "retryOptimisticConflicts": {
+              "description": "The root's default optimistic-conflict opt-in, resolved by every outer invocation that names none of its own.",
+              "$ref": "#/$defs/transactionOptions/retryOptimisticConflicts"
+            },
+            "isolation": {
+              "description": "The root's default portable Isolation Level, requested on every attempt of every outer invocation that names none of its own; the harness opens every held session a case owns at the level the case resolves the same way.",
+              "$ref": "#/$defs/transactionOptions/isolation"
+            }
+          }
+        },
         "fixtures": {
           "description": "Whether the model's fixtures are loaded BEFORE the action — so a sequence can mutate pre-existing persisted rows (for example, the m-read-lock held-session reads). Defaults to false: a writeSequence case starts from an empty schema and builds its own state (the m-txtime-write milestone-chaining and m-batch-write batched-insert cases).",
           "type": "boolean",
@@ -619,21 +642,20 @@
           "additionalProperties": false,
           "properties": {
             "concurrency": {
-              "description": "The Unit Work's Concurrency Preference: `optimistic` (default — a gate-capable Entity uses lock-free reads and observation-bound gates; an unversioned Non-Temporal Entity falls back to Locking) or `locking` (force shared-lock participation and ungated writes for every lockable Entity). Gate presence follows the target Entity's derived Effective Concurrency Strategy alone, uniformly across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close.",
-              "enum": ["locking", "optimistic"]
+              "description": "The Unit Work's Concurrency Preference this invocation explicitly requests: `optimistic` (a gate-capable Entity uses lock-free reads and observation-bound gates; an unversioned Non-Temporal Entity falls back to Locking) or `locking` (force shared-lock participation and ungated writes for every lockable Entity). Omitted, the Database Root's configured default applies (`given.databaseOptions.concurrency`, built-in `optimistic`). Gate presence follows the target Entity's derived Effective Concurrency Strategy alone, uniformly across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close.",
+              "$ref": "#/$defs/transactionOptions/concurrency"
             },
             "maxRetries": {
-              "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (m-auto-retry/m-opt-lock bounded automatic retry). Omitted, the Database Root's default applies, whose built-in value is 10; `0` disables the loop, so even a transient failure surfaces to the caller.",
-              "type": "integer",
-              "minimum": 0
+              "description": "The bound on automatic re-executions of the unit-of-work body after a retriable failure (m-auto-retry/m-opt-lock bounded automatic retry) this invocation explicitly requests. Omitted, the Database Root's configured default applies (`given.databaseOptions.maxRetries`, built-in 10); `0` disables the loop, so even a transient failure surfaces to the caller.",
+              "$ref": "#/$defs/transactionOptions/maxRetries"
             },
             "retryOptimisticConflicts": {
-              "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (m-opt-lock). Omitted, the Database Root's default applies, whose built-in value is false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
-              "type": "boolean"
+              "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (m-opt-lock), as this invocation explicitly requests it. Omitted, the Database Root's configured default applies (`given.databaseOptions.retryOptimisticConflicts`, built-in false — a conflict surfaces to the caller after one attempt). Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
+              "$ref": "#/$defs/transactionOptions/retryOptimisticConflicts"
             },
             "isolation": {
-              "description": "The portable Isolation Level every held session or unit-of-work group this case opens runs at (m-db-port), named by the anomalies it forbids rather than by any engine's spelling: `read-committed` forbids dirty reads, `repeatable-read` also forbids nonrepeatable reads, `serializable` additionally makes the committed participating transactions equivalent to some serial order. PRESCRIPTIVE wherever a runner opens the boundary — the harness opens each held session at it, an API Conformance Suite passes it to each group's transaction — and omitted means the invocation requests the Database Root's default, whose built-in value is `read-committed`. A case never names an engine level or a session variable: mapping the portable value is the adapter's, and the provider's, own work.",
-              "enum": ["read-committed", "repeatable-read", "serializable"]
+              "description": "The portable Isolation Level every held session or unit-of-work group this case opens runs at (m-db-port), as this invocation explicitly requests it. PRESCRIPTIVE wherever a runner opens the boundary — the harness opens each held session at it, an API Conformance Suite passes it to each group's transaction — and omitted means the invocation requests the Database Root's configured default (`given.databaseOptions.isolation`, built-in `read-committed`). A case never names an engine level or a session variable: mapping the portable value is the adapter's, and the provider's, own work.",
+              "$ref": "#/$defs/transactionOptions/isolation"
             }
           }
         },
@@ -1093,9 +1115,21 @@
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
                 "enum": ["read", "create", "update", "terminate", "delete", "join"]
               },
+              "maxRetries": {
+                "description": "The retry bound THIS joining call explicitly names, spelled as `when.uow.maxRetries` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the bound inherits the active transaction's resolved bound, naming that bound is accepted, and naming any other — the Database Root's own default included, where the outer call overrode it — is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone.",
+                "$ref": "#/$defs/transactionOptions/maxRetries"
+              },
+              "concurrency": {
+                "description": "The Concurrency Preference THIS joining call explicitly names, spelled as `when.uow.concurrency` is, under the same inherit / accept / refuse rule as every other option a join may name. Legal on a `join` step alone.",
+                "$ref": "#/$defs/transactionOptions/concurrency"
+              },
+              "retryOptimisticConflicts": {
+                "description": "The optimistic-conflict opt-in THIS joining call explicitly names, spelled as `when.uow.retryOptimisticConflicts` is, under the same inherit / accept / refuse rule as every other option a join may name. Legal on a `join` step alone.",
+                "$ref": "#/$defs/transactionOptions/retryOptimisticConflicts"
+              },
               "isolation": {
                 "description": "The portable Isolation Level THIS joining call explicitly names, spelled as `when.uow.isolation` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the level inherits the active transaction's resolved level, naming that level is accepted, and naming any other — the Database Root's own default included, where the outer call overrode it — is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone — every other action runs inside a boundary that is already open and has no level of its own to name.",
-                "enum": ["read-committed", "repeatable-read", "serializable"]
+                "$ref": "#/$defs/transactionOptions/isolation"
               },
               "note": {
                 "description": "Optional human-readable description of the action's role in the loop scenario.",
@@ -1104,12 +1138,19 @@
             },
             "allOf": [
               {
-                "description": "Only a `join` step opens a boundary, so only a `join` step may name a level for one.",
+                "description": "Only a `join` step opens a boundary, so only a `join` step may name a transaction option for one: every other action runs inside a boundary that is already open.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "not": { "const": "join" } } }
                 },
-                "then": { "not": { "required": ["isolation"] } }
+                "then": {
+                  "allOf": [
+                    { "not": { "required": ["maxRetries"] } },
+                    { "not": { "required": ["concurrency"] } },
+                    { "not": { "required": ["retryOptimisticConflicts"] } },
+                    { "not": { "required": ["isolation"] } }
+                  ]
+                }
               }
             ]
           }
@@ -1545,6 +1586,26 @@
     }
   },
   "$defs": {
+    "transactionOptions": {
+      "description": "The four transaction options, defined once and shared by the three placements that spell them: the Database Root's configured defaults (`given.databaseOptions`), an outer invocation's explicit request (`when.uow`), and a joining call's explicit request (a `when.boundary` `join` step). Each placement gives a field its own meaning; the value vocabulary, type, and bound are the same in all three, and null is a value none of them admits.",
+      "concurrency": {
+        "description": "A Concurrency Preference (m-unit-work strategy selection): `locking` forces the effective Locking strategy for every lockable Entity; `optimistic` selects Optimistic for an Entity with an explicit-version or Transaction-Time-derived optimistic key, while an unversioned Non-Temporal Entity falls back to Locking.",
+        "enum": ["locking", "optimistic"]
+      },
+      "maxRetries": {
+        "description": "A bound on automatic re-executions of a unit-of-work body after a retriable failure (m-auto-retry): re-executions rather than attempts, so `0` runs the body once and `N` admits at most `N + 1` attempts.",
+        "type": "integer",
+        "minimum": 0
+      },
+      "retryOptimisticConflicts": {
+        "description": "Whether an optimistic-lock conflict joins the retriable set (m-opt-lock). Transient database failures are retriable whatever this says.",
+        "type": "boolean"
+      },
+      "isolation": {
+        "description": "A portable Isolation Level (m-db-port), named by the anomalies it forbids rather than by any engine's spelling: `read-committed` forbids dirty reads, `repeatable-read` also forbids nonrepeatable reads, `serializable` additionally makes the committed participating transactions equivalent to some serial order.",
+        "enum": ["read-committed", "repeatable-read", "serializable"]
+      }
+    },
     "evolutionEndpoints": {
       "description": "The two accepted models one `evolution` case evolves between. `earlier` is a model descriptor path or `null`, the explicit fresh-provisioning sentinel — never inferred from an empty model or from inspecting a database. An evolution case carries no top-level `model`: the LATER endpoint is the model every per-case check reads.",
       "type": "object",

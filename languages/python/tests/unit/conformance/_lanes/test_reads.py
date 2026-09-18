@@ -21,6 +21,7 @@ import pytest
 
 from parallax.conformance import case_format, sweep
 from parallax.conformance._lanes import reads
+from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
@@ -30,7 +31,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.snapshot import DeferredFeatureError
+from parallax.snapshot import DatabaseOptions, DeferredFeatureError
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
 
 
@@ -717,3 +718,75 @@ def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None
     with pytest.raises(EngineError):
         reads.run_stream_case(case, port)
     assert port.executed == []
+
+
+# --------------------------------------------------------------------------- #
+# Root configuration (m-case-format *Root configuration*): the record          #
+# `given.databaseOptions` states reaches the Handle every read lane connects,  #
+# and governs only the transactions that Handle opens.                          #
+# --------------------------------------------------------------------------- #
+def _rooted(case_id: str, *, uow: dict[str, object] | None = None) -> case_format.Case:
+    """*case_id*'s case under a conspicuous root — every field away from its
+    built-in — with `when.uow` replaced by ``uow`` (dropped when ``None``)."""
+    case = _load_case(case_id)
+    document = dict(case.document)
+    document["given"] = {
+        **cast("Mapping[str, Any]", document.get("given") or {}),
+        "databaseOptions": {
+            "maxRetries": 0,
+            "concurrency": "locking",
+            "retryOptimisticConflicts": True,
+            "isolation": "serializable",
+        },
+    }
+    when = {k: v for k, v in cast("Mapping[str, Any]", document["when"]).items() if k != "uow"}
+    document["when"] = when if uow is None else {**when, "uow": uow}
+    return dataclasses.replace(case, document=document)
+
+
+def test_a_standalone_read_under_a_locking_root_opens_no_transaction_and_takes_no_lock() -> None:
+    # The root configures `locking`, and the case requests nothing: the read
+    # stays the standalone `db.read_rows` every other unrequesting read is, so
+    # no boundary is asked for at all and the emitted statement carries no lock
+    # suffix — the root's defaults govern transactions, and this read opens none.
+    port = FakeDbPort([{"id": 1, "name": "Grace"}])
+    emissions, rows, _trips = reads.run_read_case(_rooted("m-value-object-001"), port)
+    assert rows == [{"id": 1, "name": "Grace"}]
+    assert port.levels == []
+    assert "for share" not in emissions[0].sql
+
+
+def test_a_transactional_read_resolves_what_it_omits_against_the_case_root() -> None:
+    # An authored `concurrency` puts the read inside `db.transact`, and every
+    # field the request leaves out is then production's to resolve against the
+    # root this lane connected: the boundary is asked for the root's
+    # Serializable, which nothing in `when.uow` named.
+    port = FakeDbPort([{"id": 1, "name": "Grace"}])
+    reads.run_read_case(_rooted("m-value-object-001", uow={"concurrency": "optimistic"}), port)
+    assert port.levels == ["serializable"]
+
+
+def test_an_authored_level_overrides_the_case_roots_level_on_a_transactional_read() -> None:
+    port = FakeDbPort([{"id": 1, "name": "Grace"}])
+    reads.run_read_case(
+        _rooted(
+            "m-value-object-001", uow={"concurrency": "optimistic", "isolation": "repeatable-read"}
+        ),
+        port,
+    )
+    assert port.levels == ["repeatable_read"]
+
+
+def test_case_database_connects_with_the_cases_own_root_record() -> None:
+    # The seam every read lane composes its Handle through: the record it hands
+    # `connect` is the case's `given.databaseOptions`, decoded by the case format,
+    # and an unconfigured case connects the record's own defaults.
+    port = FakeDbPort([])
+    provider = lifecycle_run(None).observation().provider
+    with reads.case_database(_rooted("m-value-object-001"), port, provider) as db:
+        assert db.transact(lambda tx: tx.options) == case_format.database_options(
+            _rooted("m-value-object-001")
+        )
+    assert port.levels == ["serializable"]
+    with reads.case_database(_load_case("m-value-object-001"), FakeDbPort([]), provider) as db:
+        assert db.transact(lambda tx: tx.options) == DatabaseOptions()

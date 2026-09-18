@@ -1,0 +1,30 @@
+# A standalone read under a locking Database Root takes no lock: the root's
+# defaults govern the transactions opened through it, and a read that opens none
+# has nothing for them to govern (m-read-lock / m-unit-work / m-case-format). The
+# root is configured `locking` and the case names no `when.uow`, so the object
+# find is the plain non-transactional read every other standalone read is, and
+# its golden carries no `for share of t0` suffix. Contrast `m-read-lock-017`,
+# where the same root's preference reaches a stream because a `uow` group put
+# that stream inside a transaction.
+model: models/account.yaml
+tags: [m-read-lock, m-opt-lock, m-dialect, database-options, slice-snapshot-1, slice-managed-1]
+shape: read
+given:
+  databaseOptions:
+    concurrency: locking
+when:
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        attr: parallax.compatibility.Account.id
+        value: 2
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      binds: [2]
+  referenceSql: select id, owner, balance, version from account where id = 2
+  rows:
+    - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+  roundTrips: 1

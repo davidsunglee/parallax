@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from parallax.core.entity import DomainModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
-    from parallax.snapshot import handle
+    from parallax.snapshot import DatabaseOptions, handle
     from parallax.snapshot.handle import ServingModel
 
 __all__ = [
@@ -177,14 +177,17 @@ class InterleavedExecutionFactory(Protocol):
 
     The lane opens one per group and never constructs a connection itself, so
     what it holds is this: a call that opens a session, composes the Database
-    over it under the model, clock and observation the group runs with, and hands
-    both back as one value.
+    over it under the model, root options, clock and observation the group runs
+    with, and hands both back as one value. ``options`` is the case's own root
+    record, so the group's transaction resolves what it does not request against
+    the root the case configured rather than against a default this seam chose.
     """
 
     def __call__(
         self,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> InterleavedExecution: ...

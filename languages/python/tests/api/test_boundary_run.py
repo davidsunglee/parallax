@@ -73,8 +73,11 @@ def test_boundary_case_runs_through_the_shipped_surface(
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
 
-    # Exactly the fields the case authored, so an omitted one reaches
-    # production omitted and is resolved there rather than restated here.
+    # Two seams, each carried its own way: the root record the case configures
+    # goes to `connect`, and exactly the fields `when.uow` authored go to the
+    # call, so an omitted one reaches production omitted and is resolved there
+    # — against that root — rather than restated here.
+    root = case_format.database_options(case)
     requests = case_format.transaction_keywords(case)
     steps = boundary_runner.boundary_steps(case)
     fault = boundary_runner.fault_kind(case)
@@ -103,7 +106,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # stem — so the attempt events the case authors carry the literal it names
     # (`m-conformance-adapter`).
     serving = ServingModel(prepare_model(meta, edition=engine.case_edition(case)))
-    db = connect(port, serving, lifecycle_provider=observed.provider)
+    db = connect(port, serving, options=root, lifecycle_provider=observed.provider)
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
@@ -178,15 +181,19 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # asked to begin, so a boundary that never opened is one attempt too.
     attempts = sum(
         1
-        for root in observed.roots
-        for event in root.events
+        for execution in observed.roots
+        for event in execution.events
         if isinstance(event, TransactionAttemptStarted)
     )
+    # The oracle resolves the same two values for itself — the authored request
+    # over the configured root — and compares; nothing it resolves reaches the
+    # call above.
+    effective = case_format.effective_options(case)
     assert attempts == boundary_runner.expected_attempts(
         fault=fault,
         outcome_kind=outcome,
-        max_retries=requests.get("max_retries"),
-        retry_optimistic_conflicts=requests.get("retry_optimistic_conflicts"),
+        max_retries=effective.max_retries,
+        retry_optimistic_conflicts=effective.retry_optimistic_conflicts,
     ), case.case_id
 
     then = cast("dict[str, Any]", case_document(case)["then"])
@@ -204,10 +211,11 @@ def test_boundary_case_runs_through_the_shipped_surface(
         )
 
 
-def test_reachable_boundary_cases_cover_the_expected_seventeen() -> None:
+def test_reachable_boundary_cases_cover_the_expected_population() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001..006`, `m-opt-lock-010/011`,
-    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, and the six
+    # population): `m-auto-retry-001..011`, `m-opt-lock-010/011/024/025`,
+    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, the five
+    # root-configured join cases `m-unit-work-037..041`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
     # fault or a joined boundary — never a hand list at the RUNNER level (the
     # corpus itself drives `_CASES` above); this is a coverage assertion only.
@@ -219,6 +227,11 @@ def test_reachable_boundary_cases_cover_the_expected_seventeen() -> None:
         "m-auto-retry-004",
         "m-auto-retry-005",
         "m-auto-retry-006",
+        "m-auto-retry-007",
+        "m-auto-retry-008",
+        "m-auto-retry-009",
+        "m-auto-retry-010",
+        "m-auto-retry-011",
         "m-execution-lifecycle-004",
         "m-execution-lifecycle-005",
         "m-execution-lifecycle-006",
@@ -227,7 +240,14 @@ def test_reachable_boundary_cases_cover_the_expected_seventeen() -> None:
         "m-execution-lifecycle-010",
         "m-opt-lock-010",
         "m-opt-lock-011",
+        "m-opt-lock-024",
+        "m-opt-lock-025",
         "m-unit-work-004",
         "m-unit-work-035",
         "m-unit-work-036",
+        "m-unit-work-037",
+        "m-unit-work-038",
+        "m-unit-work-039",
+        "m-unit-work-040",
+        "m-unit-work-041",
     }
