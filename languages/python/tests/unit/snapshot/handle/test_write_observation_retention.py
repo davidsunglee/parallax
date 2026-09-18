@@ -147,7 +147,6 @@ def _positional(shape: MemberShape, document: Mapping[str, object]) -> tuple[obj
 
 
 def _member_row(layout: EntityLayout, columns: Mapping[str, object]) -> tuple[object, ...]:
-    """The positional member row ``columns`` — keyed by physical column — decodes to."""
     by_declared_name: dict[str, object] = {
         member.name: columns[binding.storage.name]
         for member, binding in zip(
@@ -398,7 +397,6 @@ def test_a_temporal_row_retains_its_whole_predecessor_milestone() -> None:
 
 
 def _voyage_members() -> dict[str, object]:
-    """Every applicable Voyage member by DECLARED name, as `_voyage_columns` holds it."""
     return {
         "id": 7,
         "title": "Northbound",
