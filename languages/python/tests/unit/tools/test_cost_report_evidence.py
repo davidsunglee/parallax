@@ -387,6 +387,8 @@ def test_the_historical_side_is_cross_checked_against_its_run_before_arithmetic(
     stray = _before(before_portfolio, foreign)
     assert any("belongs to run 1" in p for p in stray.problems)
     assert any("is attempt 2" in p for p in stray.problems)
+    assert stray.job is None and stray.timing.elapsed.seconds is None
+    assert stray.timing.runner.seconds is None
     twice = deepcopy(_before_jobs())
     twice["jobs"].append(deepcopy(twice["jobs"][1]))
     unidentified = _before(before_portfolio, twice)
@@ -753,11 +755,13 @@ def test_a_cancelled_or_failed_measure_job_makes_the_after_evidence_insufficient
 
 
 def test_every_after_job_is_cross_checked_and_the_topology_is_the_workflows(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document], before_portfolio: Document
 ) -> None:
-    """Runner minutes and elapsed consume every job of the document, so a job
-    of another attempt, a job the workflow has no job for, and a shard with
-    two jobs each make the evidence insufficient before arithmetic."""
+    """A job of another attempt, a job the workflow has no job for, and a
+    name held by two jobs each make the evidence insufficient and contribute
+    to no quantity: elapsed and every maximum over the shards are unknown
+    without the rejected measure jobs, and runner minutes count only the
+    run's own admitted jobs."""
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
     ids = [shard.id for shard in SHARDS]
@@ -773,10 +777,34 @@ def test_every_after_job_is_cross_checked_and_the_topology_is_the_workflows(
     assert f"the after run has more than one `measure ({ids[0]})` job" in after.problems
     assert "the after run has more than one `cleanup` job" in after.problems
     assert len(after.problems) == 4
+    assert after.timing.elapsed.seconds is None
+    assert after.timing.elapsed.note.endswith("a report job is absent")
+    assert after.timing.runner.seconds == 60.0 + 1800.0 + 2400.0 + 60.0
+    assert "4 jobs" in after.timing.runner.note
+    assert after.longest_job.seconds is None and after.timing.setup.seconds is None
+    assert after.dependent_wait.seconds is None
+    rendered = evidence(_before(before_portfolio), after).render()
+    assert "| 72.0 min (every allocated job's duration, 4 jobs) |" in rendered
+    assert (
+        "| unknown (plan job start to the last report job's completion: a report job is absent) |"
+        in rendered
+    )
     cleanup_of_another_run = _after_jobs(ids)
     cleanup_of_another_run["jobs"][-1]["run_id"] = 9
     foreign = _after(assembled, request, cleanup_of_another_run)
     assert foreign.problems == (f"the after job `cleanup` belongs to run 9, not {AFTER_RUN}",)
+    assert foreign.timing.elapsed.seconds == 2750.0
+    rerun = _after_jobs(ids)
+    rerun["jobs"].append(_job("11", "plan", 5.0, 9.0, run_id=AFTER_RUN, attempt=2))
+    rerun["jobs"].append(_job("201", "assemble", 5.0, 9.0, run_id="9"))
+    later = _after(assembled, request, rerun)
+    assert later.problems == (
+        "the after job `plan` is attempt 2, not 1",
+        f"the after job `assemble` belongs to run 9, not {AFTER_RUN}",
+    )
+    assert later.timing.elapsed.seconds == 2750.0
+    assert later.timing.initial_queue.seconds == 10.0
+    assert later.timing.runner.seconds == 60.0 + 600.0 + 1200.0 + 1800.0 + 2400.0 + 60.0
 
 
 def test_duplicate_plan_or_shard_entries_in_the_assembly_are_named_not_last_wins(

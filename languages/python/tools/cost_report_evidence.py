@@ -26,7 +26,7 @@ import argparse
 import json
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -542,7 +542,10 @@ def historical(run: Run, jobs: Sequence[Job], portfolio: Document) -> Historical
             run, None, UNKNOWN_SCOPE, commit, coverage, _unknown_timing(), tuple(problems), ()
         )
     job = named[0]
-    _cross_check_job(job, run, problems, "before")
+    if not _cross_check_job(job, run, problems, "before"):
+        return Historical(
+            run, None, UNKNOWN_SCOPE, commit, coverage, _unknown_timing(), tuple(problems), ()
+        )
     head = job.step(HISTORICAL_HEAD_STEP)
     base = job.step(HISTORICAL_BASE_STEP)
     upload = job.step(HISTORICAL_UPLOAD_STEP)
@@ -647,9 +650,8 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
     spans = _spans(assembled / DURATIONS_FILE, notes)
     head_seconds = _seconds_by_shard(spans, "collection")
     setup_seconds = _seconds_by_shard(spans, "setup")
-    for job in jobs:
-        _cross_check_job(job, run, problems, "after")
-    measure_jobs = _measure_jobs(jobs, problems)
+    admitted = _admitted_jobs(jobs, run, plan, problems)
+    names = {job.name for job in jobs}
     outcomes: list[ShardOutcome] = []
     envelopes: list[Document] = []
     for shard_id, planned in plan.items():
@@ -661,15 +663,14 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
             request,
             head_seconds.get(shard_id),
             setup_seconds.get(shard_id),
-            measure_jobs.pop(shard_id, None),
+            admitted.get(_measure_name(shard_id)),
             envelopes,
         )
         outcomes.append(outcome)
-    for shard_id, job in measure_jobs.items():
-        problems.append(f"measure job `{job.name}` names shard {shard_id!r}, which is not planned")
     for outcome in outcomes:
         if outcome.job is None:
-            problems.append(f"shard {outcome.id} has no measure job in the run's jobs")
+            if _measure_name(outcome.id) not in names:
+                problems.append(f"shard {outcome.id} has no measure job in the run's jobs")
         elif not outcome.job.succeeded:
             problems.append(
                 f"shard {outcome.id}'s measure job ended "
@@ -680,23 +681,12 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
                 f"shard {outcome.id}'s `{MEASURE_STEP}` step "
                 + ("is absent" if step is None else f"ended {step.conclusion or step.status}")
             )
-    plan_job = _unique(jobs, PLAN_JOB, problems)
-    assemble_job = _unique(jobs, ASSEMBLE_JOB, problems)
-    if sum(job.name == CLEANUP_JOB for job in jobs) > 1:
-        problems.append(f"the after run has more than one `{CLEANUP_JOB}` job")
-    report_jobs = [job for job in jobs if job.name != CLEANUP_JOB]
-    ended = [job.completed_at for job in report_jobs if job.completed_at is not None]
+    plan_job = _the_job(admitted, names, PLAN_JOB, problems)
+    assemble_job = _the_job(admitted, names, ASSEMBLE_JOB, problems)
     timing = Timing(
-        _quantity(
-            _between(
-                plan_job.started_at if plan_job is not None else None,
-                max(ended) if ended and len(ended) == len(report_jobs) else None,
-            ),
-            "plan job start to the last report job's completion",
-            "a report job's timestamp is absent",
-        ),
+        _elapsed(plan_job, [assemble_job, *(outcome.job for outcome in outcomes)]),
         _longest(head_seconds, outcomes, "the longest head shard collection span"),
-        _runner_minutes(jobs),
+        _runner_minutes(list(admitted.values())),
         _quantity(
             _between(run.created_at, plan_job.started_at if plan_job is not None else None),
             "run creation to the plan job's start",
@@ -849,13 +839,19 @@ def _subject_members(portfolio: object, subject: str) -> list[Document]:
     return members
 
 
-def _cross_check_job(job: Job, run: Run, problems: list[str], side: str) -> None:
+def _cross_check_job(job: Job, run: Run, problems: list[str], side: str) -> bool:
+    """Whether the job is the run's own; a job of another run or attempt is a
+    problem and never a contributor."""
+    own = True
     if job.run_id is not None and job.run_id != run.id:
         problems.append(f"the {side} job `{job.name}` belongs to run {job.run_id}, not {run.id}")
+        own = False
     if job.run_attempt is not None and job.run_attempt != run.attempt:
         problems.append(
             f"the {side} job `{job.name}` is attempt {job.run_attempt}, not {run.attempt}"
         )
+        own = False
+    return own
 
 
 def _once_each(
@@ -874,34 +870,68 @@ def _once_each(
     return found
 
 
-def _unique(jobs: Sequence[Job], name: str, problems: list[str]) -> Job | None:
-    named = [job for job in jobs if job.name == name]
-    if len(named) != 1:
-        problems.append(f"the after run has {len(named)} `{name}` job(s), not one")
-        return None
-    if not named[0].succeeded:
-        problems.append(
-            f"the after run's `{name}` job ended {named[0].conclusion or named[0].status}"
-        )
-    return named[0]
+def _admitted_jobs(
+    jobs: Sequence[Job], run: Run, plan: Mapping[str, Document], problems: list[str]
+) -> dict[str, Job]:
+    """The jobs the arithmetic may consume, by name: the run's own jobs whose
+    name the workflow gives its plan, assemble, and cleanup jobs or a planned
+    shard's measure job, each name held by one job. Every other job is a
+    problem and contributes to no quantity."""
+    own = [job for job in jobs if _cross_check_job(job, run, problems, "after")]
+    expected = [job for job in own if _expected_job(job, plan, problems)]
+    counts = Counter(job.name for job in expected)
+    for name, count in counts.items():
+        if count > 1:
+            problems.append(f"the after run has more than one `{name}` job")
+    return {job.name: job for job in expected if counts[job.name] == 1}
 
 
-def _measure_jobs(jobs: Sequence[Job], problems: list[str]) -> dict[str, Job]:
-    """The matrix jobs by shard id, naming a job the workflow has no job for
-    and a shard with more than one job, whose first job is kept."""
-    found: dict[str, Job] = {}
+def _expected_job(job: Job, plan: Mapping[str, Document], problems: list[str]) -> bool:
+    shard_id = _shard_of(job.name)
+    if shard_id is None:
+        if job.name in {PLAN_JOB, ASSEMBLE_JOB, CLEANUP_JOB}:
+            return True
+        problems.append(f"the after run has an unexpected job `{job.name}`")
+        return False
+    if shard_id in plan:
+        return True
+    problems.append(f"measure job `{job.name}` names shard {shard_id!r}, which is not planned")
+    return False
+
+
+def _measure_name(shard_id: str) -> str:
+    return f"{MEASURE_JOB} ({shard_id})"
+
+
+def _shard_of(name: str) -> str | None:
     prefix = f"{MEASURE_JOB} ("
-    for job in jobs:
-        if not (job.name.startswith(prefix) and job.name.endswith(")")):
-            if job.name not in {PLAN_JOB, ASSEMBLE_JOB, CLEANUP_JOB}:
-                problems.append(f"the after run has an unexpected job `{job.name}`")
-            continue
-        shard_id = job.name[len(prefix) : -1]
-        if shard_id in found:
-            problems.append(f"the after run has more than one `{job.name}` job")
-            continue
-        found[shard_id] = job
-    return found
+    if name.startswith(prefix) and name.endswith(")"):
+        return name[len(prefix) : -1]
+    return None
+
+
+def _the_job(
+    admitted: Mapping[str, Job], names: Set[str], name: str, problems: list[str]
+) -> Job | None:
+    job = admitted.get(name)
+    if job is None:
+        if name not in names:
+            problems.append(f"the after run has no `{name}` job")
+        return None
+    if not job.succeeded:
+        problems.append(f"the after run's `{name}` job ended {job.conclusion or job.status}")
+    return job
+
+
+def _elapsed(plan_job: Job | None, report_jobs: Sequence[Job | None]) -> Quantity:
+    note = "plan job start to the last report job's completion"
+    if plan_job is None or any(job is None for job in report_jobs):
+        return Quantity.unknown(f"{note}: a report job is absent")
+    ended = [job.completed_at for job in report_jobs if job is not None and job.completed_at]
+    last = max(ended) if len(ended) == len(report_jobs) else None
+    return _quantity(
+        _between(plan_job.started_at, last), note, "a report job's timestamp is absent"
+    )
 
 
 def _spans(path: Path, notes: list[str]) -> Spans | None:
