@@ -36,10 +36,10 @@ A capture is also partitioned into shards, each one member or one workload
 slice of the Snapshot member, so that separate runners can measure them and an
 assembly can put the results beside each other without pretending they are
 one capture. ``--plan`` prints the partition, ``--shard`` measures one shard
-(its base first, through the base checkout's own tool, then its head, on the
-same runner), and ``--assemble`` reconciles what arrived against the plan and
-the immutable request, keeping every envelope's provenance whole and naming
-every cell it could not compare.
+(its head, after the request's base when one is named, through the base
+checkout's own tool, on the same runner), and ``--assemble`` reconciles what
+arrived against the plan and the immutable request, keeping every envelope's
+provenance whole and naming every cell it could not compare.
 """
 
 from __future__ import annotations
@@ -1588,9 +1588,10 @@ def run_shards(
     base_runner: BaseRunner = run_base,
     plan: Sequence[Shard] | None = None,
 ) -> int:
-    """Measure each requested shard in plan order, base then head on this
-    runner under one fresh pair id, writing every result before answering;
-    non-zero only when a required head envelope is missing."""
+    """Measure each requested shard in plan order on this runner under one
+    fresh pair id, the request's base before the head when one is named,
+    writing every result before answering; non-zero only when a required head
+    envelope is missing."""
     out.mkdir(parents=True, exist_ok=True)
     request.write(out / REQUEST_FILE)
     failed_required = False

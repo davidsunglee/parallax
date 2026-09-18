@@ -177,7 +177,7 @@ def test_the_plan_checks_out_the_requested_ref_once_with_history_and_pins_it() -
 
 
 # --------------------------------------------------------------------------- #
-# Measure: one runner per planned shard, base then head, upload regardless    #
+# Measure: one runner per planned shard, the resolved head, upload regardless #
 # --------------------------------------------------------------------------- #
 def test_each_shard_measures_the_resolved_head_on_its_own_runner() -> None:
     job = _job("measure")
@@ -192,7 +192,7 @@ def test_each_shard_measures_the_resolved_head_on_its_own_runner() -> None:
         "name": _artifact(adapter.REQUEST_ARTIFACT),
         "path": f"{TEMP}/request/",
     }
-    measure = _named(job, "Measure base then head")
+    measure = _named(job, "Measure the shard")
     assert measure["env"] == {"SHARD": "${{ matrix.shard }}"}
     assert measure["working-directory"] == "languages/python"
     assert measure["run"] == (
@@ -209,7 +209,7 @@ def test_each_shard_measures_the_resolved_head_on_its_own_runner() -> None:
         "path": f"{TEMP}/reports/",
     }
     names = [step.get("name") for step in _steps(job)]
-    assert names.index("Measure base then head") < names.index("Upload the shard")
+    assert names.index("Measure the shard") < names.index("Upload the shard")
     assert not any("just" in str(step.get("run", "")) for step in _steps(job))
 
 
