@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from durations import SCHEMA_VERSION, SCOPES, Span, Spans, render
+from durations import SCHEMA_VERSION, SCOPES, Span, Spans, render, write_sidecar
 
 
 class _Clocks:
@@ -161,6 +161,21 @@ def test_a_sidecar_that_is_not_json_is_a_value_error(tmp_path: Path) -> None:
     sidecar.write_text("{not json", encoding="utf-8")
     with pytest.raises(ValueError):
         Spans.load(sidecar)
+
+
+def test_a_sidecar_that_cannot_be_written_is_reported_and_never_raised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spans, _clocks = _recorder()
+    written = tmp_path / "nested" / "durations.json"
+    write_sidecar(written, spans.write)
+    assert Spans.load(written).spans == ()
+    assert capsys.readouterr().err == ""
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    write_sidecar(occupied, spans.write)
+    assert occupied.is_dir()
+    assert capsys.readouterr().err.startswith(f"telemetry sidecar {occupied} was not written: ")
 
 
 def test_extending_a_recorder_folds_in_spans_and_unavailable_telemetry() -> None:

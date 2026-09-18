@@ -383,6 +383,16 @@ def test_a_capture_round_trips_and_refuses_malformed_fields() -> None:
         ("runtimes", [], "runtimes is not an object"),
         ("runner", {"image": "x"}, "not an image and version"),
         ("shard", {"id": "s", "subject": "x", "workloads": "plan"}, "workloads 'plan'"),
+        (
+            "shard",
+            {"id": "s", "subject": "x", "workloads": []},
+            "workloads \\[\\] are not distinct",
+        ),
+        (
+            "shard",
+            {"id": "s", "subject": "x", "workloads": ["plan", "plan"]},
+            "workloads \\['plan', 'plan'\\] are not distinct",
+        ),
         ("request", {}, "schemaVersion None"),
     ]
     for field, value, message in forged:

@@ -27,7 +27,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
-from durations import Spans
+from durations import Spans, write_sidecar
 from interpreter_matrix import (
     CURRENT_MINOR,
     ProbeRunner,
@@ -801,9 +801,8 @@ def _measured(
     spans = Spans()
     try:
         if metadata is not None:
-            write_metadata(
-                metadata, SUBJECT, runtime_identities(supported_minors(), spans, run_probe)
-            )
+            identities = runtime_identities(supported_minors(), spans, run_probe)
+            write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
         with spans.span("setup", "provisioner", member=SUBJECT):
             provisioner = Provisioner()
         try:
@@ -813,7 +812,7 @@ def _measured(
                 provisioner.close()
     finally:
         if durations is not None:
-            spans.write(durations)
+            write_sidecar(durations, spans.write)
 
 
 if __name__ == "__main__":

@@ -414,11 +414,11 @@ def test_each_side_is_validated_against_its_own_recorded_selection(
         complete_snapshot(contract, workload_selection([PLAN_GROUP], contract)), contract
     )
     _write(root, "a", plan_only, BASE, request, sliced)
-    claimed = _write(root, "a", plan_only, HEAD, request, envelopes[SNAPSHOT.subject])
+    claimed = _write(root, "a", SNAPSHOT, HEAD, request, sliced)
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, SNAPSHOT)
     assert _codes(entry) == [("envelope-invalid", HEAD)]
-    assert "Snapshot reading matrix is not exact: unexpected" in entry.reasons[0].message
+    assert "Snapshot reading matrix is not exact: missing" in entry.reasons[0].message
     assert entry.base is not None
     for path in claimed.iterdir():
         path.unlink()
@@ -432,6 +432,50 @@ def test_each_side_is_validated_against_its_own_recorded_selection(
         envelopes[SNAPSHOT.subject]["readings"]
     )
     assert assembly.failures == ()
+
+
+def test_a_head_must_record_the_planned_selection_and_every_supported_runtime(
+    tmp_path: Path, head_commit: str, contract: BudgetContract, envelopes: dict[str, Document]
+) -> None:
+    request = _pr_request(head_commit)
+    root = tmp_path / "inputs"
+    plan_only = Shard(SNAPSHOT.id, SNAPSHOT.member, frozenset({PLAN_GROUP}))
+    sliced = clean(
+        complete_snapshot(contract, workload_selection([PLAN_GROUP], contract)), contract
+    )
+    _write(root, "a", plan_only, HEAD, request, sliced)
+    _write(root, "a", plan_only, BASE, request, sliced)
+    partial = _identities()
+    del partial[supported_minors()[0]]
+    narrowed = deepcopy(envelopes[WRITE.subject])
+    narrowed["readings"] = [
+        reading
+        for reading in cast("list[Document]", narrowed["readings"])
+        if reading["runtime"] != supported_minors()[0]
+    ]
+    _write(root, "a", WRITE, HEAD, request, narrowed, runtimes=partial)
+    _write(root, "a", WRITE, BASE, request, narrowed, runtimes=partial)
+    assembly = assemble(discover(root), SHARDS, request)
+    snapshot = _entry(assembly, SNAPSHOT)
+    assert _codes(snapshot) == [("capture-mismatch", HEAD)]
+    assert snapshot.reasons[0].message == (
+        f"the capture selected ('{PLAN_GROUP}',), the plan selects None"
+    )
+    assert snapshot.head is None and snapshot.base is not None
+    assert _rows(snapshot, "nothing was compared") == [
+        "No head envelope is available; nothing was compared."
+    ]
+    write = _entry(assembly, WRITE)
+    assert _codes(write) == [("capture-mismatch", HEAD)]
+    assert write.reasons[0].message == (
+        f"the capture records runtimes {sorted(partial)}, "
+        f"the plan measures {list(supported_minors())}"
+    )
+    assert write.head is None and write.base is not None
+    assert sorted((f.code, f.shard, f.side) for f in assembly.failures) == [
+        ("capture-mismatch", SNAPSHOT.id, HEAD),
+        ("capture-mismatch", WRITE.id, HEAD),
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -570,13 +614,32 @@ def test_every_head_cell_is_named_when_the_base_is_unavailable_by_marker(
         envelopes[LIFECYCLE.subject]["readings"]
     )
     assert assembly.failures == ()
-    (marker.parent / "portfolio.json").write_text("{}", encoding="utf-8")
-    marker.write_text('{"schemaVersion": 1}', encoding="utf-8")
+    stale = {**json.loads(marker.read_text(encoding="utf-8")), "baseCommit": "b" * 40}
+    marker.write_text(json.dumps(stale), encoding="utf-8")
     assembly = assemble(discover(root), SHARDS, request)
-    assert [(f.code, f.source) for f in assembly.failures] == [
-        ("input-malformed", f"a/base/{WRITE.id}")
+    assert [(f.code, f.shard, f.side, f.source, f.message) for f in assembly.failures] == [
+        (
+            "request-mismatch",
+            WRITE.id,
+            BASE,
+            f"a/base/{WRITE.id}",
+            f"the marker names base {'b' * 40}, the request names {head_commit}",
+        )
     ]
     assert _codes(_entry(assembly, WRITE)) == [("base-missing", BASE)]
+    for forged, message in (
+        ({**stale, "schemaVersion": 2}, "unavailable marker schemaVersion 2 is unsupported"),
+        ({**stale, "baseCommit": "short"}, "unavailable marker baseCommit 'short' is not a full"),
+        ({"schemaVersion": 1}, "reason is not an object"),
+    ):
+        marker.write_text(json.dumps(forged), encoding="utf-8")
+        (marker.parent / "portfolio.json").write_text("{}", encoding="utf-8")
+        assembly = assemble(discover(root), SHARDS, request)
+        assert [(f.code, f.source) for f in assembly.failures] == [
+            ("input-malformed", f"a/base/{WRITE.id}")
+        ]
+        assert message in assembly.failures[0].message
+        assert _codes(_entry(assembly, WRITE)) == [("base-missing", BASE)]
 
 
 # --------------------------------------------------------------------------- #
@@ -674,6 +737,20 @@ def test_missing_or_unsupported_history_is_unavailable_and_never_a_failure(
     assert History.load(legacy).reason is not None
     (legacy / "portfolio.json").write_text("[]", encoding="utf-8")
     assert History.load(legacy).reason == "the previous assembly is not an object"
+    topologies: list[tuple[object, str]] = [
+        (None, "the previous assembly shards is not a list"),
+        (3, "the previous assembly shards is not a list"),
+        ([{"id": 4}], "the previous assembly holds a shard entry without a string id"),
+        ([[]], "the previous assembly holds a shard entry without a string id"),
+    ]
+    for shards, reason in topologies:
+        (legacy / "portfolio.json").write_text(
+            json.dumps({"schemaVersion": 2, "shards": shards}), encoding="utf-8"
+        )
+        assert History.load(legacy).reason == reason
+        topology = assemble(captures, SHARDS, request, History.load(legacy))
+        assert topology.failures == ()
+        assert all(_codes(entry) == [("history-unavailable", BASE)] for entry in topology.shards)
     previous = tmp_path / "previous"
     first = _nightly_request(head_commit, request_id="night-1")
     first_root = tmp_path / "first"
@@ -692,6 +769,22 @@ def test_missing_or_unsupported_history_is_unavailable_and_never_a_failure(
     assert _codes(_entry(renamed, SNAPSHOT)) == []
     assert _entry(renamed, SNAPSHOT).pairing == "cross-runner"
     assert renamed.failures == ()
+    snapshot_entry = next(entry for entry in document["shards"] if entry["id"] == SNAPSHOT.id)
+    document["shards"] = [
+        *document["shards"],
+        snapshot_entry,
+        {"id": LIFECYCLE.id, "head": 5},
+    ]
+    (previous / "portfolio.json").write_text(json.dumps(document), encoding="utf-8")
+    ambiguous = assemble(captures, SHARDS, request, History.load(previous))
+    assert _codes(_entry(ambiguous, SNAPSHOT)) == [("history-invalid", BASE)]
+    assert _entry(ambiguous, SNAPSHOT).reasons[0].message == (
+        f"the previous assembly holds 2 entries for {SNAPSHOT.id!r}"
+    )
+    assert _entry(ambiguous, SNAPSHOT).pairing == "unavailable"
+    assert _codes(_entry(ambiguous, LIFECYCLE)) == [("history-invalid", BASE)]
+    assert "previous head is not an object" in _entry(ambiguous, LIFECYCLE).reasons[0].message
+    assert ambiguous.failures == ()
 
 
 def test_history_is_refused_for_a_pull_request_and_a_stray_base_is_a_failure(

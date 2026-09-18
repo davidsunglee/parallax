@@ -974,6 +974,7 @@ REQUEST_FILE: Final = "request.json"
 UNAVAILABLE_FILE: Final = "unavailable.json"
 SELF_CAPTURE_FILE: Final = "self-capture.json"
 CAPTURE_VERSION: Final = 1
+MARKER_VERSION: Final = 1
 REQUEST_VERSION: Final = 1
 ASSEMBLY_VERSION: Final = 2
 HEAD: Final = "head"
@@ -1298,6 +1299,12 @@ class Capture:
             or not all(isinstance(name, str) for name in cast("Sequence[object]", workloads))
         ):
             raise ValueError(f"capture shard workloads {workloads!r} are not names or null")
+        if workloads is not None:
+            names = cast("Sequence[str]", workloads)
+            if not names or len(set(names)) != len(names):
+                raise ValueError(
+                    f"capture shard workloads {workloads!r} are not distinct names or null"
+                )
         side = _text(fields, "side")
         if side not in SIDES:
             raise ValueError(f"capture side {side!r} is not one of {list(SIDES)}")
@@ -1496,7 +1503,7 @@ def measure_base(
         _write_json(
             destination / UNAVAILABLE_FILE,
             {
-                "schemaVersion": CAPTURE_VERSION,
+                "schemaVersion": MARKER_VERSION,
                 "shard": shard_id,
                 "side": BASE,
                 "baseCommit": commit,
@@ -1610,6 +1617,7 @@ class ShardCapture:
     durations_reason: str | None = None
     unavailable: Unavailability | None = None
     unavailable_shard: str | None = None
+    unavailable_commit: str | None = None
     problems: tuple[str, ...] = ()
 
     @property
@@ -1651,6 +1659,7 @@ def _discovered(directory: Path, source: str) -> ShardCapture:
     durations_reason: str | None = None
     unavailable: Unavailability | None = None
     unavailable_shard: str | None = None
+    unavailable_commit: str | None = None
     if (directory / CAPTURE_FILE).exists():
         try:
             capture = Capture.from_document(_load(directory / CAPTURE_FILE))
@@ -1672,10 +1681,18 @@ def _discovered(directory: Path, source: str) -> ShardCapture:
     if (directory / UNAVAILABLE_FILE).exists():
         try:
             marker = _object(_load(directory / UNAVAILABLE_FILE), "unavailable marker")
+            if marker.get("schemaVersion") != MARKER_VERSION:
+                raise ValueError(
+                    f"unavailable marker schemaVersion {marker.get('schemaVersion')!r} "
+                    "is unsupported"
+                )
             unavailable = Unavailability.from_document(marker.get("reason"))
             unavailable_shard = _text(marker, "shard")
             if marker.get("side") != BASE:
                 raise ValueError(f"unavailable marker side {marker.get('side')!r} is not base")
+            unavailable_commit = _commit(
+                _text(marker, "baseCommit"), "unavailable marker baseCommit"
+            )
         except (KeyError, TypeError, ValueError, OSError) as error:
             problems.append(f"{UNAVAILABLE_FILE} does not decode: {error}")
     return ShardCapture(
@@ -1686,6 +1703,7 @@ def _discovered(directory: Path, source: str) -> ShardCapture:
         durations_reason,
         unavailable,
         unavailable_shard,
+        unavailable_commit,
         tuple(problems),
     )
 
@@ -1744,33 +1762,46 @@ class History:
                 f"the previous assembly has schemaVersion {document.get('schemaVersion')!r}, "
                 f"expected {ASSEMBLY_VERSION}",
             )
+        shards = document.get("shards")
+        if not isinstance(shards, list):
+            return cls(None, "the previous assembly shards is not a list")
+        entries = cast("list[object]", shards)
+        if not all(
+            isinstance(entry, Mapping) and isinstance(cast("Document", entry).get("id"), str)
+            for entry in entries
+        ):
+            return cls(None, "the previous assembly holds a shard entry without a string id")
         return cls(document, None)
 
     def head(self, shard_id: str) -> ShardCapture | None:
+        """The previous head of ``shard_id``: none when the assembly has no
+        such entry or the entry has no head, and a problem when it has more
+        than one entry or the head does not decode."""
         if self.document is None:
             return None
-        for entry in cast("Sequence[object]", self.document.get("shards", ())):
-            if not isinstance(entry, Mapping):
-                continue
-            shard = cast("Document", entry)
-            if shard.get("id") != shard_id:
-                continue
-            head = shard.get("head")
-            if not isinstance(head, Mapping):
-                return None
-            recorded = cast("Document", head)
-            source = f"against/{shard_id}"
-            try:
-                capture = Capture.from_document(recorded.get("capture"))
-                portfolio = _object(recorded.get("portfolio"), "previous portfolio")
-            except (KeyError, TypeError, ValueError) as error:
-                return ShardCapture(
-                    source, problems=(f"the previous head does not decode: {error}",)
-                )
+        source = f"against/{shard_id}"
+        entries = [
+            entry
+            for entry in cast("Sequence[Document]", self.document["shards"])
+            if entry.get("id") == shard_id
+        ]
+        if not entries:
+            return None
+        if len(entries) > 1:
             return ShardCapture(
-                source, capture, portfolio, None, "previous durations are not carried"
+                source,
+                problems=(f"the previous assembly holds {len(entries)} entries for {shard_id!r}",),
             )
-        return None
+        head = entries[0].get("head")
+        if head is None:
+            return None
+        try:
+            recorded = _object(head, "previous head")
+            capture = Capture.from_document(recorded.get("capture"))
+            portfolio = _object(recorded.get("portfolio"), "previous portfolio")
+        except (KeyError, TypeError, ValueError) as error:
+            return ShardCapture(source, problems=(f"the previous head does not decode: {error}",))
+        return ShardCapture(source, capture, portfolio, None, "previous durations are not carried")
 
 
 type ContractSource = Callable[[str], BudgetContract]
@@ -1867,6 +1898,22 @@ def assemble(
                 Failure(
                     "request-mismatch",
                     f"the capture answers request {capture.capture.request.run}, not {request.run}",
+                    capture.shard_id,
+                    capture.side,
+                    capture.source,
+                )
+            )
+            continue
+        if (
+            capture.unavailable is not None
+            and request.base_commit is not None
+            and capture.unavailable_commit != request.base_commit
+        ):
+            failures.append(
+                Failure(
+                    "request-mismatch",
+                    f"the marker names base {capture.unavailable_commit}, "
+                    f"the request names {request.base_commit}",
                     capture.shard_id,
                     capture.side,
                     capture.source,
@@ -2034,7 +2081,7 @@ def _unique(
         assert only.unavailable is not None
         reasons.append(Reason(only.unavailable.code, side, only.unavailable.message))
         return None
-    side_reasons = _side_reasons(shard, only, expected_commit, contracts)
+    side_reasons = _side_reasons(shard, only, expected_commit, contracts, planned=side == HEAD)
     for reason in side_reasons:
         reasons.append(replace(reason, side=side))
         failures.append(Failure(reason.code, reason.message, shard.id, side, only.source))
@@ -2042,10 +2089,17 @@ def _unique(
 
 
 def _side_reasons(
-    shard: Shard, side: ShardCapture, expected_commit: str, contracts: ContractSource
+    shard: Shard,
+    side: ShardCapture,
+    expected_commit: str,
+    contracts: ContractSource,
+    *,
+    planned: bool = False,
 ) -> list[Reason]:
     """Every reason one side is not valid evidence for ``shard``, judged
-    against the selection the capture itself records."""
+    against the selection the capture itself records; a ``planned`` side was
+    measured by this checkout's own tool, so it must also record the planned
+    selection and every supported runtime."""
     assert side.capture is not None
     capture = side.capture
     reasons: list[Reason] = []
@@ -2058,6 +2112,28 @@ def _side_reasons(
             )
         )
         return reasons
+    if planned:
+        expected_workloads = tuple(sorted(shard.workloads)) if shard.workloads is not None else None
+        if capture.workloads != expected_workloads:
+            reasons.append(
+                Reason(
+                    "capture-mismatch",
+                    None,
+                    f"the capture selected {capture.workloads}, "
+                    f"the plan selects {expected_workloads}",
+                )
+            )
+            return reasons
+        if set(capture.runtimes) != set(supported_minors()):
+            reasons.append(
+                Reason(
+                    "capture-mismatch",
+                    None,
+                    f"the capture records runtimes {sorted(capture.runtimes)}, "
+                    f"the plan measures {list(supported_minors())}",
+                )
+            )
+            return reasons
     if capture.commit != expected_commit:
         reasons.append(
             Reason(

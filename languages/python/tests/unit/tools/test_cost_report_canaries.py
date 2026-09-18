@@ -81,6 +81,26 @@ def test_lifecycle_entrypoint_writes_an_empty_sidecar_and_refuses_other_argument
     assert "usage:" in capsys.readouterr().err
 
 
+def test_lifecycle_entrypoint_reports_an_unwritable_sidecar_and_still_measures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(lifecycle_overhead, "PAIRS", 2)
+    monkeypatch.setattr(lifecycle_overhead, "WARMUP_PAIRS", 1)
+    durations = tmp_path / "durations.json"
+    metadata = tmp_path / "metadata.json"
+    durations.mkdir()
+    metadata.mkdir()
+    assert (
+        lifecycle_overhead.main(["--durations", str(durations), "--metadata", str(metadata)]) == 0
+    )
+    captured = capsys.readouterr()
+    validate(cast("dict[str, object]", json.loads(captured.out)))
+    assert captured.err.splitlines() == [
+        f"telemetry sidecar {durations} was not written: [Errno 21] Is a directory: '{durations}'",
+        f"telemetry sidecar {metadata} was not written: [Errno 21] Is a directory: '{metadata}'",
+    ]
+
+
 def test_lifecycle_entrypoint_records_the_interpreter_it_measures_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
