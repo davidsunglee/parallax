@@ -258,6 +258,8 @@ class EntityMemberSelection:
         positions = {binding.identity: position for position, binding in enumerate(self.bindings)}
         if len(positions) != len(self.bindings):
             raise ValueError("an Entity member selection assigns each identity one position")
+        if not 0 <= self.attribute_count <= len(self.bindings):
+            raise ValueError("an Entity member selection counts its attributes within its bindings")
         object.__setattr__(self, "_position_by_identity", MappingProxyType(positions))
         object.__setattr__(self, "_identities", _BindingIdentities(self.bindings))
         object.__setattr__(
