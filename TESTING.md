@@ -178,7 +178,7 @@ values through the environment and move files.
 | Job | Runs |
 |---|---|
 | `plan` | Checks out the requested commit once, and `tools/cost_report_adapter.py plan` pins the immutable `request.json` — head, a pull request's merge base, layout, workflow revision, run and attempt — and prints the shard ids the collector's `--plan` answers for that layout |
-| `measure` | One runner per shard id, `fail-fast: false`, 300 minutes each: `tools/cost_report.py --shard <id> --request request.json`, the merge base first through the base checkout's own tool and then the head on the same runner, uploaded as `cost-report-shard-<id>-attempt-<N>` whatever collection did |
+| `measure` | One runner per shard id, `fail-fast: false`, 300 minutes each: `tools/cost_report.py --shard <id> --request request.json` measures the head, preceded on the same runner by the merge base through the base checkout's own tool only when the request is a pull request's; uploaded as `cost-report-shard-<id>-attempt-<N>` whatever collection did |
 | `assemble` | Always after the requested work: this attempt's shard artifacts, each in a directory of its own, through `tools/cost_report.py --assemble`; a scheduled run first obtains the previous nightly's assembly with `tools/cost_report_adapter.py history` and compares against it cross-runner. Uploads `cost-report-assembled-attempt-<N>` and renders its summary |
 | `cleanup` | For a label request, removes the label without checking anything out; the only job holding `pull-requests: write`. A fork's token cannot remove labels, so that case is reported and a maintainer removes the label by hand and re-adds it to request another capture |
 

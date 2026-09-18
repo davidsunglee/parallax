@@ -3,7 +3,7 @@
 The workflow passes event values through environment variables and makes no
 decision of its own. ``plan`` resolves those values against the checkout into
 the immutable ``request.json`` every shard embeds, and prints the outputs the
-measure matrix and the later jobs read. ``history`` serves a scheduled run: it
+workflow's other jobs read. ``history`` serves a scheduled run: it
 selects the latest prior successful scheduled run of this workflow, downloads
 that run's assembled artifact, requires the artifact's request to name the
 commit the run measured, and fetches that object so assembly can validate the
@@ -117,6 +117,14 @@ def _optional(environment: Mapping[str, str], name: str) -> str | None:
     return environment.get(name) or None
 
 
+def _single_line(value: str, name: str) -> str:
+    """A value that becomes one ``$GITHUB_OUTPUT`` record cannot span lines,
+    or the lines after the first would be read as records of their own."""
+    if value.splitlines() != [value]:
+        raise ValueError(f"{name} {value!r} is not a single line")
+    return value
+
+
 def derived_request_id(repository: str, run_id: str, attempt: int) -> str:
     return f"{repository}/runs/{run_id}/attempts/{attempt}"
 
@@ -131,6 +139,9 @@ def pin_request(environment: Mapping[str, str], repo: Path | None = None) -> Req
     attempt = int(_required(environment, RUN_ATTEMPT_VARIABLE))
     pull_request = _optional(environment, PULL_REQUEST_VARIABLE)
     event_base = _optional(environment, EVENT_BASE_VARIABLE)
+    request_id = _optional(environment, REQUEST_ID_VARIABLE)
+    if request_id is not None:
+        _single_line(request_id, REQUEST_ID_VARIABLE)
     head = git_head(repo)
     base: str | None = None
     if event == PULL_REQUEST_EVENT:
@@ -146,8 +157,7 @@ def pin_request(environment: Mapping[str, str], repo: Path | None = None) -> Req
     return Request.from_document(
         {
             "schemaVersion": REQUEST_VERSION,
-            "requestId": _optional(environment, REQUEST_ID_VARIABLE)
-            or derived_request_id(repository, run_id, attempt),
+            "requestId": request_id or derived_request_id(repository, run_id, attempt),
             "event": event,
             "requestedRef": _required(environment, REF_VARIABLE),
             "headCommit": head,
@@ -168,7 +178,7 @@ class Plan:
     shards: list[str]
 
     def outputs(self) -> str:
-        """The ``$GITHUB_OUTPUT`` lines every later job reads."""
+        """The ``$GITHUB_OUTPUT`` records the workflow's other jobs read."""
         lines = (
             ("shards", json.dumps(self.shards)),
             ("head", self.request.head_commit),

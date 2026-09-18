@@ -1,11 +1,12 @@
 name: cost-report
 
-# Advisory observation, never a gate. One request pins the commits to measure;
-# every shard of the plan measures its base and then its head on a runner of
-# its own; assembly reconciles whatever arrived against the plan and the
-# request; and a checkout-free job removes the one-shot label. Every decision
-# about what is measured, compared, or reported is made by the Python tools;
-# the steps here pass event values through the environment and move files.
+# Advisory observation, never a gate. One request pins the commit to measure,
+# and a pull request's merge base beside it; every shard of the plan is
+# measured on a runner of its own; assembly reconciles whatever arrived against
+# the plan and the request; and a checkout-free job removes the one-shot
+# label. Every decision about what is measured, compared, or reported is made
+# by the Python tools; the steps here pass event values through the
+# environment and move files.
 run-name: "cost-report ${{ github.event_name }} ${{ github.event.pull_request.number || inputs.ref || github.ref_name }} ${{ inputs.request-id }}"
 
 on:
@@ -84,9 +85,10 @@ jobs:
           path: ${{ runner.temp }}/cost-report/request/
           if-no-files-found: error
 
-  # One runner per shard of the plan. Each measures the request's base, through
-  # the base checkout's own tool, and then its head, on this runner, and uploads
-  # whatever it wrote whether or not collection succeeded.
+  # One runner per shard of the plan. Each measures the request's head on this
+  # runner, after the merge base when the request is a pull request's (through
+  # the base checkout's own tool), and uploads whatever it wrote whether or not
+  # collection succeeded.
   measure:
     needs: plan
     runs-on: ubuntu-latest
@@ -113,7 +115,7 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: Measure base then head
+      - name: Measure the shard
         working-directory: languages/python
         env:
           SHARD: ${{ matrix.shard }}

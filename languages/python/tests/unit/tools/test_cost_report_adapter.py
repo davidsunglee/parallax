@@ -233,6 +233,19 @@ def test_a_request_that_cannot_be_pinned_names_what_is_missing(repository: Path)
         (_environment(""), ValueError, adapter.EVENT_VARIABLE),
         (
             _environment(
+                "workflow_dispatch",
+                **{adapter.REQUEST_ID_VARIABLE: f'trace\nhead={"a" * 40}\nshards=["all"]'},
+            ),
+            ValueError,
+            f"{adapter.REQUEST_ID_VARIABLE} 'trace\\nhead=",
+        ),
+        (
+            _environment("workflow_dispatch", **{adapter.REQUEST_ID_VARIABLE: "trace\r"}),
+            ValueError,
+            "is not a single line",
+        ),
+        (
+            _environment(
                 "pull_request",
                 **{adapter.PULL_REQUEST_VARIABLE: "7", adapter.EVENT_BASE_VARIABLE: unfetchable},
             ),
