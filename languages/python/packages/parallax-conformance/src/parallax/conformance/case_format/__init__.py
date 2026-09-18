@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
@@ -212,7 +212,9 @@ _SERIALIZED_ISOLATION: Final[Mapping[IsolationLevel, str]] = {
     "repeatable_read": "repeatable-read",
     "serializable": "serializable",
 }
-"""The `m-case-format` `when.uow.isolation` token each Python level is named by.
+"""The `m-case-format` isolation token each Python level is named by — the one
+spelling every placement of the field uses (`when.uow.isolation`,
+`given.databaseOptions.isolation`, a `join` step's `isolation`).
 
 Both spellings are stated because only the right-hand side is core-authored:
 recasing one into the other would make the Python identifier load-bearing for a
@@ -226,7 +228,8 @@ _ISOLATION_LITERALS: Final[Mapping[str, IsolationLevel]] = {
 
 
 def isolation_literal(value: str) -> IsolationLevel:
-    """The Python level a case's core serialized `when.uow.isolation` names.
+    """The Python level a case's core serialized isolation token names, whichever
+    placement spelled it.
 
     The corpus spells a level hyphenated and the language spells it as a Python
     identifier, so one projection sits at case ingress and every runner reads the
@@ -234,13 +237,12 @@ def isolation_literal(value: str) -> IsolationLevel:
     Python level's own spelling names no corpus value, so admitting it would
     alias a core-authored representation (`core/spec/00-overview.md`
     *Representation spelling*). A token outside the projection is refused here
-    rather than reaching a runner as a bare string.
+    rather than reaching a runner as a bare string; the refusal names the
+    vocabulary, and the decoder that knows the placement prefixes it.
     """
     level = _ISOLATION_LITERALS.get(value)
     if level is None:
-        raise ValueError(
-            f"when.uow.isolation must be one of {sorted(_ISOLATION_LITERALS)}, got {value!r}"
-        )
+        raise ValueError(f"isolation must be one of {sorted(_ISOLATION_LITERALS)}, got {value!r}")
     return level
 
 
@@ -284,9 +286,11 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
     """The transaction keywords ``request`` authors, decoded through the case
     format's own vocabulary functions.
 
-    ``request`` is a `when.uow` block or a `join` step; only the four option keys
-    are read, so a step's own members travel beside them untouched. ``where``
-    names the placement a malformed field is reported at.
+    ``request`` is any placement that spells the four option fields — a
+    `when.uow` block, a `join` step, or the `given.databaseOptions` root block —
+    and only the four option keys are read, so a step's own members travel
+    beside them untouched. ``where`` names the placement every malformed field
+    is reported at, a vocabulary refusal included.
     """
     keywords: TransactionKeywords = {}
     if "maxRetries" in request:
@@ -295,8 +299,8 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
             raise ValueError(f"{where}.maxRetries must be a nonnegative integer, got {bound!r}")
         keywords["max_retries"] = bound
     if "concurrency" in request:
-        keywords["concurrency"] = concurrency_preference(
-            _authored_string(request["concurrency"], f"{where}.concurrency")
+        keywords["concurrency"] = _vocabulary_member(
+            concurrency_preference, request["concurrency"], f"{where}.concurrency"
         )
     if "retryOptimisticConflicts" in request:
         opt_in = request["retryOptimisticConflicts"]
@@ -304,8 +308,8 @@ def request_keywords(request: Mapping[str, object], *, where: str) -> Transactio
             raise ValueError(f"{where}.retryOptimisticConflicts must be a boolean, got {opt_in!r}")
         keywords["retry_optimistic_conflicts"] = opt_in
     if "isolation" in request:
-        keywords["isolation"] = isolation_literal(
-            _authored_string(request["isolation"], f"{where}.isolation")
+        keywords["isolation"] = _vocabulary_member(
+            isolation_literal, request["isolation"], f"{where}.isolation"
         )
     return keywords
 
@@ -374,6 +378,16 @@ def _authored_string(value: object, where: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{where} must be a string, got {value!r}")
     return value
+
+
+def _vocabulary_member[T](project: Callable[[str], T], value: object, where: str) -> T:
+    """``value`` projected through ``project``, a vocabulary function that names
+    only the vocabulary in its refusal; the refusal is re-raised at ``where``."""
+    authored = _authored_string(value, where)
+    try:
+        return project(authored)
+    except ValueError as exc:
+        raise ValueError(f"{where}: {exc}") from None
 
 
 def _case_id(stem: str) -> str:

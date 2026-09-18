@@ -185,6 +185,7 @@ __all__ = [
     "lower_writes",
     "read_step_graph",
     "read_table_state",
+    "refuse_a_conflict_retry_opt_in",
     "run_conflict_case",
     "run_group_step",
     "run_scenario_case",
@@ -1255,7 +1256,9 @@ def _compile_find(
     A scenario find is an in-transaction object find, so ``concurrency`` is the
     scenario's RESOLVED Concurrency Preference
     (:func:`~parallax.conformance._mechanism.case_document.concurrency` —
-    declared ``when.uow.concurrency`` or the `optimistic` default), never absent. It
+    declared ``when.uow.concurrency``, else the root's
+    ``given.databaseOptions.concurrency``, else the built-in `optimistic`),
+    never absent. It
     resolves against the step's own target Entity into the Effective
     Concurrency Strategy that decides the ``m-sql`` shared-row-lock suffix
     (``for share of t0``) — through
@@ -3396,8 +3399,9 @@ def _conflict_attempt_requests(case: case_format.Case) -> case_format.Transactio
     production's own loop is driven from it. The root record a conflict case
     configures (`given.databaseOptions`) reaches the attempt's ``connect``
     unchanged, so a root preference or level governs the attempt exactly as an
-    authored one does; a root that opted into conflict retry would describe the
-    same authored loop, and no conflict case configures one.
+    authored one does — and a root that opts into conflict retry is refused
+    before any attempt runs (:func:`refuse_a_conflict_retry_opt_in`), because
+    the lane carries no authored keyword that could stand over it.
     """
     authored = case_format.transaction_keywords(case)
     requests: case_format.TransactionKeywords = {}
@@ -3406,6 +3410,33 @@ def _conflict_attempt_requests(case: case_format.Case) -> case_format.Transactio
     if "isolation" in authored:
         requests["isolation"] = authored["isolation"]
     return requests
+
+
+def refuse_a_conflict_retry_opt_in(
+    case: case_format.Case, resolved: DatabaseOptions, placement: str
+) -> None:
+    """Refuse a case whose transactions would resolve `retryOptimisticConflicts`
+    to true on a lane that authors each attempt itself.
+
+    The conflict lane's `when.attempts` and the interleaved lane's two `uow`
+    groups are the retry loop, spelled one attempt at a time and graded per
+    attempt, so each attempt must be exactly one production attempt. An opt-in
+    the transaction resolved — from ``resolved``, the record production would
+    resolve to — would make production re-run a conflicting attempt inside the
+    one transaction this lane opened for it: hidden SQL, a second observing
+    read, and an advance reported where the case grades the shortfall. A
+    retried loop is a `boundary` case's to prove; here it is refused by name
+    rather than run as work the case never described. ``placement`` names
+    where the case spelled the opt-in.
+    """
+    if not resolved.retry_optimistic_conflicts:
+        return
+    raise EngineError(
+        f"{case.path.name}: {placement} opts into optimistic-conflict retry, which would "
+        "make production re-run a conflicting attempt inside the one transaction this lane "
+        "opens for it; the attempts this shape authors are its retry loop, and a retried "
+        "loop is a `boundary` case's to prove"
+    )
 
 
 def _conflict_attempt_affected(
@@ -4104,8 +4135,10 @@ def _refuse_unentitled_observed_edge(
       target's Transaction-Time-derived key then carries into the Optimistic
       strategy. Beside ``observedValidStart`` it is instead the edge's
       Transaction-Time half, which selects the milestone under either strategy.
-      The preference defaults to ``optimistic``, so only an explicitly
-      ``locking`` case is refused.
+      The preference is the one the outer invocation resolves to — declared
+      ``when.uow.concurrency``, else the root's, else the built-in
+      ``optimistic`` — so only a case whose resolved preference is ``locking``
+      is refused.
 
     The Transaction-Time-Only arm of the first entitlement lives where the edge
     is built (:func:`temporal_state.observed_edge`), which refuses a coordinate
@@ -4196,6 +4229,7 @@ def run_conflict_case(
     when = case_document.when(case)
     concurrency = case_document.concurrency(case)
     options = case_format.database_options(case)
+    refuse_a_conflict_retry_opt_in(case, options, "`given.databaseOptions`")
     requests = _conflict_attempt_requests(case)
     target = _conflict_target(case, model)
     mutation = _conflict_mutation(when)

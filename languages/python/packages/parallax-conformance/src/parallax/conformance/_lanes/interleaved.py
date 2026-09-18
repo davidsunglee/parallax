@@ -54,6 +54,7 @@ from parallax.conformance._lanes.scenario import (
     GroupState,
     LoweredStep,
     graph_rows,
+    refuse_a_conflict_retry_opt_in,
     run_group_step,
     run_standalone_find,
     scenario_group_step_indices,
@@ -128,9 +129,10 @@ def _run_interleaved_group(
     :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
     signal a caller-driven retry catches, the keyed unit-of-work lane's own
     conflict-write precedent) — caught HERE, its ``actual`` recorded, and the
-    transaction aborts (never retried: `m-opt-lock-012`'s own `when.uow` sets no
-    ``retryOptimisticConflicts`` opt-in, so :func:`~parallax.core.auto_retry.
-    run_with_retry` surfaces it after exactly one attempt). Unlike
+    transaction aborts (never retried: a case whose groups would resolve the
+    ``retryOptimisticConflicts`` opt-in — from `when.uow` or from its root — is
+    refused before either worker starts, so :func:`~parallax.core.auto_retry.
+    run_with_retry` surfaces the conflict after exactly one attempt). Unlike
     :func:`~parallax.conformance._lanes.scenario._run_uow_group`'s own OWN
     ``doomed``/``rollback: true`` convention
     (an authored, EXPLICIT abort signal independent of any real conflict),
@@ -275,12 +277,20 @@ def run_interleaved_scenario_case(
     an execution that declares none is refused loudly here, rather than
     surfacing only much later as an indefinite hang at
     :func:`~parallax.conformance._lanes.turnstile.await_workers`'s own
-    unbounded post-ladder join.
+    unbounded post-ladder join. A case whose groups would resolve the
+    optimistic-conflict opt-in is refused at the same point
+    (:func:`~parallax.conformance._lanes.scenario.refuse_a_conflict_retry_opt_in`):
+    each group is one turnstile-sequenced production attempt, and a retried
+    group would re-run its steps against a turnstile that has already passed
+    them.
     """
     steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     concurrency = case_document.concurrency(case)
+    refuse_a_conflict_retry_opt_in(
+        case, case_format.effective_options(case), "`when.uow` or `given.databaseOptions`"
+    )
     if any("expectGraph" in step for step in steps):
         raise EngineError(
             f"{case.path.name}: this entry point reports emissions, round trips and find "

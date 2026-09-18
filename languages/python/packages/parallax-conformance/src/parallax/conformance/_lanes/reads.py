@@ -126,27 +126,41 @@ def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
     return "row"
 
 
-def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
-    """A read-shape case's own unit-of-work Concurrency Preference — the
-    read-shape half of the `when.uow` threading.
+def _is_transactional(case: case_format.Case) -> bool:
+    """Whether a read-shape case runs inside a unit of work: exactly when it
+    carries `when.uow`, the block spelling what its outer invocation requests.
 
-    `when.uow.concurrency` when the case declares it; ``None`` otherwise, which
-    is the plain, non-transactional `db.find` surface every other reachable read
-    models and which takes no lock under any preference.
-
-    Absent `when.uow` there is no participation to derive a strategy from at
-    all, so this seam grants no module-scoped default: the `m-read-lock`
-    witnesses whose goldens carry the shared-row-lock suffix declare the
-    preference that produces it, exactly as `m-case-format` requires of any
-    case whose SQL depends on the effective choice.
+    The block's presence is the boundary; its contents are the request. A read
+    carrying the block with no `concurrency` of its own is still a transactional
+    read whose preference production resolves against the root, and a read
+    carrying no block is the plain, non-transactional `db.read_rows` surface every
+    other reachable read models, which takes no lock under any root
+    (`m-case-format` *Root configuration*).
     """
     when = case.document.get("when")
-    uow = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
-    if isinstance(uow, Mapping):
-        concurrency = cast("Mapping[str, object]", uow).get("concurrency")
-        if concurrency in ("locking", "optimistic"):
-            return concurrency
-    return None
+    return isinstance(when, Mapping) and isinstance(
+        cast("Mapping[str, object]", when).get("uow"), Mapping
+    )
+
+
+def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
+    """The Concurrency Preference a read-shape case's read is PLANNED under —
+    the compile lane's own oracle for the shared-row-lock suffix.
+
+    For a transactional read (:func:`_is_transactional`) it is the preference
+    the outer invocation resolves to — declared `when.uow.concurrency`, else the
+    root's `given.databaseOptions.concurrency`, else the built-in `optimistic`
+    (:func:`~parallax.conformance.case_format.effective_options`, a grading-side
+    value never handed to production). A standalone read has no participation
+    to derive a strategy from at all, so it is ``None``, whatever the root says:
+    the `m-read-lock` witnesses whose goldens carry the suffix put the read
+    inside a boundary and spell the preference that produces it, explicitly or
+    on the root, exactly as `m-case-format` requires of any case whose SQL
+    depends on the effective choice.
+    """
+    if not _is_transactional(case):
+        return None
+    return case_format.effective_options(case).concurrency
 
 
 def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRead:
@@ -194,14 +208,15 @@ def run_read_case(
     reports is the row production materialized, not a row this adapter
     re-derived from the query a second time.
 
-    A case declaring a `when.uow` Concurrency Preference is RUN in a transaction
-    (`m-read-lock` "an in-transaction object find that intends to write acquires
-    a shared row lock"): the lock suffix is derived inside production from that
-    preference and the read target's own Optimistic Lock Facet, exactly as it is
-    for a developer's ``tx.find``, rather than from a lock this lane asked a
-    compiler for while executing outside any boundary. Begin and commit reach the
-    database but are no Database Call, so the round trips a locking case reports
-    are the read's alone.
+    A case carrying `when.uow` is RUN in a transaction (`m-read-lock` "an
+    in-transaction object find that intends to write acquires a shared row
+    lock"), opened with only the fields that block authors: the lock suffix is
+    derived inside production from the preference that call resolves — the
+    authored one, else the root this lane connected — and the read target's own
+    Optimistic Lock Facet, exactly as it is for a developer's ``tx.find``, rather
+    than from a lock this lane asked a compiler for while executing outside any
+    boundary. Begin and commit reach the database but are no Database Call, so
+    the round trips a locking case reports are the read's alone.
 
     The adapter returns **managed** Python values (``Decimal``, ``datetime``,
     ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so
@@ -222,11 +237,12 @@ def run_read_case(
     observed = lifecycle_run(lifecycle).observation()
     apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
-        requests = case_format.transaction_keywords(case)
         try:
             result = (
-                transact(db, lambda tx: tx.read_rows(query), **requests)
-                if "concurrency" in requests
+                transact(
+                    db, lambda tx: tx.read_rows(query), **case_format.transaction_keywords(case)
+                )
+                if _is_transactional(case)
                 else underlying(lambda: db.read_rows(query))
             )
         except READ_ERRORS as exc:

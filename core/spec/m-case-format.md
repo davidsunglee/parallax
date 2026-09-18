@@ -1636,7 +1636,11 @@ case's Database, and only the fields `when.uow` authors to the transaction it
 opens, so that resolving the omission is the implementation's own work rather
 than the runner's. A runner that opens no transaction at all — a standalone read
 or a standalone stream — carries the root record nowhere, so a locking root does
-not turn a standalone read into a locking one (`m-read-lock-019`). The harness
+not turn a standalone read into a locking one (`m-read-lock-019`). What makes a
+`read` case transactional is the presence of its `when.uow` block, never any one
+field inside it: a block that requests nothing still puts the read inside a unit
+of work, whose preference is then resolved against the root (`m-read-lock-020`
+renders the shared-lock suffix under a locking root with an empty block). The harness
 resolves the same explicit-over-root-over-built-in values for the sessions it
 holds and the strategy it grades, and executes the authored golden SQL as it
 always has.
@@ -1976,7 +1980,9 @@ rather than forking a new one for the same primary key).
   of barrier-separated rounds, each naming the statements nodes A and B run that
   round. The harness runs each node on
   its own **non-autocommit session** (the provider seam's `open_session`, opened at
-  the case's declared `when.uow.isolation` and with the
+  the level the case resolves — its explicit `when.uow.isolation`, else its root's
+  `given.databaseOptions.isolation`, else the built-in `read-committed` (*Root
+  configuration*, above) — and with the
   dialect's lock-contention tuning — Postgres `deadlock_timeout`/`lock_timeout`,
   MariaDB `innodb_lock_wait_timeout` — applied so a blocked lock fails fast), drives
   them on threads synchronized by a barrier, and classifies the error raised in the
@@ -2019,9 +2025,9 @@ first four aligned with the `m-db-error` `errorClass` vocabulary), an OPTIONAL
 `given.sessionDefault`, a `then.outcome` (the portable outcome — `committed`, a
 surfaced error kind, or a refused boundary option), and the transaction options
 its outer invocation explicitly requests under `when.uow` (`maxRetries` /
-`retryOptimisticConflicts` / `isolation`), every omitted one resolving to the
-Database Root's configured default — `given.databaseOptions`, else the built-in
-(*Root configuration*, above). It carries **no** golden SQL — the concrete DML and
+`concurrency` / `retryOptimisticConflicts` / `isolation`), every omitted one
+resolving to the Database Root's configured default — `given.databaseOptions`,
+else the built-in (*Root configuration*, above). It carries **no** golden SQL — the concrete DML and
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane. The root-driven witnesses state each configured default through what the
 loop then does: `maxRetries: 0` on the root disables the loop for an invocation

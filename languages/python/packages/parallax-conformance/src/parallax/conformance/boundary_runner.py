@@ -15,7 +15,7 @@ function (the hand-mirroring this runner exists to end):
   invocation's `when.uow` is projected by
   :func:`~parallax.conformance.case_format.transaction_keywords` beside it, and
   the root the runner connects is
-  :func:`~parallax.conformance.case_format.database_options`'), and
+  :func:`~parallax.conformance.case_format.database_options`), and
   :func:`outcome` resolves a `then.outcome` that differs by engine against the
   dialect actually running.
 - :func:`run_boundary_actions` is the ONE deterministic action -> verb

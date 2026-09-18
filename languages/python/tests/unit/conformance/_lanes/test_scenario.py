@@ -4031,12 +4031,18 @@ _CONSPICUOUS_ROOT: Final[dict[str, object]] = {
 }
 
 
-def _rooted(case: case_format.Case, *, uow: dict[str, object] | None = None) -> case_format.Case:
-    """``case`` under a conspicuous root — every field away from its built-in —
-    with `when.uow` replaced by ``uow`` (dropped when ``None``)."""
+def _rooted(
+    case: case_format.Case,
+    *,
+    uow: dict[str, object] | None = None,
+    root: Mapping[str, object] = _CONSPICUOUS_ROOT,
+) -> case_format.Case:
+    """``case`` under ``root`` — by default the conspicuous root, every field
+    away from its built-in — with `when.uow` replaced by ``uow`` (dropped when
+    ``None``)."""
     document = dict(case.document)
     given = cast("Mapping[str, Any]", document.get("given") or {})
-    document["given"] = {**given, "databaseOptions": dict(_CONSPICUOUS_ROOT)}
+    document["given"] = {**given, "databaseOptions": dict(root)}
     when = {k: v for k, v in cast("Mapping[str, Any]", document["when"]).items() if k != "uow"}
     document["when"] = when if uow is None else {**when, "uow": uow}
     return dataclasses.replace(case, document=document)
@@ -4185,10 +4191,11 @@ def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field
     # The conflict lane connects each attempt's Handle with the case's root, so
     # a root level governs the attempt exactly as an authored one does; the
     # authored `when.attempts` stays the loop, so no retry field reaches the
-    # call from the request whatever the root says about retries.
+    # call from the request whatever the root says about the bound.
     case = _rooted(
         _load_case("m-opt-lock-006"),
         uow={"concurrency": "optimistic", "retryOptimisticConflicts": True, "maxRetries": 3},
+        root={**_CONSPICUOUS_ROOT, "retryOptimisticConflicts": False},
     )
     port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
     scenario.run_conflict_case(case, port)
@@ -4196,3 +4203,17 @@ def test_a_conflict_attempt_opens_at_the_roots_level_and_forwards_no_retry_field
     assert scenario._conflict_attempt_requests(case) == {  # pyright: ignore[reportPrivateUsage] - the lane's own projection is what this pins
         "concurrency": "optimistic"
     }
+
+
+def test_a_conflict_case_whose_root_opts_into_conflict_retry_is_refused_up_front() -> None:
+    # The authored attempts ARE the loop, one production attempt each. An
+    # authored opt-in is descriptive and stripped from the request, but a root
+    # opt-in reaches `connect` unchanged and would make production re-run the
+    # stale attempt inside its own transaction — so the case is refused by
+    # name before its source read, rather than run as work it never described.
+    case = _rooted(_load_case("m-opt-lock-006"))
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    with pytest.raises(EngineError, match=r"given\.databaseOptions.*optimistic-conflict retry"):
+        scenario.run_conflict_case(case, port)
+    assert port.levels == []
+    assert port.writes == []
