@@ -71,7 +71,7 @@ from snapshot_delivery_overhead import (
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 PORTFOLIO_VERSION: Final = 1
 CANONICAL_PORTFOLIO: Final = Path(
-    "languages/python/docs/structural-metadata-envelope/after/portfolio.json"
+    "languages/python/docs/structural-metadata-envelope/recovered/portfolio.json"
 )
 """The repository's current cost portfolio and CI's verification input, relative
 to the repository root. The `before/` capture beside it is the retained
