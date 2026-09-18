@@ -219,6 +219,65 @@ def test_frozen_map_lookup_refuses_an_unhashable_key_as_the_mixin_does() -> None
         frozen.__contains__(unhashable)
 
 
+class _HashRaisesKeyError:
+    def __hash__(self) -> int:
+        raise KeyError("hash")
+
+
+class _EqRaisesKeyError:
+    def __hash__(self) -> int:
+        return hash("city")
+
+    def __eq__(self, other: object) -> bool:
+        raise KeyError("eq")
+
+
+class _HashRaisesValueError:
+    def __hash__(self) -> int:
+        raise ValueError("hash")
+
+
+@pytest.mark.parametrize(
+    "key",
+    [_HashRaisesKeyError(), _EqRaisesKeyError()],
+    ids=["hash-raises-key-error", "colliding-eq-raises-key-error"],
+)
+def test_frozen_map_lookup_swallows_a_key_error_from_the_key_as_the_mixin_does(
+    key: object,
+) -> None:
+    frozen = cast("base.FrozenMap[object, object]", base.FrozenMap({"city": "Oslo"}))
+    default = object()
+
+    assert _MAPPING_MIXIN.__contains__(frozen, key) is False
+    assert (key in frozen) is False
+    assert _MAPPING_MIXIN.get(frozen, key) is None
+    assert frozen.get(key) is None
+    assert _MAPPING_MIXIN.get(frozen, key, default) is default
+    assert frozen.get(key, default) is default
+
+
+def test_frozen_map_lookup_propagates_other_key_exceptions_as_the_mixin_does() -> None:
+    frozen = cast("base.FrozenMap[object, object]", base.FrozenMap({"city": "Oslo"}))
+    key = _HashRaisesValueError()
+
+    with pytest.raises(ValueError, match="hash"):
+        _MAPPING_MIXIN.get(frozen, key)
+    with pytest.raises(ValueError, match="hash"):
+        frozen.get(key)
+    with pytest.raises(ValueError, match="hash"):
+        _MAPPING_MIXIN.__contains__(frozen, key)
+    with pytest.raises(ValueError, match="hash"):
+        frozen.__contains__(key)
+
+
+def test_frozen_map_equality_stays_unequal_when_a_colliding_key_raises_key_error() -> None:
+    left = cast("base.FrozenMap[object, object]", base.FrozenMap({_EqRaisesKeyError(): 1}))
+    right = cast("base.FrozenMap[object, object]", base.FrozenMap({"city": 1}))
+
+    assert (left == right) is False
+    assert (left != right) is True
+
+
 def test_frozen_map_lookup_is_its_own_and_never_dispatches_through_getitem(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

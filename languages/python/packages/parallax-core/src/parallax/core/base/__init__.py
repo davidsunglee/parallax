@@ -130,8 +130,14 @@ class FrozenMap[K, V](Mapping[K, V]):
     def __getitem__(self, key: K) -> V:
         return self.__values[key]
 
+    # The Mapping mixin swallows a KeyError raised by the probe key's own
+    # __hash__ or __eq__; the guards keep that contract at no cost on the
+    # non-raising path.
     def __contains__(self, key: object, /) -> bool:
-        return key in self.__values
+        try:
+            return key in self.__values
+        except KeyError:
+            return False
 
     @overload
     def get(self, key: K, /) -> V | None: ...
@@ -140,7 +146,10 @@ class FrozenMap[K, V](Mapping[K, V]):
     @overload
     def get[D](self, key: K, default: D, /) -> V | D: ...
     def get(self, key: K, default: object = None, /) -> object:
-        return self.__values.get(key, default)
+        try:
+            return self.__values.get(key, default)
+        except KeyError:
+            return default
 
     def __iter__(self) -> Iterator[K]:
         return iter(self.__values)
