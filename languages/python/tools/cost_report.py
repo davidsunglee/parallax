@@ -978,15 +978,14 @@ SHARDS: Final[tuple[Shard, ...]] = (
     *(Shard(member.subject, member) for member in MEMBERS if member is not SNAPSHOT_MEMBER),
 )
 """The partition plan, heaviest shard first so the matrix's longest job starts
-first. The Snapshot member dominates a whole-member capture (about 2.5 hours
-against 5 minutes for the next member on a hosted runner), so it is split by
-workload from its measured attribution: each of its five heavy workloads (23 to
-27 minutes summed over both supported minors) is a shard of its own, and the
-four small ones (geometry 16 minutes, the rest about a minute each) share one,
-since another runner would cost more setup than it saves. Every other member
-is one whole shard. A split is a change to this data with its test rather than
-a new recipe, and a shard whose coverage changes takes a new id, so an old base
-or nightly capture of the same id can never be paired with different work."""
+first. The Snapshot member dominates a whole-member capture, so it is split by
+workload from its measured attribution: each of its five heavy workloads, which
+cost about the same as one another, is a shard of its own, and the four small
+ones share one, since another runner would cost more setup than it saves. Every
+other member is one whole shard. A split is a change to this data with its test
+rather than a new recipe, and a shard whose coverage changes takes a new id, so
+an old base or nightly capture of the same id can never be paired with
+different work."""
 
 ALL_SHARDS: Final = "all"
 SHARD_ID_PATTERN: Final = re.compile("[a-z0-9][a-z0-9-]*")
