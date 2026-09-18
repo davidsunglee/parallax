@@ -77,7 +77,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Final, NamedTuple
 
-from durations import Spans
+from durations import Spans, write_sidecar
 from interpreter_matrix import CURRENT_MINOR, current_identity, write_metadata
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
@@ -712,9 +712,10 @@ def main(argv: list[str]) -> int:
         )
         return 2
     if args.durations is not None:
-        Spans().write(args.durations)
+        write_sidecar(args.durations, Spans().write)
     if args.metadata is not None:
-        write_metadata(args.metadata, SUBJECT, {CURRENT_MINOR: current_identity()})
+        identity = {CURRENT_MINOR: current_identity()}
+        write_sidecar(args.metadata, lambda path: write_metadata(path, SUBJECT, identity))
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()

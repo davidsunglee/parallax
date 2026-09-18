@@ -452,6 +452,44 @@ def test_a_workload_slice_is_selected_evidence_and_never_a_diagnostic_or_canary(
     assert not (tmp_path / "m.json").exists()
 
 
+def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity = json.dumps({"implementation": "CPython", "version": "3.99.1", "executable": "/p"})
+
+    def probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        return (0, identity, "")
+
+    def child(request: ChildRequest) -> ChildReading:
+        samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
+        return ChildReading(1.0, unit(request.cell), samples)
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "run_child", child)
+    monkeypatch.setattr(report, "Provisioner", _FakeProvisioner)
+    assert report.main(["--workload", PLAN_GROUP]) == 0
+    plain = capsys.readouterr()
+    durations = tmp_path / "durations.json"
+    metadata = tmp_path / "metadata.json"
+    durations.mkdir()
+    metadata.mkdir()
+    arguments = [
+        "--workload",
+        PLAN_GROUP,
+        "--metadata",
+        str(metadata),
+        "--durations",
+        str(durations),
+    ]
+    assert report.main(arguments) == 0
+    captured = capsys.readouterr()
+    assert captured.out == plain.out
+    assert captured.err.splitlines() == [
+        f"telemetry sidecar {metadata} was not written: [Errno 21] Is a directory: '{metadata}'",
+        f"telemetry sidecar {durations} was not written: [Errno 21] Is a directory: '{durations}'",
+    ]
+
+
 def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_reading(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

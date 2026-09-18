@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import time
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -135,6 +136,16 @@ class Spans:
         for entry in _entries(loaded, "unavailable", path):
             spans.missing(_string(entry, "scope"), _string(entry, "name"), _string(entry, "reason"))
         return spans
+
+
+def write_sidecar(path: Path, write: Callable[[Path], None]) -> None:
+    """Write one telemetry sidecar with ``write``, reporting an I/O failure on
+    stderr instead of raising it: telemetry a member cannot record is
+    unavailable, and never changes the member's envelope or exit status."""
+    try:
+        write(path)
+    except OSError as error:
+        print(f"telemetry sidecar {path} was not written: {error}", file=sys.stderr)
 
 
 def _scope(scope: str) -> str:

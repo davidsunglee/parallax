@@ -141,7 +141,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal, NamedTuple, cast
 
-from durations import Spans
+from durations import Spans, write_sidecar
 from interpreter_matrix import (
     IDENTITY_SCRIPT,
     ProbeRunner,
@@ -1263,7 +1263,7 @@ def main(argv: list[str]) -> int:
         return _measured(spans, args.metadata)
     finally:
         if args.durations is not None:
-            spans.write(args.durations)
+            write_sidecar(args.durations, spans.write)
 
 
 def timed_matrix(runtimes: Sequence[str], scenarios: Sequence[Scenario], spans: Spans) -> Matrix:
@@ -1281,7 +1281,8 @@ def timed_matrix(runtimes: Sequence[str], scenarios: Sequence[Scenario], spans: 
 def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
     if metadata is not None:
-        write_metadata(metadata, SUBJECT, runtime_identities(runtimes, spans, run_probe))
+        identities = runtime_identities(runtimes, spans, run_probe)
+        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
     matrix = timed_matrix(runtimes, REPORTED, spans)
     absent = missing_cells(matrix, runtimes, REPORTED)
     if absent:

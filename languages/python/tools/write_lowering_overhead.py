@@ -23,7 +23,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Final, cast
 
-from durations import Spans
+from durations import Spans, write_sidecar
 from interpreter_matrix import (
     CURRENT_MINOR,
     HASH_SEED,
@@ -514,7 +514,7 @@ def main(argv: list[str]) -> int:
         return _measured(spans, args.metadata)
     finally:
         if args.durations is not None:
-            spans.write(args.durations)
+            write_sidecar(args.durations, spans.write)
 
 
 def runtime_identities(
@@ -532,7 +532,8 @@ def runtime_identities(
 def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
     if metadata is not None:
-        write_metadata(metadata, SUBJECT, runtime_identities(runtimes, spans, run_probe))
+        identities = runtime_identities(runtimes, spans, run_probe)
+        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
     matrix = timed_matrix(runtimes, CASE_NAMES, spans)
     absent = missing_cells(matrix, runtimes, CASE_NAMES)
     if absent:

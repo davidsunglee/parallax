@@ -602,6 +602,36 @@ def test_an_incomplete_matrix_still_leaves_its_durations(
     assert [span.name for span in Spans.load(sidecar).spans] == list(report.CASE_NAMES)
 
 
+def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    matrix = _matrix("3.14")
+    monkeypatch.setattr(report, "supported_minors", lambda: ("3.14",))
+    identity = json.dumps({"implementation": "CPython", "version": "3.14.7", "executable": "/p"})
+
+    def probe(_command: Sequence[str], _environment: Mapping[str, str]) -> tuple[int, str, str]:
+        return (0, identity, "")
+
+    def child(runtime: str, case: str) -> report.Cell:
+        return matrix[runtime][case]
+
+    monkeypatch.setattr(report, "run_probe", probe)
+    monkeypatch.setattr(report, "in_a_child", child)
+    assert report.main([]) == 0
+    plain = capsys.readouterr()
+    durations = tmp_path / "durations.json"
+    metadata = tmp_path / "metadata.json"
+    durations.mkdir()
+    metadata.mkdir()
+    assert report.main(["--durations", str(durations), "--metadata", str(metadata)]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == plain.out
+    assert captured.err.splitlines() == [
+        f"telemetry sidecar {metadata} was not written: [Errno 21] Is a directory: '{metadata}'",
+        f"telemetry sidecar {durations} was not written: [Errno 21] Is a directory: '{durations}'",
+    ]
+
+
 def test_durations_are_refused_beside_a_diagnostic(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
