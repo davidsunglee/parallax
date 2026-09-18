@@ -250,12 +250,15 @@ JoinedInvocation()
 ```
 
 `isolation` is the Isolation Level this invocation **requested**, in the
-`m-db-port` portable vocabulary, and is **absent** when it requested none. It is
-not the level the database used: a boundary naming none opens at whatever its
-adapter defaults to, and that default is the adapter's own knowledge, so an
-implementation MUST NOT infer or report it here. Every attempt of one invocation
-opens at the same requested level, so the level belongs to the invocation and no
-attempt restates it.
+`m-db-port` portable vocabulary, and is **absent** when it requested none. An
+invocation a Database Root opens always requests one — the explicit level, else
+the root's configured default (ADR 0065) — so it always states one here;
+absence is the form a lower-level caller takes when it asks the port for no
+level. It is the requested level, not the level the database used: a boundary
+requesting none opens at whatever its adapter defaults to, and that default is
+the adapter's own knowledge, so an implementation MUST NOT infer or report it
+here. Every attempt of one invocation opens at the same requested level, so the
+level belongs to the invocation and no attempt restates it.
 
 An Outer Invocation is the root activity. It spans every physical attempt and
 finishes exactly once as:

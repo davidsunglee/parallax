@@ -282,9 +282,12 @@ connection-scoped — a session default would outlive the transaction that asked
 for it and silently govern the next one — and an adapter that cannot open a
 boundary at the requested isolation **reports a boundary failure** rather than
 opening one at a different level, because a request silently downgraded is
-indistinguishable from one honored. Absence asks for nothing and leaves whatever
-the adapter or its driver already defaults to, which is what every caller that
-names no isolation gets.
+indistinguishable from one honored. Absence at the port asks for nothing and
+leaves whatever the adapter or its driver already defaults to. A Database Root
+never uses that form for a transaction: an omitted isolation there resolves to
+the root's configured default, which itself defaults to Read Committed, and the
+port is asked for that concrete level on every attempt (ADR 0065). Absence
+remains the port's own lower-level capability for a caller below the root.
 
 For each `documentReads` pair, the adapter reads both cells before building the
 managed row. The presence ordinal MUST immediately precede the document ordinal
@@ -341,12 +344,16 @@ to hold. Applying the level acquires no snapshot of its own: an adapter **MUST
 NOT** issue a query merely to force one, since when a snapshot is taken is the
 database's own business and a forced one changes what the boundary observes.
 
-Omission requests nothing and keeps the adapter's own default, **provided that
+A port request naming no level keeps the adapter's own default, **provided that
 default is at least Read Committed**. An adapter checks this **once per
 connection, when it takes the connection** — not per boundary and not per attempt
 — and refuses a connection whose default is weaker as a connection error rather
-than silently upgrading it, because a caller who named no level asked for the
-adapter's default and would otherwise get one it did not configure. Where the
+than silently upgrading it, because a connection whose configured default is
+below the vocabulary's floor is a misconfiguration the deployment owns, whatever
+level a later boundary goes on to request. The floor is therefore independent
+of root resolution: a Database Root's transactions request a concrete level on
+every attempt, and the intake check still judges the connection before any of
+them asks it for anything. Where the
 adapter owns the connection's whole life, "when it takes the connection" is that
 connection's own initialization, and the refusal is an acquisition that failed
 preparation rather than a statement that failed. A default at

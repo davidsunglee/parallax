@@ -543,7 +543,7 @@
       ]
     },
     "lifecycleInvocationStarted": {
-      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them — plus the Isolation Level it REQUESTED, which has no resolved form above the port: a boundary naming no level runs at whatever the adapter defaults to, so `isolation` is stated when one was named and absent otherwise rather than reporting a default nothing here established. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states none of the four: all were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
+      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them — plus the Isolation Level it REQUESTED. A Database-driven invocation always states one, because it always resolves one — the explicit level, else the Database Root's default (`read-committed` on an unconfigured root); the field stays optional because the lifecycle vocabulary also serves a lower-level caller that asks the port for no level, and then it is absent rather than a default nothing here established. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states none of the four: all were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
       "type": "object",
       "additionalProperties": false,
       "required": ["invocation"],
@@ -556,7 +556,7 @@
       },
       "allOf": [
         {
-          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested isolation is OPTIONAL on an outer invocation — a boundary may name none — and forbidden on a joined one for the same reason the other three are.",
+          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested isolation is OPTIONAL on an outer invocation — a lower-level caller may ask the port for no level, while a Database-driven invocation always states its resolved one — and forbidden on a joined one for the same reason the other three are.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
           "then": {"required": ["concurrency", "retries", "retryOptimisticConflicts"]},
           "else": {

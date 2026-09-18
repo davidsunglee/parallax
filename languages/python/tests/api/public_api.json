@@ -504,6 +504,7 @@
   ],
   "parallax.snapshot": [
     "CheckedSnapshot",
+    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "InvalidData",
@@ -583,6 +584,7 @@
   "parallax.snapshot.handle": [
     "CheckedSnapshot",
     "Database",
+    "DatabaseOptions",
     "DeferredFeatureError",
     "ExecutionFailure",
     "FindResult",

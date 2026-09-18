@@ -187,9 +187,7 @@ def _run_interleaved_group(
 
     committed = False
     try:
-        transact(
-            session.database, body, concurrency=context.concurrency, isolation=context.isolation
-        )
+        transact(session.database, body, **context.requests)
         committed = True
     except OptimisticLockConflictError as exc:
         result.conflict_actual = exc.actual
@@ -308,7 +306,9 @@ def run_interleaved_scenario_case(
     lifecycle = LifecycleRun()
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
-    context = CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
+    context = CaseContext(
+        serving, model, concurrency, shadow, case_format.transaction_keywords(case)
+    )
     turnstile = Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})

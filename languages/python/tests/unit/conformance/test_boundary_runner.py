@@ -1,8 +1,9 @@
 """``parallax.conformance.boundary_runner`` unit tests (Docker-free fake ports).
 
 Pins the pure pieces the real-database suite (`tests/api/test_boundary_run.py`)
-composes against real Postgres: `when.uow`/
-`when.boundary`/`given.fault` parsing, the action -> verb mapping (incl. its
+composes against real Postgres: `when.boundary`/`given.fault` parsing (the
+`when.uow` projection is `case_format`'s own, pinned beside it), the action ->
+verb mapping (incl. its
 branches no reachable corpus case reaches — `create`/`delete`/`terminate`),
 the fault-injecting port decorator's firing/attempt-counting behavior, and
 the attempt-count formula.
@@ -54,8 +55,8 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 def _steps(*actions: str) -> list[boundary_runner.BoundaryStep]:
-    """The steps a body of plain actions runs, none of them naming a level."""
-    return [boundary_runner.BoundaryStep(action, None) for action in actions]
+    """The steps a body of plain actions runs, none of them naming an option."""
+    return [boundary_runner.BoundaryStep(action, {}) for action in actions]
 
 
 def _case(document: dict[str, Any], *, case_id: str = "m-auto-retry-900") -> case_format.Case:
@@ -72,54 +73,42 @@ def _case(document: dict[str, Any], *, case_id: str = "m-auto-retry-900") -> cas
 # --------------------------------------------------------------------------- #
 # when.uow / when.boundary / given.fault / then.outcome parsing.              #
 # --------------------------------------------------------------------------- #
-def test_boundary_uow_leaves_every_omitted_option_to_db_transact() -> None:
-    # A case declaring no `when.uow` supplies no argument at all, so
-    # `db.transact` resolves each option itself (`optimistic`, 10 retries, no
-    # conflict opt-in) — the runner never restates a default that could drift
-    # from production's. An omitted isolation is the same sentinel: it asks for
-    # nothing rather than standing in for the adapter's own default.
-    uow = boundary_runner.boundary_uow(_case({}))
-    assert uow.concurrency is None
-    assert uow.retries is None
-    assert uow.retry_optimistic_conflicts is None
-    assert uow.isolation is None
-
-
-def test_boundary_uow_reads_declared_fields() -> None:
-    case = _case(
-        {
-            "when": {
-                "uow": {
-                    "concurrency": "optimistic",
-                    "retries": 2,
-                    "retryOptimisticConflicts": True,
-                    "isolation": "repeatable-read",
-                }
-            }
-        }
-    )
-    uow = boundary_runner.boundary_uow(case)
-    assert uow.concurrency == "optimistic"
-    assert uow.retries == 2
-    assert uow.retry_optimistic_conflicts is True
-    # The corpus spells the level hyphenated and the language as a Python
-    # identifier: the conversion happens once, here at ingress.
-    assert uow.isolation == "repeatable_read"
-
-
 def test_boundary_steps_reads_the_ordered_list() -> None:
     case = _case({"when": {"boundary": [{"action": "read"}, {"action": "update"}]}})
     assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep("read", None),
-        boundary_runner.BoundaryStep("update", None),
+        boundary_runner.BoundaryStep("read", {}),
+        boundary_runner.BoundaryStep("update", {}),
     ]
 
 
-def test_boundary_steps_reads_a_joins_own_level() -> None:
-    case = _case({"when": {"boundary": [{"action": "join", "isolation": "serializable"}]}})
+def test_boundary_steps_reads_a_joins_own_options() -> None:
+    # A join step projects exactly the fields it authors, through the same
+    # decoder the outer `when.uow` uses: the level arrives as the Python
+    # literal, and an omitted field stays absent so production inherits it.
+    case = _case(
+        {
+            "when": {
+                "boundary": [
+                    {"action": "join", "isolation": "serializable"},
+                    {"action": "join", "maxRetries": 0, "retryOptimisticConflicts": False},
+                    {"action": "join", "note": "inherits everything"},
+                ]
+            }
+        }
+    )
     assert boundary_runner.boundary_steps(case) == [
-        boundary_runner.BoundaryStep("join", "serializable")
+        boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
+        boundary_runner.BoundaryStep(
+            "join", {"max_retries": 0, "retry_optimistic_conflicts": False}
+        ),
+        boundary_runner.BoundaryStep("join", {}),
     ]
+
+
+def test_boundary_steps_refuses_a_null_option_on_a_join() -> None:
+    case = _case({"when": {"boundary": [{"action": "join", "isolation": None}]}})
+    with pytest.raises(ValueError, match=r"when\.boundary\[0\]\.isolation"):
+        boundary_runner.boundary_steps(case)
 
 
 def test_fault_kind_absent_is_none() -> None:
@@ -253,8 +242,8 @@ def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
     db = _db(port)
     steps = [
-        boundary_runner.BoundaryStep("read", None),
-        boundary_runner.BoundaryStep("join", "serializable"),
+        boundary_runner.BoundaryStep("read", {}),
+        boundary_runner.BoundaryStep("join", {"isolation": "serializable"}),
     ]
 
     def fn(tx: Transaction) -> Any:
@@ -268,9 +257,9 @@ def test_a_join_repeating_the_boundarys_level_is_accepted() -> None:
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
     db = _db(port)
     steps = [
-        boundary_runner.BoundaryStep("read", None),
-        boundary_runner.BoundaryStep("join", "repeatable_read"),
-        boundary_runner.BoundaryStep("update", None),
+        boundary_runner.BoundaryStep("read", {}),
+        boundary_runner.BoundaryStep("join", {"isolation": "repeatable_read"}),
+        boundary_runner.BoundaryStep("update", {}),
     ]
 
     def fn(tx: Transaction) -> Any:
@@ -493,7 +482,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
 class _AttemptsCase:
     fault: str | None
     outcome_kind: str
-    retries: int | None
+    max_retries: int | None
     retry_optimistic_conflicts: bool | None
     expected: int
 
@@ -504,7 +493,7 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     _AttemptsCase("serialization-failure", "committed", None, True, 2),
     # m-auto-retry-003: no fault at all.
     _AttemptsCase(None, "committed", None, True, 1),
-    # m-auto-retry-004: retries: 0 disables the loop.
+    # m-auto-retry-004: maxRetries: 0 disables the loop.
     _AttemptsCase("serialization-failure", "serialization-failure", 0, False, 1),
     # m-auto-retry-005: persistent, bound exhausted.
     _AttemptsCase("serialization-failure", "serialization-failure", 2, False, 3),
@@ -541,7 +530,7 @@ def test_expected_attempts(case: _AttemptsCase) -> None:
         boundary_runner.expected_attempts(
             fault=case.fault,
             outcome_kind=case.outcome_kind,
-            retries=case.retries,
+            max_retries=case.max_retries,
             retry_optimistic_conflicts=case.retry_optimistic_conflicts,
         )
         == case.expected

@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 33 `modules` below, `dialects: ["postgres"]`, the ten `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -1764,12 +1764,11 @@ Port access, connection acquisition, materialization, or transaction work.
 Every read entry calls this seam rather than reimplementing any step:
 `Database.find` and `Transaction.find`, the `db.wire.find` / `tx.wire.find`
 peers beside them — each handle runs one read seam for both interfaces, so the
-two cannot gate differently — the values lane's `read_rows`, the conformance
-compile lane, and the later Session read boundary.
+two cannot gate differently — the values lane's `read_rows`, and the
+conformance compile lane.
 
 Deferred Execution Features apply only to modeled read execution through
-`Database.find`, `Transaction.find`, their Wire peers, and the later Session
-read boundary.
+`Database.find`, `Transaction.find`, and their Wire peers.
 Predicate-selected write methods never invoke this classifier. They first
 require a mutation-compatible Object Query, so a read-shaped query matching a
 deferral still raises `QueryDefinitionError(query-not-mutation-compatible)`
@@ -2288,7 +2287,7 @@ as the API Conformance Suite's publication story, rendered into the Usage Guide
 (§6) — not as a generic updater callback interface.
 
 **A connected handle owns its runtime.**
-`Database.connect(adapter, model, *, read_plan_cache_capacity=16)`
+`Database.connect(adapter, model, *, options=None, read_plan_cache_capacity=16, clock=None, lifecycle_provider=None)`
 takes **configuration**, not a live resource. `PostgresAdapter(connection_string,
 pool=PoolOptions(...) | OnDemandOptions(...), prepare_threshold=...)` is a frozen
 value that opens no connection, pool, or thread, so it is safe to build at import
@@ -2298,6 +2297,40 @@ closes. Every `connect` over one configuration opens an INDEPENDENT runtime, so
 closing one handle leaves another working. `db.close()` and using the handle as a
 context manager are equivalent, both idempotent, and one of them is required:
 what a handle holds is connections, and nothing above it can release them.
+
+**A connected handle is the Database Root** (ADR 0065): the configured owner
+of one runtime, carrying the transaction option defaults every outer
+`db.transact` resolves its omitted keywords against. `options` is that record,
+a `DatabaseOptions` exported from `parallax.snapshot` beside `connect`, and it
+is the first keyword: `connect(adapter, model, *, options=DatabaseOptions(...))`
+reads as where, then what, then how. Omitting it and passing `options=None`
+both mean `DatabaseOptions()`; this whole-record shorthand is distinct from
+supplying `None` for a field, which no field admits. The record is established
+before the adapter opens a runtime, so an invalid one costs no resource, and
+the same object is what the direct `Database(runtime, model, *, options=...)`
+constructor takes over an already-open runtime. Cache capacity, clock, and
+lifecycle provider stay separate root-lifetime configuration rather than
+fields of the record: the plan cache and the installed lifecycle are resources
+the handle owns for its life, as the pool is.
+
+```python
+@dataclass(frozen=True, slots=True)
+class DatabaseOptions:
+    max_retries: int = 10
+    concurrency: Literal["locking", "optimistic"] = "optimistic"
+    retry_optimistic_conflicts: bool = False
+    isolation: IsolationLevel = "read_committed"
+```
+
+Every field is validated at construction under the rule an explicit
+`db.transact` keyword meets — `max_retries` a nonnegative built-in `int` that
+is not a `bool`, `retry_optimistic_conflicts` a `bool`, `concurrency` and
+`isolation` members of their closed core vocabularies, each refused with a
+plain `ValueError` — and every field holds a concrete value: the record never
+carries an omission, and `None` is refused for all four. `isolation` defaults to
+Read Committed as a concrete request rather than to no request, so an
+unconfigured root asks the port for that level on every attempt even where the
+connection's own configured default is stronger (§5).
 
 There is no permanent connection on a handle and no raw accessor to one. Each
 operation acquires its own connection and gives it back — an eager read for its
@@ -3848,13 +3881,24 @@ of shared edition identity.
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
-  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None, isolation: IsolationLevel | None = None)`.
-  Every option is **sentinel-backed** so an omitted option is distinguishable
-  from an explicitly passed value: `None` (the default) means *apply the
-  outermost defaults when this call opens the transaction — `retries=10`,
-  `concurrency="optimistic"`, `retry_optimistic_conflicts=False`, and no
-  isolation request at all — and inherit the active transaction's settings when
-  this call joins one*. The closure
+  `db.transact(fn, *, max_retries=..., concurrency=..., retry_optimistic_conflicts=..., isolation=...)`,
+  each keyword typed as its `DatabaseOptions` field. **Only omission
+  inherits**: an omitted keyword takes the Database Root's default for that
+  field when this call opens the transaction, and the active transaction's
+  resolved value when this call joins one. Omission is carried by a private
+  typed marker each keyword defaults to, never by `None`: an explicit value is
+  held to its field's contract — the same rule `DatabaseOptions` enforces at
+  construction — and `None` is an invalid value for every field, refused with
+  a plain `ValueError` before any transaction is opened or observed and before
+  this call is compared against an active transaction. The resolved record —
+  each explicit value, else the root's default — is what `tx.options` answers:
+  one `DatabaseOptions`, the type the root was configured with, shared by
+  every attempt of the invocation and read by every joining call, and reused
+  from the root's own record whenever the resolved values are its own. The
+  former `retries` keyword is gone without an alias; the public spelling is
+  `max_retries` on the record, the keyword, and the resolved record alike,
+  while the core retry loop and lifecycle events keep their own `retries`
+  parameter and field. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
   `tx.find(query)` reads inside the transaction (participating according to each
   Entity's Effective Concurrency Strategy), and the call returns the callback's
@@ -3863,14 +3907,23 @@ of shared edition identity.
   deliberately not offered: the core retry contract requires re-executing the
   closure, which a `with` block cannot do; a decorator form is a possible
   additive future. Bounded automatic retry follows core: deadlock-category
-  failures retriable by default, bound default 10, `retries=0` disables the
-  loop, exhaustion surfaces diagnosably with the attempt count;
-  optimistic-lock conflicts join the retriable set only via
-  `retry_optimistic_conflicts=True`. Each attempt adopts the Serving Model's
+  failures retriable by default, the bound resolved from the root (built-in
+  default 10), `max_retries=0` disables the loop, exhaustion surfaces
+  diagnosably with the attempt count; optimistic-lock conflicts join the
+  retriable set only where the resolved `retry_optimistic_conflicts` is
+  `True`, whether the root or the call set it. Each attempt adopts the Serving Model's
   current selection before its boundary opens and `tx.edition` names it; an
   ordinary failure escaping the call surfaces as `ExecutionFailure` under the
   edition of the attempt that failed last, with the underlying error as its
   cause (§3 *Transaction failures carry the edition*).
+- **`tx.options` is the invocation's resolved record.** A read-only property
+  answering the `DatabaseOptions` the outer invocation resolved — the same
+  object on every attempt of that invocation and on every transaction a
+  joining call receives, and the root's own record wherever the resolved
+  values are its own. It is read off the transaction rather than off any
+  active state, so a caller holding a transaction reads its options after the
+  invocation has ended exactly as it did inside it, and a joiner or a
+  component reads one value instead of four sentinels.
 - **Transient execution lifecycle.** `Database`, `Transaction`, `Snapshot`, and
   stream values expose no lifecycle accessors. An installed Provider receives
   one transaction-invocation Root Execution spanning every physical retry and
@@ -3984,7 +4037,9 @@ connect(
     adapter: DatabaseAdapter,
     model: DomainModel | ServingModel,
     *,
+    options: DatabaseOptions | None = None,
     read_plan_cache_capacity: int = 16,
+    clock: Clock | None = None,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
 ) -> Database
 
@@ -4287,10 +4342,20 @@ These feature tests do not claim the deferred `benchmark` command or general
   failure therefore has exactly one defined continuation: clean up and let
   the outermost boundary abort (and retry per the original failure's
   classification). A joining call may not re-negotiate the
-  boundary: an explicit (non-`None`) option whose value conflicts with the
-  active transaction's setting raises, an explicit value equal to the active
-  setting is accepted, and omitted (`None`) options inherit the active
-  settings. The active transaction
+  boundary: an explicit option whose value differs from the active
+  transaction's resolved `tx.options` raises
+  `TransactionOptionConflictError`, an explicit value equal to the resolved
+  value is accepted, and an omitted option inherits it. The root's default
+  never enters that comparison on its own: a join naming the root's value
+  under an outer call that overrode it is a conflict. The refusals run in one
+  order — the lifecycle re-entry guard, then every explicit keyword's own
+  validation, then the bare-unit-of-work check, ownership, option equality,
+  and last rollback-only foreclosure — so a malformed keyword on the wrong
+  root is a `ValueError`, a valid differing keyword on the wrong root is
+  `TransactionOwnershipError`, and only a validated, owned, differing keyword
+  is an option conflict; none of those refusals runs the callback or opens
+  invocation activity, while rollback-only foreclosure keeps its joined
+  activity. The active transaction
   is tracked per thread; a transaction object is owned by its outermost
   closure invocation and is not thread-safe; escaping references raise on use
   after the scope ends. The per-transaction `concurrency` option is a
@@ -4306,19 +4371,22 @@ These feature tests do not claim the deferred `benchmark` command or general
   Isolation Levels — `parallax.core.db_port.IsolationLevel`, a `Literal` of
   `"read_committed"`, `"repeatable_read"`, `"serializable"` — each defined by
   the anomalies it forbids (`m-unit-work`, `m-db-port`) rather than by any
-  database's own spelling; omitting it requests nothing and leaves the
-  connection at whatever the adapter or its driver already defaults to (READ
-  COMMITTED on Postgres). The value reaches `DatabaseConnection.transaction` unchanged and
+  database's own spelling; omitting it resolves to the Database Root's
+  `isolation` default, whose built-in value is `"read_committed"`, requested
+  concretely on every attempt rather than left to whatever the connection
+  defaults to — a connection configured to default to Repeatable Read still
+  runs an unconfigured root's transactions at Read Committed. The resolved value reaches `DatabaseConnection.transaction` unchanged and
   `PostgresAdapter` maps it to this engine's name for it
   (`parallax.postgres.isolation_spelling`), so what Parallax promises is the
   GUARANTEE rather than a string's arrival, and a `Literal` is what makes the
   promise expressible.
 
-  A value outside the vocabulary raises a plain `ValueError` naming the three,
-  raised where a negative `retries` bound is: at the outer call, before any
-  transaction is opened or observed, before a lifecycle event, and before this
-  call is compared against an active boundary — so a joining call naming an
-  invalid level is refused as INVALID rather than as a conflict. The check
+  A value outside the vocabulary — `None` included — raises a plain
+  `ValueError` naming the three, raised where an invalid `max_retries` bound
+  is: at the outer call, before any transaction is opened or observed, before a
+  lifecycle event, and before this call is compared against an active
+  transaction — so a joining call naming an invalid level is refused as
+  INVALID rather than as a conflict. The check
   compares rather than tests set membership, so a value of any type is refused
   the one way. An engine's own spelling of a level Parallax does carry
   (`"repeatable read"`) is refused on the same terms as a level it does not
@@ -4327,27 +4395,41 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   The level is a property of a boundary at the moment it opens, so it joins on
   the same terms as the other three options — omit to inherit, repeat the
-  active value to be accepted, name a different one for
-  `TransactionOptionConflictError` before the joined callback runs — and a
-  boundary opened with no level refuses a joining call that names one. Every
-  physical attempt of one invocation opens at the same requested level, so a
+  resolved value to be accepted, name a different one for
+  `TransactionOptionConflictError` before the joined callback runs. Every
+  physical attempt of one invocation opens at the same resolved level, so a
   retried callback never silently runs at a weaker one; a serialization failure
   or deadlock still retries under `m-auto-retry`'s own bound, and no new error
-  class or retry policy comes with the vocabulary. There is no handle-level,
-  connection-level, or environment default: the setting is transaction-scoped,
+  class or retry policy comes with the vocabulary. The Database Root's default
+  is the only default: there is no connection-level or environment default,
   because a connection setting is only a default for later transactions and a
   long read is exactly the case wanting a different level from the rest of an
-  application. `tx.stream` therefore inherits its transaction's level and
-  `db.stream` carries no isolation option at all — a caller wanting one
-  database snapshot across a whole delivery streams inside `db.transact`.
+  application, and the setting stays transaction-scoped — the root supplies
+  the value a transaction resolves, and the transaction is what requests it.
+  `tx.stream` therefore inherits its transaction's level and `db.stream`
+  carries no isolation option at all — a caller wanting one database snapshot
+  across a whole delivery streams inside `db.transact`. Neither the root's
+  defaults nor a call's overrides govern standalone reads or standalone
+  streams, which open no transaction. What Read Committed, Repeatable Read, and
+  Serializable each promise is the anomalies they forbid (`m-db-port`); on
+  Postgres, Read Committed gives each statement its own snapshot, Repeatable
+  Read gives the transaction one stable snapshot and still permits
+  serialization anomalies such as write skew, and Serializable guarantees
+  serial equivalence only among the transactions that all requested it, never
+  across a workload mixing weaker levels. A root default configures this
+  application's transactions and cannot govern other users of the database.
+  Resolving options costs constant space for the fixed field set; what a
+  stronger level costs in retained row versions or Serializable tracking is the
+  database's own and grows with the workload, not with the record.
 
   An installed lifecycle Provider observes the level on the outer invocation's
-  Started transition and nowhere else (`m-execution-lifecycle`): the requested
-  value, or nothing at all where the call named none, because the default an
-  omitting call keeps is the adapter's own and Parallax does not infer it. A
-  joined invocation reports none, and neither does a Transaction Attempt — the
-  level belongs to the invocation that requested it, and every attempt opens at
-  that same one.
+  Started transition and nowhere else (`m-execution-lifecycle`): the resolved
+  value the invocation requested, which a Database transaction always has —
+  absence remains the vocabulary's form for a lower-level caller that asks the
+  port for no level, and no Database transaction reports it. A joined
+  invocation reports none, and neither does a Transaction Attempt — the level
+  belongs to the invocation that requested it, and every attempt opens at that
+  same one.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
   work and flush at commit, combined and batched per `m-batch-write` (multi-row
   INSERT collapse, per-key UPDATE batching, IN-list DELETE collapse) and
@@ -6352,7 +6434,7 @@ hatchling.
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `Unrelinquished`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

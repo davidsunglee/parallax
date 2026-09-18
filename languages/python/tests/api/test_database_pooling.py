@@ -101,7 +101,7 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
         raise RuntimeError("this attempt fails after the handle closed")
 
     with pytest.raises(ExecutionFailure):
-        db.transact(body, retries=3)
+        db.transact(body, max_retries=3)
 
     assert attempts == [1]
 

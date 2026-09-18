@@ -621,12 +621,29 @@ Principal that would erase provider- or domain-specific identity structure. A
 joined `db.transact(principal, body)` snapshots the supplied Principal once and
 raises `PrincipalMismatchError` before `body` when it differs from the outer
 transaction's captured identity; operations on `tx` inherit without a
-Principal argument. A nested join first proves that the transaction belongs to
-the exact originating Database, then checks rollback-only state without
-evaluating the Principal, resolves and validates the Principal, compares Subject
-Identity, and finally validates explicit transaction options before invoking
-the body.
+Principal argument. A nested join first validates every explicit transaction
+option it was handed, then proves that the transaction belongs to the exact
+originating Database, compares those explicit options against the active
+transaction's resolved `tx.options`, checks rollback-only state without
+evaluating the Principal, and last resolves and validates the Principal and
+compares Subject Identity before invoking the body.
 _Avoid_: raw subject string, generic Subject wrapper, framework user model
+
+**Database Options**:
+The frozen `DatabaseOptions` record exported from `parallax.snapshot` beside
+`connect`: `max_retries`, `concurrency`, `retry_optimistic_conflicts`, and
+`isolation`, each validated at construction and never `None`. One type serves
+three surfaces — the defaults a Database Root is connected with through
+`connect(..., options=...)`, the record an outer `db.transact` resolves its
+omitted keywords into, and what `tx.options` answers.
+_Avoid_: transaction settings, options manager, sentinel record, config dict
+
+**Omitted Keyword**:
+A `db.transact` option the caller did not pass, carried by a private typed
+marker each keyword defaults to. Omission alone inherits — the root's default
+on an outer call, the active transaction's resolved value on a join — while an
+explicit value, `None` included, is validated against its field's contract.
+_Avoid_: `None` sentinel, nullable option, missing default
 
 **Transaction Body**:
 The closure passed to `db.transact`, receiving the Parallax Transaction; it

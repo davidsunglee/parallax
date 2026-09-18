@@ -98,7 +98,6 @@ from parallax.core.base import (
 from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
-    IsolationLevel,
     MappingRow,
 )
 from parallax.core.dialect import Dialect, dialect_for
@@ -1326,18 +1325,19 @@ def run_standalone_find(
 ) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
     """Run one UNGROUPED scenario find step through the production Wire read.
 
-    A step carrying its scenario's Concurrency Preference runs inside a real
-    ``db.transact`` so the read participates exactly as
+    A step runs inside a real ``db.transact`` under exactly the options its
+    scenario authored, so the read participates exactly as
     :func:`~parallax.conformance._lanes.reads.run_read_case` does and exactly
     as a developer's ``tx.find`` would: whether it takes the shared row lock is
-    then the target Entity's own Effective Concurrency Strategy, never a
-    property of the preference alone or of what the scenario goes on to write.
+    then the target Entity's own Effective Concurrency Strategy under the
+    preference production resolves, never a property of the planning value
+    alone or of what the scenario goes on to write.
     """
     query = step_query(step, context.model)
     observed = lifecycle.observation()
     with handle.Database.connect(port, context.serving, lifecycle_provider=observed.provider) as db:
         return (
-            transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
+            transact(db, lambda tx: tx.wire.find(query), **context.requests),
             observed,
         )
 
@@ -1609,7 +1609,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     concurrency = case_document.concurrency(case)
     dialect = dialect_for(dialect_name)
     context = CaseContext(
-        serving, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
+        serving, model, concurrency, TemporalShadow(), case_format.transaction_keywords(case)
     )
     seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
@@ -1955,7 +1955,7 @@ def _execute_write_unit(
     port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
-    concurrency: Concurrency,
+    requests: case_format.TransactionKeywords,
     resolved: Sequence[_ResolvedWrite],
     statements: Sequence[LoweredStatement],
     tx_instant: str,
@@ -2034,7 +2034,7 @@ def _execute_write_unit(
                 _buffer_wire_write(tx, model, state, write, None)
 
         with absorbing_rollback():
-            transact(database, body, concurrency=concurrency)
+            transact(database, body, **requests)
         return envelope.delivered(
             statements, observed.writes, "a keyed write unit"
         ), observed.round_trips
@@ -2086,7 +2086,7 @@ def execute_keyed_unit(
             port,
             context.serving,
             context.model,
-            context.concurrency,
+            context.requests,
             resolved,
             statements,
             tx_instant,
@@ -2133,7 +2133,7 @@ def _run_readless_predicate_write(
             buffer_prepared_predicate_write(tx, instruction)
 
         with absorbing_rollback():
-            transact(database, body, concurrency=context.concurrency)
+            transact(database, body, **context.requests)
         return (
             envelope.delivered((statement,), observed.writes, "a readless predicate write"),
             observed.round_trips,
@@ -2271,7 +2271,7 @@ def _run_materializing_pair(
 
         with shadow.staged(doomed=rollback):
             with absorbing_rollback():
-                transact(database, body, concurrency=context.concurrency)
+                transact(database, body, **context.requests)
             shadow.note_materialized_write(case_entity(model, write_target))
         # The split is the port method each statement ran through rather than a
         # position in one flat list, so a resolve that issued more than one call, or
@@ -2396,18 +2396,21 @@ class CaseContext:
     statement (:class:`_GroupSession` for a group, the unit's own port
     otherwise), so this record can travel beside any of them.
 
-    The isolation is the case's own `when.uow.isolation`, carried beside the
-    concurrency preference because both are `db.transact` arguments a held group
-    opens at rather than anything a step's translation reads. It has no default:
-    a level the case declared and no lane propagated is invisible, so every
-    construction states it — ``None`` for a case declaring none.
+    The concurrency is the preference the case's writes are PLANNED under —
+    declared, or the built-in default — and is what every lowering here reads.
+    The requests are the ``db.transact`` keywords the case AUTHORED
+    (:func:`~parallax.conformance.case_format.transaction_keywords`), carried
+    separately because an omitted field must reach production omitted rather
+    than as the planning value restated: a held group, an ungrouped unit, and a
+    standalone find all forward exactly these. Every construction states both,
+    so a field the case declared and no lane propagated cannot go invisible.
     """
 
     serving: ServingModel
     model: AcceptedMetamodel
     concurrency: Concurrency
     shadow: TemporalShadow
-    isolation: IsolationLevel | None
+    requests: case_format.TransactionKeywords
 
 
 def _empty_published() -> list[handle.WireEntity]:
@@ -2937,9 +2940,7 @@ def _run_uow_group(
                     step_graphs.append(observed)
 
         with context.shadow.staged(doomed=doomed), absorbing_rollback():
-            transact(
-                session.database, body, concurrency=context.concurrency, isolation=context.isolation
-            )
+            transact(session.database, body, **context.requests)
         # The group's writes reach the wire in ONE flush at its boundary, so a step's
         # own plan is reconciled against the group's whole delivery rather than
         # against a flush of its own: what the transaction wrote is every write
@@ -3006,7 +3007,9 @@ def run_scenario_case(
             "run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
+    context = CaseContext(
+        serving, model, concurrency, shadow, case_format.transaction_keywords(case)
+    )
     lowered: list[LoweredStep] = []
     round_trips = 0
     try:
@@ -3128,7 +3131,7 @@ def run_write_sequence_case(
         model,
         case_document.concurrency(case),
         TemporalShadow(),
-        case_format.uow_isolation(case),
+        case_format.transaction_keywords(case),
     )
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
@@ -3350,9 +3353,31 @@ def _implied_shortfall_error(
     return OptimisticLockConflictError if strategy == "optimistic" else StaleWriteError
 
 
+def _conflict_attempt_requests(case: case_format.Case) -> case_format.TransactionKeywords:
+    """The options one authored conflict ATTEMPT's transaction requests: the
+    case's `concurrency` and `isolation`, and neither retry field.
+
+    A conflict case's `when.attempts` IS its retry loop, authored one attempt at
+    a time and graded per attempt — `affectedRows: 0` on the stale attempt, the
+    advance on the next — so each attempt runs as one transaction of its own.
+    Forwarding an authored `retryOptimisticConflicts` would make production
+    re-execute the stale attempt inside that transaction and report the
+    advance where the case grades the shortfall; the opt-in that case authors
+    describes the loop the attempts spell out, and the boundary lane is where
+    production's own loop is driven from it.
+    """
+    authored = case_format.transaction_keywords(case)
+    requests: case_format.TransactionKeywords = {}
+    if "concurrency" in authored:
+        requests["concurrency"] = authored["concurrency"]
+    if "isolation" in authored:
+        requests["isolation"] = authored["isolation"]
+    return requests
+
+
 def _conflict_attempt_affected(
     database: handle.Database,
-    concurrency: Concurrency,
+    requests: case_format.TransactionKeywords,
     implied: type[WriteEffectError],
     body: Callable[[handle.Transaction], int],
 ) -> int:
@@ -3374,7 +3399,7 @@ def _conflict_attempt_affected(
     that arm.
     """
     try:
-        return transact(database, body, concurrency=concurrency)
+        return transact(database, body, **requests)
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
@@ -3529,14 +3554,17 @@ def _run_conflict_write(
     model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
+    requests: case_format.TransactionKeywords,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
     nodes: Mapping[ObjectKey, handle.WireEntity],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int, int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
-    ``db.transact`` — ONE
-    transaction, an inert Clock (never consumed by a non-temporal write).
+    ``db.transact`` — ONE transaction, an inert Clock (never consumed by a
+    non-temporal write), and exactly the options the case authored
+    (``requests``); ``concurrency`` is the planning value the emission is
+    lowered and the implied shortfall classified under.
 
     Every row is written through the PUBLIC keyed Wire verb its mutation names,
     against the node ``nodes`` published for its key, so a MULTI-KEY attempt
@@ -3588,7 +3616,7 @@ def _run_conflict_write(
 
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
-        affected = _conflict_attempt_affected(database, concurrency, implied, body)
+        affected = _conflict_attempt_affected(database, requests, implied, body)
         ran = envelope.delivered(statements, observed.writes, "a conflict attempt")
         return ran, affected, observed.round_trips
 
@@ -4129,6 +4157,7 @@ def run_conflict_case(
     lifecycle = lifecycle_run(lifecycle)
     when = case_document.when(case)
     concurrency = case_document.concurrency(case)
+    requests = _conflict_attempt_requests(case)
     target = _conflict_target(case, model)
     mutation = _conflict_mutation(when)
     is_temporal = _is_temporal_entity(model, target)
@@ -4191,6 +4220,7 @@ def run_conflict_case(
                     model,
                     target,
                     concurrency,
+                    requests,
                     _conflict_write_rows(attempt),
                     mutation,
                     sources_for(attempt) if sources is None else sources,

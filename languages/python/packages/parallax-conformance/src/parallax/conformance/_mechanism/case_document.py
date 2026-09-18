@@ -78,11 +78,16 @@ def write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]
 
 
 def concurrency(case: case_format.Case) -> Concurrency:
-    """The case's declared unit-of-work Concurrency Preference
-    (`when.uow.concurrency`; `m-unit-work` "Strategy selection"), defaulting to
-    `optimistic` when the case declares none — the SAME default
-    `m-unit-work.TransactionSettings` resolves and the one `m-case-format`
-    states for the `when.uow` block.
+    """The Concurrency Preference a case's writes are PLANNED under
+    (`when.uow.concurrency`; `m-unit-work` "Strategy selection"): the declared
+    preference, or `optimistic` when the case declares none — the built-in
+    root default `m-case-format` states for the `when.uow` block.
+
+    A planning value, never a request: the lanes lower and grade against it,
+    and forward only what the case authored
+    (:func:`~parallax.conformance.case_format.transaction_keywords`) to
+    ``db.transact``, so an omitted preference is resolved by production rather
+    than restated as though the case had asked for it.
 
     A preference is not a strategy: what each step's own Entity participates
     under is derived from this value and that Entity's Optimistic Lock Facet, so

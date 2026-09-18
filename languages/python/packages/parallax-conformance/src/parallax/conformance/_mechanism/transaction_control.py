@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable, Generator, Sequence
+from typing import Unpack
 
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._decoration import DecoratingAdapter
+from parallax.conformance.case_format import TransactionKeywords
 from parallax.core.db_port import (
     BeginFailed,
     CallbackRaised,
@@ -38,7 +40,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import Dialect
-from parallax.core.unit_work import Concurrency
 from parallax.snapshot import handle
 
 __all__ = [
@@ -82,12 +83,16 @@ def underlying[T](execution: Callable[[], T]) -> T:
 def transact[T](
     database: handle.Database,
     body: Callable[[handle.Transaction], T],
-    *,
-    concurrency: Concurrency | None = None,
-    isolation: IsolationLevel | None = None,
+    **keywords: Unpack[TransactionKeywords],
 ) -> T:
-    """``db.transact`` as every lane drives it, through :func:`underlying`."""
-    return underlying(lambda: database.transact(body, concurrency=concurrency, isolation=isolation))
+    """``db.transact`` as every lane drives it, through :func:`underlying`.
+
+    ``keywords`` is the sparse projection of what the case authored: a field
+    the case omitted is absent here and therefore omitted at the production
+    call, so the root's defaults — never a value restated by a lane — resolve
+    it.
+    """
+    return underlying(lambda: database.transact(body, **keywords))
 
 
 class _AbortingPort:

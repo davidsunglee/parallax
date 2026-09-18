@@ -214,12 +214,12 @@ def run_read_case(
     observed = lifecycle_run(lifecycle).observation()
     apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
-        concurrency = _read_case_concurrency(case)
+        requests = case_format.transaction_keywords(case)
         try:
             result = (
-                underlying(lambda: db.read_rows(query))
-                if concurrency is None
-                else transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
+                transact(db, lambda tx: tx.read_rows(query), **requests)
+                if "concurrency" in requests
+                else underlying(lambda: db.read_rows(query))
             )
         except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc

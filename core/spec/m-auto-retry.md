@@ -15,12 +15,14 @@ The unit-of-work boundary **MUST** offer **bounded automatic retry**. On a
    the retry re-reads, it does not replay a stale in-memory shadow;
 3. **re-execute the closure** against that fresh state, inside a new atomic scope.
 
-The bound is **configurable** with a **default of 10** re-executions; a bound of
-**`0` disables** the loop, so even a retriable failure surfaces to the caller
-after the first attempt. A retry that **exhausts** the bound surfaces the failure
-to the caller (diagnosably — the surfaced error carries the attempt count). This
-mirrors Reladomo's `MithraManager.executeTransactionalCommand` retry loop
-(`TransactionStyle` default 10).
+The bound is **configurable** per boundary; an omitted bound resolves to the
+Database Root's configured default, which itself defaults to **10**
+re-executions (ADR 0065). A bound of **`0` disables** the loop, so even a
+retriable failure surfaces to the caller after the first attempt. A retry that
+**exhausts** the bound surfaces the failure to the caller (diagnosably — the
+surfaced error carries the attempt count). This mirrors Reladomo's
+`MithraManager.executeTransactionalCommand` retry loop (`TransactionStyle`
+default 10), with the default owned by the root rather than by each call.
 
 Which failures are retriable:
 
@@ -30,7 +32,8 @@ Which failures are retriable:
 - An **Optimistic Lock Conflict Error** is **not** retriable by default: a
   conflict surfaces to the caller after one attempt, and joins the retriable set
   **only** when the unit of work opts in (`retryOptimisticConflicts`, Reladomo's
-  `setRetryOnOptimisticLockFailure`, default off).
+  `setRetryOnOptimisticLockFailure`; an omitted opt-in resolves to the Database
+  Root's configured default, which itself defaults to off).
 - A **lock-wait timeout** (the `m-db-error` `lockWaitTimeout` category) is **not**
   retriable.
 - The remaining Write Effect Errors — **Missing Target Error**, **Stale Write
@@ -73,7 +76,7 @@ carrying a type across a module boundary does not.
 ## What the suite pins down
 
 The observable loop-mechanics branches (a conflict surfacing without the opt-in, an
-injected transient auto-retried away, `retries: 0`, bound exhaustion, the callback
+injected transient auto-retried away, `maxRetries: 0`, bound exhaustion, the callback
 value withheld on abort) need injected faults a single-connection harness cannot
 provoke, so they are authored as **boundary** cases on the `api-conformance` lane
 and satisfied by each language's API Conformance Suite (`m-api-conformance`).

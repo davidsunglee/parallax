@@ -14,17 +14,19 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import yaml
 
 from parallax.core.db_port import IsolationLevel
+from parallax.core.unit_work import Concurrency, concurrency_preference
 from parallax.core.wire._json import authored_number
 
 __all__ = [
     "CASE_SHAPES",
     "Case",
     "SelectionFilter",
+    "TransactionKeywords",
     "default_cases_dir",
     "find_repo_root",
     "is_module_tag",
@@ -32,9 +34,11 @@ __all__ = [
     "isolation_literal",
     "load_case",
     "load_cases",
+    "request_keywords",
     "safe_load_yaml",
     "select",
     "serialized_isolation",
+    "transaction_keywords",
     "uow_isolation",
 ]
 
@@ -251,13 +255,101 @@ def serialized_isolation(level: IsolationLevel) -> str:
 def uow_isolation(case: Case) -> IsolationLevel | None:
     """A case's declared portable Isolation Level, or ``None`` for none declared.
 
-    Read exactly as production reads an omitted option: absence requests nothing
-    rather than standing in for a value the suite would supply.
+    For the raw held sessions a two-connection choreography opens outside any
+    Database: absence applies no level statement to those sessions. A
+    transactional lane projects the same field through
+    :func:`transaction_keywords` instead, so that production resolves absence.
     """
     when = cast("dict[str, Any]", case.document.get("when") or {})
     uow = cast("dict[str, Any]", when.get("uow") or {})
-    declared = cast("str | None", uow.get("isolation"))
-    return None if declared is None else isolation_literal(declared)
+    declared = uow.get("isolation")
+    if declared is None:
+        return None
+    return isolation_literal(_authored_string(declared, "when.uow.isolation"))
+
+
+class TransactionKeywords(TypedDict, total=False):
+    """The ``db.transact`` keywords a case AUTHORS, and no others.
+
+    A sparse projection of one `when.uow` block or one `join` step: a key is
+    present exactly when the case wrote the field, so an absent key reaches
+    production as an omitted keyword and is resolved there — against the root's
+    defaults on an outer call, against the active transaction on a join — never
+    against a default restated here. Authored ``0`` and ``false`` are present
+    values, and authored ``null`` is refused at ingress rather than carried.
+    """
+
+    max_retries: int
+    concurrency: Concurrency
+    retry_optimistic_conflicts: bool
+    isolation: IsolationLevel
+
+
+_REQUEST_KEYS: Final[tuple[str, ...]] = (
+    "maxRetries",
+    "concurrency",
+    "retryOptimisticConflicts",
+    "isolation",
+)
+
+
+def request_keywords(request: Mapping[str, object], *, where: str) -> TransactionKeywords:
+    """The transaction keywords ``request`` authors, decoded through the case
+    format's own vocabulary functions.
+
+    ``request`` is a `when.uow` block or a `join` step; only the four option keys
+    are read, so a step's own members travel beside them untouched. ``where``
+    names the placement a malformed field is reported at.
+    """
+    keywords: TransactionKeywords = {}
+    if "maxRetries" in request:
+        bound = request["maxRetries"]
+        if isinstance(bound, bool) or not isinstance(bound, int) or bound < 0:
+            raise ValueError(f"{where}.maxRetries must be a nonnegative integer, got {bound!r}")
+        keywords["max_retries"] = bound
+    if "concurrency" in request:
+        keywords["concurrency"] = concurrency_preference(
+            _authored_string(request["concurrency"], f"{where}.concurrency")
+        )
+    if "retryOptimisticConflicts" in request:
+        opt_in = request["retryOptimisticConflicts"]
+        if not isinstance(opt_in, bool):
+            raise ValueError(f"{where}.retryOptimisticConflicts must be a boolean, got {opt_in!r}")
+        keywords["retry_optimistic_conflicts"] = opt_in
+    if "isolation" in request:
+        keywords["isolation"] = isolation_literal(
+            _authored_string(request["isolation"], f"{where}.isolation")
+        )
+    return keywords
+
+
+def transaction_keywords(case: Case) -> TransactionKeywords:
+    """The ``db.transact`` keywords a case's `when.uow` authors for its outer
+    invocation — every authored field and nothing else.
+
+    A `when.uow` naming a key outside the four request keys is refused here, so
+    a retired spelling reports the case rather than silently requesting nothing.
+    """
+    when = case.document.get("when")
+    uow = cast("Mapping[str, object]", when).get("uow") if isinstance(when, Mapping) else None
+    if uow is None:
+        return {}
+    if not isinstance(uow, Mapping):
+        raise ValueError(f"{case.path.name}: when.uow must be a mapping, got {uow!r}")
+    request = cast("Mapping[str, object]", uow)
+    unknown = sorted(set(request) - set(_REQUEST_KEYS))
+    if unknown:
+        raise ValueError(
+            f"{case.path.name}: when.uow names no request key {unknown}; the request keys "
+            f"are {list(_REQUEST_KEYS)}"
+        )
+    return request_keywords(request, where=f"{case.path.name}: when.uow")
+
+
+def _authored_string(value: object, where: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{where} must be a string, got {value!r}")
+    return value
 
 
 def _case_id(stem: str) -> str:

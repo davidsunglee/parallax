@@ -341,7 +341,7 @@ The suite proves the retriable half observably with a conflict case's
 rows, then a retry that re-reads the fresh version and re-applies affects `1` — the
 `0`-then-`1` transition, asserted against real data. The loop-mechanics branches a
 single-connection harness cannot provoke (a conflict surfacing without the opt-in,
-an injected transient auto-retried, `retries: 0`, bound exhaustion) are authored as
+an injected transient auto-retried, `maxRetries: 0`, bound exhaustion) are authored as
 **boundary** cases on the `api-conformance` lane and satisfied by each language's
 API Conformance Suite (`m-api-conformance`).
 

@@ -951,7 +951,7 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         db = _db(port, LoggingLifecycleProvider(logger))
         try:
             with raises_contextualized(DatabaseError):
-                db.transact(lambda tx: tx.insert(new_account()), retries=1)
+                db.transact(lambda tx: tx.insert(new_account()), max_retries=1)
         finally:
             logger.removeHandler(collected)
         written = [_written(record) for record in collected.records]

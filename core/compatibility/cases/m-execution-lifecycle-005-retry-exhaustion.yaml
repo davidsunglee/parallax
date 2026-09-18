@@ -3,7 +3,7 @@
 # loop.
 #
 # A persistent injected deadlock fails the write on every attempt under
-# `retries: 1`, so the root holds two attempts and both roll back. Two
+# `maxRetries: 1`, so the root holds two attempts and both roll back. Two
 # distinctions ride on that.
 #
 # The first is balance under failure. Every activity the first attempt opened is
@@ -64,7 +64,7 @@ given:
 when:
   uow:
     concurrency: locking
-    retries: 1
+    maxRetries: 1
   boundary:
     - action: read
       note: observe the row the write addresses
@@ -86,6 +86,7 @@ then:
               concurrency: locking
               retries: 1
               retryOptimisticConflicts: false
+              isolation: read-committed
           - sequence: 2
             activity: 2
             parent: 1

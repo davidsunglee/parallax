@@ -1370,7 +1370,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
 
     def run() -> None:
         with suppress(ExecutionFailure):
-            db.transact(lambda tx: tx.insert(new_account()), retries=1)
+            db.transact(lambda tx: tx.insert(new_account()), max_retries=1)
 
     assert _left_behind(run) == []
     assert port.begins == 2

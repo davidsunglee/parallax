@@ -216,9 +216,15 @@ class WriteCall:
 
 @dataclass(frozen=True, slots=True)
 class BeginCall:
-    """A transaction boundary opened, carrying the isolation the caller asked for."""
+    """A transaction boundary opened, carrying the isolation the caller asked for.
 
-    isolation: IsolationLevel | None = None
+    The default is the level an unconfigured Database Root resolves every
+    transaction to, so a test about anything but isolation spells nothing;
+    ``None`` is the port-level request for nothing, which only a caller below
+    the handle makes.
+    """
+
+    isolation: IsolationLevel | None = "read_committed"
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol, runtime_checkable
+from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -41,6 +41,7 @@ __all__ = [
     "AUTHORED_UNTIL",
     "CARRIED_STATE",
     "CHANGED_STATE",
+    "CONCURRENCY_PREFERENCES",
     "NO_AUDIT",
     "OPEN_END",
     "PREDECESSOR_END",
@@ -68,6 +69,7 @@ __all__ = [
     "ValidTimeWindow",
     "VersionArithmetic",
     "capture_subject_identity",
+    "concurrency_preference",
 ]
 
 # The closed two-valued concurrency vocabulary (`m-unit-work` "Strategy
@@ -82,6 +84,27 @@ __all__ = [
 # (`uow.py`) and the planner (`write_planner.py`) need the same value: defining
 # it in either would make the other import back.
 Concurrency = Literal["locking", "optimistic"]
+
+CONCURRENCY_PREFERENCES: Final[frozenset[str]] = frozenset(get_args(Concurrency))
+
+
+def concurrency_preference(value: object) -> Concurrency:
+    """Return the vocabulary's own spelling of ``value``, or raise ``ValueError``.
+
+    The vocabulary is closed, so a name outside it names no strategy any Entity
+    could resolve — the caller's mistake, reportable before a unit of work opens.
+    Every value outside it is refused the one way, whatever its type: the
+    candidate is compared to each preference rather than looked up in the set,
+    since a value no set can be asked about (an unhashable ``str`` subclass)
+    would make membership alone raise ``TypeError``. What comes back is the
+    matched preference itself, never the caller's own object.
+    """
+    known = sorted(CONCURRENCY_PREFERENCES)
+    if isinstance(value, str):
+        for preference in known:
+            if value == preference:
+                return cast("Concurrency", preference)
+    raise ValueError(f"concurrency must be one of {known}, got {value!r}")
 
 
 @dataclass(frozen=True, slots=True)

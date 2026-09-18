@@ -12,10 +12,12 @@ delegate to the one :class:`~parallax.snapshot.handle._read_scope.ReadScope`
 this connection owns — the same scope its Wire view retains, and the same scope
 every stream it opens is delivered through — and :meth:`Database.transact`
 refuses re-entry and delegates to the one
-:class:`~parallax.snapshot.handle._demarcation.Demarcation` it built at connect.
-Both hold the Serving Model and adopt its current selection per execution, so
-a publication reaches every later execution of this handle without the handle
-caching, rebuilding, or comparing anything.
+:class:`~parallax.snapshot.handle._transaction_runner.TransactionRunner` it
+built at connect, over the root's
+:class:`~parallax.snapshot.handle._options.DatabaseOptions`. Both hold the
+Serving Model and adopt its current selection per execution, so a publication
+reaches every later execution of this handle without the handle caching,
+rebuilding, or comparing anything.
 
 Preparation lives here rather than beside the selection it builds because a
 Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
@@ -28,7 +30,9 @@ own, so the static shorthand and an explicitly shared Serving Model enter the
 same execution paths.
 
 This is the TOP of the package's internal graph: it imports
-:mod:`~parallax.snapshot.handle._demarcation` for the transaction demarcation,
+:mod:`~parallax.snapshot.handle._transaction_runner` for the transaction runner,
+:mod:`~parallax.snapshot.handle._options` for the root defaults it configures
+that runner with,
 :mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns
 one of, :mod:`~parallax.snapshot.handle._publication` for the selection it
 prepares and the Serving Model it holds, and
@@ -78,8 +82,8 @@ from parallax.core.execution_lifecycle._pool_observation import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import Clock, Concurrency, SystemClock
-from parallax.snapshot.handle._demarcation import Demarcation
 from parallax.snapshot.handle._errors import SnapshotConnectionError
+from parallax.snapshot.handle._options import OMITTED, DatabaseOptions, Omitted
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._publication import (
     ModelSelection,
@@ -96,6 +100,7 @@ from parallax.snapshot.handle._read_plan import (
 from parallax.snapshot.handle._read_scope import standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
+from parallax.snapshot.handle._transaction_runner import TransactionRunner
 from parallax.snapshot.handle._wire import WireDatabaseView
 
 __all__ = [
@@ -190,13 +195,13 @@ class Database:
 
     __slots__ = (
         "_clock",
-        "_demarcation",
         "_lifecycle",
         "_observation",
         "_planner",
         "_reads",
         "_runtime",
         "_shutdown",
+        "_transactions",
     )
 
     def __init__(
@@ -204,6 +209,7 @@ class Database:
         runtime: DatabaseRuntime,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -216,6 +222,10 @@ class Database:
         below leaves it to the caller that opened it. :meth:`connect` is the
         entry point that opens one and owns both halves, and is what an
         application uses.
+
+        ``options`` is the root's :class:`DatabaseOptions`: the defaults every
+        outer :meth:`transact` resolves its omitted keywords against. ``None``
+        and omission both mean the built-in record.
 
         If ``runtime`` publishes pool measurements and ``lifecycle_provider``
         implements
@@ -244,6 +254,7 @@ class Database:
         """
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONSTRUCTOR_REFUSAL)
+        defaults = options if options is not None else DatabaseOptions()
         self._runtime = runtime
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -258,16 +269,17 @@ class Database:
         self._planner = ReadPlanCache(capacity)
         # The one Read Scope this connection's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
-        # read composition") — and the one demarcation its transactions run
-        # through. Both adopt from the same Serving Model.
+        # read composition") — and the one runner its transactions run through,
+        # which is the only holder of the root's defaults. Both adopt from the
+        # same Serving Model.
         self._reads = standalone_read_scope(
             lifecycle=self._lifecycle,
             serving=serving,
             runtime=runtime,
             planner=self._planner,
         )
-        self._demarcation = Demarcation(
-            runtime, self._clock, self._lifecycle, serving, self._planner
+        self._transactions = TransactionRunner(
+            runtime, self._clock, self._lifecycle, serving, self._planner, defaults
         )
         # Held across the whole of close, so the ordering below is the ordering
         # every caller sees: a second close waits for the first rather than
@@ -292,6 +304,7 @@ class Database:
         adapter: DatabaseAdapter,
         model: DomainModel | ServingModel,
         *,
+        options: DatabaseOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -301,7 +314,11 @@ class Database:
         The composition-root entry point (spec §8): only the root names a
         concrete adapter; everything above works against the abstract seam, and
         the dialect every statement is spelled in is that adapter's own.
-        ``clock`` defaults to the system clock
+        ``options`` is the root's :class:`DatabaseOptions` — the transaction
+        defaults every outer :meth:`transact` resolves its omitted keywords
+        against; omitting it, or passing ``None``, means the built-in record.
+        An invalid record never reaches this call, because constructing one
+        refuses it. ``clock`` defaults to the system clock
         (inject a fixed clock in tests). ``lifecycle_provider`` is the ONE
         execution-lifecycle seam (`m-execution-lifecycle`): the Provider owns
         its own error reporter, so there is no second argument, and omitting it
@@ -346,11 +363,16 @@ class Database:
         """
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
+        # Concrete before the runtime opens, and handed on as the same object:
+        # the constructor keeps what it is given rather than building a second
+        # record.
+        defaults = options if options is not None else DatabaseOptions()
         runtime = adapter.open()
         try:
             return cls(
                 runtime,
                 serving,
+                options=defaults,
                 read_plan_cache_capacity=capacity,
                 clock=clock,
                 lifecycle_provider=lifecycle_provider,
@@ -505,39 +527,44 @@ class Database:
         self,
         fn: Callable[[Transaction], T],
         *,
-        retries: int | None = None,
-        concurrency: Concurrency | None = None,
-        retry_optimistic_conflicts: bool | None = None,
-        isolation: IsolationLevel | None = None,
+        max_retries: int | Omitted = OMITTED,
+        concurrency: Concurrency | Omitted = OMITTED,
+        retry_optimistic_conflicts: bool | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         """Run ``fn(tx)`` in a transaction, returning its value only after commit.
 
-        Every option is sentinel-backed (spec §5): ``None`` means *apply the
-        outermost defaults when this call opens the transaction* (``retries=10``,
-        ``concurrency="optimistic"``, ``retry_optimistic_conflicts=False``) *and
-        inherit the active transaction's settings when it joins one*.
+        Only an OMITTED keyword inherits (spec §5): when this call opens the
+        transaction it takes the root's :class:`DatabaseOptions` default for
+        that field, and when it joins one it takes the active transaction's
+        resolved value. An explicit value is held to the field's contract —
+        ``max_retries`` a nonnegative ``int`` that is not a ``bool``,
+        ``retry_optimistic_conflicts`` a ``bool``, ``concurrency`` and
+        ``isolation`` members of their closed vocabularies — and ``None`` is an
+        invalid value for every field rather than a second spelling of
+        omission. Any invalid value is a deterministic :class:`ValueError`,
+        raised before any transaction is opened or observed, and before this
+        call is even compared against an active transaction, so a joining call
+        naming a level outside the vocabulary is refused as invalid rather than
+        as a conflict. The resolved record is what ``tx.options`` answers.
+
         ``concurrency`` is a Concurrency PREFERENCE: each Entity's own Optimistic
         Lock Facet decides whether it participates optimistically or falls back
         to the shared read lock, so one transaction mixes both (`m-unit-work`
-        "Strategy selection"). ``retries`` bounds re-executions rather than total
-        attempts, and a negative bound is a deterministic refusal raised before
-        any transaction is opened or observed. ``isolation`` names one of the
-        three portable Isolation Levels (:data:`~parallax.core.db_port.
-        IsolationLevel`), each defined by the anomalies it forbids and mapped by
-        the adapter to its own database; omitting it asks for nothing and leaves
-        whatever the adapter or its driver defaults to. Any other value is a
-        deterministic :class:`ValueError`, raised — like a negative retry bound —
-        before any transaction is opened or observed, and before this call is
-        even compared against an active boundary, so a joining call naming a
-        level outside the vocabulary is refused as invalid rather than as a
-        conflict. Every physical attempt of one invocation opens at the same
-        requested level, and `tx.stream` inherits it. A call
-        while a transaction is active on the current thread joins it, but only
-        through the exact ``Database`` that opened the boundary — any other
-        handle raises :class:`TransactionOwnershipError` before every later
-        joining check. A joining call's closure receives the **same**
-        :class:`Transaction`, its value returns immediately, and an explicit
-        option that conflicts with the boundary raises
+        "Strategy selection"). ``max_retries`` bounds re-executions rather than
+        total attempts. ``isolation`` names one of the three portable Isolation
+        Levels (:data:`~parallax.core.db_port.IsolationLevel`), each defined by
+        the anomalies it forbids and mapped by the adapter to its own database;
+        the root's built-in default is Read Committed, requested concretely
+        rather than left to the database's configured default. Every physical
+        attempt of one invocation opens at the same resolved level, and
+        `tx.stream` inherits it. A call while a transaction is active on the
+        current thread joins it, but only through the exact ``Database`` that
+        opened the boundary — any other handle raises
+        :class:`TransactionOwnershipError` before every later joining check. A
+        joining call's closure receives the **same** :class:`Transaction`, its
+        value returns immediately, and an explicit option that differs from
+        the active transaction's resolved value raises
         :class:`TransactionOptionConflictError`. The outermost boundary
         owns commit, abort, and the ``m-auto-retry`` bounded retry loop; abort
         withholds the callback value, and an inner failure dooms the whole
@@ -567,10 +594,10 @@ class Database:
         was delivered while it ran (`m-execution-lifecycle`).
         """
         refuse_reentry(self._lifecycle)
-        return self._demarcation.transact(
+        return self._transactions.transact(
             fn,
             owner=self,
-            retries=retries,
+            max_retries=max_retries,
             concurrency=concurrency,
             retry_optimistic_conflicts=retry_optimistic_conflicts,
             isolation=isolation,

@@ -175,6 +175,7 @@ from parallax.core.unit_work.strategy import (
     AUTHORED_UNTIL,
     CARRIED_STATE,
     CHANGED_STATE,
+    CONCURRENCY_PREFERENCES,
     NO_AUDIT,
     OPEN_END,
     PREDECESSOR_END,
@@ -200,6 +201,7 @@ from parallax.core.unit_work.strategy import (
     ValidTimeWindow,
     VersionArithmetic,
     capture_subject_identity,
+    concurrency_preference,
 )
 from parallax.core.unit_work.temporal import TemporalAxes
 from parallax.core.unit_work.uow import (
@@ -236,6 +238,7 @@ __all__ = [
     "BOUNDED_MUTATIONS",
     "CARRIED_STATE",
     "CHANGED_STATE",
+    "CONCURRENCY_PREFERENCES",
     "DESTRUCTIVE_MUTATIONS",
     "INFINITY",
     "INSERT_MUTATIONS",
@@ -391,6 +394,7 @@ __all__ = [
     "capture_subject_identity",
     "claim_scope",
     "claimed_object",
+    "concurrency_preference",
     "deserialize",
     "eager_segment",
     "enforce_affected_rows",

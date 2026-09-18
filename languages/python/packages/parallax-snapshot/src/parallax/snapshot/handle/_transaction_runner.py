@@ -1,13 +1,16 @@
-"""``parallax.snapshot.handle._demarcation`` — the outermost transaction
-demarcation and the flush edge.
+"""``parallax.snapshot.handle._transaction_runner`` — the outermost transaction
+runner and the flush edge.
 
-:class:`Demarcation` is what ``Database.transact`` delegates to once re-entry
-has been refused: sentinel-backed options, the join through the exact
-originating handle with the option-conflict check, the ``m-auto-retry`` bounded
-retry loop, the per-attempt adoption of the Serving Model's current selection,
-and the flush executor it injects into the unit of work. A ``Database`` builds
-exactly one at connect, over its port, clock, installed lifecycle, and Serving
-Model; it has one adapter and is an internal seam rather than a Protocol.
+:class:`TransactionRunner` is what ``Database.transact`` delegates to once
+re-entry has been refused: the validation of every explicit option, the
+resolution of an outer invocation's omitted options against the root's
+:class:`~parallax.snapshot.handle._options.DatabaseOptions`, the join through
+the exact originating handle with the option-conflict check, the
+``m-auto-retry`` bounded retry loop, the per-attempt adoption of the Serving
+Model's current selection, and the flush executor it injects into the unit of
+work. A ``Database`` builds exactly one at connect, over its port, clock,
+installed lifecycle, Serving Model, and defaults; it has one adapter and is an
+internal seam rather than a Protocol.
 
 Each outer attempt adopts one complete selection before the boundary is asked
 to begin and retains it through commit or rollback: the attempt's lifecycle
@@ -31,7 +34,7 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
 The three public refusals declared here — :class:`TransactionOptionConflictError`,
 :class:`TransactionOwnershipError`, :class:`TransactionRollbackError` — are the
-demarcation's own and are re-exported through ``handle/__init__.py``'s frozen
+runner's own and are re-exported through ``handle/__init__.py``'s frozen
 ``__all__``; every other name keeps its leading underscore because nothing
 outside this module reaches it.
 """
@@ -42,7 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.auto_retry import check_retry_bound, run_with_retry
+from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
@@ -76,6 +79,7 @@ from parallax.core.unit_work import (
     WritePlanner,
     active_unit_of_work,
     capture_subject_identity,
+    concurrency_preference,
     enforce_affected_rows,
     run_unit_of_work,
 )
@@ -85,6 +89,13 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`.
 from parallax.snapshot.handle._adoption import AdoptedExecution
 from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
+from parallax.snapshot.handle._options import (
+    OMITTED,
+    DatabaseOptions,
+    Omitted,
+    check_max_retries,
+    check_retry_optimistic_conflicts,
+)
 from parallax.snapshot.handle._publication import (
     ServingModel,
     read_projection,
@@ -95,10 +106,10 @@ from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = [
-    "Demarcation",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
     "TransactionRollbackError",
+    "TransactionRunner",
 ]
 
 # The audit-neutral Subject Identity every production planning request carries
@@ -114,8 +125,8 @@ class TransactionOptionConflictError(ValueError):
     """A joining ``db.transact`` call tried to re-negotiate the boundary.
 
     A joining call may not change the active transaction's settings: an explicit
-    (non-``None``) option whose value conflicts with the outermost boundary's
-    resolved setting raises; an explicit equal value and an omitted option are
+    option whose value conflicts with the active transaction's resolved
+    ``options`` raises; an explicit equal value and an omitted option are
     accepted (spec §5).
     """
 
@@ -123,7 +134,7 @@ class TransactionOptionConflictError(ValueError):
 class TransactionOwnershipError(RuntimeError):
     """A nested ``db.transact`` call was made through a foreign ``Database``.
 
-    The active demarcation records the exact ``Database`` object that opened it,
+    The active transaction records the exact ``Database`` object that opened it,
     and a nested call joins only through that same object. An alias of the owner
     joins and receives the identical :class:`Transaction`; every different handle
     is refused even when it carries the same model, adapter, clock, or
@@ -174,8 +185,8 @@ class _BeginFailure(Exception):
     it catches, and a begin failure is an ordinary
     :class:`~parallax.core.db_error.DatabaseError` like any other. Travelling
     as a type the loop does not catch is what makes it terminal;
-    :meth:`Demarcation.transact` unwraps it immediately outside the loop, so
-    nothing above ever sees this class.
+    :meth:`TransactionRunner.transact` unwraps it immediately outside the loop,
+    so nothing above ever sees this class.
     """
 
     def __init__(self, error: Exception) -> None:
@@ -184,71 +195,43 @@ class _BeginFailure(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class _ResolvedOptions:
-    """The outermost boundary's resolved ``db.transact`` options.
-
-    ``concurrency`` also lives on the core :class:`TransactionSettings`;
-    ``retries`` and ``retry_optimistic_conflicts`` are demarcation-level only
-    (the core unit of work never sees them). ``retry_optimistic_conflicts``
-    is stored for the join/conflict contract AND gates
-    :func:`_optimistic_conflict_retriable` — the opt-in-only classification
-    branch :meth:`Demarcation.transact` injects into
-    :func:`~parallax.core.auto_retry.run_with_retry` (`m-opt-lock`
-    "Retry contract").
-
-    ``isolation`` is the one option with no resolved default of its own: it
-    stays whatever the call named, because ``None`` here is a request for
-    nothing rather than a stand-in for a value Parallax would supply. It is the
-    vocabulary's own spelling of that request rather than the caller's object,
-    so what a joining call is compared against, and what every adapter keys its
-    per-level mapping by, is a plain level. Every physical attempt of this
-    boundary asks the port for the same one, so a retry re-opens at the
-    isolation the invocation asked for rather than at the database's default.
-    """
-
-    retries: int
-    concurrency: Concurrency
-    retry_optimistic_conflicts: bool
-    isolation: IsolationLevel | None
-
-
-@dataclass(frozen=True, slots=True)
-class _Boundary:
-    """What the outermost boundary publishes on the unit of work's ``companion``.
+class _ActiveTransaction:
+    """What the outermost attempt publishes on the unit of work's ``companion``.
 
     A joining ``db.transact`` call needs the same :class:`Transaction` to hand
-    its closure, the boundary's resolved options for the conflict check, the
-    exact ``Database`` that opened the boundary so ownership can be settled
-    before either, the physical attempt currently running — which is what a
-    joined invocation is a child activity OF — and the Write Planner of the
-    selection that attempt adopted, so a join plans through what it inherited
-    rather than adopting anything. All five ride core's single per-thread active
-    binding, so their visibility ends exactly when it does (no handle-owned
-    thread-local, nothing to clean up). ``owner`` is a strong reference
-    deliberately: it is scoped state whose lifetime is the boundary's, not a
-    registry entry.
+    its closure — which also carries the resolved options the join is compared
+    against — the exact ``Database`` that opened the transaction so ownership
+    can be settled before that comparison, the physical attempt currently
+    running — which is what a joined invocation is a child activity OF — and the
+    Write Planner of the selection that attempt adopted, so a join plans through
+    what it inherited rather than adopting anything. All four ride core's single
+    per-thread active binding, so their visibility ends exactly when it does (no
+    handle-owned thread-local, nothing to clean up). ``owner`` is a strong
+    reference deliberately: it is scoped state whose lifetime is the
+    transaction's, not a registry entry.
     """
 
     tx: Transaction
-    options: _ResolvedOptions
     owner: object
     attempt: TransactionAttemptActivity
     planner: WritePlanner
 
 
-class Demarcation:
-    """One handle's callback demarcation, built once at connect.
+class TransactionRunner:
+    """One handle's transaction runner, built once at connect.
 
     Holds what every invocation needs and nothing an invocation retains: the
     runtime every attempt acquires its connection from, the Clock the unit of
     work reads, the installed lifecycle every root and attempt reports through,
-    and the Serving Model each attempt adopts from. Neither the selection nor a
-    connection is held here — that is what makes both of them per attempt, so a
-    retry adopts afresh and acquires afresh rather than replaying over what its
-    predecessor left.
+    the Serving Model each attempt adopts from, and the root's defaults every
+    outer invocation resolves its omitted options against. Neither the
+    selection, a connection, nor the active transaction is held here — that is
+    what makes the first two per attempt, so a retry adopts afresh and acquires
+    afresh rather than replaying over what its predecessor left, and what keeps
+    the active transaction on core's per-thread binding alone.
     """
 
-    __slots__ = ("_clock", "_lifecycle", "_planner", "_runtime", "_serving")
+    __slots__ = ("_clock", "_defaults", "_lifecycle", "_planner", "_runtime", "_serving")
 
     def __init__(
         self,
@@ -257,22 +240,24 @@ class Demarcation:
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
+        defaults: DatabaseOptions,
     ) -> None:
         self._runtime = runtime
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
         self._planner = planner
+        self._defaults = defaults
 
     def transact[T](
         self,
         fn: Callable[[Transaction], T],
         *,
         owner: object,
-        retries: int | None,
-        concurrency: Concurrency | None,
-        retry_optimistic_conflicts: bool | None,
-        isolation: IsolationLevel | None,
+        max_retries: int | Omitted,
+        concurrency: Concurrency | Omitted,
+        retry_optimistic_conflicts: bool | Omitted,
+        isolation: IsolationLevel | Omitted,
     ) -> T:
         """Run ``fn(tx)`` in a transaction owned by ``owner``, returning its
         value only after commit.
@@ -280,24 +265,36 @@ class Demarcation:
         The public contract is ``Database.transact``'s. What is decided here:
         the deterministic refusals run first and keep their own types, the join
         path returns inside the active attempt without adopting or wrapping,
-        and an outer invocation opens its root, runs the retry loop with one
-        adoption per attempt, and is contextualized as a whole once the loop
-        has resolved.
+        and an outer invocation resolves its options once, opens its root, runs
+        the retry loop with one adoption per attempt, and is contextualized as
+        a whole once the loop has resolved.
         """
-        # Ahead of the join comparison below, because a level outside the
-        # vocabulary is the CALL's own defect: comparing it first would report a
-        # nonsense level as a disagreement with the active boundary, which reads
-        # as though naming it correctly would have been accepted.
-        requested = None if isolation is None else isolation_level(isolation)
+        # Every explicit value is validated ahead of the join comparison below,
+        # because a value outside its field's contract is the CALL's own defect:
+        # comparing it first would report a nonsense value as a disagreement
+        # with the active transaction, which reads as though naming it
+        # correctly would have been accepted. An omitted keyword is left as the
+        # marker until it is resolved — against the root for an outer
+        # invocation, against the active transaction for a join.
+        bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
+        preference = (
+            concurrency if isinstance(concurrency, Omitted) else concurrency_preference(concurrency)
+        )
+        opt_in = (
+            retry_optimistic_conflicts
+            if isinstance(retry_optimistic_conflicts, Omitted)
+            else check_retry_optimistic_conflicts(retry_optimistic_conflicts)
+        )
+        level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
         active = active_unit_of_work()
         if active is not None:
-            boundary = active.companion
-            if not isinstance(boundary, _Boundary):
+            joined = active.companion
+            if not isinstance(joined, _ActiveTransaction):
                 raise UnitOfWorkError(
                     "a bare unit of work is active on this thread; db.transact can "
                     "only join a transaction it opened"
                 )
-            if boundary.owner is not owner:
+            if joined.owner is not owner:
                 raise TransactionOwnershipError(
                     "this Database did not open the active transaction, so it cannot "
                     "join it (transaction-owner-mismatch); only the exact Database "
@@ -305,11 +302,11 @@ class Demarcation:
                     "another handle's model, adapter, or clock may be"
                 )
             _check_join_options(
-                boundary.options,
-                retries=retries,
-                concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
-                isolation=requested,
+                joined.tx.options,
+                max_retries=bound,
+                concurrency=preference,
+                retry_optimistic_conflicts=opt_in,
+                isolation=level,
             )
             # The join path returns immediately and ignores these arguments in
             # favor of the active transaction's own (m-unit-work); rollback-only
@@ -319,30 +316,24 @@ class Demarcation:
             # because those refusals reach no transaction at all. Nothing is
             # adopted and nothing is wrapped: the selection and the failure
             # contract are the outer invocation's.
-            with boundary.attempt.joined_invocation():
+            with joined.attempt.joined_invocation():
                 return run_unit_of_work(
-                    lambda _: fn(boundary.tx),
+                    lambda _: fn(joined.tx),
                     settings=active.settings,
                     clock=active.clock,
                     meta=active.meta,
                     flush_executor=active.flush_executor,
                     write_batch_opening=active.write_batch_opening,
-                    planner=boundary.planner,
+                    planner=joined.planner,
                     subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                 )
-        options = _ResolvedOptions(
-            retries=retries if retries is not None else 10,
-            concurrency=concurrency if concurrency is not None else "optimistic",
-            retry_optimistic_conflicts=(
-                retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
-            ),
-            isolation=requested,
+        options = _resolved(
+            self._defaults,
+            max_retries=bound,
+            concurrency=preference,
+            retry_optimistic_conflicts=opt_in,
+            isolation=level,
         )
-        # The last deterministic refusal, and it belongs here rather than at the
-        # retry loop's own entry: the loop runs inside the root opened below, so
-        # a bound rejected only there would have called the Provider and emitted
-        # this invocation's Started and Finished first (`m-execution-lifecycle`).
-        check_retry_bound(options.retries)
 
         extra_retriable = (
             _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
@@ -354,7 +345,7 @@ class Demarcation:
         root = open_transaction_root(
             self._lifecycle,
             concurrency=options.concurrency,
-            retries=options.retries,
+            retries=options.max_retries,
             retry_optimistic_conflicts=options.retry_optimistic_conflicts,
             isolation=options.isolation,
             extra_retriable=extra_retriable,
@@ -387,13 +378,13 @@ class Demarcation:
                                     physical,
                                     self._lifecycle,
                                     self._planner,
+                                    options,
                                 )
                                 # Published for joining calls; visible only
                                 # while core's active-transaction binding is,
                                 # so it needs no cleanup.
-                                uow.companion = _Boundary(
+                                uow.companion = _ActiveTransaction(
                                     tx=tx,
-                                    options=options,
                                     owner=owner,
                                     attempt=physical,
                                     planner=write.planner,
@@ -453,7 +444,7 @@ class Demarcation:
 
                 try:
                     return run_with_retry(
-                        attempt, retries=options.retries, extra_retriable=extra_retriable
+                        attempt, retries=options.max_retries, extra_retriable=extra_retriable
                     )
                 except _BeginFailure as failed:
                     # Unwrapped here rather than at the port, so the loop sees a
@@ -512,13 +503,53 @@ def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptAct
             raise triggering_error from rollback_error
 
 
+def _resolved(
+    defaults: DatabaseOptions,
+    *,
+    max_retries: int | Omitted,
+    concurrency: Concurrency | Omitted,
+    retry_optimistic_conflicts: bool | Omitted,
+    isolation: IsolationLevel | Omitted,
+) -> DatabaseOptions:
+    """The options an outer invocation runs under: each explicit value, else
+    the root's default for that field.
+
+    Every explicit value has already been validated, so the record built here
+    re-runs the same rules over values known to pass them. The root's own
+    record is answered as itself whenever the resolved values are its own —
+    every keyword omitted, or explicit values equal to the defaults — so an
+    invocation that changes nothing allocates nothing.
+    """
+    bound = defaults.max_retries if isinstance(max_retries, Omitted) else max_retries
+    preference = defaults.concurrency if isinstance(concurrency, Omitted) else concurrency
+    opt_in = (
+        defaults.retry_optimistic_conflicts
+        if isinstance(retry_optimistic_conflicts, Omitted)
+        else retry_optimistic_conflicts
+    )
+    level = defaults.isolation if isinstance(isolation, Omitted) else isolation
+    if (
+        bound == defaults.max_retries
+        and preference == defaults.concurrency
+        and opt_in == defaults.retry_optimistic_conflicts
+        and level == defaults.isolation
+    ):
+        return defaults
+    return DatabaseOptions(
+        max_retries=bound,
+        concurrency=preference,
+        retry_optimistic_conflicts=opt_in,
+        isolation=level,
+    )
+
+
 def _optimistic_conflict_retriable(exc: BaseException) -> bool:
     """The ``retry_optimistic_conflicts`` opt-in's own retriability verdict
     (`m-opt-lock` "Retry contract"; `m-auto-retry.md` "Which failures are
     retriable"; ADR 0008 / `python.md` §5) — injected into
     :func:`~parallax.core.auto_retry.run_with_retry` as its
     ``extra_retriable`` extension ONLY when the resolved option is set
-    (:meth:`Demarcation.transact`, above).
+    (:meth:`TransactionRunner.transact`, above).
 
     The retry loop already recognizes the canonical conflict; what stays
     caller policy is whether a recognized conflict is RETRIED, which is what
@@ -540,22 +571,24 @@ def _optimistic_conflict_retriable(exc: BaseException) -> bool:
 
 
 def _check_join_options(
-    active: _ResolvedOptions,
+    active: DatabaseOptions,
     *,
-    retries: int | None,
-    concurrency: Concurrency | None,
-    retry_optimistic_conflicts: bool | None,
-    isolation: IsolationLevel | None,
+    max_retries: int | Omitted,
+    concurrency: Concurrency | Omitted,
+    retry_optimistic_conflicts: bool | Omitted,
+    isolation: IsolationLevel | Omitted,
 ) -> None:
-    """Refuse a joining call's explicit option that conflicts with the boundary.
+    """Refuse a joining call's explicit option that conflicts with the active
+    transaction's resolved record.
 
-    ``isolation`` joins on the same terms as the other three, and the sentinel
-    carries one more meaning there: a boundary opened without one is active at
-    ``None``, so a joining call NAMING a level conflicts with it. That is the
-    honest answer rather than a strict one — the transaction is already open, and
-    an isolation is only a property of a boundary at the moment it opens.
+    Every field is compared on the same terms: an omitted keyword inherits, an
+    explicit value equal to the resolved one is accepted, and an explicit
+    different value is refused. The record is complete — the root resolved
+    every field the transaction opened with — so the comparison never needs a
+    default of its own, and a partial request is never materialized as a record
+    merely to be compared.
     """
-    _refuse_conflict("retries", retries, active.retries)
+    _refuse_conflict("max_retries", max_retries, active.max_retries)
     _refuse_conflict("concurrency", concurrency, active.concurrency)
     _refuse_conflict(
         "retry_optimistic_conflicts", retry_optimistic_conflicts, active.retry_optimistic_conflicts
@@ -563,10 +596,10 @@ def _check_join_options(
     _refuse_conflict("isolation", isolation, active.isolation)
 
 
-def _refuse_conflict(name: str, explicit: object | None, active_value: object) -> None:
-    if explicit is not None and explicit != active_value:
+def _refuse_conflict(name: str, explicit: object, active_value: object) -> None:
+    if explicit is not OMITTED and explicit != active_value:
         raise TransactionOptionConflictError(
-            f"cannot join the active transaction with {name}={explicit!r}: the boundary "
+            f"cannot join the active transaction with {name}={explicit!r}: the transaction "
             f"was opened with {name}={active_value!r} (a joining call may not "
             "re-negotiate; omit the option to inherit)"
         )
