@@ -41,9 +41,11 @@ errors. Nineteen of 20 streamed-memory arm-growth comparisons pass over 40 arms;
 every arm meets its absolute ceiling.
 
 The repository's canonical current cost portfolio and CI input is the
-structural-metadata after-capture under
-[`../structural-metadata-envelope/after/`](../structural-metadata-envelope/after/portfolio.json),
-named once by `cost_report.CANONICAL_PORTFOLIO`. The later
+structural-metadata recovered capture under
+[`../structural-metadata-envelope/recovered/`](../structural-metadata-envelope/recovered/portfolio.json),
+named once by `cost_report.CANONICAL_PORTFOLIO`; the unification's
+after-capture under `../structural-metadata-envelope/after/` is retained
+unchanged as its regression baseline. The later
 [`db56a19e` portfolio](../write-lowering-envelope/portfolio.json), which retains
 a schema-authoritative Snapshot delivery member and adds a write-lowering
 member, is likewise retained as historical review evidence.

@@ -260,7 +260,7 @@ jobs:
         shell: bash
         run: |
           echo "## Committed evidence: head lock $HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
-          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/structural-metadata-envelope/after/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --verify languages/python/docs/structural-metadata-envelope/recovered/portfolio.json 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check committed evidence against event merge lock
         if: github.event_name == 'pull_request' && !cancelled()
         shell: bash
@@ -270,7 +270,7 @@ jobs:
           echo "## Committed evidence: event merge lock $MERGE_SHA" >> "$GITHUB_STEP_SUMMARY"
           git fetch --no-tags origin "$MERGE_SHA"
           git show "$MERGE_SHA:languages/python/uv.lock" > "$RUNNER_TEMP/event-merge-uv.lock"
-          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/structural-metadata-envelope/after/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          uv run --project languages/python python languages/python/tools/cost_report.py --freshness-only languages/python/docs/structural-metadata-envelope/recovered/portfolio.json --lock-file "$RUNNER_TEMP/event-merge-uv.lock" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Measure merge-base
         if: github.event_name == 'pull_request' && !cancelled()
         shell: bash
