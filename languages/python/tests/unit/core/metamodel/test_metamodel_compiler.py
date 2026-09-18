@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from typing import Any, TypeGuard, cast
 
 import pytest
@@ -236,6 +236,54 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     assert leaf.type == base.Decimal(9, 6)
     assert leaf.nullable is True
     assert nested.attribute("absent") is None
+
+
+def _occurrence_windows() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
+    """Every window an occurrence hands out beside the bound members it is
+    expected to yield: the leaf prefix, the nested suffix, a whole leaf-only
+    member tuple, and an occurrence with nothing nested."""
+    metadata = compile_metadata(accepted(source(_model(), _peer())))
+    order = metadata.entity(_ORDER)
+    assert order is not None
+    ship_to = order.value_object("shipTo")
+    assert ship_to is not None
+    geo = ship_to.value_object("geo")
+    assert geo is not None
+    members = cast("Any", ship_to).members
+    nested = cast("Any", geo).members
+    return [
+        ("prefix", ship_to.attributes, members[:1]),
+        ("suffix", ship_to.value_objects, members[1:]),
+        ("whole", geo.attributes, nested),
+        ("empty", geo.value_objects, ()),
+    ]
+
+
+def test_every_occurrence_window_iterates_its_own_bound_members_in_order() -> None:
+    for shape, window, expected in _occurrence_windows():
+        assert len(window) == len(expected), shape
+        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
+        assert [window[index] for index in range(len(window))] == list(expected), shape
+        assert [window[-1 - index] for index in range(len(window))] == list(expected)[::-1], shape
+        assert tuple(window[:]) == expected, shape
+        assert tuple(window[:1]) == expected[:1], shape
+        assert list(window) == list(window), shape
+        first, second = iter(window), iter(window)
+        interleaved = [next(iterator) for _ in expected for iterator in (first, second)]
+        assert interleaved == [member for member in expected for _ in (first, second)], shape
+        assert next(first, None) is None and next(second, None) is None, shape
+        assert window != expected, shape
+
+
+def test_iterating_an_occurrence_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(_window: object, index: object) -> object:
+        raise AssertionError(f"iteration indexed the window at {index!r}")
+
+    windows = _occurrence_windows()
+    for shape, window, expected in windows:
+        monkeypatch.setattr(type(window), "__getitem__", refuse)
+        assert list(window) == list(expected), shape
+        assert all(left is right for left, right in zip(window, expected, strict=True)), shape
 
 
 def test_one_reused_shape_expands_to_distinct_occurrence_trees() -> None:

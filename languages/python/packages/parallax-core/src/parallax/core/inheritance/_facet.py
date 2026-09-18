@@ -16,8 +16,9 @@ names the ancestor that introduced it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import islice
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard, cast, overload
 
@@ -187,6 +188,17 @@ class _BindingRange[T](Sequence[T]):
         if position < 0 or position >= len(self):
             raise IndexError(index)
         return cast("T", self.bindings[self.start + position])
+
+    def __iter__(self) -> Iterator[T]:
+        # The Sequence mixin would index every element through Python-level
+        # `__getitem__`; each case below walks the shared tuple in C without
+        # copying the window.
+        if self.start == self.stop:
+            return iter(())
+        bindings = cast("tuple[T, ...]", self.bindings)
+        if self.start == 0 and self.stop == len(bindings):
+            return iter(bindings)
+        return islice(bindings, self.start, self.stop)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Sequence):
