@@ -973,7 +973,11 @@ CAPTURE_FILE: Final = "capture.json"
 REQUEST_FILE: Final = "request.json"
 UNAVAILABLE_FILE: Final = "unavailable.json"
 SELF_CAPTURE_FILE: Final = "self-capture.json"
+HISTORY_FILE: Final = "history.json"
+"""What the workflow adapter writes beside a previous nightly it could or
+could not obtain: the run it selected and, when no assembly arrived, why."""
 CAPTURE_VERSION: Final = 1
+HISTORY_VERSION: Final = 1
 MARKER_VERSION: Final = 1
 REQUEST_VERSION: Final = 1
 ASSEMBLY_VERSION: Final = 2
@@ -1749,7 +1753,8 @@ class History:
             return cls(None, None)
         portfolio = path / "portfolio.json"
         if not portfolio.exists():
-            return cls(None, f"no previous assembly at {portfolio}")
+            stated = _stated_history_reason(path / HISTORY_FILE)
+            return cls(None, stated or f"no previous assembly at {portfolio}")
         try:
             document = _load(portfolio)
         except (ValueError, OSError) as error:
@@ -1802,6 +1807,23 @@ class History:
         except (KeyError, TypeError, ValueError) as error:
             return ShardCapture(source, problems=(f"the previous head does not decode: {error}",))
         return ShardCapture(source, capture, portfolio, None, "previous durations are not carried")
+
+
+def _stated_history_reason(marker: Path) -> str | None:
+    """The reason the adapter recorded for obtaining no previous assembly, when
+    the marker is present and decodes to one."""
+    if not marker.exists():
+        return None
+    try:
+        document = _load(marker)
+    except (ValueError, OSError):
+        return None
+    if not isinstance(cast("object", document), Mapping):
+        return None
+    if document.get("schemaVersion") != HISTORY_VERSION:
+        return None
+    reason = document.get("reason")
+    return reason if isinstance(reason, str) and reason else None
 
 
 type ContractSource = Callable[[str], BudgetContract]

@@ -1,67 +1,223 @@
 name: cost-report
 
-# Advisory observation, never a gate: one sequential capture of the requested
-# ref on one runner, with its durations sidecar, uploaded whatever the
-# collector's exit status. Dispatched only; ordinary CI still verifies the
-# committed evidence and never runs this.
-run-name: "cost-report ${{ inputs.ref }} ${{ inputs.request-id }}"
+# Advisory observation, never a gate. One request pins the commits to measure;
+# every shard of the plan measures its base and then its head on a runner of
+# its own; assembly reconciles whatever arrived against the plan and the
+# request; and a checkout-free job removes the one-shot label. Every decision
+# about what is measured, compared, or reported is made by the Python tools;
+# the steps here pass event values through the environment and move files.
+run-name: "cost-report ${{ github.event_name }} ${{ github.event.pull_request.number || inputs.ref || github.ref_name }} ${{ inputs.request-id }}"
 
 on:
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       ref:
         description: The commit, branch, or tag to measure
         type: string
         required: true
+      layout:
+        description: One runner per shard, or every shard in turn on one runner
+        type: choice
+        options: [sharded, sequential]
+        default: sharded
       request-id:
         description: An identifier the caller uses to find this run
         type: string
         required: false
         default: ""
+  schedule:
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
 
+# Keyed by what was requested, so a dispatch never shares a group with the
+# branch its workflow file came from. A running report is never cancelled; a
+# newer request replaces the one pending run behind it.
 concurrency:
-  group: cost-report-${{ inputs.ref }}
+  group: cost-report-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  # Pin the request: the commit the event asks for, resolved once, and a pull
+  # request's merge base against the base commit the event names. The plan is
+  # the tool's; this job only records what it answers.
+  plan:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'cost-report'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_FROZEN: "1"
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      head: ${{ steps.plan.outputs.head }}
+      base: ${{ steps.plan.outputs.base }}
+      layout: ${{ steps.plan.outputs.layout }}
+      request-id: ${{ steps.plan.outputs.request-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: Pin the request and plan its shards
+        id: plan
+        working-directory: languages/python
+        env:
+          COST_REPORT_REF: ${{ github.event.pull_request.head.sha || inputs.ref || github.sha }}
+          COST_REPORT_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          COST_REPORT_EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          COST_REPORT_LAYOUT: ${{ inputs.layout }}
+          COST_REPORT_REQUEST_ID: ${{ inputs.request-id }}
+        run: uv run python tools/cost_report_adapter.py plan --out "$RUNNER_TEMP/cost-report/request" >> "$GITHUB_OUTPUT"
+      - name: Upload the request
+        uses: actions/upload-artifact@v6
+        with:
+          name: cost-report-request-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/request/
+          if-no-files-found: error
+
+  # One runner per shard of the plan. Each measures the request's base, through
+  # the base checkout's own tool, and then its head, on this runner, and uploads
+  # whatever it wrote whether or not collection succeeded.
   measure:
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     env:
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.ref }}
-      - uses: extractions/setup-just@v4
+          ref: ${{ needs.plan.outputs.head }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.14"
-      - name: Identify the measured commit
-        id: measured
-        shell: bash
-        env:
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-          REQUEST_ID: ${{ inputs.request-id }}
-        run: |
-          MEASURED_SHA="$(git rev-parse HEAD)"
-          echo "sha=$MEASURED_SHA" >> "$GITHUB_OUTPUT"
-          echo "## Cost report: sequential capture of $MEASURED_SHA by workflow $WORKFLOW_SHA (request ${REQUEST_ID:-none})" >> "$GITHUB_STEP_SUMMARY"
+      - name: Download the request
+        uses: actions/download-artifact@v8
+        with:
+          name: cost-report-request-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/request/
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: Measure head
-        run: just python-report-cost
-      - name: Upload reports
+      - name: Measure base then head
+        working-directory: languages/python
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: uv run python tools/cost_report.py --shard "$SHARD" --request "$RUNNER_TEMP/cost-report/request/request.json" --out "$RUNNER_TEMP/cost-report/reports"
+      - name: Upload the shard
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: cost-report-sequential-${{ steps.measured.outputs.sha }}
-          path: languages/python/reports/
-      - name: Render summary
-        if: always()
-        shell: bash
-        run: cat languages/python/reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+          name: cost-report-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/reports/
+
+  # Reconcile this attempt's shards against the plan and the request, whatever
+  # measurement did. A scheduled run first obtains the previous nightly's
+  # assembly to compare with, cross-runner. A plan that did not complete leaves
+  # the intended coverage unknown, and this job says so instead of assembling.
+  assemble:
+    needs: [plan, measure]
+    if: always() && (github.event_name != 'pull_request' || github.event.label.name == 'cost-report')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - name: Report a plan that did not complete
+        if: needs.plan.result != 'success'
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          MEASURE_RESULT: ${{ needs.measure.result }}
+        run: |
+          echo "## Cost report: nothing assembled. The plan job ended $PLAN_RESULT and measurement $MEASURE_RESULT, so the intended coverage of this run is unknown." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.head }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Download the request
+        uses: actions/download-artifact@v8
+        with:
+          name: cost-report-request-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/request/
+      - name: Download every shard of this attempt
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cost-report-shard-*-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/inputs/
+          merge-multiple: false
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: Obtain the previous nightly
+        if: github.event_name == 'schedule'
+        working-directory: languages/python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python tools/cost_report_adapter.py history --out "$RUNNER_TEMP/cost-report/previous"
+      - name: Assemble the shards
+        if: github.event_name != 'schedule'
+        working-directory: languages/python
+        run: uv run python tools/cost_report.py --assemble "$RUNNER_TEMP/cost-report/inputs" --request "$RUNNER_TEMP/cost-report/request/request.json" --out "$RUNNER_TEMP/cost-report/assembled"
+      - name: Assemble the shards against the previous nightly
+        if: github.event_name == 'schedule'
+        working-directory: languages/python
+        run: uv run python tools/cost_report.py --assemble "$RUNNER_TEMP/cost-report/inputs" --request "$RUNNER_TEMP/cost-report/request/request.json" --against "$RUNNER_TEMP/cost-report/previous" --out "$RUNNER_TEMP/cost-report/assembled"
+      - name: Render the assembled summary
+        if: always() && needs.plan.result == 'success'
+        run: cat "$RUNNER_TEMP/cost-report/assembled/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the assembly
+        if: always() && needs.plan.result == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: cost-report-assembled-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cost-report/assembled/
+
+  # The label is a one-shot request: remove it once the request has been
+  # answered, however it was answered. Nothing is checked out and no artifact
+  # is executed here, so the only token allowed to write is never available to
+  # code from the measured revision. A fork's token cannot remove labels; that
+  # case is reported, and a maintainer removes the label by hand and re-adds it
+  # to request another capture.
+  cleanup:
+    needs: [plan, measure, assemble]
+    if: always() && github.event_name == 'pull_request' && github.event.label.name == 'cost-report'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove the one-shot label
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$PULL_REQUEST" --remove-label cost-report
+      - name: Report a fork's label as not removable
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          echo "## Cost report: the cost-report label on pull request #$PULL_REQUEST stays. A fork's token cannot remove labels; a maintainer removes it and re-adds it to request another capture." >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::the cost-report label on pull request #$PULL_REQUEST was not removed: a fork's token cannot remove labels"
