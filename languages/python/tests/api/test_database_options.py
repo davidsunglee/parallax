@@ -72,12 +72,12 @@ def test_transact_names_the_four_options_by_their_record_field_names() -> None:
         signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in keywords
     )
     assert "retries" not in signature.parameters
-    # Every keyword's default is the one shared omission marker, never `None`,
-    # and it names itself as omission rather than as any value.
+    # Every keyword's default is one shared omission marker: never `None`, and
+    # never a value any of the four fields admits.
     defaults = {signature.parameters[name].default for name in keywords}
     assert len(defaults) == 1
     assert None not in defaults
-    assert repr(next(iter(defaults))) == "OMITTED"
+    assert not isinstance(next(iter(defaults)), (bool, int, str))
 
 
 def test_the_record_is_read_only_on_the_transaction_and_names_the_same_four_fields() -> None:

@@ -1,6 +1,7 @@
 """`DatabaseOptions` (spec §5): the built-in record, the field rules
 construction is held to — the same rules an explicit `db.transact` keyword
-meets — and the immutability of what a root is connected with.
+meets — the immutability of what a root is connected with, and the private
+marker an omitted transaction keyword defaults to.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import dataclasses
 import pytest
 
 from parallax.snapshot import DatabaseOptions
+from parallax.snapshot.handle._options import OMITTED, Omitted
 
 
 def test_the_built_in_record_is_ten_optimistic_off_and_read_committed() -> None:
@@ -86,3 +88,11 @@ def test_an_accepted_vocabulary_value_is_stored_as_its_canonical_spelling() -> N
 def test_zero_retries_is_a_value_rather_than_an_omission() -> None:
     assert DatabaseOptions(max_retries=0).max_retries == 0
     assert DatabaseOptions(retry_optimistic_conflicts=False).retry_optimistic_conflicts is False
+
+
+def test_the_omission_marker_is_one_slotted_value_that_names_itself() -> None:
+    # `help(db.transact)` renders each keyword's default through this `repr`,
+    # so it reads as omission rather than as an object address.
+    assert isinstance(OMITTED, Omitted)
+    assert not hasattr(OMITTED, "__dict__")
+    assert repr(OMITTED) == "OMITTED"
