@@ -5,6 +5,7 @@ import json
 import subprocess
 from collections.abc import Callable, Sequence
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,7 +14,11 @@ import pytest
 import cost_report
 import write_lowering_overhead as write_report
 from cost_report import (
+    COLLECTION_SPAN,
+    DURATIONS_FILE,
+    DURATIONS_OPTION,
     MEMBERS,
+    Collection,
     Member,
     MemberResult,
     advisories,
@@ -25,6 +30,7 @@ from cost_report import (
     validate_write_lowering_matrix,
     verify,
 )
+from durations import SCHEMA_VERSION, Spans
 from interpreter_matrix import authority_minor, supported_minors
 from parallax.conformance.budget import BudgetContract, MemoryGate, MemoryGates
 from parallax.conformance.cost_envelope import CostReportEnvelope, validate
@@ -220,14 +226,18 @@ def test_collector_members_are_the_python_report_command_graph() -> None:
 def test_collection_attempts_every_member_and_fails_late_for_a_required_one() -> None:
     attempted: list[str] = []
 
-    def failing(member: Member) -> tuple[int, str, str]:
+    def failing(member: Member, _arguments: Sequence[str]) -> tuple[int, str, str]:
         attempted.append(member.recipe)
         return (7, "", f"{member.recipe} failed")
 
-    results, failed_required = collect(failing)
+    collection = collect(failing)
     assert attempted == [member.recipe for member in MEMBERS]
-    assert len(results) == len(MEMBERS)
-    assert failed_required
+    assert len(collection.results) == len(MEMBERS)
+    assert collection.failed_required
+    assert [span.name for span in collection.durations.spans] == [
+        *(member.subject for member in MEMBERS),
+        COLLECTION_SPAN,
+    ]
 
 
 def test_portfolio_document_preserves_optional_failures() -> None:
@@ -244,16 +254,16 @@ def test_outside_budget_outcomes_do_not_fail_collection() -> None:
     _push_outside(snapshot, _first_comparison(snapshot, timing=False))
     write = _complete_write(contract)
 
-    def run(member: Member) -> tuple[int, str, str]:
+    def run(member: Member, _arguments: Sequence[str]) -> tuple[int, str, str]:
         if member.subject == "snapshot-delivery":
             return (0, json.dumps(snapshot), "")
         if member.subject == write_report.SUBJECT:
             return (0, json.dumps(write), "")
         return (9, "", "optional report unavailable")
 
-    results, failed_required = collect(run)
-    assert not failed_required
-    assert results[0].envelope is not None
+    collection = collect(run)
+    assert not collection.failed_required
+    assert collection.results[0].envelope is not None
 
 
 def test_collection_decodes_each_members_own_envelope() -> None:
@@ -261,7 +271,7 @@ def test_collection_decodes_each_members_own_envelope() -> None:
     snapshot = _complete_snapshot(contract)
     write = _complete_write(contract)
 
-    def run(member: Member) -> tuple[int, str, str]:
+    def run(member: Member, _arguments: Sequence[str]) -> tuple[int, str, str]:
         document = (
             snapshot
             if member.subject == "snapshot-delivery"
@@ -271,15 +281,185 @@ def test_collection_decodes_each_members_own_envelope() -> None:
         )
         return (0, json.dumps(document), "")
 
-    results, failed_required = collect(run)
-    assert not failed_required
-    assert [result.envelope["subject"] for result in results if result.envelope] == [
+    collection = collect(run)
+    assert not collection.failed_required
+    assert [result.envelope["subject"] for result in collection.results if result.envelope] == [
         member.subject for member in MEMBERS
     ]
     summary = cost_report._summary(  # pyright: ignore[reportPrivateUsage] - rendered output under test
-        portfolio_document(results)
+        portfolio_document(collection.results)
     )
     assert ", ".join(supported_minors()) in summary
+
+
+# --------------------------------------------------------------------------- #
+# Durations: telemetry beside the evidence, never part of it                  #
+# --------------------------------------------------------------------------- #
+class _Clocks:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.wall = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
+
+    def advance(self, seconds: float) -> None:
+        self.elapsed += seconds
+        self.wall += timedelta(seconds=seconds)
+
+    def monotonic(self) -> float:
+        return self.elapsed
+
+    def now(self) -> datetime:
+        return self.wall
+
+
+def _sidecar_path(arguments: Sequence[str]) -> Path:
+    assert list(arguments[:1]) == [DURATIONS_OPTION]
+    assert len(arguments) == 2
+    return Path(arguments[1])
+
+
+def _member_sidecar(*spans: dict[str, object]) -> str:
+    return json.dumps({"schemaVersion": SCHEMA_VERSION, "spans": list(spans), "unavailable": []})
+
+
+def test_collection_asks_each_member_for_a_sidecar_and_folds_only_what_decodes() -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    write = _complete_write(contract)
+    clocks = _Clocks()
+    asked: dict[str, Path] = {}
+
+    def run(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        sidecar = _sidecar_path(arguments)
+        asked[member.subject] = sidecar
+        clocks.advance(10.0)
+        if member.subject == "snapshot-delivery":
+            sidecar.write_text(
+                _member_sidecar(
+                    {
+                        "scope": "workload",
+                        "name": "conventional-fanout",
+                        "labels": {"runtime": "3.13"},
+                        "startedAt": "2026-09-18T12:00:01+00:00",
+                        "seconds": 4.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return (0, json.dumps(snapshot), "")
+        if member.subject == "lifecycle-overhead":
+            sidecar.write_text(_member_sidecar(), encoding="utf-8")
+            return (0, json.dumps(_optional_document(member)), "")
+        if member.subject == "instance-state":
+            sidecar.write_text('{"schemaVersion": 1, "spans": "none"}', encoding="utf-8")
+            return (4, "", "the matrix is incomplete")
+        return (0, json.dumps(write), "")
+
+    collection = collect(run, Spans(clock=clocks.monotonic, now=clocks.now))
+    assert not collection.failed_required
+    assert set(asked) == {member.subject for member in MEMBERS}
+    assert {path.name for path in asked.values()} == {f"{subject}.json" for subject in asked}
+    assert len({path.parent for path in asked.values()}) == 1
+    assert not any(path.parent.exists() for path in asked.values())
+    recorded = [
+        (span.scope, span.name, dict(span.labels), span.seconds)
+        for span in collection.durations.spans
+    ]
+    assert recorded == [
+        ("member", "snapshot-delivery", {"member": "snapshot-delivery"}, 10.0),
+        (
+            "workload",
+            "conventional-fanout",
+            {"member": "snapshot-delivery", "runtime": "3.13"},
+            4.0,
+        ),
+        ("member", "lifecycle-overhead", {"member": "lifecycle-overhead"}, 10.0),
+        ("member", "instance-state", {"member": "instance-state"}, 10.0),
+        ("member", write_report.SUBJECT, {"member": write_report.SUBJECT}, 10.0),
+        ("collection", COLLECTION_SPAN, {}, 40.0),
+    ]
+    assert [(entry.name, entry.reason) for entry in collection.durations.unavailable] == [
+        (
+            "instance-state",
+            "the member's durations sidecar does not decode: "
+            f"{asked['instance-state']} spans is not a list",
+        ),
+        (write_report.SUBJECT, "the member wrote no durations sidecar"),
+    ]
+    assert collection.results[2].failure == "exit 4: the matrix is incomplete"
+
+
+def test_written_output_keeps_the_legacy_portfolio_beside_the_durations_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    write = _complete_write(contract)
+
+    def run(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        _sidecar_path(arguments).write_text(_member_sidecar(), encoding="utf-8")
+        document = (
+            snapshot
+            if member.subject == "snapshot-delivery"
+            else write
+            if member.subject == write_report.SUBJECT
+            else _optional_document(member)
+        )
+        return (0, json.dumps(document), "")
+
+    monkeypatch.setattr(cost_report, "run_member", run)
+    out = tmp_path / "reports"
+    assert cost_report.main(["--out", str(out)]) == 0
+    assert sorted(path.name for path in out.iterdir()) == sorted(
+        ["portfolio.json", "summary.md", DURATIONS_FILE, *(f"{m.subject}.json" for m in MEMBERS)]
+    )
+    portfolio = cast("dict[str, Any]", json.loads((out / "portfolio.json").read_text("utf-8")))
+    assert set(portfolio) == {"schemaVersion", "members", "failures"}
+    assert portfolio["schemaVersion"] == 1
+    assert [member["subject"] for member in portfolio["members"]] == [m.subject for m in MEMBERS]
+    assert portfolio["failures"] == []
+    durations = Spans.load(out / DURATIONS_FILE)
+    assert [span.name for span in durations.spans] == [
+        *(member.subject for member in MEMBERS),
+        COLLECTION_SPAN,
+    ]
+    assert durations.unavailable == ()
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert summary.startswith("# Python cost report\n")
+    assert "## Durations" in summary
+    assert f"the `{COLLECTION_SPAN}` collection span" in summary
+    assert capsys.readouterr().out == summary
+
+
+def test_a_failed_required_member_still_leaves_every_output_and_its_attribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(member: Member, _arguments: Sequence[str]) -> tuple[int, str, str]:
+        if member.subject == "snapshot-delivery":
+            return (1, "", "no database")
+        return (0, json.dumps(_optional_document(member)), "")
+
+    monkeypatch.setattr(cost_report, "run_member", run)
+    out = tmp_path / "reports"
+    assert cost_report.main(["--out", str(out)]) == 1
+    durations = Spans.load(out / DURATIONS_FILE)
+    assert [span.name for span in durations.spans] == [
+        *(member.subject for member in MEMBERS),
+        COLLECTION_SPAN,
+    ]
+    assert [entry.name for entry in durations.unavailable] == [m.subject for m in MEMBERS]
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert "`python-report-snapshot-delivery` (required): exit 1: no database" in summary
+    assert "Durations unavailable:" in summary
+    assert not (out / "snapshot-delivery.json").exists()
+
+
+def test_portfolio_document_carries_no_telemetry() -> None:
+    collection = Collection((), Spans())
+    assert portfolio_document(collection.results) == {
+        "schemaVersion": 1,
+        "members": [],
+        "failures": [],
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -717,7 +897,7 @@ def test_collection_attempts_later_members_after_an_invalid_required_matrix() ->
     write = _complete_write(contract)
     cast("list[object]", snapshot["readings"]).clear()
 
-    def run(member: Member) -> tuple[int, str, str]:
+    def run(member: Member, _arguments: Sequence[str]) -> tuple[int, str, str]:
         attempted.append(member.recipe)
         document = (
             snapshot
@@ -728,11 +908,11 @@ def test_collection_attempts_later_members_after_an_invalid_required_matrix() ->
         )
         return (0, json.dumps(document), "")
 
-    results, failed_required = collect(run)
+    collection = collect(run)
     assert attempted == [member.recipe for member in MEMBERS]
-    assert failed_required
-    assert results[0].envelope is None
-    assert all(result.envelope is not None for result in results[1:])
+    assert collection.failed_required
+    assert collection.results[0].envelope is None
+    assert all(result.envelope is not None for result in collection.results[1:])
 
 
 def test_a_moved_checkout_lock_is_advisory_and_never_changes_authority_or_the_verdict(

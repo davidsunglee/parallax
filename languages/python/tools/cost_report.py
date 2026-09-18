@@ -25,6 +25,12 @@ two captures comparable is a judgement recorded beside the evidence.
 Comparison pairs readings only when their subject, runtime, window, workload,
 cell, and unit all agree, names every cell present on one side alone, and
 judges a timing delta against one explicit noise allowance.
+
+Collection records how long each member took beside what it measured: a
+``durations.json`` sidecar of spans taken outside every measured window, folded
+from each member's own sidecar. Durations are telemetry, so a member that
+writes none, or one whose sidecar does not decode, leaves its attribution
+unavailable and its envelope untouched.
 """
 
 from __future__ import annotations
@@ -37,14 +43,16 @@ import re
 import statistics
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, cast
 
 from jsonschema import ValidationError
 
 import write_lowering_overhead as write_report
+from durations import Spans, render
 from interpreter_matrix import authority_minor, supported_minors
 from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
 from parallax.conformance.cost_envelope import Reading, validate
@@ -140,10 +148,29 @@ class MemberResult:
     failure: str | None = None
 
 
-type Runner = Callable[[Member], tuple[int, str, str]]
+@dataclass(frozen=True, slots=True)
+class Collection:
+    """Every member's outcome, in ``MEMBERS`` order, beside the spans the
+    collection recorded around and inside them."""
+
+    results: tuple[MemberResult, ...]
+    durations: Spans
+
+    @property
+    def failed_required(self) -> bool:
+        return any(result.member.required and result.envelope is None for result in self.results)
+
+
+type Runner = Callable[[Member, Sequence[str]], tuple[int, str, str]]
+"""Runs one member script with the given arguments and answers its exit
+status, stdout, and stderr."""
 type Document = Mapping[str, object]
 type ReadingAddress = tuple[str, str, str]
 """A reading's (runtime, workload, cell) address within one subject."""
+
+COLLECTION_SPAN: Final = "python-report-cost"
+DURATIONS_OPTION: Final = "--durations"
+DURATIONS_FILE: Final = "durations.json"
 
 
 def report_recipes() -> frozenset[str]:
@@ -151,9 +178,9 @@ def report_recipes() -> frozenset[str]:
     return frozenset(member.recipe for member in MEMBERS)
 
 
-def run_member(member: Member) -> tuple[int, str, str]:
+def run_member(member: Member, arguments: Sequence[str] = ()) -> tuple[int, str, str]:
     completed = subprocess.run(
-        [sys.executable, str(WORKSPACE / "tools" / member.script)],
+        [sys.executable, str(WORKSPACE / "tools" / member.script), *arguments],
         cwd=WORKSPACE,
         capture_output=True,
         text=True,
@@ -334,27 +361,49 @@ def validate_write_lowering_matrix(document: Document) -> None:
             raise ValueError(f"{_spelled(address)} value disagrees with its sample median")
 
 
-def collect(runner: Runner = run_member) -> tuple[list[MemberResult], bool]:
-    """Attempt every member and fail only after required envelope validation."""
+def collect(runner: Runner = run_member, spans: Spans | None = None) -> Collection:
+    """Attempt every member in order and fail only after required envelope
+    validation. Each member runs inside its own span and is asked for a
+    durations sidecar of its own, folded into ``spans`` when it arrives."""
+    recorder = spans if spans is not None else Spans()
     results: list[MemberResult] = []
-    for member in MEMBERS:
-        returncode, stdout, stderr = runner(member)
-        if returncode != 0:
-            results.append(
-                MemberResult(
-                    member,
-                    None,
-                    f"exit {returncode}: {stderr.strip() or stdout.strip()}",
-                )
-            )
-            continue
-        try:
-            envelope = _decoded(member, stdout)
-            results.append(MemberResult(member, envelope))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as error:
-            results.append(MemberResult(member, None, str(error)))
-    failed_required = any(result.member.required and result.envelope is None for result in results)
-    return results, failed_required
+    with (
+        tempfile.TemporaryDirectory(prefix="parallax-durations-") as scratch,
+        recorder.span("collection", COLLECTION_SPAN),
+    ):
+        for member in MEMBERS:
+            sidecar = Path(scratch) / f"{member.subject}.json"
+            with recorder.span("member", member.subject, member=member.subject):
+                returncode, stdout, stderr = runner(member, [DURATIONS_OPTION, str(sidecar)])
+            results.append(_result(member, returncode, stdout, stderr))
+            _fold(recorder, member, sidecar)
+    return Collection(tuple(results), recorder)
+
+
+def _result(member: Member, returncode: int, stdout: str, stderr: str) -> MemberResult:
+    if returncode != 0:
+        return MemberResult(member, None, f"exit {returncode}: {stderr.strip() or stdout.strip()}")
+    try:
+        return MemberResult(member, _decoded(member, stdout))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as error:
+        return MemberResult(member, None, str(error))
+
+
+def _fold(recorder: Spans, member: Member, sidecar: Path) -> None:
+    if not sidecar.exists():
+        recorder.missing("member", member.subject, "the member wrote no durations sidecar")
+        return
+    try:
+        loaded = Spans.load(sidecar)
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        recorder.missing(
+            "member", member.subject, f"the member's durations sidecar does not decode: {error}"
+        )
+        return
+    for span in loaded.spans:
+        recorder.add(replace(span, labels={"member": member.subject, **span.labels}))
+    for entry in loaded.unavailable:
+        recorder.missing(entry.scope, entry.name, entry.reason)
 
 
 def portfolio_document(results: Sequence[MemberResult]) -> dict[str, object]:
@@ -373,7 +422,7 @@ def portfolio_document(results: Sequence[MemberResult]) -> dict[str, object]:
     }
 
 
-def _summary(document: Document) -> str:
+def _summary(document: Document, durations: Spans | None = None) -> str:
     members = cast("Sequence[Document]", document.get("members", ()))
     failures = cast("Sequence[Document]", document.get("failures", ()))
     lines = [
@@ -408,17 +457,20 @@ def _summary(document: Document) -> str:
         "Budget outcomes are advisory. This collector fails only for a missing "
         "or invalid required envelope.",
     ]
+    if durations is not None:
+        lines += ["", render(durations).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 
-def write_portfolio(results: Sequence[MemberResult], out: Path) -> None:
+def write_portfolio(collection: Collection, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    document = portfolio_document(results)
+    document = portfolio_document(collection.results)
     (out / "portfolio.json").write_text(
         json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    (out / "summary.md").write_text(_summary(document), encoding="utf-8")
-    for result in results:
+    (out / "summary.md").write_text(_summary(document, collection.durations), encoding="utf-8")
+    collection.durations.write(out / DURATIONS_FILE)
+    for result in collection.results:
         if result.envelope is not None:
             (out / f"{result.member.subject}.json").write_text(
                 json.dumps(result.envelope, indent=2, sort_keys=True) + "\n",
@@ -799,23 +851,12 @@ def diagnostic_arguments(
     return arguments
 
 
-def run_member_diagnostic(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
-    completed = subprocess.run(
-        [sys.executable, str(WORKSPACE / "tools" / member.script), *arguments],
-        cwd=WORKSPACE,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return completed.returncode, completed.stdout, completed.stderr
-
-
 def diagnose(
     subjects: Sequence[str],
     selections: Sequence[str],
     runtimes: Sequence[str],
     out: Path | None,
-    runner: Callable[[Member, Sequence[str]], tuple[int, str, str]] = run_member_diagnostic,
+    runner: Runner = run_member,
 ) -> int:
     """Take diagnostic readings from the chosen required members and write or
     print each member's diagnostic document; never a portfolio, and never into
@@ -908,10 +949,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.out is None:
         parser.error("--out is required when collecting")
-    results, failed_required = collect()
-    write_portfolio(results, args.out)
-    print(_summary(portfolio_document(results)), end="")
-    return 1 if failed_required else 0
+    collection = collect(run_member)
+    write_portfolio(collection, args.out)
+    print(_summary(portfolio_document(collection.results), collection.durations), end="")
+    return 1 if collection.failed_required else 0
 
 
 if __name__ == "__main__":

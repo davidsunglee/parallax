@@ -1,10 +1,10 @@
 name: cost-report
 
-# Registers the advisory cost-report workflow on the default branch so that
-# workflow_dispatch can target a branch carrying the full definition. This
-# revision measures nothing; a dispatched run executes the workflow file of
-# the ref it is dispatched against.
-run-name: "cost-report ${{ github.event_name }} ${{ inputs.ref || github.ref_name }} ${{ inputs.request-id }}"
+# Advisory observation, never a gate: one sequential capture of the requested
+# ref on one runner, with its durations sidecar, uploaded whatever the
+# collector's exit status. Dispatched only; ordinary CI still verifies the
+# committed evidence and never runs this.
+run-name: "cost-report ${{ inputs.ref }} ${{ inputs.request-id }}"
 
 on:
   workflow_dispatch:
@@ -13,11 +13,6 @@ on:
         description: The commit, branch, or tag to measure
         type: string
         required: true
-      layout:
-        description: One runner per shard, or every shard in turn on one runner
-        type: choice
-        options: [sharded, sequential]
-        default: sharded
       request-id:
         description: An identifier the caller uses to find this run
         type: string
@@ -28,12 +23,45 @@ permissions:
   contents: read
 
 concurrency:
-  group: cost-report-${{ github.event_name }}-${{ inputs.ref || github.ref_name }}
+  group: cost-report-${{ inputs.ref }}
   cancel-in-progress: false
 
 jobs:
-  registered:
+  measure:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 300
+    env:
+      UV_FROZEN: "1"
     steps:
-      - run: echo "cost-report is registered; dispatch against a ref that carries the measuring workflow."
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Identify the measured commit
+        id: measured
+        shell: bash
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          REQUEST_ID: ${{ inputs.request-id }}
+        run: |
+          MEASURED_SHA="$(git rev-parse HEAD)"
+          echo "sha=$MEASURED_SHA" >> "$GITHUB_OUTPUT"
+          echo "## Cost report: sequential capture of $MEASURED_SHA by workflow $WORKFLOW_SHA (request ${REQUEST_ID:-none})" >> "$GITHUB_STEP_SUMMARY"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: Measure head
+        run: just python-report-cost
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cost-report-sequential-${{ steps.measured.outputs.sha }}
+          path: languages/python/reports/
+      - name: Render summary
+        if: always()
+        shell: bash
+        run: cat languages/python/reports/summary.md >> "$GITHUB_STEP_SUMMARY"

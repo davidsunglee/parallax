@@ -22,6 +22,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
+from durations import Spans
 from interpreter_matrix import (
     CURRENT_MINOR,
     authority_minor,
@@ -43,6 +44,7 @@ from parallax.conformance.provision import Provisioner
 from parallax.conformance.workloads import (
     GEOMETRY_LEVELS,
     STRUCTURAL_LAYOUTS,
+    Workload,
     catalog,
     plan_levels,
     workload_digest,
@@ -446,6 +448,10 @@ def every_cell(_workload: str, _path: str) -> bool:
     return True
 
 
+GEOMETRY_GROUP: Final = "geometry"
+PLAN_GROUP: Final = "plan"
+
+
 def _measure_runtime(
     contract: BudgetContract,
     provisioner: Provisioner | None,
@@ -453,32 +459,102 @@ def _measure_runtime(
     runtime: str,
     results: dict[Address, list[ChildResult]],
     selected: Selection = every_cell,
+    spans: Spans | None = None,
 ) -> None:
+    recorder = spans if spans is not None else Spans()
     workloads = catalog(contract)
     cells = [cell for cell in expanded_cells(contract) if selected(cell.workload, cell.path)]
     memory_children = contract.memory_children
     scaling_arms = contract.memory_scaling_arms
     for workload_id in contract.workload_ids:
-        workload = workloads[workload_id]
-        live = [
-            cell for cell in cells if cell.workload == workload_id and needs_database(cell.path)
-        ]
-        if live and provisioner is None:
-            for cell in live:
-                results[(runtime, cell.workload, cell.path)].append(
-                    Diagnostic(
-                        "cell-unprovisioned",
-                        f"CPython {runtime} {cell.workload}.{cell.path} needs a provisioned "
-                        "database",
+        with recorder.span("workload", workload_id, member=SUBJECT, runtime=runtime):
+            _measure_workload(
+                contract,
+                provisioner,
+                runner,
+                runtime,
+                results,
+                workloads[workload_id],
+                [cell for cell in cells if cell.workload == workload_id],
+                recorder,
+            )
+    for group, group_cells in ((GEOMETRY_GROUP, geometry_cells()), (PLAN_GROUP, plan_cells())):
+        with recorder.span("workload", group, member=SUBJECT, runtime=runtime):
+            for cell in group_cells:
+                if not selected(cell.workload, cell.path):
+                    continue
+                for _ in range(memory_children if is_memory_cell(cell.path) else 1):
+                    results[(runtime, cell.workload, cell.path)].append(
+                        runner(
+                            _request(
+                                contract, runtime, cell.workload, cell.path, scaling_arms[0], None
+                            )
+                        )
+                    )
+
+
+def _provision(
+    workload: Workload, provisioner: Provisioner, roots: int, runtime: str, recorder: Spans
+) -> None:
+    with recorder.span(
+        "setup",
+        "provision",
+        member=SUBJECT,
+        runtime=runtime,
+        workload=workload.id,
+        roots=str(roots),
+    ):
+        workload.provision(provisioner, roots)
+
+
+def _measure_workload(
+    contract: BudgetContract,
+    provisioner: Provisioner | None,
+    runner: ChildRunner,
+    runtime: str,
+    results: dict[Address, list[ChildResult]],
+    workload: Workload,
+    cells: Sequence[BudgetCell],
+    recorder: Spans,
+) -> None:
+    memory_children = contract.memory_children
+    scaling_arms = contract.memory_scaling_arms
+    live = [cell for cell in cells if needs_database(cell.path)]
+    if live and provisioner is None:
+        for cell in live:
+            results[(runtime, cell.workload, cell.path)].append(
+                Diagnostic(
+                    "cell-unprovisioned",
+                    f"CPython {runtime} {cell.workload}.{cell.path} needs a provisioned database",
+                )
+            )
+        live = []
+    if live:
+        assert provisioner is not None
+        _provision(workload, provisioner, scaling_arms[0], runtime, recorder)
+    for cell in live:
+        assert provisioner is not None
+        for _ in range(memory_children if is_memory_cell(cell.path) else 1):
+            results[(runtime, cell.workload, cell.path)].append(
+                runner(
+                    _request(
+                        contract,
+                        runtime,
+                        cell.workload,
+                        cell.path,
+                        scaling_arms[0],
+                        provisioner.connection_info,
                     )
                 )
-            live = []
-        if live:
+            )
+    memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
+    for roots in scaling_arms[1:]:
+        if memory_live:
             assert provisioner is not None
-            workload.provision(provisioner, scaling_arms[0])
-        for cell in live:
+            _provision(workload, provisioner, roots, runtime, recorder)
+        for cell in memory_live:
             assert provisioner is not None
-            for _ in range(memory_children if is_memory_cell(cell.path) else 1):
+            for _ in range(memory_children):
                 results[(runtime, cell.workload, cell.path)].append(
                     runner(
                         _request(
@@ -486,42 +562,13 @@ def _measure_runtime(
                             runtime,
                             cell.workload,
                             cell.path,
-                            scaling_arms[0],
+                            roots,
                             provisioner.connection_info,
                         )
                     )
                 )
-        memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
-        for roots in scaling_arms[1:]:
-            if memory_live:
-                assert provisioner is not None
-                workload.provision(provisioner, roots)
-            for cell in memory_live:
-                assert provisioner is not None
-                for _ in range(memory_children):
-                    results[(runtime, cell.workload, cell.path)].append(
-                        runner(
-                            _request(
-                                contract,
-                                runtime,
-                                cell.workload,
-                                cell.path,
-                                roots,
-                                provisioner.connection_info,
-                            )
-                        )
-                    )
-        for cell in cells:
-            if cell.workload != workload_id or needs_database(cell.path):
-                continue
-            for _ in range(memory_children if is_memory_cell(cell.path) else 1):
-                results[(runtime, cell.workload, cell.path)].append(
-                    runner(
-                        _request(contract, runtime, cell.workload, cell.path, scaling_arms[0], None)
-                    )
-                )
-    for cell in (*geometry_cells(), *plan_cells()):
-        if not selected(cell.workload, cell.path):
+    for cell in cells:
+        if needs_database(cell.path):
             continue
         for _ in range(memory_children if is_memory_cell(cell.path) else 1):
             results[(runtime, cell.workload, cell.path)].append(
@@ -534,13 +581,14 @@ def measure(
     provisioner: Provisioner,
     runner: ChildRunner,
     runtimes: Sequence[str] | None = None,
+    spans: Spans | None = None,
 ) -> CostReportEnvelope:
     selected = tuple(runtimes) if runtimes is not None else supported_minors()
     results: dict[Address, list[ChildResult]] = {
         address: [] for address in addresses(contract, selected)
     }
     for runtime in selected:
-        _measure_runtime(contract, provisioner, runner, runtime, results)
+        _measure_runtime(contract, provisioner, runner, runtime, results, spans=spans)
     server_version = provisioner.port.execute("show server_version", ())[0][0]
     provenance = Provenance.capture(
         contract,
@@ -619,11 +667,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--select", action="append", default=[], help="workload pattern")
     parser.add_argument("--cell", action="append", default=[], help="cell pattern")
     parser.add_argument("--runtime", action="append", default=[], help="CPython minor")
+    parser.add_argument(
+        "--durations", type=Path, help="where the harness writes its spans; not evidence"
+    )
     args = parser.parse_args(argv)
     if (args.select or args.cell or args.runtime) and not args.diagnostic:
         parser.error("--select, --cell, and --runtime are diagnostic options")
     if args.diagnostic and args.out is not None:
         parser.error("a diagnostic run is not evidence and is printed, never written to a file")
+    if args.durations is not None and (args.diagnostic or args.canary):
+        parser.error("--durations records a complete measurement, never a diagnostic or canary")
     contract = BudgetContract.load()
     if args.diagnostic:
         runtimes = tuple(args.runtime) or supported_minors()
@@ -640,11 +693,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.canary:
         rendered = json.dumps(canary(contract, run_child).document(), indent=2, sort_keys=True)
     else:
-        provisioner = Provisioner()
-        try:
-            envelope = measure(contract, provisioner, run_child)
-        finally:
-            provisioner.close()
+        envelope = _measured(contract, args.durations)
         rendered = json.dumps(envelope.document(), indent=2, sort_keys=True)
     if args.out is None:
         print(rendered)
@@ -652,6 +701,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(rendered + "\n", encoding="utf-8")
     return 0
+
+
+def _measured(contract: BudgetContract, durations: Path | None) -> CostReportEnvelope:
+    spans = Spans()
+    try:
+        with spans.span("setup", "provisioner", member=SUBJECT):
+            provisioner = Provisioner()
+        try:
+            return measure(contract, provisioner, run_child, spans=spans)
+        finally:
+            with spans.span("setup", "close", member=SUBJECT):
+                provisioner.close()
+    finally:
+        if durations is not None:
+            spans.write(durations)
 
 
 if __name__ == "__main__":
