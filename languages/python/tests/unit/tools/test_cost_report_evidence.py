@@ -62,6 +62,7 @@ type Document = dict[str, Any]
 BEFORE_RUN = "35343050954"
 BEFORE_JOB = "105593153404"
 BEFORE_COMMIT = "d7c838dd0b2b39543473604caffc89851c4ae6fe"
+BEFORE_PARENT_CPYTHON = "3.14.7"
 AFTER_RUN = "424242"
 REPOSITORY = "davidsunglee/parallax"
 CLOCK = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
@@ -79,10 +80,13 @@ def head_commit() -> str:
 
 @pytest.fixture(scope="module")
 def envelopes(contract: BudgetContract) -> dict[str, Document]:
-    return {
-        subject: clean(document, contract)
-        for subject, document in member_envelopes(contract).items()
-    }
+    """Every member's envelope with the frozen baseline's parent CPython, so the
+    rendered interpreter rows do not depend on the interpreter running the test."""
+    documents: dict[str, Document] = {}
+    for subject, document in member_envelopes(contract).items():
+        cast("dict[str, Any]", document["provenance"])["cpython"] = BEFORE_PARENT_CPYTHON
+        documents[subject] = clean(document, contract)
+    return documents
 
 
 @pytest.fixture(scope="module")

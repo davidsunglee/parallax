@@ -650,12 +650,19 @@ def test_metadata_probes_each_runtime_through_the_childs_resolution_before_any_c
     monkeypatch.setattr(report, "supported_minors", lambda: ("3.13", "3.14"))
     events: list[str] = []
     probed: list[tuple[list[str], dict[str, str]]] = []
+    versions = {
+        tuple(report.child_command(runtime, IDENTITY_SCRIPT, ())): version
+        for runtime, version in (("3.13", "3.13.15"), ("3.14", "3.14.7"))
+    }
 
     def probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
         probed.append((list(command), dict(environment)))
         events.append("probe")
-        version = "3.13.15" if command[0] == "uv" else "3.14.7"
-        identity = {"implementation": "CPython", "version": version, "executable": "/p"}
+        identity = {
+            "implementation": "CPython",
+            "version": versions[tuple(command)],
+            "executable": "/p",
+        }
         return (0, json.dumps(identity), "")
 
     def child(runtime: str, case: str) -> report.Cell:
