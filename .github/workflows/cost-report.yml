@@ -1,0 +1,39 @@
+name: cost-report
+
+# Registers the advisory cost-report workflow on the default branch so that
+# workflow_dispatch can target a branch carrying the full definition. This
+# revision measures nothing; a dispatched run executes the workflow file of
+# the ref it is dispatched against.
+run-name: "cost-report ${{ github.event_name }} ${{ inputs.ref || github.ref_name }} ${{ inputs.request-id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit, branch, or tag to measure
+        type: string
+        required: true
+      layout:
+        description: One runner per shard, or every shard in turn on one runner
+        type: choice
+        options: [sharded, sequential]
+        default: sharded
+      request-id:
+        description: An identifier the caller uses to find this run
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cost-report-${{ github.event_name }}-${{ inputs.ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  registered:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "cost-report is registered; dispatch against a ref that carries the measuring workflow."
