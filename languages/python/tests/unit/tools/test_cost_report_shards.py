@@ -57,6 +57,10 @@ from tests.unit.tools._cost_report_support import complete_snapshot, member_enve
 
 SNAPSHOT = next(member for member in MEMBERS if member.subject == "snapshot-delivery")
 OTHERS = tuple(member for member in MEMBERS if member is not SNAPSHOT)
+SNAPSHOT_SHARDS = tuple(shard for shard in SHARDS if shard.member is SNAPSHOT)
+OTHER_SHARDS = tuple(shard for shard in SHARDS if shard.member is not SNAPSHOT)
+WHOLE_SNAPSHOT = Shard(SNAPSHOT.subject, SNAPSHOT)
+LIFECYCLE = next(shard for shard in SHARDS if shard.member is MEMBERS[1])
 
 
 @pytest.fixture(scope="module")
@@ -125,14 +129,58 @@ def _member_runner(
 # --------------------------------------------------------------------------- #
 # The plan                                                                     #
 # --------------------------------------------------------------------------- #
-def test_the_plan_is_one_whole_shard_per_member_in_member_order() -> None:
-    validate_plan(SHARDS)
-    assert [shard.member for shard in SHARDS] == list(MEMBERS)
-    assert all(shard.workloads is None for shard in SHARDS)
-    assert plan_ids("sharded") == [member.subject for member in MEMBERS]
+def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_others_whole(
+    contract: BudgetContract,
+) -> None:
+    validate_plan(SHARDS, contract)
+    assert [(shard.id, shard.subject, shard.workloads) for shard in SHARDS] == [
+        ("snapshot-duplicate-include", SNAPSHOT.subject, frozenset({"duplicate-include"})),
+        ("snapshot-document-heavy", SNAPSHOT.subject, frozenset({"document-heavy"})),
+        ("snapshot-conventional-fanout", SNAPSHOT.subject, frozenset({"conventional-fanout"})),
+        ("snapshot-bitemporal-current", SNAPSHOT.subject, frozenset({"bitemporal-current"})),
+        ("snapshot-versioned-document", SNAPSHOT.subject, frozenset({"versioned-document"})),
+        (
+            "snapshot-geometry-plan-stress",
+            SNAPSHOT.subject,
+            frozenset({GEOMETRY_GROUP, PLAN_GROUP, "stress-columns", "stress-document"}),
+        ),
+        ("lifecycle-overhead", "lifecycle-overhead", None),
+        ("instance-state", "instance-state", None),
+        ("write-lowering", "write-lowering", None),
+    ]
+    assert [shard.member for shard in OTHER_SHARDS] == list(OTHERS)
+    assert plan_ids("sharded") == [shard.id for shard in SHARDS]
     assert plan_ids("sequential") == [ALL_SHARDS]
     with pytest.raises(ValueError, match="layout"):
         plan_ids("parallel")
+
+
+def test_the_plan_covers_every_snapshot_address_on_every_supported_minor_exactly_once(
+    contract: BudgetContract,
+) -> None:
+    covered = [
+        address
+        for shard in SNAPSHOT_SHARDS
+        for address in selected_addresses(contract, supported_minors(), shard.selection(contract))
+    ]
+    assert sorted(covered) == sorted(
+        selected_addresses(contract, supported_minors(), cost_report.every_cell)
+    )
+    assert sorted(name for shard in SNAPSHOT_SHARDS for name in shard.workloads or ()) == sorted(
+        workload_names(contract)
+    )
+    assert shard_arguments(SHARDS[0]) == [cost_report.WORKLOAD_OPTION, "duplicate-include"]
+    assert shard_arguments(SHARDS[5]) == [
+        cost_report.WORKLOAD_OPTION,
+        GEOMETRY_GROUP,
+        cost_report.WORKLOAD_OPTION,
+        PLAN_GROUP,
+        cost_report.WORKLOAD_OPTION,
+        "stress-columns",
+        cost_report.WORKLOAD_OPTION,
+        "stress-document",
+    ]
+    assert all(shard_arguments(shard) == [] for shard in OTHER_SHARDS)
 
 
 def test_the_plan_is_printed_deterministically_for_either_layout(
@@ -166,23 +214,28 @@ def test_a_workload_split_plan_covers_every_snapshot_address_exactly_once(
 @pytest.mark.parametrize(
     ("plan", "message"),
     [
-        ((Shard("all", SNAPSHOT), *SHARDS[1:]), "reserved or unsafe"),
-        ((Shard("Snapshot Delivery", SNAPSHOT), *SHARDS[1:]), "reserved or unsafe"),
-        ((Shard("x", SNAPSHOT), Shard("x", MEMBERS[1]), *SHARDS[2:]), "not unique"),
+        ((Shard("all", SNAPSHOT), *OTHER_SHARDS), "reserved or unsafe"),
+        ((Shard("Snapshot Delivery", SNAPSHOT), *OTHER_SHARDS), "reserved or unsafe"),
+        ((Shard("x", SNAPSHOT), Shard("x", MEMBERS[1]), *OTHER_SHARDS[1:]), "not unique"),
         (
             (Shard("s", Member("python-report-other", "other.py", "other")), *SHARDS),
             "does not run",
         ),
-        ((Shard("w", MEMBERS[1], frozenset({"a"})), SHARDS[0], *SHARDS[2:]), "has no workloads"),
-        ((Shard("w", SNAPSHOT, frozenset()), *SHARDS[1:]), "selects no workload"),
-        (SHARDS[1:], "snapshot-delivery must be one whole shard, found 0"),
+        (
+            (Shard("w", MEMBERS[1], frozenset({"a"})), WHOLE_SNAPSHOT, *OTHER_SHARDS[1:]),
+            "has no workloads",
+        ),
+        ((Shard("w", SNAPSHOT, frozenset()), *OTHER_SHARDS), "selects no workload"),
+        (OTHER_SHARDS, "snapshot-delivery must be one whole shard, found 0"),
         ((*SHARDS, Shard("again", MEMBERS[1])), "must be one whole shard, found 2"),
-        ((Shard("half", SNAPSHOT, frozenset({GEOMETRY_GROUP})), *SHARDS[1:]), "no shard covers"),
+        ((WHOLE_SNAPSHOT, WHOLE_SNAPSHOT, *OTHER_SHARDS), "not unique"),
+        ((Shard("half", SNAPSHOT, frozenset({GEOMETRY_GROUP})), *OTHER_SHARDS), "no shard covers"),
+        (SHARDS[1:], "no shard covers"),
         (
             (
                 Shard("half", SNAPSHOT, frozenset({GEOMETRY_GROUP})),
-                Shard("whole", SNAPSHOT),
-                *SHARDS[1:],
+                WHOLE_SNAPSHOT,
+                *OTHER_SHARDS,
             ),
             "mixes a whole-member shard",
         ),
@@ -190,11 +243,12 @@ def test_a_workload_split_plan_covers_every_snapshot_address_exactly_once(
             (
                 Shard("one", SNAPSHOT, frozenset({GEOMETRY_GROUP})),
                 Shard("two", SNAPSHOT, frozenset({GEOMETRY_GROUP, PLAN_GROUP})),
-                *SHARDS[1:],
+                *OTHER_SHARDS,
             ),
             "covered by both 'one' and 'two'",
         ),
-        ((Shard("bad", SNAPSHOT, frozenset({"nope"})), *SHARDS[1:]), "unknown workload nope"),
+        ((*SHARDS, Shard("twice", SNAPSHOT, frozenset({PLAN_GROUP}))), "covered by both"),
+        ((Shard("bad", SNAPSHOT, frozenset({"nope"})), *OTHER_SHARDS), "unknown workload nope"),
     ],
 )
 def test_an_incomplete_overlapping_or_unsafe_plan_is_refused(
@@ -249,7 +303,7 @@ def test_missing_or_malformed_metadata_leaves_every_runtime_unavailable(
     contract: BudgetContract, envelopes: dict[str, dict[str, Any]]
 ) -> None:
     run, _invoked = _member_runner(contract, envelopes, metadata=False)
-    absent = collect_shard(SHARDS[1], run)
+    absent = collect_shard(LIFECYCLE, run)
     assert absent.runtimes == dict.fromkeys(
         supported_minors(), RuntimeUnavailable("the member wrote no metadata sidecar")
     )
@@ -259,7 +313,7 @@ def test_missing_or_malformed_metadata_leaves_every_runtime_unavailable(
         Path(metadata_path).write_text('{"schemaVersion": 1, "runtimes": []}', encoding="utf-8")
         return (0, json.dumps(envelopes[member.subject]), "")
 
-    broken = collect_shard(SHARDS[1], malformed)
+    broken = collect_shard(LIFECYCLE, malformed)
     assert all(isinstance(status, RuntimeUnavailable) for status in broken.runtimes.values())
     assert all(
         "runtimes is not an object" in cast("RuntimeUnavailable", status).reason
@@ -271,7 +325,7 @@ def test_missing_or_malformed_metadata_leaves_every_runtime_unavailable(
         write_metadata(Path(metadata_path), member.subject, {"9.99": _identities()["3.14"]})
         return (0, json.dumps(envelopes[member.subject]), "")
 
-    incomplete = collect_shard(SHARDS[1], partial)
+    incomplete = collect_shard(LIFECYCLE, partial)
     assert incomplete.runtimes == dict.fromkeys(
         supported_minors(), RuntimeUnavailable("the member recorded no identity for this runtime")
     )
@@ -353,7 +407,7 @@ def _capture(request: Request, side: str = HEAD, pair: str = "pair") -> Capture:
         request,
         SHARDS[0].id,
         SNAPSHOT.subject,
-        None,
+        tuple(sorted(SHARDS[0].workloads or ())),
         side,
         request.head_commit,
         pair,
@@ -367,14 +421,19 @@ def test_a_capture_round_trips_and_refuses_malformed_fields() -> None:
     capture = _capture(request)
     document = capture.document()
     assert Capture.from_document(document) == capture
-    assert document["shard"] == {"id": SHARDS[0].id, "subject": SNAPSHOT.subject, "workloads": None}
-    sliced = Capture.from_document(
+    assert document["shard"] == SHARDS[0].document()
+    assert document["shard"] == {
+        "id": SHARDS[0].id,
+        "subject": SNAPSHOT.subject,
+        "workloads": ["duplicate-include"],
+    }
+    whole = Capture.from_document(
         {
             **document,
-            "shard": {**cast("dict[str, object]", document["shard"]), "workloads": ["plan"]},
+            "shard": {**cast("dict[str, object]", document["shard"]), "workloads": None},
         }
     )
-    assert sliced.workloads == ("plan",)
+    assert whole.workloads is None
     forged: list[tuple[str, object, str]] = [
         ("schemaVersion", 3, "schemaVersion 3"),
         ("side", "middle", "side 'middle'"),
@@ -405,9 +464,9 @@ def test_a_written_shard_is_a_legacy_portfolio_with_its_capture_beside_it(
 ) -> None:
     request = local_request("sharded")
     result = ShardResult(
-        SHARDS[1], MemberResult(MEMBERS[1], envelopes[MEMBERS[1].subject]), Spans(), _identities()
+        LIFECYCLE, MemberResult(MEMBERS[1], envelopes[MEMBERS[1].subject]), Spans(), _identities()
     )
-    out = tmp_path / HEAD / SHARDS[1].id
+    out = tmp_path / HEAD / LIFECYCLE.id
     write_shard(result, request, HEAD, request.head_commit, "pair-1", out)
     assert sorted(path.name for path in out.iterdir()) == sorted(
         ["portfolio.json", "summary.md", DURATIONS_FILE, CAPTURE_FILE, f"{MEMBERS[1].subject}.json"]
@@ -418,7 +477,7 @@ def test_a_written_shard_is_a_legacy_portfolio_with_its_capture_beside_it(
     capture = Capture.from_document(json.loads((out / CAPTURE_FILE).read_text(encoding="utf-8")))
     assert capture.request == request
     assert (capture.shard_id, capture.subject, capture.workloads, capture.side) == (
-        SHARDS[1].id,
+        LIFECYCLE.id,
         MEMBERS[1].subject,
         None,
         HEAD,
@@ -439,8 +498,7 @@ def test_sequential_all_and_independent_shards_write_identical_coverage(
     contract: BudgetContract,
     envelopes: dict[str, dict[str, Any]],
 ) -> None:
-    plan = _split_plan(contract)
-    monkeypatch.setattr(cost_report, "SHARDS", plan)
+    plan = SHARDS
     run, invoked = _member_runner(contract, envelopes)
     monkeypatch.setattr(cost_report, "run_member", run)
     everything = tmp_path / "all"
@@ -485,14 +543,13 @@ def test_sequential_all_and_independent_shards_write_identical_coverage(
     assert len(readings) == len(set(readings))
 
 
-def test_the_local_default_still_writes_the_complete_legacy_portfolio_under_a_split_plan(
+def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole_members(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     contract: BudgetContract,
     envelopes: dict[str, dict[str, Any]],
 ) -> None:
-    monkeypatch.setattr(cost_report, "SHARDS", _split_plan(contract))
     run, invoked = _member_runner(contract, envelopes)
     monkeypatch.setattr(cost_report, "run_member", run)
     out = tmp_path / "reports"
@@ -504,6 +561,10 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_under_a_sp
     portfolio = json.loads((out / "portfolio.json").read_text(encoding="utf-8"))
     assert [member["subject"] for member in portfolio["members"]] == [m.subject for m in MEMBERS]
     assert portfolio["members"][0] == envelopes[SNAPSHOT.subject]
+    assert portfolio["failures"] == []
+    assert sorted(path.name for path in out.iterdir()) == sorted(
+        ["portfolio.json", "summary.md", DURATIONS_FILE, *(f"{m.subject}.json" for m in MEMBERS)]
+    )
     assert not (out / CAPTURE_FILE).exists() and not (out / HEAD).exists()
 
 
@@ -522,7 +583,7 @@ def test_a_failed_required_head_exits_non_zero_after_writing_every_shard(
     out = tmp_path / "reports"
     assert cost_report.main(["--shard", ALL_SHARDS, "--out", str(out)]) == 1
     capsys.readouterr()
-    assert [subject for subject, _ in invoked] == [member.subject for member in MEMBERS]
+    assert [subject for subject, _ in invoked] == [shard.subject for shard in SHARDS]
     for shard in SHARDS:
         directory = out / HEAD / shard.id
         assert (directory / CAPTURE_FILE).exists()
@@ -564,23 +625,23 @@ def test_each_invocation_pairs_its_base_and_head_under_a_fresh_id(
         patch.setattr(cost_report, "base_worktree", worktree)
         for attempt in ("first", "second"):
             assert (
-                run_shards([SHARDS[1].id], request, tmp_path / attempt, run, base_runner, SHARDS)
+                run_shards([LIFECYCLE.id], request, tmp_path / attempt, run, base_runner, SHARDS)
                 == 0
             )
     assert seen == [head, head]
     pairs = {
         Capture.from_document(
-            json.loads((tmp_path / attempt / HEAD / SHARDS[1].id / CAPTURE_FILE).read_text("utf-8"))
+            json.loads((tmp_path / attempt / HEAD / LIFECYCLE.id / CAPTURE_FILE).read_text("utf-8"))
         ).pair_id
         for attempt in ("first", "second")
     }
     assert len(pairs) == 2
     marker = json.loads(
-        (tmp_path / "first" / BASE / SHARDS[1].id / UNAVAILABLE_FILE).read_text("utf-8")
+        (tmp_path / "first" / BASE / LIFECYCLE.id / UNAVAILABLE_FILE).read_text("utf-8")
     )
     assert marker["reason"]["code"] == "missing-base-support"
     assert marker["baseCommit"] == head
-    assert not (tmp_path / "first" / BASE / SHARDS[1].id / CAPTURE_FILE).exists()
+    assert not (tmp_path / "first" / BASE / LIFECYCLE.id / CAPTURE_FILE).exists()
 
 
 # --------------------------------------------------------------------------- #
@@ -594,7 +655,8 @@ def test_each_invocation_pairs_its_base_and_head_under_a_fresh_id(
         ["--against", "previous"],
         ["--request", "request.json"],
         ["--shard", "nope", "--out", "reports"],
-        ["--shard", "snapshot-delivery"],
+        ["--shard", SHARDS[0].id],
+        ["--shard", "snapshot-delivery", "--out", "reports"],
         ["--assemble", "reports"],
         ["--plan", "--shard", "all", "--out", "reports"],
         ["--shard", "all", "--assemble", "reports", "--out", "assembled"],
@@ -621,10 +683,10 @@ def test_a_request_must_agree_with_the_checkout_layout_and_base(
     for arguments, message in (
         (["--shard", ALL_SHARDS, "--request", str(request)], "sequential layout"),
         (
-            ["--shard", SHARDS[1].id, "--request", str(request), "--base-commit", "HEAD~1"],
+            ["--shard", LIFECYCLE.id, "--request", str(request), "--base-commit", "HEAD~1"],
             "disagrees with the request",
         ),
-        (["--shard", SHARDS[1].id, "--base-commit", "not-a-ref"], "is not a commit"),
+        (["--shard", LIFECYCLE.id, "--base-commit", "not-a-ref"], "is not a commit"),
     ):
         with pytest.raises(SystemExit) as error:
             cost_report.main([*arguments, "--out", str(tmp_path / "out")])
@@ -634,14 +696,14 @@ def test_a_request_must_agree_with_the_checkout_layout_and_base(
     moved.write(request)
     with pytest.raises(SystemExit) as error:
         cost_report.main(
-            ["--shard", SHARDS[1].id, "--request", str(request), "--out", str(tmp_path)]
+            ["--shard", LIFECYCLE.id, "--request", str(request), "--out", str(tmp_path)]
         )
     assert error.value.code == 2
     assert "is not the checkout's" in capsys.readouterr().err
     request.write_text("{}", encoding="utf-8")
     with pytest.raises(SystemExit) as error:
         cost_report.main(
-            ["--shard", SHARDS[1].id, "--request", str(request), "--out", str(tmp_path)]
+            ["--shard", LIFECYCLE.id, "--request", str(request), "--out", str(tmp_path)]
         )
     assert error.value.code == 2
     assert "does not hold a request" in capsys.readouterr().err
@@ -757,23 +819,23 @@ def test_the_base_measures_itself_in_a_detached_worktree_that_is_removed_afterwa
     out = tmp_path / "reports" / BASE
     result = measure_base(
         commit,
-        SHARDS[1].id,
+        LIFECYCLE.id,
         out,
         request,
         "shared-pair",
         tool,
         lambda commit: cost_report.base_worktree(commit, repo),
     )
-    assert result == BaseResult(SHARDS[1].id, commit, None, result.capture)
+    assert result == BaseResult(LIFECYCLE.id, commit, None, result.capture)
     assert result.measured
     assert [arguments for _workspace, arguments in tool.calls] == [
         ["--plan", "--layout", "sharded"],
-        ["--shard", SHARDS[1].id, "--out", tool.calls[1][1][3]],
+        ["--shard", LIFECYCLE.id, "--out", tool.calls[1][1][3]],
     ]
     assert tool.checkouts[0] == tool.checkouts[1]
     assert not tool.checkouts[0].exists()
     assert _no_worktrees_left(repo)
-    imported = out / SHARDS[1].id
+    imported = out / LIFECYCLE.id
     assert sorted(path.name for path in imported.iterdir()) == sorted(
         [
             "portfolio.json",
@@ -836,7 +898,7 @@ def test_an_unavailable_base_records_its_distinct_reason_and_leaves_no_worktree(
     out = tmp_path / BASE
     result = measure_base(
         commit,
-        SHARDS[1].id,
+        LIFECYCLE.id,
         out,
         request,
         "pair",
@@ -849,15 +911,15 @@ def test_an_unavailable_base_records_its_distinct_reason_and_leaves_no_worktree(
     assert not result.measured and result.capture is None
     assert _no_worktrees_left(repo)
     assert all(not checkout.exists() for checkout in runner.checkouts)
-    marker = json.loads((out / SHARDS[1].id / UNAVAILABLE_FILE).read_text(encoding="utf-8"))
+    marker = json.loads((out / LIFECYCLE.id / UNAVAILABLE_FILE).read_text(encoding="utf-8"))
     assert marker == {
         "schemaVersion": 1,
-        "shard": SHARDS[1].id,
+        "shard": LIFECYCLE.id,
         "side": BASE,
         "baseCommit": commit,
         "reason": {"code": code, "message": result.reason.message},
     }
-    assert sorted(path.name for path in (out / SHARDS[1].id).iterdir()) == [UNAVAILABLE_FILE]
+    assert sorted(path.name for path in (out / LIFECYCLE.id).iterdir()) == [UNAVAILABLE_FILE]
 
 
 def test_a_commit_git_cannot_check_out_is_an_unavailable_base(
@@ -871,7 +933,7 @@ def test_a_commit_git_cannot_check_out_is_an_unavailable_base(
 
     result = measure_base(
         "f" * 40,
-        SHARDS[1].id,
+        LIFECYCLE.id,
         tmp_path / BASE,
         request,
         "pair",

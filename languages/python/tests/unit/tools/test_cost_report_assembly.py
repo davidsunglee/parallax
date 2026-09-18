@@ -45,12 +45,14 @@ from tests.unit.tools._cost_report_support import (
     complete_snapshot,
     identities,
     member_envelopes,
+    requested_shard,
+    shard_envelopes,
     write_capture,
 )
 
 type Document = dict[str, Any]
 
-SNAPSHOT = next(shard for shard in SHARDS if shard.subject == "snapshot-delivery")
+SNAPSHOT = SHARDS[0]
 WRITE = next(shard for shard in SHARDS if shard.subject == "write-lowering")
 LIFECYCLE = next(shard for shard in SHARDS if shard.subject == "lifecycle-overhead")
 
@@ -71,6 +73,12 @@ def envelopes(contract: BudgetContract) -> dict[str, Document]:
         subject: clean(document, contract)
         for subject, document in member_envelopes(contract).items()
     }
+
+
+@pytest.fixture(scope="module")
+def sliced(contract: BudgetContract, envelopes: dict[str, Document]) -> dict[str, Document]:
+    """Each planned shard's envelope, keyed by shard id."""
+    return shard_envelopes(envelopes, contract)
 
 
 def _pr_request(head: str, *, request_id: str = "req-1", attempt: int = 1) -> Request:
@@ -99,7 +107,7 @@ def _nightly_request(head: str, *, request_id: str) -> Request:
     )
 
 
-def _complete_pr(root: Path, request: Request, envelopes: dict[str, Document]) -> None:
+def _complete_pr(root: Path, request: Request, sliced: dict[str, Document]) -> None:
     for index, shard in enumerate(SHARDS):
         for side in (BASE, HEAD):
             write_capture(
@@ -108,7 +116,7 @@ def _complete_pr(root: Path, request: Request, envelopes: dict[str, Document]) -
                 shard,
                 side,
                 request,
-                envelopes[shard.subject],
+                sliced[shard.id],
                 pair=f"pair-{shard.id}",
                 seconds=10.0 * (index + 1),
             )
@@ -133,11 +141,12 @@ def test_a_complete_pull_request_assembly_pairs_every_shard_on_its_own_runner(
     tmp_path: Path,
     head_commit: str,
     envelopes: dict[str, Document],
+    sliced: dict[str, Document],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
-    _complete_pr(root, request, envelopes)
+    _complete_pr(root, request, sliced)
     request.write(root / REQUEST_FILE)
     captures = discover(root)
     assert [capture.source for capture in captures] == sorted(
@@ -167,7 +176,10 @@ def test_a_complete_pull_request_assembly_pairs_every_shard_on_its_own_runner(
     first = cast("dict[str, Any]", cast("list[Any]", document["shards"])[0])
     assert set(first) == {"id", "base", "head", "pairing", "reasons", "sources"}
     assert first["head"]["capture"]["side"] == HEAD and first["base"]["capture"]["side"] == BASE
-    assert first["head"]["portfolio"]["members"] == [envelopes[SNAPSHOT.subject]]
+    assert first["head"]["portfolio"]["members"] == [sliced[SNAPSHOT.id]]
+    assert first["head"]["capture"]["shard"] == SNAPSHOT.document()
+    assert SNAPSHOT.workloads is not None
+    assert {r["workload"] for r in sliced[SNAPSHOT.id]["readings"]} == SNAPSHOT.workloads
     labelled = {
         (span.labels["shard"], span.labels["side"])
         for span in assembly.durations.spans
@@ -176,7 +188,7 @@ def test_a_complete_pull_request_assembly_pairs_every_shard_on_its_own_runner(
     assert labelled == {(shard.id, side) for shard in SHARDS for side in (BASE, HEAD)}
     assert assembly.durations.unavailable == ()
     summary = assembly.summary()
-    assert f"Critical path: 80.000 s on shard `{SHARDS[-1].id}`" in summary
+    assert f"Critical path: 180.000 s on shard `{SHARDS[-1].id}`" in summary
     assert "| Shard | Subject | Workloads | Head | Base | Pairing | Reasons |" in summary
     assert f"Planned {len(SHARDS)} shard(s); {len(SHARDS)} with a valid head capture" in summary
     assert "same-runner" in summary and "cross-runner" not in summary
@@ -249,7 +261,7 @@ def test_zero_arriving_captures_assemble_into_an_honest_all_missing_result(
 
 
 def test_duplicate_unexpected_and_malformed_inputs_are_failures_that_lose_nothing(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document], sliced: dict[str, Document]
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
@@ -266,7 +278,7 @@ def test_duplicate_unexpected_and_malformed_inputs_are_failures_that_lose_nothin
         SNAPSHOT,
         HEAD,
         _pr_request(head_commit, request_id="other"),
-        envelopes[SNAPSHOT.subject],
+        sliced[SNAPSHOT.id],
     )
     captures = discover(root)
     assembly = assemble(captures, SHARDS, request)
@@ -366,16 +378,16 @@ def test_invalid_provenance_a_diagnostic_and_a_missing_envelope_are_collection_f
 
 
 def test_each_side_is_validated_against_its_own_recorded_selection(
-    tmp_path: Path, head_commit: str, contract: BudgetContract, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, contract: BudgetContract, sliced: dict[str, Document]
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
     plan_only = Shard(SNAPSHOT.id, SNAPSHOT.member, frozenset({PLAN_GROUP}))
-    sliced = clean(
+    plan_envelope = clean(
         complete_snapshot(contract, workload_selection([PLAN_GROUP], contract)), contract
     )
-    write_capture(root, "a", plan_only, BASE, request, sliced)
-    claimed = write_capture(root, "a", SNAPSHOT, HEAD, request, sliced)
+    write_capture(root, "a", plan_only, BASE, request, plan_envelope)
+    claimed = write_capture(root, "a", SNAPSHOT, HEAD, request, plan_envelope)
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, SNAPSHOT)
     assert _codes(entry) == [("envelope-invalid", HEAD)]
@@ -384,13 +396,13 @@ def test_each_side_is_validated_against_its_own_recorded_selection(
     for path in claimed.iterdir():
         path.unlink()
     claimed.rmdir()
-    write_capture(root, "b", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject])
+    write_capture(root, "b", SNAPSHOT, HEAD, request, sliced[SNAPSHOT.id])
     assembly = assemble(discover(root), SHARDS, request)
     entry = _entry(assembly, SNAPSHOT)
     assert _codes(entry) == [("selection-mismatch", BASE)]
     assert entry.pairing == "same-runner" and entry.base is not None
     assert len(_rows(entry, "unavailable: incompatible (selection-mismatch")) == len(
-        envelopes[SNAPSHOT.subject]["readings"]
+        sliced[SNAPSHOT.id]["readings"]
     )
     assert assembly.failures == ()
 
@@ -420,7 +432,8 @@ def test_a_head_must_record_the_planned_selection_and_every_supported_runtime(
     snapshot = _entry(assembly, SNAPSHOT)
     assert _codes(snapshot) == [("capture-mismatch", HEAD)]
     assert snapshot.reasons[0].message == (
-        f"the capture selected ('{PLAN_GROUP}',), the plan selects None"
+        f"the capture selected ('{PLAN_GROUP}',), "
+        f"the plan selects {tuple(sorted(SNAPSHOT.workloads or ()))}"
     )
     assert snapshot.head is None and snapshot.base is not None
     assert _rows(snapshot, "nothing was compared") == [
@@ -443,7 +456,7 @@ def test_a_head_must_record_the_planned_selection_and_every_supported_runtime(
 # Incompatible and unpaired sides                                             #
 # --------------------------------------------------------------------------- #
 def test_only_cells_on_runtimes_with_the_same_full_interpreter_are_compared(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, envelopes: dict[str, Document], sliced: dict[str, Document]
 ) -> None:
     request = _pr_request(head_commit)
     root = tmp_path / "inputs"
@@ -460,8 +473,8 @@ def test_only_cells_on_runtimes_with_the_same_full_interpreter_are_compared(
     write_capture(root, "a", WRITE, BASE, request, envelopes[WRITE.subject])
     unknown = identities()
     unknown[newer] = RuntimeUnavailable("the identity probe printed nothing")
-    write_capture(root, "a", SNAPSHOT, HEAD, request, envelopes[SNAPSHOT.subject], runtimes=unknown)
-    write_capture(root, "a", SNAPSHOT, BASE, request, envelopes[SNAPSHOT.subject])
+    write_capture(root, "a", SNAPSHOT, HEAD, request, sliced[SNAPSHOT.id], runtimes=unknown)
+    write_capture(root, "a", SNAPSHOT, BASE, request, sliced[SNAPSHOT.id])
     assembly = assemble(discover(root), SHARDS, request)
     write = _entry(assembly, WRITE)
     assert _codes(write) == [("runtime-mismatch", BASE)]
@@ -611,7 +624,7 @@ def test_every_head_cell_is_named_when_the_base_is_unavailable_by_marker(
 # Nightlies: the previous assembly's head, cross-runner                        #
 # --------------------------------------------------------------------------- #
 def _nightly(
-    root: Path, request: Request, envelopes: dict[str, Document]
+    root: Path, request: Request, sliced: dict[str, Document]
 ) -> list[cost_report.ShardCapture]:
     for shard in SHARDS:
         write_capture(
@@ -620,7 +633,7 @@ def _nightly(
             shard,
             HEAD,
             request,
-            envelopes[shard.subject],
+            sliced[shard.id],
             pair=f"{request.request_id}-{shard.id}",
         )
     request.write(root / REQUEST_FILE)
@@ -630,18 +643,18 @@ def _nightly(
 def test_a_nightly_pairs_each_head_with_the_previous_nightlys_head_cross_runner(
     tmp_path: Path,
     head_commit: str,
-    envelopes: dict[str, Document],
+    sliced: dict[str, Document],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     first = _nightly_request(head_commit, request_id="night-1")
     first_root = tmp_path / "first"
-    first_assembly = assemble(_nightly(first_root, first, envelopes), SHARDS, first)
+    first_assembly = assemble(_nightly(first_root, first, sliced), SHARDS, first)
     assert all(_codes(entry) == [("base-not-requested", BASE)] for entry in first_assembly.shards)
     previous = tmp_path / "previous"
     write_assembly(first_assembly, first_root, discover(first_root), previous)
     second = _nightly_request(head_commit, request_id="night-2")
     second_root = tmp_path / "second"
-    captures = _nightly(second_root, second, envelopes)
+    captures = _nightly(second_root, second, sliced)
     assembly = assemble(captures, SHARDS, second, History.load(previous))
     assert assembly.failures == ()
     for entry in assembly.shards:
@@ -652,7 +665,7 @@ def test_a_nightly_pairs_each_head_with_the_previous_nightlys_head_cross_runner(
         assert entry.base.capture.request.request_id == "night-1"
         assert entry.comparison[0].startswith("Cross-runner comparison:")
         assert "calibrated on same-runner pairs" in entry.comparison[0]
-        if envelopes[entry.shard.subject]["readings"]:
+        if sliced[entry.shard.id]["readings"]:
             assert _rows(entry, "| within noise |") or _rows(entry, "| exact |")
     assert "cross-runner" in assembly.summary()
     document = assembly.document()
@@ -683,11 +696,11 @@ def test_a_nightly_pairs_each_head_with_the_previous_nightlys_head_cross_runner(
 
 
 def test_missing_or_unsupported_history_is_unavailable_and_never_a_failure(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, sliced: dict[str, Document]
 ) -> None:
     request = _nightly_request(head_commit, request_id="night-2")
     root = tmp_path / "inputs"
-    captures = _nightly(root, request, envelopes)
+    captures = _nightly(root, request, sliced)
     absent = assemble(captures, SHARDS, request, History.load(tmp_path / "expired"))
     assert absent.failures == ()
     assert all(_codes(entry) == [("history-unavailable", BASE)] for entry in absent.shards)
@@ -719,7 +732,7 @@ def test_missing_or_unsupported_history_is_unavailable_and_never_a_failure(
     previous = tmp_path / "previous"
     first = _nightly_request(head_commit, request_id="night-1")
     first_root = tmp_path / "first"
-    first_assembly = assemble(_nightly(first_root, first, envelopes), SHARDS, first)
+    first_assembly = assemble(_nightly(first_root, first, sliced), SHARDS, first)
     write_assembly(first_assembly, first_root, discover(first_root), previous)
     document = json.loads((previous / "portfolio.json").read_text("utf-8"))
     document["shards"] = [
@@ -756,6 +769,7 @@ def test_history_is_refused_for_a_pull_request_and_a_stray_base_is_a_failure(
     tmp_path: Path,
     head_commit: str,
     envelopes: dict[str, Document],
+    sliced: dict[str, Document],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     request = _pr_request(head_commit)
@@ -769,7 +783,7 @@ def test_history_is_refused_for_a_pull_request_and_a_stray_base_is_a_failure(
     assert "never a pull request" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
     nightly = _nightly_request(head_commit, request_id="night-3")
-    captures = _nightly(root, nightly, envelopes)
+    captures = _nightly(root, nightly, sliced)
     write_capture(
         root, "stray", LIFECYCLE, BASE, nightly, envelopes[LIFECYCLE.subject], commit=head_commit
     )
@@ -793,7 +807,7 @@ def test_history_is_refused_for_a_pull_request_and_a_stray_base_is_a_failure(
 def test_a_shard_run_with_a_self_measured_base_assembles_into_same_runner_pairs(
     tmp_path: Path,
     head_commit: str,
-    envelopes: dict[str, Document],
+    sliced: dict[str, Document],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = _pr_request(head_commit)
@@ -801,7 +815,7 @@ def test_a_shard_run_with_a_self_measured_base_assembles_into_same_runner_pairs(
     def member(shard_member: cost_report.Member, arguments: Sequence[str]) -> tuple[int, str, str]:
         metadata = Path(arguments[arguments.index(cost_report.METADATA_OPTION) + 1])
         write_metadata(metadata, shard_member.subject, identities())
-        return (0, json.dumps(envelopes[shard_member.subject]), "")
+        return (0, json.dumps(sliced[requested_shard(shard_member, arguments).id]), "")
 
     def base_tool(workspace: Path, arguments: Sequence[str]) -> tuple[int, str, str]:
         del workspace
@@ -812,7 +826,7 @@ def test_a_shard_run_with_a_self_measured_base_assembles_into_same_runner_pairs(
         base_local = local_request("sharded")
         result = ShardResult(
             shard,
-            MemberResult(shard.member, envelopes[shard.subject]),
+            MemberResult(shard.member, sliced[shard.id]),
             collection_spans(shard.id, 5.0),
             identities(),
         )

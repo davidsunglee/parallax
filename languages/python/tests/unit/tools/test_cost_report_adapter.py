@@ -24,7 +24,12 @@ from cost_report import (
     write_assembly,
 )
 from parallax.conformance.budget import BudgetContract
-from tests.unit.tools._cost_report_support import clean, member_envelopes, write_capture
+from tests.unit.tools._cost_report_support import (
+    clean,
+    member_envelopes,
+    shard_envelopes,
+    write_capture,
+)
 
 type Document = dict[str, Any]
 
@@ -42,11 +47,15 @@ def head_commit() -> str:
 
 
 @pytest.fixture(scope="module")
-def envelopes(contract: BudgetContract) -> dict[str, Document]:
-    return {
-        subject: clean(document, contract)
-        for subject, document in member_envelopes(contract).items()
-    }
+def sliced(contract: BudgetContract) -> dict[str, Document]:
+    """Each planned shard's clean envelope, keyed by shard id."""
+    return shard_envelopes(
+        {
+            subject: clean(document, contract)
+            for subject, document in member_envelopes(contract).items()
+        },
+        contract,
+    )
 
 
 def _git(repo: Path, *arguments: str) -> str:
@@ -373,7 +382,7 @@ def _artifacts(*names: str, expired: bool = False) -> dict[str, object]:
 
 
 def _previous_nightly(
-    root: Path, head: str, envelopes: dict[str, Document], request_id: str
+    root: Path, head: str, sliced: dict[str, Document], request_id: str
 ) -> tuple[Path, Request]:
     """A complete nightly at ``head``, assembled and written under ``root``."""
     request = Request.from_document(
@@ -394,7 +403,7 @@ def _previous_nightly(
             shard,
             HEAD,
             request,
-            envelopes[shard.subject],
+            sliced[shard.id],
             pair=f"{request_id}-{shard.id}",
         )
     assembled = root / "assembled"
@@ -403,10 +412,10 @@ def _previous_nightly(
 
 
 def test_the_previous_nightly_is_obtained_verified_and_placed_for_assembly(
-    tmp_path: Path, head_commit: str, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, sliced: dict[str, Document]
 ) -> None:
     assembled, previous_request = _previous_nightly(
-        tmp_path / "night-1", head_commit, envelopes, "night-1"
+        tmp_path / "night-1", head_commit, sliced, "night-1"
     )
 
     def stage(directory: Path) -> None:
@@ -555,9 +564,9 @@ def test_whatever_cannot_be_obtained_is_stated_and_read_by_assembly_as_unavailab
 
 
 def test_an_artifact_answering_another_commit_or_an_unfetchable_one_is_unavailable(
-    tmp_path: Path, head_commit: str, repository: Path, envelopes: dict[str, Document]
+    tmp_path: Path, head_commit: str, repository: Path, sliced: dict[str, Document]
 ) -> None:
-    assembled, _ = _previous_nightly(tmp_path / "night-1", head_commit, envelopes, "night-1")
+    assembled, _ = _previous_nightly(tmp_path / "night-1", head_commit, sliced, "night-1")
 
     def stage(directory: Path) -> None:
         (directory / "portfolio.json").write_bytes((assembled / "portfolio.json").read_bytes())
@@ -687,10 +696,10 @@ def test_a_nightly_with_no_artifacts_and_no_history_assembles_every_shard_as_mis
 def test_a_nightly_pairs_cross_runner_with_the_predecessor_the_adapter_obtained(
     tmp_path: Path,
     head_commit: str,
-    envelopes: dict[str, Document],
+    sliced: dict[str, Document],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assembled_before, _ = _previous_nightly(tmp_path / "night-1", head_commit, envelopes, "night-1")
+    assembled_before, _ = _previous_nightly(tmp_path / "night-1", head_commit, sliced, "night-1")
 
     def stage(directory: Path) -> None:
         shutil.copytree(assembled_before, directory, dirs_exist_ok=True)
@@ -712,7 +721,7 @@ def test_a_nightly_pairs_cross_runner_with_the_predecessor_the_adapter_obtained(
             shard,
             HEAD,
             planned.request,
-            envelopes[shard.subject],
+            sliced[shard.id],
             pair=f"night-2-{shard.id}",
         )
     assembled = tmp_path / "assembled"

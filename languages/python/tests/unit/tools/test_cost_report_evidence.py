@@ -14,9 +14,11 @@ import cost_report_evidence as evidence_tool
 from cost_report import (
     DURATIONS_FILE,
     HEAD,
+    MEMBERS,
     SHARDS,
     MemberResult,
     Request,
+    Shard,
     ShardResult,
     assemble,
     discover,
@@ -54,6 +56,7 @@ from tests.unit.tools._cost_report_support import (
     clean,
     identities,
     member_envelopes,
+    shard_envelopes,
     write_capture,
 )
 
@@ -66,6 +69,9 @@ BEFORE_PARENT_CPYTHON = "3.14.7"
 AFTER_RUN = "424242"
 REPOSITORY = "davidsunglee/parallax"
 CLOCK = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
+PLAN = tuple(Shard(member.subject, member) for member in MEMBERS)
+"""A whole-member plan for the timing arithmetic, which reads whatever plan the
+assembly carries; the collector's own ``SHARDS`` is assembled once below."""
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +101,9 @@ def before_portfolio(contract: BudgetContract, envelopes: dict[str, Document]) -
     commit rather than this checkout's."""
     return {
         "schemaVersion": 1,
-        "members": [clean(envelopes[shard.subject], contract, BEFORE_COMMIT) for shard in SHARDS],
+        "members": [
+            clean(envelopes[member.subject], contract, BEFORE_COMMIT) for member in MEMBERS
+        ],
         "failures": [],
     }
 
@@ -277,7 +285,7 @@ def _assembled(
     seconds: Sequence[float] | None = None,
 ) -> Path:
     inputs = root / "inputs"
-    for index, shard in enumerate(SHARDS):
+    for index, shard in enumerate(PLAN):
         if shard.id in skip:
             continue
         write_capture(
@@ -292,7 +300,7 @@ def _assembled(
         )
     captures = discover(inputs)
     out = root / "assembled"
-    write_assembly(assemble(captures, SHARDS, request), inputs, captures, out)
+    write_assembly(assemble(captures, PLAN, request), inputs, captures, out)
     return out
 
 
@@ -314,7 +322,7 @@ def _after(
 ) -> Sharded:
     return sharded(
         Run.from_document(_run(AFTER_RUN, event, head_sha or request.workflow_commit, created=0.0)),
-        _jobs(jobs or _after_jobs([shard.id for shard in SHARDS])),
+        _jobs(jobs or _after_jobs([shard.id for shard in PLAN])),
         assembled,
     )
 
@@ -616,10 +624,10 @@ def test_a_complete_sharded_run_reports_its_cost_from_job_durations_and_head_spa
     after = _after(_assembled(tmp_path, request, envelopes), request)
     assert after.sufficient and after.complete and after.problems == ()
     assert after.scope == HEAD_ONLY
-    assert [shard.id for shard in after.shards] == [shard.id for shard in SHARDS]
+    assert [shard.id for shard in after.shards] == [shard.id for shard in PLAN]
     assert after.timing.elapsed.seconds == 2750.0
     assert after.timing.measurement_path.seconds == 2000.0
-    assert f"shard `{SHARDS[-1].id}`" in after.timing.measurement_path.note
+    assert f"shard `{PLAN[-1].id}`" in after.timing.measurement_path.note
     assert after.longest_job.seconds == 2400.0
     assert after.timing.runner.seconds == 60.0 + 600.0 + 1200.0 + 1800.0 + 2400.0 + 60.0
     assert "6 jobs" in after.timing.runner.note
@@ -635,9 +643,41 @@ def test_a_complete_sharded_run_reports_its_cost_from_job_durations_and_head_spa
         shard.runtimes == {"3.13": "CPython 3.13.1", "3.14": "CPython 3.14.1"}
         for shard in after.shards
     )
-    assert after.coverage == coverage_of([envelopes[shard.subject] for shard in SHARDS])
+    assert after.coverage == coverage_of([envelopes[member.subject] for member in MEMBERS])
     (note,) = after.notes
     assert "identifies the workflow's ref" in note and request.head_commit in note
+
+
+def test_the_collectors_plan_assembles_to_the_whole_portfolios_coverage(
+    tmp_path: Path,
+    head_commit: str,
+    envelopes: dict[str, Document],
+    contract: BudgetContract,
+    before_portfolio: Document,
+) -> None:
+    request = _dispatch_request(head_commit)
+    inputs = tmp_path / "inputs"
+    sliced = shard_envelopes(envelopes, contract)
+    for shard in SHARDS:
+        write_capture(
+            inputs,
+            f"cost-report-shard-{shard.id}-attempt-1",
+            shard,
+            HEAD,
+            request,
+            sliced[shard.id],
+            pair=f"pair-{shard.id}",
+        )
+    captures = discover(inputs)
+    out = tmp_path / "assembled"
+    write_assembly(assemble(captures, SHARDS, request), inputs, captures, out)
+    after = _after(out, request, _after_jobs([shard.id for shard in SHARDS]))
+    assert after.complete and after.problems == ()
+    assert [shard.id for shard in after.shards] == [shard.id for shard in SHARDS]
+    assert after.coverage == coverage_of([envelopes[member.subject] for member in MEMBERS])
+    assert after.coverage.disagreements == ()
+    verdict = compare_coverage(coverage_of(before_portfolio["members"]), after.coverage)
+    assert verdict.equivalent and verdict.same_protocol
 
 
 def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
@@ -645,7 +685,7 @@ def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
 ) -> None:
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
-    jobs = _after_jobs([shard.id for shard in SHARDS], assemble_completed=None)
+    jobs = _after_jobs([shard.id for shard in PLAN], assemble_completed=None)
     after = _after(assembled, request, jobs)
     assert after.timing.runner.seconds == 60.0 + 600.0 + 1200.0 + 1800.0 + 2400.0
     assert after.timing.runner.note.startswith("partial: 5 of 6 allocated jobs timed")
@@ -653,7 +693,7 @@ def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
     assert after.timing.elapsed.seconds is None
     assert after.timing.request_latency.seconds is None
     assert after.timing.setup.seconds is None
-    untimed = _after_jobs([shard.id for shard in SHARDS])
+    untimed = _after_jobs([shard.id for shard in PLAN])
     for job in untimed["jobs"]:
         job["completed_at"] = None
     nothing = _after(assembled, request, untimed)
@@ -661,7 +701,7 @@ def test_runner_minutes_are_partial_when_an_allocated_job_lacks_a_timestamp(
     assert nothing.timing.runner.note == "none of the 6 allocated jobs is timed"
     assert nothing.longest_job.seconds is None
     assert nothing.longest_job.note == "the longest measure job: unrecorded for shard " + ", ".join(
-        f"`{shard.id}`" for shard in SHARDS
+        f"`{shard.id}`" for shard in PLAN
     )
     assert "0.0 min" not in evidence(_before(before_portfolio), nothing).render()
 
@@ -674,7 +714,7 @@ def test_a_maximum_over_shards_is_unknown_while_any_shards_contributor_is(
     rather than the maximum of what did arrive."""
     request = _dispatch_request(head_commit)
     inputs = tmp_path / "inputs"
-    for index, shard in enumerate(SHARDS):
+    for index, shard in enumerate(PLAN):
         spans = _spans_with_setup(shard.id, shard.subject, 30.0 * (index + 1))
         result = ShardResult(
             shard, MemberResult(shard.member, envelopes[shard.subject]), spans, identities()
@@ -687,20 +727,20 @@ def test_a_maximum_over_shards_is_unknown_while_any_shards_contributor_is(
             f"pair-{shard.id}",
             inputs / shard.id / HEAD / shard.id,
         )
-    (inputs / SHARDS[-1].id / HEAD / SHARDS[-1].id / DURATIONS_FILE).unlink()
+    (inputs / PLAN[-1].id / HEAD / PLAN[-1].id / DURATIONS_FILE).unlink()
     captures = discover(inputs)
     out = tmp_path / "assembled"
-    write_assembly(assemble(captures, SHARDS, request), inputs, captures, out)
+    write_assembly(assemble(captures, PLAN, request), inputs, captures, out)
     after = _after(out, request)
     assert after.complete
     assert after.timing.measurement_path.seconds is None
     assert after.timing.measurement_path.note == (
-        f"the longest head shard collection span: unrecorded for shard `{SHARDS[-1].id}`"
+        f"the longest head shard collection span: unrecorded for shard `{PLAN[-1].id}`"
     )
     assert after.internal_setup.seconds is None
-    assert after.internal_setup.note == f"the head sidecar is absent for shard `{SHARDS[-1].id}`"
+    assert after.internal_setup.note == f"the head sidecar is absent for shard `{PLAN[-1].id}`"
     assert after.modeled_serial.seconds is None
-    ids = [shard.id for shard in SHARDS]
+    ids = [shard.id for shard in PLAN]
     jobs = _after_jobs(ids)
     jobs["jobs"][3]["completed_at"] = None
     partial = _after(out, request, jobs)
@@ -712,7 +752,7 @@ def test_after_coverage_is_validated_against_its_own_plan_even_without_a_histori
     tmp_path: Path, head_commit: str, envelopes: dict[str, Document], before_portfolio: Document
 ) -> None:
     request = _dispatch_request(head_commit)
-    missing = SHARDS[2]
+    missing = PLAN[2]
     after = _after(_assembled(tmp_path, request, envelopes, skip=[missing.id]), request)
     assert not after.complete
     outcome = next(shard for shard in after.shards if shard.id == missing.id)
@@ -722,7 +762,7 @@ def test_after_coverage_is_validated_against_its_own_plan_even_without_a_histori
     )
     assert all(shard.complete for shard in after.shards if shard.id != missing.id)
     assert after.coverage.subjects == tuple(
-        sorted(shard.subject for shard in SHARDS if shard.id != missing.id)
+        sorted(shard.subject for shard in PLAN if shard.id != missing.id)
     )
     before = _before(before_portfolio, _before_jobs(head_conclusion="cancelled"))
     result = evidence(before, after)
@@ -739,7 +779,7 @@ def test_a_cancelled_or_failed_measure_job_makes_the_after_evidence_insufficient
 ) -> None:
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
-    ids = [shard.id for shard in SHARDS]
+    ids = [shard.id for shard in PLAN]
     cancelled = _after(
         assembled,
         request,
@@ -768,7 +808,7 @@ def test_every_after_job_is_cross_checked_and_the_topology_is_the_workflows(
     run's own admitted jobs."""
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
-    ids = [shard.id for shard in SHARDS]
+    ids = [shard.id for shard in PLAN]
     jobs = _after_jobs(ids)
     jobs["jobs"][2]["run_attempt"] = 2
     jobs["jobs"].append(_job("400", "lint", 0.0, 9000.0, run_id=AFTER_RUN))
@@ -823,11 +863,11 @@ def test_duplicate_plan_or_shard_entries_in_the_assembly_are_named_not_last_wins
     portfolio["plan"].append(deepcopy(portfolio["plan"][1]))
     (assembled / "portfolio.json").write_text(json.dumps(portfolio), encoding="utf-8")
     after = _after(assembled, request)
-    assert [shard.id for shard in after.shards] == [shard.id for shard in SHARDS]
+    assert [shard.id for shard in after.shards] == [shard.id for shard in PLAN]
     assert after.complete and not after.sufficient
     assert after.problems == (
-        f"the assembly's plan lists shard {SHARDS[1].id!r} more than once",
-        f"the assembly's shards lists shard {SHARDS[0].id!r} more than once",
+        f"the assembly's plan lists shard {PLAN[1].id!r} more than once",
+        f"the assembly's shards lists shard {PLAN[0].id!r} more than once",
     )
 
 
@@ -856,7 +896,7 @@ def test_run_attempt_and_event_are_cross_checked_before_arithmetic(
 ) -> None:
     request = _dispatch_request(head_commit)
     assembled = _assembled(tmp_path, request, envelopes)
-    ids = [shard.id for shard in SHARDS]
+    ids = [shard.id for shard in PLAN]
     other_run = sharded(
         Run.from_document(_run("7", "workflow_dispatch", request.workflow_commit)),
         _jobs(_after_jobs(ids, run_id="7")),
@@ -918,7 +958,7 @@ def test_the_measurement_path_reads_head_spans_and_a_missing_sidecar_is_unknown(
 ) -> None:
     request = _dispatch_request(head_commit)
     inputs = tmp_path / "inputs"
-    for index, shard in enumerate(SHARDS):
+    for index, shard in enumerate(PLAN):
         spans = _spans_with_setup(shard.id, shard.subject, 30.0 * (index + 1))
         result = ShardResult(
             shard,
@@ -936,11 +976,11 @@ def test_the_measurement_path_reads_head_spans_and_a_missing_sidecar_is_unknown(
         )
     captures = discover(inputs)
     out = tmp_path / "assembled"
-    write_assembly(assemble(captures, SHARDS, request), inputs, captures, out)
+    write_assembly(assemble(captures, PLAN, request), inputs, captures, out)
     after = _after(out, request)
     assert after.timing.measurement_path.seconds == 220.0
     assert after.internal_setup.seconds == 120.0
-    assert f"`{SHARDS[0].id}` 30 s" in after.internal_setup.note
+    assert f"`{PLAN[0].id}` 30 s" in after.internal_setup.note
     assert "none recorded" not in after.internal_setup.note
     assert after.modeled_serial.seconds == 130.0 + 160.0 + 190.0 + 220.0
     (out / DURATIONS_FILE).unlink()
@@ -1050,7 +1090,7 @@ def test_the_entry_point_renders_the_evidence_and_refuses_unreadable_inputs(
     )
     paths["before-jobs"].write_text(json.dumps(_before_jobs()), encoding="utf-8")
     paths["after-jobs"].write_text(
-        json.dumps(_after_jobs([shard.id for shard in SHARDS])), encoding="utf-8"
+        json.dumps(_after_jobs([shard.id for shard in PLAN])), encoding="utf-8"
     )
     arguments = [f"--{name}={path}" for name, path in paths.items()] + [f"--after={assembled}"]
     assert evidence_tool.main(arguments) == 0
