@@ -49,7 +49,7 @@ PLAN_JOB: Final = "plan"
 MEASURE_JOB: Final = "measure"
 ASSEMBLE_JOB: Final = "assemble"
 CLEANUP_JOB: Final = "cleanup"
-MEASURE_STEP: Final = "Measure base then head"
+MEASURE_STEP: Final = "Measure the shard"
 SHARD_UPLOAD_STEP: Final = "Upload the shard"
 
 HEAD_ONLY: Final = "head-only"
@@ -253,6 +253,9 @@ class Coverage:
     readings: Mapping[Address, int]
     samples: Mapping[Address, tuple[int, ...]]
     protocols: Mapping[str, Protocol]
+    disagreements: tuple[str, ...] = ()
+    """Every way two envelopes of one subject on this side fail to share one
+    commit, workload digest, and sampling protocol."""
 
     @property
     def total(self) -> int:
@@ -265,43 +268,88 @@ class Coverage:
 
 def coverage_of(envelopes: Sequence[Document]) -> Coverage:
     """The multiset of addresses over ``envelopes``, the sample counts behind
-    each address in ascending order, and each subject's protocol."""
+    each address in ascending order, and each subject's protocol; ``ValueError``
+    for a reading without the address fields or the samples the envelope
+    schema requires."""
     readings: Counter[Address] = Counter()
     samples: dict[Address, list[int]] = {}
-    protocols: dict[str, Protocol] = {}
+    protocols: dict[str, Protocol | None] = {}
+    disagreements: list[str] = []
     for envelope in envelopes:
-        subject = str(envelope.get("subject"))
-        for reading in cast("Sequence[object]", envelope.get("readings", ())):
-            entry = _object(reading, "reading")
+        subject = _string(envelope, "subject")
+        for reading in _listed(envelope, "readings", f"{subject} readings"):
+            entry = _object(reading, f"{subject} reading")
             address: Address = (
                 subject,
-                str(entry.get("runtime") or ""),
-                str(entry.get("window") or ""),
-                str(entry.get("workload")),
-                str(entry.get("cell")),
-                str(entry.get("unit")),
+                _optional_string(entry, "runtime") or "",
+                _optional_string(entry, "window") or "",
+                _string(entry, "workload"),
+                _string(entry, "cell"),
+                _string(entry, "unit"),
             )
             readings[address] += 1
             samples.setdefault(address, []).append(
-                len(cast("Sequence[object]", entry.get("samples", ())))
+                len(_listed(entry, "samples", f"{subject} reading samples"))
             )
-        provenance = envelope.get("provenance")
-        if isinstance(provenance, Mapping):
-            fields = cast("Mapping[str, object]", provenance)
-            protocols[subject] = Protocol(
-                subject,
-                str(fields.get("commit", "unknown")),
-                str(fields.get("workloadDigest", "unknown")),
-                _flattened(fields.get("sampling")),
-                str(fields.get("budgetContractDigest", "unknown")),
-                str(fields.get("lockDigest", "unknown")),
-                str(fields.get("cpython", "unknown")),
-            )
+        protocol = _protocol(subject, envelope.get("provenance"))
+        if subject not in protocols:
+            protocols[subject] = protocol
+        else:
+            disagreements += _disagreements(subject, protocols[subject], protocol)
     return Coverage(
         dict(readings),
         {address: tuple(sorted(counts)) for address, counts in samples.items()},
-        protocols,
+        {subject: protocol for subject, protocol in protocols.items() if protocol is not None},
+        tuple(disagreements),
     )
+
+
+def _protocol(subject: str, provenance: object) -> Protocol | None:
+    if not isinstance(provenance, Mapping):
+        return None
+    fields = cast("Mapping[str, object]", provenance)
+    return Protocol(
+        subject,
+        str(fields.get("commit", "unknown")),
+        str(fields.get("workloadDigest", "unknown")),
+        _flattened(fields.get("sampling")),
+        str(fields.get("budgetContractDigest", "unknown")),
+        str(fields.get("lockDigest", "unknown")),
+        str(fields.get("cpython", "unknown")),
+    )
+
+
+def _disagreements(subject: str, first: Protocol | None, second: Protocol | None) -> list[str]:
+    """How a further envelope of ``subject`` departs from the first one seen
+    on the same side."""
+    if first is None and second is None:
+        return []
+    if first is None or second is None:
+        return [f"{subject}: one envelope carries provenance and another none"]
+    found = (
+        [f"{subject}: commit {first.commit} in one envelope, {second.commit} in another"]
+        if first.commit != second.commit
+        else []
+    )
+    return found + _protocol_differences(subject, first, second, "in one envelope", "in another")
+
+
+def _protocol_differences(
+    subject: str, first: Protocol, second: Protocol, first_label: str, second_label: str
+) -> list[str]:
+    differences: list[str] = []
+    if first.workload_digest != second.workload_digest:
+        differences.append(
+            f"{subject}: workload digest {first.workload_digest} {first_label}, "
+            f"{second.workload_digest} {second_label}"
+        )
+    for key in sorted(set(first.sampling) | set(second.sampling)):
+        if first.sampling.get(key) != second.sampling.get(key):
+            differences.append(
+                f"{subject}: sampling {key} {first.sampling.get(key, 'absent')} {first_label}, "
+                f"{second.sampling.get(key, 'absent')} {second_label}"
+            )
+    return differences
 
 
 def _flattened(value: object, prefix: str = "") -> dict[str, str]:
@@ -336,8 +384,9 @@ class CoverageVerdict:
 def compare_coverage(before: Coverage, after: Coverage) -> CoverageVerdict:
     """Every way ``after`` measures other work than ``before``: addresses on
     one side alone, an address counted differently, an address sampled
-    differently, and a subject whose workload digest or sampling protocol
-    changed. Contract and lock digests are displayed, never judged."""
+    differently, a subject whose workload digest or sampling protocol changed,
+    and a side whose envelopes of one subject disagree among themselves.
+    Contract and lock digests are displayed, never judged."""
     missing = tuple(sorted(set(before.readings) - set(after.readings)))
     extra = tuple(sorted(set(after.readings) - set(before.readings)))
     shared = sorted(set(before.readings) & set(after.readings))
@@ -351,7 +400,8 @@ def compare_coverage(before: Coverage, after: Coverage) -> CoverageVerdict:
         for address in shared
         if before.samples[address] != after.samples[address]
     )
-    protocol: list[str] = []
+    protocol = [f"before side: {found}" for found in before.disagreements]
+    protocol += [f"after side: {found}" for found in after.disagreements]
     displayed: list[str] = []
     for subject in sorted(set(before.protocols) | set(after.protocols)):
         first = before.protocols.get(subject)
@@ -360,17 +410,7 @@ def compare_coverage(before: Coverage, after: Coverage) -> CoverageVerdict:
             side = "before" if first is None else "after"
             protocol.append(f"{subject}: no provenance on the {side} side")
             continue
-        if first.workload_digest != second.workload_digest:
-            protocol.append(
-                f"{subject}: workload digest {first.workload_digest} before, "
-                f"{second.workload_digest} after"
-            )
-        for key in sorted(set(first.sampling) | set(second.sampling)):
-            if first.sampling.get(key) != second.sampling.get(key):
-                protocol.append(
-                    f"{subject}: sampling {key} {first.sampling.get(key, 'absent')} before, "
-                    f"{second.sampling.get(key, 'absent')} after"
-                )
+        protocol += _protocol_differences(subject, first, second, "before", "after")
         if first.contract_digest != second.contract_digest:
             displayed.append(
                 f"{subject}: Budget Contract digest {first.contract_digest} before, "
@@ -480,9 +520,9 @@ def historical(run: Run, jobs: Sequence[Job], portfolio: Document) -> Historical
         )
     members = [
         _object(member, "member")
-        for member in cast("Sequence[object]", portfolio.get("members", ()))
+        for member in _listed(portfolio, "members", "before portfolio members")
     ]
-    failures = cast("Sequence[object]", portfolio.get("failures", ()))
+    failures = _listed(portfolio, "failures", "before portfolio failures")
     if failures:
         problems.append(f"the before portfolio records {len(failures)} collection failure(s)")
     coverage = coverage_of(members)
@@ -602,23 +642,18 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
             f"commit is the request's {request.head_commit}"
         )
     scope = PAIRED if request.base_commit is not None else HEAD_ONLY
-    plan = [
-        _object(shard, "planned shard")
-        for shard in cast("Sequence[object]", portfolio.get("plan", ()))
-    ]
-    entries = {
-        str(_object(entry, "assembled shard").get("id")): _object(entry, "assembled shard")
-        for entry in cast("Sequence[object]", portfolio.get("shards", ()))
-    }
+    plan = _once_each(portfolio, "plan", "planned shard", problems)
+    entries = _once_each(portfolio, "shards", "assembled shard", problems)
     spans = _spans(assembled / DURATIONS_FILE, notes)
     head_seconds = _seconds_by_shard(spans, "collection")
     setup_seconds = _seconds_by_shard(spans, "setup")
-    measure_jobs = _measure_jobs(jobs)
+    for job in jobs:
+        _cross_check_job(job, run, problems, "after")
+    measure_jobs = _measure_jobs(jobs, problems)
     outcomes: list[ShardOutcome] = []
     envelopes: list[Document] = []
-    for planned in plan:
-        shard_id = str(planned.get("id"))
-        subject = str(planned.get("subject"))
+    for shard_id, planned in plan.items():
+        subject = _string(planned, "subject")
         outcome = _shard_outcome(
             shard_id,
             subject,
@@ -645,8 +680,10 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
                 f"shard {outcome.id}'s `{MEASURE_STEP}` step "
                 + ("is absent" if step is None else f"ended {step.conclusion or step.status}")
             )
-    plan_job = _unique(jobs, PLAN_JOB, run, problems)
-    assemble_job = _unique(jobs, ASSEMBLE_JOB, run, problems)
+    plan_job = _unique(jobs, PLAN_JOB, problems)
+    assemble_job = _unique(jobs, ASSEMBLE_JOB, problems)
+    if sum(job.name == CLEANUP_JOB for job in jobs) > 1:
+        problems.append(f"the after run has more than one `{CLEANUP_JOB}` job")
     report_jobs = [job for job in jobs if job.name != CLEANUP_JOB]
     ended = [job.completed_at for job in report_jobs if job.completed_at is not None]
     timing = Timing(
@@ -658,7 +695,7 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
             "plan job start to the last report job's completion",
             "a report job's timestamp is absent",
         ),
-        _longest(head_seconds, "the longest head shard collection span", "shard"),
+        _longest(head_seconds, outcomes, "the longest head shard collection span"),
         _runner_minutes(jobs),
         _quantity(
             _between(run.created_at, plan_job.started_at if plan_job is not None else None),
@@ -682,17 +719,13 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
         coverage_of(envelopes),
         timing,
         _longest(
-            {
-                shard.id: shard.job.seconds
-                for shard in outcomes
-                if shard.job is not None and shard.job.seconds is not None
-            },
+            {shard.id: shard.job.seconds for shard in outcomes if shard.job is not None},
+            outcomes,
             "the longest measure job",
-            "shard",
         ),
         _dependent_wait(plan_job, outcomes),
         _modeled_serial(head_seconds, outcomes),
-        _internal_setup(setup_seconds, outcomes),
+        _internal_setup(setup_seconds, head_seconds, outcomes),
         tuple(problems),
         tuple(notes),
     )
@@ -825,12 +858,27 @@ def _cross_check_job(job: Job, run: Run, problems: list[str], side: str) -> None
         )
 
 
-def _unique(jobs: Sequence[Job], name: str, run: Run, problems: list[str]) -> Job | None:
+def _once_each(
+    portfolio: Document, key: str, label: str, problems: list[str]
+) -> dict[str, Document]:
+    """The ``key`` list of the assembly by shard id, naming every id listed
+    more than once and keeping its first entry."""
+    found: dict[str, Document] = {}
+    for entry in _listed(portfolio, key, f"assembled portfolio {key}"):
+        fields = _object(entry, label)
+        shard_id = _string(fields, "id")
+        if shard_id in found:
+            problems.append(f"the assembly's {key} lists shard {shard_id!r} more than once")
+            continue
+        found[shard_id] = fields
+    return found
+
+
+def _unique(jobs: Sequence[Job], name: str, problems: list[str]) -> Job | None:
     named = [job for job in jobs if job.name == name]
     if len(named) != 1:
         problems.append(f"the after run has {len(named)} `{name}` job(s), not one")
         return None
-    _cross_check_job(named[0], run, problems, "after")
     if not named[0].succeeded:
         problems.append(
             f"the after run's `{name}` job ended {named[0].conclusion or named[0].status}"
@@ -838,12 +886,21 @@ def _unique(jobs: Sequence[Job], name: str, run: Run, problems: list[str]) -> Jo
     return named[0]
 
 
-def _measure_jobs(jobs: Sequence[Job]) -> dict[str, Job]:
+def _measure_jobs(jobs: Sequence[Job], problems: list[str]) -> dict[str, Job]:
+    """The matrix jobs by shard id, naming a job the workflow has no job for
+    and a shard with more than one job, whose first job is kept."""
     found: dict[str, Job] = {}
+    prefix = f"{MEASURE_JOB} ("
     for job in jobs:
-        prefix = f"{MEASURE_JOB} ("
-        if job.name.startswith(prefix) and job.name.endswith(")"):
-            found[job.name[len(prefix) : -1]] = job
+        if not (job.name.startswith(prefix) and job.name.endswith(")")):
+            if job.name not in {PLAN_JOB, ASSEMBLE_JOB, CLEANUP_JOB}:
+                problems.append(f"the after run has an unexpected job `{job.name}`")
+            continue
+        shard_id = job.name[len(prefix) : -1]
+        if shard_id in found:
+            problems.append(f"the after run has more than one `{job.name}` job")
+            continue
+        found[shard_id] = job
     return found
 
 
@@ -882,17 +939,31 @@ def _unknown_timing() -> Timing:
     return Timing(unknown, unknown, unknown, unknown, unknown, unknown)
 
 
-def _longest(seconds: Mapping[str, float | None], note: str, label: str) -> Quantity:
-    known = {key: value for key, value in seconds.items() if value is not None}
-    if not known:
-        return Quantity.unknown(f"{note}: none recorded")
-    longest = max(known, key=lambda key: known[key])
-    return Quantity(known[longest], f"{note}, {label} `{longest}`")
+def _longest(
+    seconds: Mapping[str, float | None], outcomes: Sequence[ShardOutcome], note: str
+) -> Quantity:
+    """The maximum over every planned shard, unknown while any shard's value
+    is, so a missing contributor never shortens the path."""
+    if not outcomes:
+        return Quantity.unknown(f"{note}: no shard planned")
+    known = {shard.id: seconds.get(shard.id) for shard in outcomes}
+    unrecorded = [shard_id for shard_id, value in known.items() if value is None]
+    if unrecorded:
+        return Quantity.unknown(f"{note}: unrecorded for shard {_ids(unrecorded)}")
+    timed = {shard_id: value for shard_id, value in known.items() if value is not None}
+    longest = max(timed, key=lambda shard_id: timed[shard_id])
+    return Quantity(timed[longest], f"{note}, shard `{longest}`")
+
+
+def _ids(shards: Sequence[str]) -> str:
+    return ", ".join(f"`{shard}`" for shard in shards)
 
 
 def _runner_minutes(jobs: Sequence[Job]) -> Quantity:
     allocated = [job for job in jobs if job.conclusion != SKIPPED]
     known = [job for job in allocated if job.seconds is not None]
+    if not known:
+        return Quantity.unknown(f"none of the {len(allocated)} allocated jobs is timed")
     total = sum(job.seconds or 0.0 for job in known)
     if len(known) < len(allocated):
         missing = ", ".join(f"`{job.name}`" for job in allocated if job.seconds is None)
@@ -974,14 +1045,24 @@ def _modeled_serial(
 
 
 def _internal_setup(
-    setup_seconds: Mapping[str, float], outcomes: Sequence[ShardOutcome]
+    setup_seconds: Mapping[str, float],
+    head_seconds: Mapping[str, float],
+    outcomes: Sequence[ShardOutcome],
 ) -> Quantity:
+    """The largest shard's head setup spans, unknown until every planned
+    shard's head sidecar arrived; a sidecar recording no setup span is listed
+    as recording none."""
+    if not outcomes:
+        return Quantity.unknown("no shard planned")
+    absent = [shard.id for shard in outcomes if shard.id not in head_seconds]
+    if absent:
+        return Quantity.unknown(f"the head sidecar is absent for shard {_ids(absent)}")
     if not setup_seconds:
-        return Quantity.unknown("no head setup spans arrived")
+        return Quantity.unknown("no head sidecar records a setup span")
     listed = ", ".join(
-        f"`{outcome.id}` {_clock(setup_seconds[outcome.id])}"
+        f"`{outcome.id}` "
+        + (_clock(setup_seconds[outcome.id]) if outcome.id in setup_seconds else "none recorded")
         for outcome in outcomes
-        if outcome.id in setup_seconds
     )
     return Quantity(
         max(setup_seconds.values()), f"the largest shard's head setup spans; per shard: {listed}"
@@ -1260,6 +1341,13 @@ def _string(fields: Mapping[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{key} {value!r} is not a non-empty string")
     return value
+
+
+def _listed(fields: Mapping[str, object], key: str, label: str) -> Sequence[object]:
+    value = fields.get(key)
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise ValueError(f"{label} is not a list")
+    return cast("Sequence[object]", value)
 
 
 def _optional_string(fields: Mapping[str, object], key: str) -> str | None:
