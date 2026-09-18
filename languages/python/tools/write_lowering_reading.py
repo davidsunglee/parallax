@@ -35,6 +35,10 @@ from typing import Any, Final, Literal, cast
 
 from parallax.core import document_codec
 from parallax.core.base import detach_json_container
+from parallax.core.document_codec._document import (
+    encode_managed_document,
+    encode_managed_many,
+)
 from parallax.core.entity import DomainModel, EntityRowCodec
 from parallax.core.unit_work import WritePlanner
 from parallax.snapshot import prepare_model
@@ -78,13 +82,18 @@ OBSERVED_FUNCTIONS: Final[Mapping[str, Callable[..., object]]] = {
     "shapeOfDeclaration": document_codec.shape_of_declaration,
     "entityShape": document_codec.entity_shape,
     "occurrenceShape": document_codec.occurrence_shape,
-    "encodeDocument": document_codec.encode_document,
-    "encodeMany": document_codec.encode_many,
+    "encodeManagedDocument": encode_managed_document,
+    "encodeManagedMany": encode_managed_many,
     "applyPatches": document_codec.apply_patches,
     "detachJsonContainer": detach_json_container,
 }
-"""Pass observations over the keyed-write window: diagnostics that distinguish
-roots, nested values, and repeated calls, and gate nothing."""
+"""Pass observations over the keyed-write window: returns of each named function
+per row, diagnostics that distinguish roots, nested values, and repeated calls,
+and gate nothing. The two managed encoders are observed at the private module
+SQL lowering imports them from, so the count is of the code objects production
+runs: a nested document returns once per recursion, one Many return covers every
+element it encodes, a successor lowered as patches returns once per replaced
+subtree, and an unchanged successor returns neither."""
 
 WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},

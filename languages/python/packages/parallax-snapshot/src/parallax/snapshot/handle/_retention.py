@@ -98,12 +98,13 @@ class _ObservedRow:
 
     ``node`` is the Page occurrence this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
-    ``entity`` is the row's own resolved concrete Entity. The state arrives in
+    ``entity`` is the row's own resolved concrete Entity. ``state`` arrives in
     exactly one of two namings, and in neither until the Page judges that
-    occurrence: ``members`` is the declared-name view over its shared positional
-    Entity State, and ``columns`` is the physical-column-keyed mapping a direct
-    fixture supplied, remapped to declared names only when the row is retained.
-    ``document`` is the raw Structured Column under Relational Document Layout.
+    occurrence: an :class:`EntityStateRow` is the declared-name view over its
+    shared positional Entity State, and any other mapping is the
+    physical-column-keyed snapshot a direct fixture supplied, remapped to
+    declared names only when the row is retained. ``document`` is the raw
+    Structured Column under Relational Document Layout.
 
     It holds neither a raw driver row nor a materialized node, so an observation
     outlives the read that produced it without pinning either.
@@ -111,8 +112,7 @@ class _ObservedRow:
 
     node: int
     entity: EntityIdentity
-    columns: Mapping[str, object] | None
-    members: EntityStateRow | None
+    state: EntityStateRow | Mapping[str, object] | None
     document: object | None
 
 
@@ -145,7 +145,7 @@ class ObservedRows:
         """Snapshot one materialized row's observable state, keyed by physical
         column. ``columns`` stays the caller's, so a later edit to it cannot reach
         the recorded observation."""
-        self._rows.append(_ObservedRow(node, entity, dict(columns), None, document))
+        self._rows.append(_ObservedRow(node, entity, dict(columns), document))
 
     def observe_occurrence(
         self,
@@ -154,9 +154,7 @@ class ObservedRows:
         document: object | None,
     ) -> None:
         """Record a projection whose columns will come from its judged Entity State."""
-        self._rows.append(
-            node if document is None else _ObservedRow(node, entity, None, None, document)
-        )
+        self._rows.append(node if document is None else _ObservedRow(node, entity, None, document))
 
     def __iter__(self) -> Iterator[_ObservedRow]:
         """Every row observed so far, in the order the executor materialized them
@@ -238,8 +236,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
                 _ObservedRow(
                     pending.node,
                     pending.entity,
-                    pending.columns,
-                    pending.members,
+                    pending.state,
                     (None if pending.document is None else retain_document_value(pending.document)),
                 )
                 if shape is not None and shape.temporal
@@ -324,7 +321,6 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         observed = _ObservedRow(
             key,
             entity,
-            None,
             EntityStateRow.over_declared_members(
                 layout.member_selection, member_row, absent=ABSENT
             ),
@@ -622,12 +618,14 @@ def _observed_object(
         shapes[observed.entity] = shape
     if shape is None:
         return None
-    members = observed.members
-    if members is None:
-        columns = observed.columns
-        if columns is None:  # pragma: no cover - deferred retention supplies judged state
-            return None
-        members = EntityStateRow.remap(shape.member_columns, columns)
+    state = observed.state
+    if state is None:  # pragma: no cover - deferred retention supplies judged state
+        return None
+    members = (
+        state
+        if isinstance(state, EntityStateRow)
+        else EntityStateRow.remap(shape.member_columns, state)
+    )
     if not shape.primary_key or any(  # pragma: no cover - defends a malformed model/projection
         name not in members for name in shape.primary_key
     ):

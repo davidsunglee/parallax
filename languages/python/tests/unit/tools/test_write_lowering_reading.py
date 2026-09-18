@@ -6,14 +6,20 @@ import sys
 from contextlib import redirect_stdout
 from typing import cast
 
+import write_lowering_overhead
 import write_lowering_reading
+from parallax.core import document_codec
+from parallax.core.base import INT32
+from parallax.core.document_codec import Leaf, MemberShape, Occurrence, _document
+from parallax.core.metamodel import Multiplicity
+from parallax.core.sql_gen import _write as sql_write
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
     serve_one_measurement,
 )
-from write_lowering_reading import CASE_NAMES, Observer
+from write_lowering_reading import CASE_NAMES, OBSERVED_FUNCTIONS, Observer
 
 
 def test_observer_counts_nested_calls() -> None:
@@ -30,6 +36,50 @@ def test_observer_counts_nested_calls() -> None:
 
     observation = observer.observation()
     assert observation.calls == {"outer": 1, "inner": 2}
+
+
+def test_the_observed_functions_are_the_managed_encoders_lowering_calls() -> None:
+    assert tuple(OBSERVED_FUNCTIONS) == write_lowering_overhead.CALL_NAMES
+    lowering = vars(sql_write)
+    assert (
+        OBSERVED_FUNCTIONS["encodeManagedDocument"]
+        is _document.encode_managed_document
+        is lowering["encode_managed_document"]
+    )
+    assert (
+        OBSERVED_FUNCTIONS["encodeManagedMany"]
+        is _document.encode_managed_many
+        is lowering["encode_managed_many"]
+    )
+    assert not {"encodeDocument", "encodeMany"} & set(OBSERVED_FUNCTIONS)
+    assert document_codec.encode_document not in OBSERVED_FUNCTIONS.values()
+    assert document_codec.encode_many not in OBSERVED_FUNCTIONS.values()
+    assert "encode_managed_document" not in document_codec.__all__
+    assert "encode_managed_many" not in document_codec.__all__
+    assert not hasattr(document_codec, "encode_managed_document")
+    assert not hasattr(document_codec, "encode_managed_many")
+
+
+def test_managed_encoder_observations_count_returns_not_rows() -> None:
+    element = MemberShape(members=(Leaf("leaf", INT32, True),))
+    shape = MemberShape(
+        members=(
+            Leaf("scalar", INT32, True),
+            Occurrence("one", Multiplicity.ONE, False, element),
+            Occurrence("many", Multiplicity.MANY, False, element),
+        )
+    )
+    observer = Observer(OBSERVED_FUNCTIONS)
+    with observer:
+        _document.encode_managed_document(
+            shape, {"scalar": 1, "one": {"leaf": 2}, "many": [{"leaf": 3}, {"leaf": 4}, {}]}
+        )
+        _document.encode_managed_document(shape, {"scalar": 5})
+    calls = observer.observation().calls
+    assert calls["encodeManagedDocument"] == 6
+    assert calls["encodeManagedMany"] == 1
+    assert calls["applyPatches"] == 0
+    assert calls["detachJsonContainer"] == 0
 
 
 def test_child_case_names_match_the_shared_workloads() -> None:

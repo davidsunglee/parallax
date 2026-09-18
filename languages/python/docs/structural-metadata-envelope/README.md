@@ -239,17 +239,31 @@ retained by the fixture modules and are outside every window.
 - A retained checkpoint is a graph reachable at one point; a high-water mark is a
   net rise over one floor. Neither is cumulative allocation, and a duplicate
   traversal that allocates and frees inside a window need not move either.
-- Pass observations (`calls.*`) count returns of named document-codec functions
-  per row over the keyed-write window. They are diagnostics with units that
-  distinguish roots, nested values, and repeated calls; they gate nothing. The
-  four names were frozen with the manifest: `encodeDocument` and `encodeMany`
-  count the codec's `encode_document` and `encode_many`, which the unified
-  write path no longer reaches — it encodes managed values through
-  `encode_managed_document`, which no observation names — so those two cells
-  read zero at `after/` and say nothing about how many encodings a row pays
-  there; `applyPatches` and `detachJsonContainer` still count what they name.
-  Renaming an observed function is a protocol change that needs comparable
-  evidence on both sides, so the names stand.
+- Pass observations (`calls.*`) count returns of named functions per row over
+  the keyed-write window, taken in a pass of their own after the timing samples
+  and before the memory samples. They are diagnostics with units that
+  distinguish roots, nested values, and repeated calls; they gate nothing. A
+  count is of returns, never of semantic complete-row encodings: a nested
+  document counts once per recursive return, one `encodeManagedMany` return
+  covers every element it encodes, a successor lowered as patches over its
+  retained predecessor pays managed encodings only for the subtrees it
+  replaces, and an unchanged successor pays none. Two vocabularies exist and a
+  capture carries exactly one of them whole. `before/` and `after/` carry the legacy names frozen with
+  the manifest, `encodeDocument` and `encodeMany`, which count the source
+  codec's `encode_document` and `encode_many`; the unified write path no longer
+  reaches those functions, so both cells read zero at `after/` and say nothing
+  about how many encodings a row pays there. Every later capture carries the
+  current names, `encodeManagedDocument` and `encodeManagedMany`, which count
+  the managed encoders `encode_managed_document` and `encode_managed_many` that
+  the unified path does run, observed at the private module SQL lowering
+  imports them from. The two pairs are different functions under different
+  names: `--compare` leaves a renamed counter unmatched on each side rather than
+  aliasing it or reading a historical zero as a count of anything, while every
+  timing and memory address pairs as before. `applyPatches` and
+  `detachJsonContainer` count what they name under both vocabularies.
+  `cost_report.py --verify` accepts a write-lowering matrix only under one
+  whole vocabulary across every keyed case and runtime; a mixture is not exact
+  under either, and a live child answering the legacy names is refused.
 - Timing is machine- and interpreter-relative and is compared only between
   captures taken on the same runner with the same protocol.
 - Json-leaf payload size and malformed-read evidence volume are not dimensions
@@ -838,8 +852,10 @@ did not move, so this growth is recorded as an observation, not attributed.
 `detachJsonContainer` is 0 per row on every keyed-write case (it was 2 to 393),
 `applyPatches` is 1 on every changed Relational Document successor and 0 on
 every unchanged one (it was 1 on both), and `encodeDocument` and `encodeMany`
-read 0 everywhere for the reason stated under *Limits*: the observed names are
-functions the unified path no longer calls.
+read 0 everywhere for the reason stated under *Limits*: the legacy names are
+functions the unified path no longer calls. The current names that count the
+managed encoders were introduced after this capture and are first read by the
+`recovered/` capture below.
 
 ### Attribution diagnostics
 
@@ -914,10 +930,23 @@ on both sides.
   the `read-depth-4` and `read-depth-8` peaks) are confirmed at
   +1.4%, +1.6%, and +3.1% to +5.4% and now carried by the re-derived gates.
 - Unchanged: the cold compiled plan is the same size at every geometry level.
-- Not attributed: `bitemporal-current`'s 3.5–19% delivery memory growth, alone
-  among the delivery workloads. The baseline's 4,184 B/row high-water offset
-  between its own two captures is superseded by this comparison, which pairs
-  the retained baseline alone.
+- Attributed after this capture, by inspection of the read path between the
+  two producing commits and by diagnostic readings, not by this capture:
+  `bitemporal-current`'s 3.5–19% delivery memory growth, alone among the
+  delivery workloads, is the cost of owning each delivered row's raw Structured
+  Column in deferred read evidence. `Charter` is the one bitemporal Entity among
+  the five delivery workloads, and the retention seam
+  (`snapshot/handle/_retention.py`) retains a temporal row's raw document
+  through `retain_document_value` when it retains the row — one owned
+  `FrozenMap` tree per delivered Charter (`payload` and its nested `terms`),
+  alive for the delivered snapshot's lifetime — where the baseline stored the
+  provider's reference. The `document-heavy` and `versioned-document` Relational
+  Document workloads declare no temporal axis and did not move. The ownership
+  is required by the complete-predecessor rule, so the cost stands as `after/`'s
+  own; diagnostic readings of the recovery tree put this workload's eager peak
+  and retained memory within 2.1% of `after/` on both runtimes. The baseline's 4,184
+  B/row high-water offset between its own two captures is superseded by this
+  comparison, which pairs the retained baseline alone.
 - Recorded, not measured separately: the frozen-document serialization
   bridge's per-mapping callback cost, inside the keyed-write windows.
 
@@ -1040,3 +1069,64 @@ transient B/projection, 45.7 KiB peak for 64 KiB, 42.3 KiB prepared set.
 transient B/projection, 50.7 KiB peak for 64 KiB, 57.4 KiB prepared set. Every
 delivery and stress ceiling other than the seventeen timing cells, the one
 memory cell, and the two scaling arms named above is within its limit.
+
+## Recovered capture — `recovered/`
+
+Prepared for the one complete capture of the tree that recovers the read and
+predicate-acquisition time the unification cost, to be taken once every
+implementation change and review has closed and the owner has approved the
+capture; nothing under this heading is populated until that capture exists. `before/` stays the recovery reference and `after/`
+the fixed regression baseline; neither is recaptured. The capture is retained
+beside them unchanged, with `comparison-before.md` and `comparison-after.md` as
+the `--compare` renderings against each. Acceptance is read per runtime under
+one rule: for a timing cell, `delta = recovered / reference − 1` with a
+permitted maximum of `0.15`, faster results passing however large the
+improvement; a family result is the median of its paired per-cell deltas on one
+runtime, never a ratio of pooled durations.
+
+### Provenance
+
+*Pending capture: producing commit, invocation, date and duration, runner,
+interpreters, PostgreSQL, `uv.lock` agreement with the baselines, member table
+(subject, authority, runtimes, readings, within, outside), and the verbatim
+`--verify` advisories.*
+
+### Acceptance against `before/`
+
+| Required result, per runtime | Cells | 3.13 | 3.14 |
+|---|---:|---|---|
+| Acquisition family (`acquisition.*` / `elapsedUs`) | 6 | *pending* | *pending* |
+| Geometry-read family (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | *pending* | *pending* |
+| Positional-materialization family (`stress-*` / `stress.maxUsPerProjection`) | 2 | *pending* | *pending* |
+| Eager live-delivery family (catalog workloads / `live.eager.maxMs`) | 5 | *pending* | *pending* |
+| `read-sparse-64`, columns and document | 2 | *pending* | *pending* |
+| `acquisition.rows-128`, columns and document | 2 | *pending* | *pending* |
+| `stress-columns` and `stress-document` | 2 | *pending* | *pending* |
+
+*Pending capture: raw reference and recovered values beside every delta, and
+every exact miss with its runtime, address or family, values, delta,
+criterion, and likely cause, together with the owner's disposition of it.*
+
+### Keyed writes against `after/`
+
+*Pending capture: every keyed-write `elapsedUs` cell on both runtimes against
+`after/` under the same rule, with its `before/` value shown beside it, and the
+per-cell high-water and retained readings against the unchanged `after/`
+ceilings.*
+
+### Memory
+
+*Pending capture: every gated reading against the ceilings derived from
+`after/` (the gates in force when the capture was taken), the scaling-domain
+result, the `bitemporal-current` eager and streamed delivery memory against
+`after/` with the raw-document ownership cost restated, and the 154 ceilings
+re-derived from `recovered/` under the unchanged 1.10 rule once the pointer
+moves.*
+
+### Pass observations
+
+*Pending capture: the `encodeManagedDocument` and `encodeManagedMany` readings
+per keyed case, read as returns per row under **Limits**, beside `applyPatches`
+and `detachJsonContainer`; the legacy `encodeDocument` and `encodeMany` cells of
+the two earlier captures are unmatched in both comparisons and are not compared
+with them.*

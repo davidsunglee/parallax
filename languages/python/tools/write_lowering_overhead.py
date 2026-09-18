@@ -50,11 +50,32 @@ CALL_NAMES: Final = (
     "shapeOfDeclaration",
     "entityShape",
     "occurrenceShape",
+    "encodeManagedDocument",
+    "encodeManagedMany",
+    "applyPatches",
+    "detachJsonContainer",
+)
+"""The pass observations a keyed-write child answers, exactly and only."""
+LEGACY_CALL_NAMES: Final = (
+    "shapeOfDeclaration",
+    "entityShape",
+    "occurrenceShape",
     "encodeDocument",
     "encodeMany",
     "applyPatches",
     "detachJsonContainer",
 )
+"""The vocabulary the retained captures were taken under. ``encodeDocument`` and
+``encodeMany`` counted the source codec's ``encode_document`` and
+``encode_many``, which the unified write path no longer reaches; the current
+names count the managed encoders it does. A historical envelope verifies
+against this vocabulary whole, and a child answering it is refused."""
+CALL_VOCABULARIES: Final[Mapping[str, tuple[str, ...]]] = {
+    "current": CALL_NAMES,
+    "legacy": LEGACY_CALL_NAMES,
+}
+"""Every complete counter vocabulary a write-lowering envelope may carry, by
+the name a validation failure reports it under."""
 METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
 REPEATED_METRICS: Final = ("elapsedUs", "transientBytes")
 """The metrics sampled once per measured run. ``retainedBytes`` is one
@@ -302,14 +323,17 @@ def case_readings(runtime: str, reading: ChildReading) -> tuple[Reading, ...]:
     )
 
 
-def expected_addresses(runtimes: Sequence[str]) -> frozenset[tuple[str, str, str]]:
-    """Every (runtime, case, cell) address a complete envelope carries."""
+def expected_addresses(
+    runtimes: Sequence[str], call_names: Sequence[str] = CALL_NAMES
+) -> frozenset[tuple[str, str, str]]:
+    """Every (runtime, case, cell) address a complete envelope carries whose
+    keyed-write cases count ``call_names``."""
     addresses: set[tuple[str, str, str]] = set()
     for runtime in runtimes:
         for case, window in WINDOWS.items():
             addresses.update((runtime, case, metric) for metric in METRICS)
             if window == KEYED_WINDOW:
-                addresses.update((runtime, case, f"calls.{name}") for name in CALL_NAMES)
+                addresses.update((runtime, case, f"calls.{name}") for name in call_names)
     return frozenset(addresses)
 
 
