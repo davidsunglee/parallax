@@ -387,24 +387,40 @@ def _to_legacy(document: dict[str, Any]) -> None:
     _rename_counters(document, {new: old for old, new in _RENAMED_COUNTERS.items()})
 
 
+def _commit_in_clone(commit: str) -> bool:
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=cost_report.WORKSPACE,
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 # The two retained captures carry the legacy counter vocabulary on every keyed
 # case and both runtimes; neither file is rewritten, and both keep verifying as
-# evidence beside a capture taken under the current vocabulary.
-def test_both_retained_historical_portfolios_verify_under_the_legacy_vocabulary() -> None:
-    for name in ("before", "after"):
-        write = _historical(name, write_report.SUBJECT)
-        validate_write_lowering_matrix(write)
-        counters = {str(reading["cell"]) for reading in _counter_readings(write)}
-        assert counters == {f"calls.{name}" for name in write_report.LEGACY_CALL_NAMES}
-        portfolio = cast(
-            "dict[str, Any]",
-            json.loads(
-                (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(
-                    encoding="utf-8"
-                )
-            ),
-        )
-        assert verify(portfolio) == []
+# evidence beside a capture taken under the current vocabulary. Their producing
+# commits were squash-merged, so a clone holds them only if it still carries the
+# original branches; the whole-portfolio verification needs the commit and is
+# skipped where it is absent, while the matrix contract is checked everywhere.
+@pytest.mark.parametrize("name", ["before", "after"])
+def test_each_retained_historical_portfolio_verifies_under_the_legacy_vocabulary(
+    name: str,
+) -> None:
+    write = _historical(name, write_report.SUBJECT)
+    validate_write_lowering_matrix(write)
+    counters = {str(reading["cell"]) for reading in _counter_readings(write)}
+    assert counters == {f"calls.{name}" for name in write_report.LEGACY_CALL_NAMES}
+    portfolio = cast(
+        "dict[str, Any]",
+        json.loads(
+            (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(encoding="utf-8")
+        ),
+    )
+    commit = str(cast("dict[str, Any]", write["provenance"])["commit"])
+    if not _commit_in_clone(commit):
+        pytest.skip(f"{name}/ producing commit {commit} is not in this clone")
+    assert verify(portfolio) == []
 
 
 def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture() -> None:
