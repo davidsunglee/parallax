@@ -16,7 +16,7 @@ import math
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Final, Self, TypeGuard, cast
+from typing import ClassVar, Final, Self, TypeGuard, cast, overload
 
 from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
@@ -129,6 +129,18 @@ class FrozenMap[K, V](Mapping[K, V]):
 
     def __getitem__(self, key: K) -> V:
         return self.__values[key]
+
+    def __contains__(self, key: object, /) -> bool:
+        return key in self.__values
+
+    @overload
+    def get(self, key: K, /) -> V | None: ...
+    @overload
+    def get(self, key: K, default: V, /) -> V: ...
+    @overload
+    def get[D](self, key: K, default: D, /) -> V | D: ...
+    def get(self, key: K, default: object = None, /) -> object:
+        return self.__values.get(key, default)
 
     def __iter__(self) -> Iterator[K]:
         return iter(self.__values)

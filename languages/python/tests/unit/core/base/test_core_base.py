@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import cast
 
@@ -160,6 +160,89 @@ def test_frozen_map_does_not_execute_arbitrary_mapping_equality() -> None:
             raise AssertionError("arbitrary mapping behavior was executed")
 
     assert base.FrozenMap({"city": "Oslo"}) != MappingSubclass(city="Oslo")
+
+
+_MAPPING_MIXIN = Mapping[object, object]
+
+_FROZEN_LOOKUP_SOURCE: dict[object, object] = {
+    "city": "Oslo",
+    "note": None,
+    "terms": {"days": 30},
+    None: "null-key",
+    (1, 2): "tuple-key",
+}
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["city", "note", "terms", None, (1, 2), "street", 3],
+    ids=["hit", "null-value", "nested", "none-key", "tuple-key", "miss", "unknown-int"],
+)
+def test_frozen_map_lookup_answers_exactly_what_the_mapping_mixin_answers(key: object) -> None:
+    frozen = base.FrozenMap(_FROZEN_LOOKUP_SOURCE)
+    default = object()
+
+    assert (key in frozen) is _MAPPING_MIXIN.__contains__(frozen, key)
+    assert frozen.get(key) is _MAPPING_MIXIN.get(frozen, key)
+    assert frozen.get(key, default) is _MAPPING_MIXIN.get(frozen, key, default)
+    assert frozen.get(key, None) is _MAPPING_MIXIN.get(frozen, key, None)
+    if key in _FROZEN_LOOKUP_SOURCE:
+        assert key in frozen
+        assert frozen.get(key, default) is frozen[key]
+    else:
+        assert key not in frozen
+        assert frozen.get(key) is None
+        assert frozen.get(key, default) is default
+
+
+def test_frozen_map_lookup_keeps_a_stored_null_apart_from_a_missing_key() -> None:
+    frozen = base.FrozenMap({"note": None})
+    default = object()
+
+    assert "note" in frozen
+    assert frozen.get("note", default) is None
+    assert "street" not in frozen
+    assert frozen.get("street", default) is default
+
+
+def test_frozen_map_lookup_refuses_an_unhashable_key_as_the_mixin_does() -> None:
+    frozen = cast("base.FrozenMap[object, object]", base.FrozenMap({"city": "Oslo"}))
+    unhashable: object = ["city"]
+
+    with pytest.raises(TypeError, match="unhashable"):
+        _MAPPING_MIXIN.get(frozen, unhashable)
+    with pytest.raises(TypeError, match="unhashable"):
+        frozen.get(unhashable)
+    with pytest.raises(TypeError, match="unhashable"):
+        _MAPPING_MIXIN.__contains__(frozen, unhashable)
+    with pytest.raises(TypeError, match="unhashable"):
+        frozen.__contains__(unhashable)
+
+
+def test_frozen_map_lookup_is_its_own_and_never_dispatches_through_getitem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen = base.FrozenMap({"city": "Oslo"})
+    retained = cast(
+        "base.FrozenMap[str, object]", base.retain_document_value({"nested": {"city": "Oslo"}})
+    )
+    nested = retained["nested"]
+
+    own = vars(base.FrozenMap)
+    assert own["get"] is not _MAPPING_MIXIN.get
+    assert own["__contains__"] is not _MAPPING_MIXIN.__contains__
+
+    def refuse_indexing(self: object, key: object) -> object:
+        raise AssertionError(f"lookup indexed the map for {key!r}")
+
+    monkeypatch.setattr(base.FrozenMap, "__getitem__", refuse_indexing)
+
+    assert "city" in frozen
+    assert "street" not in frozen
+    assert frozen.get("city") == "Oslo"
+    assert frozen.get("street", "fallback") == "fallback"
+    assert "nested" in retained
+    assert retained.get("nested") is nested
 
 
 def test_normalize_instant_converts_aware_to_utc_microsecond() -> None:
