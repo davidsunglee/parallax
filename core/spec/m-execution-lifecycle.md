@@ -553,11 +553,12 @@ delivery for it, runs required database cleanup without further events, and
 propagates unchanged. It produces no Handler Error report.
 
 Provider opening, event delivery, and error reporting are **lifecycle contexts**.
-Calling an operation through the originating Execution Scope or Transaction from one of
-those contexts is Execution Lifecycle Re-entry. It is refused before execution
-state, clocks, or database work. Re-entry during opening becomes the Provider
-Error's cause; re-entry escaping a Handler is an ordinary handler failure and
-causes quarantine. Unrelated scopes remain usable.
+Calling an operation through any Execution Scope or Transaction belonging to
+the originating Database Root from one of those contexts is Execution Lifecycle
+Re-entry. It is refused before execution state, clocks, or database work.
+Re-entry during opening becomes the Provider Error's cause; re-entry escaping a
+Handler is an ordinary handler failure and causes quarantine. Execution Scopes
+belonging to other Database Roots remain usable.
 
 An event carrying a cleanup fact — a failed Acquisition's partial cleanup, and
 every Release — additionally has a **delivery completion**: whether at least one

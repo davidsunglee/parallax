@@ -258,10 +258,11 @@ _Avoid_: version column cache, per-subtype version, copied attribute metadata
 
 **Concurrency Preference**:
 The Unit Work's resolved `locking` or `optimistic` workflow policy. An omitted
-preference resolves to the invoking Execution Scope's effective value, whose
-root-built-in value is `optimistic`; Locking forces shared-lock participation, while
-Optimistic asks each Entity to use its optimistic key when it has one and the
-Locking fallback otherwise.
+preference on an outer Transaction Invocation resolves to the invoking Execution
+Scope's effective value, whose root-built-in value is `optimistic`; omission on
+a Joined Invocation inherits the active Transaction's resolved value. Locking
+forces shared-lock participation, while Optimistic asks each Entity to use its
+optimistic key when it has one and the Locking fallback otherwise.
 _Avoid_: transaction-wide concurrency strategy, global lock mode, participation mode
 
 **Effective Concurrency Strategy**:
@@ -275,10 +276,11 @@ _Avoid_: Concurrency Preference, entity override, mutation-specific mode
 The portable Read Committed, Repeatable Read, or Serializable guarantee a
 Transaction Invocation requests for every Transaction Attempt it owns, each
 defined by the anomalies it forbids and mapped by the adapter to the concrete
-database. An omitted level resolves to the invoking Execution Scope's effective
-value, whose root-built-in value is Read Committed, requested concretely rather than left
-to the adapter's own default; a joined invocation may omit or repeat the
-resolved level but never name a different one.
+database. An omitted level on an outer Transaction Invocation resolves to the
+invoking Execution Scope's effective value, whose root-built-in value is Read
+Committed, requested concretely rather than left to the adapter's own default;
+a Joined Invocation inherits the active Transaction's resolved level when it
+omits one, may repeat that level, and may not name a different one.
 _Avoid_: isolation string, session isolation, vendor level, transaction mode
 
 **Audit Metadata**:
@@ -859,8 +861,10 @@ serially without retaining borrowed event data.
 _Avoid_: Execution Observer, callback hook, audit sink, handler singleton
 
 **Execution Lifecycle Re-entry**:
-An attempt from lifecycle handling to invoke an operation through the
-originating Execution Scope or Transaction, which is refused before execution work.
+An attempt from lifecycle handling to invoke an operation through any Execution
+Scope or Transaction belonging to the originating Database Root, which is
+refused before execution work. Execution Scopes belonging to other Database
+Roots remain usable.
 _Avoid_: nested execution, recursive handling, joined invocation
 
 **Execution Lifecycle Re-entry Error**:
