@@ -805,7 +805,7 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
     published = (
-        handle.Database.connect(port, CUSTOMER)
+        own_root(handle.Database.connect(port, CUSTOMER))
         .using_database_login()
         .wire.find(query)
         .checked()
@@ -982,7 +982,7 @@ _HISTORY_QUERY: Mapping[str, object] = {
 def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_result() -> None:
     port = _history_port()
     roots = (
-        handle.Database.connect(port, INVOICE)
+        own_root(handle.Database.connect(port, INVOICE))
         .using_database_login()
         .wire.find(_HISTORY_QUERY)
         .results()

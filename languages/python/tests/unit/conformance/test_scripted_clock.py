@@ -136,8 +136,8 @@ def test_an_empty_or_read_only_transact_consumes_no_scripted_instant() -> None:
     account_db.transact(lambda tx: tx.find(Account.where(Account.id == 1)).result())
 
     # The single scripted instant is untouched — still available for a temporal write.
-    Database.connect(
-        ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock
+    own_root(
+        Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock)
     ).using_database_login().transact(lambda tx: tx.insert(_balance(2)))
 
 
@@ -162,8 +162,8 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
     assert _writes(port) == 1
 
     # The single scripted instant is still available, proving nothing above took it.
-    Database.connect(
-        ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock
+    own_root(
+        Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock)
     ).using_database_login().transact(lambda tx: tx.insert(_balance(1)))
 
 
@@ -217,8 +217,8 @@ def test_a_retry_that_reaches_no_timestamp_requiring_work_captures_no_instant() 
     assert _writes(port) == 2  # attempt 0's write failed, the retry's succeeded
 
     # Neither attempt asked the clock, so the single scripted instant is intact.
-    Database.connect(
-        ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock
+    own_root(
+        Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock)
     ).using_database_login().transact(lambda tx: tx.insert(_balance(2)))
 
 

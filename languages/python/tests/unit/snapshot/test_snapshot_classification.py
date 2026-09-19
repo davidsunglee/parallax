@@ -335,8 +335,8 @@ def _published(
     model: DomainModel, query: object, rows: Sequence[Sequence[MappingRow]]
 ) -> InvalidData[Any]:
     """One twin member's published record for a scripted two-level read."""
-    database = connect(
-        ScriptedAdapter(*(Read(rows=result) for result in rows)), model
+    database = own_root(
+        connect(ScriptedAdapter(*(Read(rows=result) for result in rows)), model)
     ).using_database_login()
     record = database.find(cast("Any", query)).checked().result()
     assert isinstance(record, InvalidData), model

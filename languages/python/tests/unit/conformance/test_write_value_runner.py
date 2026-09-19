@@ -117,7 +117,9 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
     value = (
-        Database.connect(ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED))
+        own_root(
+            Database.connect(ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED))
+        )
         .using_database_login()
         .transact(fn)
     )

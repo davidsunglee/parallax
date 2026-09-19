@@ -431,7 +431,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
 def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
     port = QueuePort([[{"id": 1}]])
     result = (
-        handle.Database.connect(port, _PROFILE_OWNER_MODEL)
+        own_root(handle.Database.connect(port, _PROFILE_OWNER_MODEL))
         .using_database_login()
         .read_rows(object_query_node(ProfileOwner.where(ProfileOwner.id == 1)))
     )

@@ -3,15 +3,16 @@ runner and the flush edge.
 
 :class:`TransactionRunner` is what ``ScopedDatabase.transact`` delegates to once
 re-entry has been refused: the validation of every explicit option, the
-resolution of an outer invocation's omitted options against the root's
+resolution of an outer invocation's omitted options against the scope's
 :class:`~parallax.snapshot.handle._options.DatabaseOptions`, the join through
 the originating resource root with authority and option-conflict checks, the
 ``m-auto-retry`` bounded retry loop, the per-attempt adoption of the Serving
 Model's current selection, and the flush executor it injects into the unit of
 work. A Database Root builds exactly one at connect, over its runtime, clock,
 installed lifecycle, Serving Model, and read planner; scopes supply their own
-capture and defaults per invocation. The runner has one adapter and is an
-internal seam rather than a Protocol.
+capture and defaults per invocation. The runner retains no adapter: each
+invocation acquires through its scope's captured source. It is an internal seam
+rather than a Protocol.
 
 Each outer attempt adopts one complete selection before the boundary is asked
 to begin and retains it through commit or rollback: the attempt's lifecycle
@@ -274,7 +275,7 @@ class TransactionRunner:
         # comparing it first would report a nonsense value as a disagreement
         # with the active transaction, which reads as though naming it
         # correctly would have been accepted. An omitted keyword is left as the
-        # marker until it is resolved — against the root for an outer
+        # marker until it is resolved — against the scope for an outer
         # invocation, against the active transaction for a join.
         bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
         preference = (
@@ -517,10 +518,10 @@ def _resolved(
     isolation: IsolationLevel | Omitted,
 ) -> DatabaseOptions:
     """The options an outer invocation runs under: each explicit value, else
-    the root's default for that field.
+    the scope's default for that field.
 
     Every explicit value has already been validated, so the record built here
-    re-runs the same rules over values known to pass them. The root's own
+    re-runs the same rules over values known to pass them. The scope's own
     record is answered as itself whenever the resolved values are its own —
     every keyword omitted, or explicit values equal to the defaults — so an
     invocation that changes nothing allocates nothing.
@@ -588,10 +589,10 @@ def _check_join_options(
 
     Every field is compared on the same terms: an omitted keyword inherits, an
     explicit value equal to the resolved one is accepted, and an explicit
-    different value is refused. The record is complete — the root resolved
-    every field the transaction opened with — so the comparison never needs a
-    default of its own, and a partial request is never materialized as a record
-    merely to be compared.
+    different value is refused. The record is complete — the opening scope
+    resolved every field the transaction opened with — so the comparison never
+    needs a default of its own, and a partial request is never materialized as a
+    record merely to be compared.
     """
     _refuse_conflict("max_retries", max_retries, active.max_retries)
     _refuse_conflict("concurrency", concurrency, active.concurrency)

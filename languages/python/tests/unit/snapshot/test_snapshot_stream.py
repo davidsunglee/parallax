@@ -935,7 +935,7 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
     )
     with (
         pytest.raises(DeferredFeatureError, match="snapshot-history-includes"),
-        Database(RefusingAdapter(), POLICY_MODEL)
+        own_root(Database(RefusingAdapter(), POLICY_MODEL))
         .using_database_login()
         .stream(query, batch_size=2),
     ):
@@ -1112,7 +1112,7 @@ def test_an_entered_stream_reports_its_edition_and_an_unentered_one_has_none() -
     # before entry, because a stream that has not entered has adopted nothing.
     a, _b, serving = _editions()
     stream = (
-        Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving)
+        own_root(Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving))
         .using_database_login()
         .stream(_all_orders())
     )
@@ -1133,7 +1133,7 @@ def test_a_stream_adopts_at_entry_rather_than_at_construction() -> None:
     # scope is entered, and the call itself took nothing.
     a, b, serving = _editions()
     stream = (
-        Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving)
+        own_root(Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving))
         .using_database_login()
         .stream(_all_orders())
     )

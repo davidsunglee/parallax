@@ -24,8 +24,8 @@ import gc
 import json
 import sys
 import tracemalloc
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
@@ -200,9 +200,7 @@ def _keyed_driver(case: lowering_support.Case) -> Driver:
     return Driver(units, run, marked, checkpoint)
 
 
-def _acquisition_driver(case: acquisition_support.Case) -> Driver:
-    handle: ScopedDatabase = acquisition_support.database(case)
-
+def _acquisition_driver(case: acquisition_support.Case, handle: ScopedDatabase) -> Driver:
     def run() -> None:
         acquisition_support.acquire(handle, case)
 
@@ -236,13 +234,18 @@ def _model_driver() -> Driver:
     return Driver(1, run, marked, checkpoint)
 
 
-def driver_for(name: str) -> Driver:
+@contextmanager
+def driver_for(name: str) -> Generator[Driver]:
     window = WINDOWS[name]
     if window == KEYED_WINDOW:
-        return _keyed_driver(lowering_support.case_named(name))
+        yield _keyed_driver(lowering_support.case_named(name))
+        return
     if window == ACQUISITION_WINDOW:
-        return _acquisition_driver(acquisition_support.case_named(name))
-    return _model_driver()
+        case = acquisition_support.case_named(name)
+        with acquisition_support.database(case) as handle:
+            yield _acquisition_driver(case, handle)
+        return
+    yield _model_driver()
 
 
 def _timed(driver: Driver) -> int:
@@ -292,49 +295,49 @@ def measure(name: str, *, warmups: int, measured: int) -> dict[str, object]:
     if warmups < 0 or measured <= 0:
         raise ValueError("warmups must be non-negative and measured must be positive")
     window = WINDOWS[name]
-    driver = driver_for(name)
     observe = window == KEYED_WINDOW
 
-    with untraced():
-        for _ in range(warmups):
-            driver.run()
-        elapsed: list[int] = []
-        call_samples: dict[str, list[int]] = {name: [] for name in OBSERVED_FUNCTIONS}
-        for _ in range(measured):
-            elapsed.append(_timed(driver))
-            if observe:
-                for called, count in _observed(driver).calls.items():
-                    call_samples[called].append(count)
-
-    transient: list[int] = []
-    tracemalloc.start()
-    try:
+    with driver_for(name) as driver:
         with untraced():
+            for _ in range(warmups):
+                driver.run()
+            elapsed: list[int] = []
+            call_samples: dict[str, list[int]] = {name: [] for name in OBSERVED_FUNCTIONS}
             for _ in range(measured):
-                transient.append(_peak(driver))
-        kept = retained(driver.checkpoint)
-    finally:
-        tracemalloc.stop()
+                elapsed.append(_timed(driver))
+                if observe:
+                    for called, count in _observed(driver).calls.items():
+                        call_samples[called].append(count)
 
-    units = driver.units
-    return {
-        "case": name,
-        "window": window,
-        "units": units,
-        "samples": {
-            "elapsedUs": _per_unit([total / 1_000 for total in elapsed], units),
-            "transientBytes": _per_unit(transient, units),
-            "retainedBytes": _per_unit([kept], units),
-        },
-        "calls": {
-            called: float(median(samples)) / units
-            for called, samples in call_samples.items()
-            if observe
-        },
-        "warmups": warmups,
-        "measured": measured,
-        "retainedWarmups": RETAINED_WARMUPS,
-    }
+        transient: list[int] = []
+        tracemalloc.start()
+        try:
+            with untraced():
+                for _ in range(measured):
+                    transient.append(_peak(driver))
+            kept = retained(driver.checkpoint)
+        finally:
+            tracemalloc.stop()
+
+        units = driver.units
+        return {
+            "case": name,
+            "window": window,
+            "units": units,
+            "samples": {
+                "elapsedUs": _per_unit([total / 1_000 for total in elapsed], units),
+                "transientBytes": _per_unit(transient, units),
+                "retainedBytes": _per_unit([kept], units),
+            },
+            "calls": {
+                called: float(median(samples)) / units
+                for called, samples in call_samples.items()
+                if observe
+            },
+            "warmups": warmups,
+            "measured": measured,
+            "retainedWarmups": RETAINED_WARMUPS,
+        }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
