@@ -391,6 +391,7 @@ class ControlledRuntime:
         self._active: ControlledScope | None = None
         self._closed = False
         self._retired = False
+        self._retirement_active = False
         self._on_retired: Callable[[], None] | None = None
 
     @property
@@ -445,12 +446,25 @@ class ControlledRuntime:
                 )
 
     def restore_authorization(self) -> None:
-        """Restore the login role unless session retirement already owns cleanup."""
-        with self._retirement:
-            with self._state:
-                retired = self._retired
-            if not retired:
-                restore_role(self._connection)
+        """Restore the login role unless session retirement already owns cleanup.
+
+        Restoration stays outside the retirement claim so the termination
+        ladder can tear down a session whose RESET ROLE round trip is blocked.
+        Cleanup that starts after retirement was claimed skips RESET ROLE and
+        waits for that ownership decision; cleanup already restoring lets the
+        teardown interrupt it, then observes the decision before release.
+        """
+        with self._state:
+            retiring = self._retirement_active or self._retired
+        if retiring:
+            with self._retirement:
+                return
+        restore_role(self._connection)
+        with self._state:
+            interrupted = self._retirement_active
+        if interrupted:
+            with self._retirement:
+                return
 
     def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:
@@ -566,7 +580,14 @@ class ControlledRuntime:
         with self._retirement:
             with self._state:
                 pending = not self._retired
-            yield pending
+                if pending:
+                    self._retirement_active = True
+            try:
+                yield pending
+            finally:
+                if pending:
+                    with self._state:
+                        self._retirement_active = False
 
     def report_retirement_to(self, observer: Callable[[], None]) -> None:
         """Call *observer* once this session is gone, immediately if it already is.

@@ -128,6 +128,7 @@ class _FakeConnection:
         login_rows: list[MappingRow] | None = None,
         role_error: BaseException | None = None,
         reset_error: Exception | None = None,
+        reset_parked: Callable[[], None] | None = None,
     ) -> None:
         self.rows: list[MappingRow] = rows if rows is not None else []
         self.statements: list[tuple[str, tuple[object, ...]]] = []
@@ -148,15 +149,20 @@ class _FakeConnection:
         self.login_rows = login_rows
         self.role_error = role_error
         self.reset_error = reset_error
+        self._reset_parked = reset_parked if reset_parked is not None else lambda: None
 
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
 
     def execute(self, sql: object, binds: Sequence[object] | None = None) -> _FakeCursor:
         text = sql.decode() if isinstance(sql, bytes) else str(sql)
-        if text == "RESET ROLE" and self.reset_error is not None:
-            self.statements.append((text, tuple(binds or ())))
-            raise self.reset_error
+        if text == "RESET ROLE":
+            cursor = self.cursor()
+            cursor.execute(sql, binds)
+            self._reset_parked()
+            if self.reset_error is not None:
+                raise self.reset_error
+            return cursor
         if "SET ROLE" in text and text != "RESET ROLE" and self.role_error is not None:
             self.statements.append((text, tuple(binds or ())))
             raise self.role_error
@@ -913,6 +919,52 @@ def test_termination_owns_principal_cleanup_until_the_session_is_condemned() -> 
     assert reports == [TerminationReport(terminated=True)]
     assert connection.closes == 1
     assert all(statement != "RESET ROLE" for statement, _ in connection.statements)
+    assert scope.cleanup_result == Invalidated()
+
+
+def test_termination_interrupts_a_blocked_principal_restoration() -> None:
+    # A principal cleanup is blocked in RESET ROLE after best-effort cancellation
+    # could not wake it. Termination must still reach native close, which unblocks
+    # restoration; cleanup then observes the condemned session and reports its
+    # established disposal rather than hanging behind its own round trip.
+    restoring = threading.Event()
+    closing = threading.Event()
+    finish_close = threading.Event()
+
+    def park_reset() -> None:
+        restoring.set()
+        assert closing.wait(timeout=5.0)
+
+    def park_close() -> None:
+        closing.set()
+        assert finish_close.wait(timeout=5.0)
+
+    connection = _FakeConnection(parked=park_close, reset_parked=park_reset)
+    execution = _execution(connection)
+    runtime = cast("Any", execution)._runtime
+    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope.__enter__()
+    retirement = observing(runtime, "_retirement")
+
+    cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
+    cleaning.start()
+    assert restoring.wait(timeout=5.0)
+
+    reports: list[TerminationReport] = []
+    terminating = threading.Thread(target=lambda: reports.append(execution.terminate_active()))
+    terminating.start()
+    assert closing.wait(timeout=5.0)
+    assert retirement.contended.wait(timeout=5.0)
+
+    finish_close.set()
+    terminating.join(timeout=5.0)
+    cleaning.join(timeout=5.0)
+
+    assert not terminating.is_alive()
+    assert not cleaning.is_alive()
+    assert reports == [TerminationReport(terminated=True)]
+    assert connection.closes == 1
+    assert [statement for statement, _ in connection.statements].count("RESET ROLE") == 1
     assert scope.cleanup_result == Invalidated()
 
 

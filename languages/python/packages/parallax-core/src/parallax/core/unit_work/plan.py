@@ -2,7 +2,7 @@
 
 A Write Plan is the immutable, execution-ordered result of one planning call.
 It retains no Transaction Instant, raw Write Observation, concurrency mode,
-Subject Identity, strategy object, barrier marker, or private group — every
+Actor Identity, strategy object, barrier marker, or private group — every
 derived value is materialized into the steps themselves.
 
 Planned Steps is a logical ``Sequence[PlannedWrite]``; its physical backing is
