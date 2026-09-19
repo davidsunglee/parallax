@@ -44,10 +44,11 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert contract.memory_scaling_arms == (200, 2_000)
 
 
-# Authored contract and workload changes require recapture; the lock digest
-# records the capture's dependencies and remains valid across later dependency
-# updates, and an instrument edit is judged for comparability beside the evidence.
-def test_committed_envelope_digests_match_their_inputs() -> None:
+# A retained capture keeps the digest measured at its producing commit. The
+# Snapshot workload is unchanged and remains current; the authority migration
+# changed write-instrument source without a recapture, so verification must name
+# that member stale instead of making the historical evidence claim new inputs.
+def test_committed_envelope_digests_preserve_their_provenance() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
         "Mapping[str, object]",
@@ -61,7 +62,10 @@ def test_committed_envelope_digests_match_their_inputs() -> None:
 
     assert provenance["budgetContractDigest"] == BudgetContract.load().digest
     assert provenance["workloadDigest"] == workload_digest()
-    assert write_provenance["workloadDigest"] == lowering_support.write_lowering_digest()
+    assert write_provenance["workloadDigest"] != lowering_support.write_lowering_digest()
+    assert cost_report.verify(portfolio) == [
+        "the write-lowering envelope's workload digest is stale"
+    ]
     assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
 
 

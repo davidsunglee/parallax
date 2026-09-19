@@ -582,10 +582,10 @@ class _StandaloneExecution:
     begins adopts whatever selection is current at that call, through an
     adoption of its own, and is served under that selection for its whole
     execution — a publication landing afterwards reaches the next operation and
-    never this one. It holds the RUNTIME for the same reason it holds the
-    Serving Model and not a selection: a connection belongs to one operation,
-    so what is retained here is the ability to acquire one rather than one
-    already acquired.
+    never this one. It holds the bound context SOURCE for the same reason it
+    holds the Serving Model and not a selection: a connection belongs to one
+    operation, so what is retained here is the ability to create one acquisition
+    under the selected authority rather than a connection already acquired.
     """
 
     lifecycle: InstalledLifecycle | None

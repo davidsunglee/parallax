@@ -93,9 +93,10 @@ connection be held for exactly one operation without any statement being able to
 take or give one back.
 
 ```text
-adapter configuration   immutable, resource-free; opens an independent runtime
-  runtime               the running resource one Database Root owns
-    connection context  one single-use acquisition, yielding scoped execution
+adapter configuration          immutable, resource-free; opens an independent runtime
+  runtime<Authorization>       the running resource one Database Root owns
+    bound context source       a resource-free authorization binding
+      connection context       one single-use acquisition, yielding scoped execution
 ```
 
 **Configuration owns nothing.** Constructing it MUST open no connection, no
@@ -107,6 +108,23 @@ Database Roots built from one configuration own two runtimes, and closing either
 the other working. External inputs a connection string refers to (environment,
 service files, credentials, server defaults) resolve when each physical
 connection is created rather than being frozen at construction.
+
+**A runtime binds before it acquires.** Its `Authorization` parameter is an
+opaque provider value. The runtime captures the actual authenticated login
+identity during readiness and exposes it after publication. Binding either that
+existing login authority or one validated `Authorization` produces a stable,
+resource-free context source; it performs no I/O and acquires nothing. A
+provider-invalid authorization is refused at binding. Each context the source
+creates is fresh and carries that binding through exactly one acquisition.
+
+```text
+runtime.loginExecution()                         → ConnectionContextSource
+runtime.principalExecution(authorization)        → ConnectionContextSource | InvalidAuthorization
+source.newContext()                              → ConnectionContext
+```
+
+The runtime has no direct context-producing operation. Selection of login or
+principal authority is therefore explicit before any context can be created.
 
 **A runtime is ready or it is not.** Opening returns only a runtime that has
 proved it can execute: waiting for retained capacity, where a mode retains any,
@@ -121,11 +139,13 @@ releases what it took on the way out, under the release rule below: what
 it reports is what that release ESTABLISHED, never a promise of reclamation a
 native disposal or accounting that itself failed cannot make.
 
-**One acquisition is single-use.** Creating a connection context takes nothing.
-Entering it acquires, prepares, and admits, or fails having already run that
-same cleanup over whatever partial ownership it took — so nothing is left for
-the caller to release, and what the cleanup established is readable on the
-context. Leaving it revokes the execution it yielded and
+**One acquisition is single-use.** Creating a connection context from a bound
+source takes nothing. Entering it acquires, prepares, establishes the bound
+authorization where one is required, and admits, or fails having already run
+that same cleanup over whatever partial ownership it took — so nothing is left
+for the caller to release, and what the cleanup established is readable on the
+context. Leaving it revokes the execution it yielded, restores scoped
+authorization where reuse remains possible, and
 releases the connection exactly once. Re-entering one, entering one that has
 exited, and entering one whose entry failed are each refused without touching
 the resource. Each entry yields FRESH execution access even where the physical
@@ -136,9 +156,12 @@ Entering opens no transaction and leaving neither commits nor rolls back:
 transaction outcomes stay the execution interface's, authoritative and unchanged.
 
 **Admission decides what may finish.** Starting an acquisition reserves no right
-to execute. Expiry and closure are decided together, once, immediately before
-the connection is handed over. A native success that arrives after the budget is
-spent is released and reported as a timeout rather than admitted. Work
+to execute. Expiry and closure are decided together immediately before the
+connection is handed over. An implementation MAY make an earlier check before
+provider setup, but after installing bound authorization it MUST recheck
+admission before publication; setup cannot reserve a right to execute across a
+concurrent close or an expired budget. A native success that arrives after the
+budget is spent is released and reported as a timeout rather than admitted. Work
 already admitted may finish everything it was going to do, including statements
 it has not issued yet; anything needing a NEW acquisition after a close — a
 retry, a delivery that has not read its first page — is refused from then on.
@@ -165,8 +188,15 @@ path, and that path reports what it ESTABLISHED rather than what it attempted:
 | Invalidated | Physical disposal was established BEFORE the handoff, and the handoff then completed for accounting |
 | ReleaseUnconfirmed | Required disposal or the accounting after it failed, or could not be confirmed |
 
-Reuse is offered only for a connection that is idle and that the execution did
-not declare suspect. Anything else is disposed of FIRST and handed back second:
+Cleanup follows the finite phase order **inspect → restore → dispose → return**.
+Restore removes scoped authorization only while reuse remains possible; a
+restore failure makes disposal mandatory. Its stable condition is
+`authorization-restore-failed`, alongside the inspection conditions and the
+existing `close-failed` and `handoff-failed` disposal/accounting conditions.
+
+Reuse is offered only for a connection that is idle, has had scoped
+authorization restored, and was not declared suspect by execution. Anything
+else is disposed of FIRST and handed back second:
 disposal alone would leak the capacity, and a handoff alone would offer a
 connection nothing may reuse. Nothing repairs an unexpected state in order to
 reuse it, and idle status alone does not establish arbitrary session
@@ -192,12 +222,13 @@ exceptions, whose existing precedence and cleanup rules are unchanged.
 
 ## Acquisition and readiness failures are outside the SQL categories
 
-An acquisition that produces no usable connection reports one of four
+An acquisition that produces no usable connection reports one of five
 driver-neutral reasons: **timeout**, **queue rejected**, **closed**, and
-**preparation failed** — the last covering establishing or preparing execution
-access, including a direct connection attempt that failed, a session
+**preparation failed**, or **authorization failed**. Preparation failure covers
+establishing or preparing execution access, including a direct connection attempt that failed, a session
 configuration the codecs cannot execute under, and a checkout that handed over a
-connection which was not idle. No modeled statement ran, so nothing was
+connection which was not idle. Authorization failure means the provider could
+not establish the source's bound authorization. No modeled statement ran, so nothing was
 classified: these are not `m-db-error` categories and no retry rule reads them.
 
 A runtime that did not become ready reports which readiness phase stopped it and

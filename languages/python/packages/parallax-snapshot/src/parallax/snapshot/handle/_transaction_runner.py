@@ -219,10 +219,10 @@ class TransactionRunner:
     """One handle's transaction runner, built once at connect.
 
     Holds what every invocation needs and nothing an invocation retains: the
-    runtime every attempt acquires its connection from, the Clock the unit of
-    work reads, the installed lifecycle every root and attempt reports through,
-    the Serving Model each attempt adopts from, and the root's defaults every
-    outer invocation resolves its omitted options against. Neither the
+    bound context source every attempt creates its acquisition from, the Clock
+    the unit of work reads, the installed lifecycle every root and attempt
+    reports through, the Serving Model each attempt adopts from, and the root's
+    defaults every outer invocation resolves its omitted options against. Neither the
     selection, a connection, nor the active transaction is held here — that is
     what makes the first two per attempt, so a retry adopts afresh and acquires
     afresh rather than replaying over what its predecessor left, and what keeps

@@ -570,24 +570,12 @@ def _to_legacy(document: dict[str, Any]) -> None:
     _rename_counters(document, {new: old for old, new in _RENAMED_COUNTERS.items()})
 
 
-def _commit_in_clone(commit: str) -> bool:
-    completed = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-        cwd=cost_report.WORKSPACE,
-        capture_output=True,
-        check=False,
-    )
-    return completed.returncode == 0
-
-
 # The two retained captures carry the legacy counter vocabulary on every keyed
-# case and both runtimes; neither file is rewritten, and both keep verifying as
-# evidence beside a capture taken under the current vocabulary. Their producing
-# commits were squash-merged, so a clone holds them only if it still carries the
-# original branches; the whole-portfolio verification needs the commit and is
-# skipped where it is absent, while the matrix contract is checked everywhere.
+# case and both runtimes. Their original workload digests remain untouched when
+# later instrument source changes without a recapture, and verification names
+# that mismatch rather than presenting the old readings as current evidence.
 @pytest.mark.parametrize("name", ["before", "after"])
-def test_each_retained_historical_portfolio_verifies_under_the_legacy_vocabulary(
+def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     name: str,
 ) -> None:
     write = _historical(name, write_report.SUBJECT)
@@ -600,10 +588,7 @@ def test_each_retained_historical_portfolio_verifies_under_the_legacy_vocabulary
             (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(encoding="utf-8")
         ),
     )
-    commit = str(cast("dict[str, Any]", write["provenance"])["commit"])
-    if not _commit_in_clone(commit):
-        pytest.skip(f"{name}/ producing commit {commit} is not in this clone")
-    assert verify(portfolio) == []
+    assert verify(portfolio) == ["the write-lowering envelope's workload digest is stale"]
 
 
 def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture() -> None:

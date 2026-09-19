@@ -82,8 +82,8 @@ def checkout(
 
     The remaining budget is what the native checkout is given, so its own
     health-check recovery spends the caller's time rather than an additional
-    allowance. Native failures map to the four acquisition reasons and keep
-    their cause.
+    allowance. Native failures map to the checkout-reachable acquisition reasons
+    and keep their cause; authorization setup is classified later, after checkout.
 
     An expiry is reported as ``preparation_failed`` rather than ``timeout``
     when a connection initialization refusal is currently on record: a
@@ -162,9 +162,10 @@ def release(
 ) -> CleanupResult:
     """End this connection's exclusive use, and report what that established.
 
-    The sequence is finite — inspect, dispose where inspection or the execution
-    says reuse cannot be established, hand back exactly once — so the issues it
-    can report are bounded by the steps rather than accumulated as history.
+    The sequence is finite — inspect, restore scoped authorization where reuse
+    remains possible, dispose where either step or the execution says reuse
+    cannot be established, then hand back exactly once — so the issues it can
+    report are bounded by the steps rather than accumulated as history.
 
     Three refusals are deliberate. A failed physical close does NOT fall back to
     returning a connection that is still suspect, because balancing the
