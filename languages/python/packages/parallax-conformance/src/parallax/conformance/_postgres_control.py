@@ -369,6 +369,7 @@ class ControlledRuntime:
         self._connection = connection
         self._login_identity = login_identity
         self._state = threading.Lock()
+        self._retirement_changed = threading.Condition(self._state)
         # Held for the whole of a control action, and taken BEFORE the state
         # lock by anything that admits a scope. Revalidating a captured scope
         # and acting on it have to be one step: between a check and an act, a
@@ -392,6 +393,8 @@ class ControlledRuntime:
         self._closed = False
         self._retired = False
         self._retirement_active = False
+        self._restoration_pending = False
+        self._restoration_active = False
         self._on_retired: Callable[[], None] | None = None
 
     @property
@@ -448,23 +451,39 @@ class ControlledRuntime:
     def restore_authorization(self) -> None:
         """Restore the login role unless session retirement already owns cleanup.
 
-        Restoration stays outside the retirement claim so the termination
-        ladder can tear down a session whose RESET ROLE round trip is blocked.
-        Cleanup that starts after retirement was claimed skips RESET ROLE and
-        waits for that ownership decision; cleanup already restoring lets the
-        teardown interrupt it, then observes the decision before release.
+        Cleanup owns the retirement claim through the call into the shared role
+        helper, closing the gap in which teardown could condemn the session just
+        before RESET ROLE began. The helper publishes when it is about to enter
+        native I/O; only then may termination interrupt a blocked round trip.
         """
-        with self._state:
-            retiring = self._retirement_active or self._retired
-        if retiring:
-            with self._retirement:
-                return
-        restore_role(self._connection)
-        with self._state:
-            interrupted = self._retirement_active
-        if interrupted:
-            with self._retirement:
-                return
+        restore_error: Exception | None = None
+        with self._retirement:
+            with self._retirement_changed:
+                if self._retired:
+                    return
+                self._restoration_pending = True
+
+            def begin_native_restoration() -> None:
+                with self._retirement_changed:
+                    self._restoration_active = True
+                    self._retirement_changed.notify_all()
+
+            try:
+                restore_role(self._connection, before_execute=begin_native_restoration)
+            except Exception as exc:
+                restore_error = exc
+            finally:
+                with self._retirement_changed:
+                    self._restoration_pending = False
+                    self._restoration_active = False
+                    self._retirement_changed.notify_all()
+
+        with self._retirement_changed:
+            while self._retirement_active:
+                self._retirement_changed.wait()
+            retired = self._retired
+        if restore_error is not None and not retired:
+            raise restore_error
 
     def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:
@@ -556,38 +575,54 @@ class ControlledRuntime:
 
         Termination is not a close and does not go through one, but what it
         leaves behind is a retired runtime: closing that session again would
-        establish nothing new, and its opener may forget it.
+        establish nothing new, and its opener may forget it. The caller owns a
+        :meth:`retiring` claim, including the interrupting claim that can run
+        while native role restoration holds the retirement lock.
         """
-        with self._retirement:
-            with self._state:
-                self._closed = True
-            self._complete_retirement()
+        with self._state:
+            self._closed = True
+        self._complete_retirement()
 
     @contextlib.contextmanager
-    def retiring(self) -> Generator[bool]:
+    def retiring(self, *, interrupt_restoration: bool = False) -> Generator[bool]:
         """The claim on ending this session — true while there is still a session to end.
 
         What every path that destroys this session enters: it holds the claim
         across the native teardown and the completion that publishes it, so
         exactly one path ends the session and every other one finds it already
-        ended. Without that, two paths could each read an unretired runtime and
-        both close the one driver connection.
+        ended. Termination may interrupt restoration only after RESET ROLE has
+        crossed into native I/O; before that boundary it waits for the ordinary
+        claim so condemnation cannot overtake the reset call.
 
         The claim is released whether or not retirement was reached, which is
         what keeps a refused close retryable: what a later attempt observes is
         the retirement flag, not a claim somebody once took.
         """
-        with self._retirement:
-            with self._state:
-                pending = not self._retired
-                if pending:
+        owns_lock = self._retirement.acquire(blocking=not interrupt_restoration)
+        if not owns_lock:
+            with self._retirement_changed:
+                while self._restoration_pending and not self._restoration_active:
+                    self._retirement_changed.wait()
+                interrupts_restoration = self._restoration_active and not self._retired
+                if interrupts_restoration:
                     self._retirement_active = True
-            try:
-                yield pending
-            finally:
-                if pending:
-                    with self._state:
-                        self._retirement_active = False
+            if not interrupts_restoration:
+                self._retirement.acquire()
+                owns_lock = True
+
+        with self._retirement_changed:
+            pending = not self._retired
+            if pending:
+                self._retirement_active = True
+        try:
+            yield pending
+        finally:
+            if pending:
+                with self._retirement_changed:
+                    self._retirement_active = False
+                    self._retirement_changed.notify_all()
+            if owns_lock:
+                self._retirement.release()
 
     def report_retirement_to(self, observer: Callable[[], None]) -> None:
         """Call *observer* once this session is gone, immediately if it already is.
@@ -798,7 +833,7 @@ class PostgresInterleavedExecution:
         and the miss is recorded rather than dressed up as a termination this
         escalation achieved.
         """
-        with self._runtime.retiring() as pending:
+        with self._runtime.retiring(interrupt_restoration=True) as pending:
             if not pending:
                 return TerminationReport(
                     terminated=False,
