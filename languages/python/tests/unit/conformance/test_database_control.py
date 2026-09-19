@@ -922,6 +922,62 @@ def test_termination_owns_principal_cleanup_until_the_session_is_condemned() -> 
     assert scope.cleanup_result == Invalidated()
 
 
+def test_termination_cannot_overtake_principal_restoration_before_native_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cleanup has committed to restoring this live session but has not reached
+    # the native RESET ROLE call. Termination must wait at that boundary, then
+    # may interrupt once restoration enters driver I/O; RESET ROLE is therefore
+    # never first issued after the termination has condemned the session.
+    entered_restore = threading.Event()
+    permit_restore = threading.Event()
+    restoring = threading.Event()
+    closing = threading.Event()
+
+    def park_before_native_io(
+        connection: Any, *, before_execute: Callable[[], None] | None = None
+    ) -> None:
+        entered_restore.set()
+        assert permit_restore.wait(timeout=5.0)
+        if before_execute is not None:
+            before_execute()
+        connection.execute("RESET ROLE")
+
+    def park_reset() -> None:
+        restoring.set()
+        assert closing.wait(timeout=5.0)
+
+    monkeypatch.setattr(
+        "parallax.conformance._postgres_control.restore_role", park_before_native_io
+    )
+    connection = _FakeConnection(parked=closing.set, reset_parked=park_reset)
+    execution = _execution(connection)
+    runtime = cast("Any", execution)._runtime
+    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope.__enter__()
+
+    cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
+    cleaning.start()
+    assert entered_restore.wait(timeout=5.0)
+
+    reports: list[TerminationReport] = []
+    terminating = threading.Thread(target=lambda: reports.append(execution.terminate_active()))
+    terminating.start()
+    assert not closing.wait(timeout=0.25)
+
+    permit_restore.set()
+    assert restoring.wait(timeout=5.0)
+    terminating.join(timeout=5.0)
+    cleaning.join(timeout=5.0)
+
+    assert not terminating.is_alive()
+    assert not cleaning.is_alive()
+    assert reports == [TerminationReport(terminated=True)]
+    assert connection.closes == 1
+    assert [statement for statement, _ in connection.statements].count("RESET ROLE") == 1
+    assert scope.cleanup_result == Invalidated()
+
+
 def test_termination_interrupts_a_blocked_principal_restoration() -> None:
     # A principal cleanup is blocked in RESET ROLE after best-effort cancellation
     # could not wake it. Termination must still reach native close, which unblocks
@@ -944,7 +1000,6 @@ def test_termination_interrupts_a_blocked_principal_restoration() -> None:
     runtime = cast("Any", execution)._runtime
     scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
     scope.__enter__()
-    retirement = observing(runtime, "_retirement")
 
     cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
     cleaning.start()
@@ -954,7 +1009,7 @@ def test_termination_interrupts_a_blocked_principal_restoration() -> None:
     terminating = threading.Thread(target=lambda: reports.append(execution.terminate_active()))
     terminating.start()
     assert closing.wait(timeout=5.0)
-    assert retirement.contended.wait(timeout=5.0)
+    assert cleaning.is_alive()
 
     finish_close.set()
     terminating.join(timeout=5.0)
@@ -1202,6 +1257,44 @@ def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once()
     borrower.join(timeout=5.0)
     closer.join(timeout=5.0)
 
+    assert connection.closes == 1
+    assert runtime.retired is True
+
+
+def test_an_interrupting_retirement_waits_for_an_ordinary_retirement() -> None:
+    # Only native role restoration grants the termination ladder permission to
+    # bypass the retirement lock. If an ordinary close owns teardown instead,
+    # an interrupt-capable claimant waits and then observes the retired session
+    # rather than racing a second native close against the first owner.
+    closing = threading.Event()
+    proceed = threading.Event()
+
+    def park_close() -> None:
+        closing.set()
+        assert proceed.wait(timeout=5.0)
+
+    connection = _FakeConnection(parked=park_close)
+    runtime = cast("Any", _adapter(connection).open())
+    ordinary = threading.Thread(target=runtime._retire_session)
+    ordinary.start()
+    assert closing.wait(timeout=5.0)
+
+    retirement = observing(runtime, "_retirement")
+    claims: list[bool] = []
+
+    def interrupting_retirement() -> None:
+        with runtime.retiring(interrupt_restoration=True) as pending:
+            claims.append(pending)
+
+    interrupting = threading.Thread(target=interrupting_retirement)
+    interrupting.start()
+    assert retirement.contended.wait(timeout=5.0)
+
+    proceed.set()
+    ordinary.join(timeout=5.0)
+    interrupting.join(timeout=5.0)
+
+    assert claims == [False]
     assert connection.closes == 1
     assert runtime.retired is True
 

@@ -29,13 +29,22 @@ class ObservedClaim:
         self._claim = claim
         self.contended = threading.Event()
 
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if self._claim.acquire(blocking=False):
+            return True
+        self.contended.set()
+        if not blocking:
+            return False
+        return self._claim.acquire(timeout=timeout)
+
+    def release(self) -> None:
+        self._claim.release()
+
     def __enter__(self) -> None:
-        if not self._claim.acquire(blocking=False):
-            self.contended.set()
-            self._claim.acquire()
+        self.acquire()
 
     def __exit__(self, *exc: object) -> None:
-        self._claim.release()
+        self.release()
 
 
 def observing(owner: object, claim: str) -> ObservedClaim:
