@@ -1200,7 +1200,7 @@ _Avoid_: list of observed writes, result collection, public plan group, Atomic U
 
 **Write Planner**:
 The model-scoped, stateless Unit Work module whose single pure planning
-operation converts one flush's boundary-captured Subject Identity, lazy
+operation converts one flush's boundary-captured Actor Identity, lazy
 Transaction Instant, Concurrency Preference, buffered writes, and observations into a
 Write Planning Result. Its planning strategies are wired at construction; it retains no
 attempt state and performs no database, clock, SQL, dialect, or driver work.

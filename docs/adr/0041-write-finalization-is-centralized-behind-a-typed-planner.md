@@ -251,3 +251,15 @@ operation, `finalize(PlanningRequest) -> WritePlanningResult`, and the same path
 is `build_write_planner(model).finalize(PlanningRequest(...)).plan`. This is a
 spelling change only: `plan()` was already a projection over `finalize()`, so no
 caller plans differently or does more work than before.
+
+## Amendment (2026-09): planning carries Actor Identity
+
+ADR 0066 introduces database-login execution alongside subject execution. Every
+Subject Identity reference above as a Planning Request input is superseded by
+the closed **Actor Identity**: either a captured Subject Identity or a captured
+Database Login Identity. The keyword-only request field and settlement keyword
+are both `actor_identity`.
+
+The neutrality rule is unchanged. Planning accepts either variant without
+inspecting it except where Audit Provenance projects the actor to its persisted
+string, and a Write Plan retains neither variant as planning context.

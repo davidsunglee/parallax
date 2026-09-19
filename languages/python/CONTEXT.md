@@ -602,7 +602,7 @@ _Avoid_: `Finalization`, `plan()`, plan-and-claims tuple
 `WriteSettlement` in `parallax.core.unit_work.write_settlement`, the planner's
 own module for everything after dependency ordering. `WritePlanner.__init__`
 constructs one over the family-fact reader it holds; `settle(ordered_writes, *,
-concurrency, subject_identity, transaction_instant)` is its whole surface and
+concurrency, actor_identity, transaction_instant)` is its whole surface and
 answers the `WritePlanningResult` the planner returns unchanged. Imports run
 `write_planner` to `write_settlement` and never back, so the two symbols both
 files use are defined here.

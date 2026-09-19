@@ -10,6 +10,7 @@ from typing import Final
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
+    ActorIdentity,
     BufferItem,
     KeyedWrite,
     MaterializedWriteGroup,
@@ -30,10 +31,10 @@ from parallax.core.unit_work.instructions import (
 
 __all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer"]
 
-# An arbitrary nonempty Subject Identity: `m-unit-work` requires one on every
-# Planning Request and guarantees it is never inspected, so any value serves
+# An arbitrary Actor Identity: `m-unit-work` requires one on every Planning
+# Request and guarantees it is never inspected, so either closed variant serves
 # every suite here identically.
-TEST_ACTOR_IDENTITY: Final[SubjectActor] = SubjectActor("test-subject")
+TEST_ACTOR_IDENTITY: Final[ActorIdentity] = SubjectActor("test-subject")
 
 
 def observed_buffer(
