@@ -53,6 +53,9 @@ down:
 - connection budgeting across workers, replicas and runtimes;
 - observing the pool, and what its measurements do and do not mean;
 - which session settings are required, which are preserved;
+- how fixed login identity, scoped role replacement/restoration, and required
+  session affinity behave, including unsupported transaction/statement pooling
+  proxies and the absence of runtime proxy detection;
 - the three logging paths and their different disclosure policies;
 - migrating from the pre-pooling surface.
 

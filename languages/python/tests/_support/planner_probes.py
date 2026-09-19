@@ -17,7 +17,7 @@ from parallax.core.unit_work import (
     ObjectKey,
     ObservedKeyedWrite,
     PredicateWrite,
-    SubjectIdentity,
+    SubjectActor,
     WriteObservation,
     buffered_write,
     object_key,
@@ -28,12 +28,12 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 
-__all__ = ["TEST_SUBJECT_IDENTITY", "observed_buffer"]
+__all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer"]
 
 # An arbitrary nonempty Subject Identity: `m-unit-work` requires one on every
 # Planning Request and guarantees it is never inspected, so any value serves
 # every suite here identically.
-TEST_SUBJECT_IDENTITY: Final[SubjectIdentity] = SubjectIdentity("test-subject")
+TEST_ACTOR_IDENTITY: Final[SubjectActor] = SubjectActor("test-subject")
 
 
 def observed_buffer(

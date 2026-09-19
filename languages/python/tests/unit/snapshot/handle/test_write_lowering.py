@@ -105,7 +105,7 @@ from parallax.descriptor import _records
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -147,7 +147,7 @@ def _flush_and_lower(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant,
                 concurrency=concurrency,
                 buffered_writes=observed_buffer(buffer, model, observations),

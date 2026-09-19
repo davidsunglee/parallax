@@ -204,9 +204,9 @@ class Database:
         "_transactions",
     )
 
-    def __init__(
+    def __init__[Authorization](
         self,
-        runtime: DatabaseRuntime,
+        runtime: DatabaseRuntime[Authorization],
         model: DomainModel | ServingModel,
         *,
         options: DatabaseOptions | None = None,
@@ -256,6 +256,7 @@ class Database:
         serving = served_model(model, _CONSTRUCTOR_REFUSAL)
         defaults = options if options is not None else DatabaseOptions()
         self._runtime = runtime
+        execution = runtime.login_execution()
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
         # operation below branches on it before allocating a UUID, a descriptor,
@@ -275,11 +276,11 @@ class Database:
         self._reads = standalone_read_scope(
             lifecycle=self._lifecycle,
             serving=serving,
-            runtime=runtime,
+            source=execution,
             planner=self._planner,
         )
         self._transactions = TransactionRunner(
-            runtime, self._clock, self._lifecycle, serving, self._planner, defaults
+            execution, self._clock, self._lifecycle, serving, self._planner, defaults
         )
         # Held across the whole of close, so the ordering below is the ordering
         # every caller sees: a second close waits for the first rather than
@@ -299,9 +300,9 @@ class Database:
         )
 
     @classmethod
-    def connect(
+    def connect[Authorization](
         cls,
-        adapter: DatabaseAdapter,
+        adapter: DatabaseAdapter[Authorization],
         model: DomainModel | ServingModel,
         *,
         options: DatabaseOptions | None = None,

@@ -35,6 +35,7 @@ import os
 import socket
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 import psycopg
@@ -42,12 +43,22 @@ from psycopg.rows import TupleRow, tuple_row
 
 from parallax.conformance._database_control import TerminationReport
 from parallax.core.db_port import (
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
     CleanupResult,
     ConnectionAcquisitionError,
+    ConnectionContextSource,
     DatabaseConnection,
+    Invalidated,
+    InvalidAuthorizationError,
+    ReleaseUnconfirmed,
     Returned,
 )
+from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.postgres import PostgresRole
+from parallax.postgres._authorization import install_role, restore_role
 from parallax.postgres._connection import PostgresConnection, initialize_connection
 from parallax.snapshot import handle
 
@@ -75,7 +86,16 @@ __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
 
 _BACKEND_PID: Final[str] = "select pg_backend_pid() as pid"
 _TERMINATE_BACKEND: Final[str] = "select pg_terminate_backend(%s) as terminated"
+_LOGIN_IDENTITY: Final[str] = "select session_user as login_identity"
 _RELEASED: Final[CleanupResult] = Returned()
+
+
+def _cleanup_issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> CleanupIssue:
+    return CleanupIssue(
+        phase=phase,
+        code=code,
+        diagnostic=diagnostic_for(exc),
+    )
 
 
 def initialized_session(
@@ -226,8 +246,9 @@ class ControlledScope:
     THIS scope when it finally executes.
     """
 
-    def __init__(self, runtime: ControlledRuntime) -> None:
+    def __init__(self, runtime: ControlledRuntime, role: PostgresRole | None) -> None:
         self._runtime = runtime
+        self._role = role
         self._execution: PostgresConnection | None = None
         self._spent = False
         self._cleanup_result: CleanupResult | None = None
@@ -241,6 +262,39 @@ class ControlledScope:
             raise RuntimeError("a controlled connection context is entered exactly once")
         self._spent = True
         execution = self._runtime.admit(self)
+        role = self._role
+        if role is not None:
+            try:
+                install_role(self._runtime.native, role)
+            except BaseException as exc:
+                self._cleanup_result = self._runtime.invalidate(
+                    self,
+                    (
+                        _cleanup_issue(
+                            "inspect", "suspect", RuntimeError("role installation failed")
+                        ),
+                    ),
+                )
+                if not isinstance(exc, Exception):
+                    raise
+                raise ConnectionAcquisitionError(
+                    "the requested database principal could not be installed",
+                    reason="authorization_failed",
+                ) from exc
+            try:
+                self._runtime.confirm_authorization(self)
+            except BaseException:
+                try:
+                    restore_role(self._runtime.native)
+                except Exception as restore_error:
+                    self._cleanup_result = self._runtime.invalidate(
+                        self,
+                        (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
+                    )
+                else:
+                    self._runtime.release(self)
+                    self._cleanup_result = _RELEASED
+                raise
         self._execution = execution
         return execution
 
@@ -258,15 +312,39 @@ class ControlledScope:
         # Released even if revocation does not complete: the runtime serves
         # one scope at a time, so a scope that failed to give the session back
         # would leave it refusing every later acquisition.
+        suspect = True
         try:
-            execution.revoke()
+            suspect = execution.revoke()
         finally:
             self._execution = None
-            self._runtime.release(self)
-            # The dedicated session is not returned anywhere: it is this
-            # runtime's for its whole life, so what ended is the exclusive use
-            # of it.
-            self._cleanup_result = _RELEASED
+            if suspect:
+                self._cleanup_result = self._runtime.invalidate(
+                    self,
+                    (_cleanup_issue("inspect", "suspect", RuntimeError("revocation failed")),),
+                )
+            elif self._role is not None:
+                try:
+                    restore_role(self._runtime.native)
+                except Exception as restore_error:
+                    self._cleanup_result = self._runtime.invalidate(
+                        self,
+                        (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
+                    )
+                else:
+                    self._runtime.release(self)
+                    self._cleanup_result = _RELEASED
+            else:
+                self._runtime.release(self)
+                self._cleanup_result = _RELEASED
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledExecutionSource:
+    runtime: ControlledRuntime
+    role: PostgresRole | None
+
+    def new_context(self) -> ConnectionContext:
+        return ControlledScope(self.runtime, self.role)
 
 
 class ControlledRuntime:
@@ -286,8 +364,13 @@ class ControlledRuntime:
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
+    def __init__(
+        self,
+        connection: psycopg.Connection[TupleRow],
+        login_identity: str,
+    ) -> None:
         self._connection = connection
+        self._login_identity = login_identity
         self._state = threading.Lock()
         # Held for the whole of a control action, and taken BEFORE the state
         # lock by anything that admits a scope. Revalidating a captured scope
@@ -318,6 +401,10 @@ class ControlledRuntime:
         return None
 
     @property
+    def login_identity(self) -> str:
+        return self._login_identity
+
+    @property
     def native(self) -> psycopg.Connection[TupleRow]:
         """The dedicated session itself, for this module's control actions alone.
 
@@ -327,8 +414,15 @@ class ControlledRuntime:
         """
         return self._connection
 
-    def connection(self) -> ConnectionContext:
-        return ControlledScope(self)
+    def login_execution(self) -> ConnectionContextSource:
+        return _ControlledExecutionSource(self, None)
+
+    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
+        if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the boundary
+            raise InvalidAuthorizationError(
+                "PostgreSQL principal execution requires a PostgresRole"
+            )
+        return _ControlledExecutionSource(self, authorization)
 
     def admit(self, scope: ControlledScope) -> PostgresConnection:
         with self._admission, self._state:
@@ -345,7 +439,15 @@ class ControlledRuntime:
             self._active = scope
             return PostgresConnection(self._connection)
 
-    def release(self, scope: ControlledScope) -> None:
+    def confirm_authorization(self, scope: ControlledScope) -> None:
+        with self._admission, self._state:
+            if self._closed or self._active is not scope:
+                raise ConnectionAcquisitionError(
+                    "this controlled runtime closed while installing authorization",
+                    reason="closed",
+                )
+
+    def release(self, scope: ControlledScope) -> Exception | None:
         with self._state:
             if self._active is scope:
                 self._active = None
@@ -356,8 +458,21 @@ class ControlledRuntime:
             # waits for it to come back. Nothing here can be raised at — the
             # caller is leaving a scope, not closing a runtime — so a refusal is
             # dropped and stays readable as an unretired runtime.
-            with contextlib.suppress(Exception):
+            try:
                 self._retire_session()
+            except Exception as exc:
+                return exc
+        return None
+
+    def invalidate(self, scope: ControlledScope, issues: tuple[CleanupIssue, ...]) -> CleanupResult:
+        with self._state:
+            self._closed = True
+        close_error = self.release(scope)
+        if close_error is not None:
+            return ReleaseUnconfirmed(
+                (*issues, _cleanup_issue("dispose", "close-failed", close_error))
+            )
+        return Invalidated(issues)
 
     @contextlib.contextmanager
     def holding(self, scope: ControlledScope | None) -> Generator[bool]:
@@ -519,7 +634,19 @@ class ControlledAdapter:
     def open(self) -> ControlledRuntime:
         opener = self._session
         connection = opener() if opener is not None else open_session(self._conninfo)
-        runtime = ControlledRuntime(connection)
+        try:
+            rows = PostgresConnection(connection).execute(_LOGIN_IDENTITY, [])
+            if len(rows) != 1 or len(rows[0]) != 1:
+                raise ValueError("the controlled runtime did not read one session_user value")
+            login = rows[0][0]
+            if not isinstance(login, str) or not login:
+                raise ValueError("the controlled runtime did not read a nonempty session_user")
+            identity = login
+        except BaseException:
+            with contextlib.suppress(Exception):
+                connection.close()
+            raise
+        runtime = ControlledRuntime(connection, identity)
         self.opened = runtime
         return runtime
 

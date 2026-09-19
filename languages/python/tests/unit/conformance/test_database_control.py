@@ -40,10 +40,15 @@ from parallax.conformance._postgres_control import (
 from parallax.core.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
+    Invalidated,
+    InvalidAuthorizationError,
     MappingRow,
     PipelineStatement,
+    ReleaseUnconfirmed,
+    Returned,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.postgres import PostgresRole
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
@@ -55,6 +60,7 @@ class _FakeCursor:
 
     def __init__(self, connection: _FakeConnection) -> None:
         self._connection = connection
+        self._rows = connection.rows
         self.description: list[Any] | None = None
         self.rowcount = 1
 
@@ -66,12 +72,19 @@ class _FakeCursor:
 
     def execute(self, sql: object, binds: Sequence[object] | None = None) -> None:
         text = sql.decode() if isinstance(sql, bytes) else str(sql)
+        if text == "select session_user as login_identity":
+            rows = self._connection.login_rows
+            self._rows = (
+                [{"login_identity": self._connection.login_identity}] if rows is None else rows
+            )
+            self.description = [_Column(name) for name in self._rows[0]] if self._rows else None
+            return
         self._connection.statements.append((text, tuple(binds or ())))
-        rows = self._connection.rows
+        rows = self._rows
         self.description = [_Column(name) for name in rows[0]] if rows else None
 
     def fetchall(self) -> list[tuple[object, ...]]:
-        return [tuple(row.values()) for row in self._connection.rows]
+        return [tuple(row.values()) for row in self._rows]
 
 
 class _Column:
@@ -112,6 +125,10 @@ class _FakeConnection:
         cancel_raises: Exception | None = None,
         close_raises: Exception | None = None,
         parked: Callable[[], None] | None = None,
+        login_identity: object = "test-login",
+        login_rows: list[MappingRow] | None = None,
+        role_error: BaseException | None = None,
+        reset_error: Exception | None = None,
     ) -> None:
         self.rows: list[MappingRow] = rows if rows is not None else []
         self.statements: list[tuple[str, tuple[object, ...]]] = []
@@ -128,9 +145,25 @@ class _FakeConnection:
         # What a control action does while it is in flight, for the pins that
         # need to observe the runtime WHILE one is running rather than after.
         self._parked = parked if parked is not None else lambda: None
+        self.login_identity = login_identity
+        self.login_rows = login_rows
+        self.role_error = role_error
+        self.reset_error = reset_error
 
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
+
+    def execute(self, sql: object, binds: Sequence[object] | None = None) -> _FakeCursor:
+        text = sql.decode() if isinstance(sql, bytes) else str(sql)
+        if text == "RESET ROLE" and self.reset_error is not None:
+            self.statements.append((text, tuple(binds or ())))
+            raise self.reset_error
+        if "SET ROLE" in text and text != "RESET ROLE" and self.role_error is not None:
+            self.statements.append((text, tuple(binds or ())))
+            raise self.role_error
+        cursor = self.cursor()
+        cursor.execute(sql, binds)
+        return cursor
 
     def transaction(self) -> _FakeTransaction:
         return _FakeTransaction(self)
@@ -169,6 +202,10 @@ def _control(connection: _FakeConnection, **kwargs: Any) -> PostgresControl:
 
 def _adapter(connection: _FakeConnection) -> ControlledAdapter:
     return ControlledAdapter("", session=lambda: _native(connection))
+
+
+def _context(runtime: Any) -> Any:
+    return runtime.login_execution().new_context()
 
 
 def _execution(connection: _FakeConnection, **kwargs: Any) -> PostgresInterleavedExecution:
@@ -385,18 +422,18 @@ def test_a_controlled_runtime_serves_one_scope_at_a_time() -> None:
     # this runtime, and two overlapping scopes on it would be the confusion the
     # choreography it serves is built to avoid.
     runtime = _adapter(_FakeConnection()).open()
-    first = runtime.connection()
+    first = _context(runtime)
     with first, pytest.raises(ConnectionAcquisitionError) as refused:
-        runtime.connection().__enter__()
+        _context(runtime).__enter__()
     assert refused.value.reason == "queue_rejected"
     # Released again, the next scope is admitted.
-    with runtime.connection():
+    with _context(runtime):
         pass
 
 
 def test_a_controlled_scope_is_entered_exactly_once() -> None:
     runtime = _adapter(_FakeConnection()).open()
-    scope = runtime.connection()
+    scope = _context(runtime)
     with scope:
         pass
     with pytest.raises(RuntimeError):
@@ -407,7 +444,7 @@ def test_a_closed_controlled_runtime_admits_no_further_scope() -> None:
     runtime = _adapter(_FakeConnection()).open()
     runtime.close()
     with pytest.raises(ConnectionAcquisitionError) as refused:
-        runtime.connection().__enter__()
+        _context(runtime).__enter__()
     assert refused.value.reason == "closed"
 
 
@@ -416,11 +453,152 @@ def test_leaving_a_controlled_scope_revokes_what_it_yielded() -> None:
     # reference kept past the release executes nothing.
     connection = _FakeConnection()
     runtime = _adapter(connection).open()
-    with runtime.connection() as scoped:
+    with _context(runtime) as scoped:
         pass
     with pytest.raises(RuntimeError):
         scoped.execute("select 1", [])
     assert connection.statements == []
+
+
+def test_controlled_principal_source_uses_shared_role_installation_and_restoration() -> None:
+    connection = _FakeConnection()
+    runtime = _adapter(connection).open()
+    source = runtime.principal_execution(PostgresRole("tenant_reader"))
+
+    assert connection.statements == []
+    with source.new_context() as scoped:
+        scoped.execute("select 1", [])
+
+    role_command = connection.statements[0][0]
+    assert "SET ROLE" in role_command
+    assert "tenant_reader" in role_command
+    assert connection.statements[1:] == [("select 1", ()), ("RESET ROLE", ())]
+
+
+def test_controlled_role_installation_failure_refuses_and_retires_the_session() -> None:
+    failure = RuntimeError("role denied")
+    connection = _FakeConnection(role_error=failure)
+    runtime = _adapter(connection).open()
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "authorization_failed"
+    assert refused.value.__cause__ is failure
+    assert isinstance(resource.cleanup_result, Invalidated)
+    assert runtime.retired is True
+    assert connection.closes == 1
+    assert all(statement != "RESET ROLE" for statement, _ in connection.statements)
+
+
+def test_controlled_role_installation_preserves_a_control_flow_exception() -> None:
+    connection = _FakeConnection(role_error=KeyboardInterrupt())
+    runtime = _adapter(connection).open()
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(KeyboardInterrupt):
+        resource.__enter__()
+
+    assert isinstance(resource.cleanup_result, Invalidated)
+    assert runtime.retired is True
+
+
+def test_controlled_authorization_rechecks_admission_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.conformance import _postgres_control as control_module
+
+    connection = _FakeConnection()
+    runtime = _adapter(connection).open()
+    install_role = control_module.install_role  # pyright: ignore[reportPrivateImportUsage] - the test wraps the exact imported operation the controlled runtime invokes
+
+    def install_then_close(native: Any, role: PostgresRole) -> None:
+        install_role(native, role)
+        runtime.close()
+
+    monkeypatch.setattr(control_module, "install_role", install_then_close)
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "closed"
+    assert connection.statements[-1] == ("RESET ROLE", ())
+    assert resource.cleanup_result == Returned()
+    assert runtime.retired is True
+
+
+def test_controlled_authorization_recheck_restoration_failure_invalidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.conformance import _postgres_control as control_module
+
+    connection = _FakeConnection(reset_error=RuntimeError("reset denied"))
+    runtime = _adapter(connection).open()
+    install_role = control_module.install_role  # pyright: ignore[reportPrivateImportUsage] - the test wraps the exact imported operation the controlled runtime invokes
+
+    def install_then_close(native: Any, role: PostgresRole) -> None:
+        install_role(native, role)
+        runtime.close()
+
+    monkeypatch.setattr(control_module, "install_role", install_then_close)
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "closed"
+    result = resource.cleanup_result
+    assert isinstance(result, Invalidated)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [
+        ("restore", "authorization-restore-failed")
+    ]
+    assert runtime.retired is True
+
+
+def test_controlled_authorization_failure_reports_an_unconfirmed_disposal() -> None:
+    connection = _FakeConnection(
+        role_error=RuntimeError("role denied"),
+        close_raises=RuntimeError("close denied"),
+    )
+    runtime = _adapter(connection).open()
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(ConnectionAcquisitionError):
+        resource.__enter__()
+
+    result = resource.cleanup_result
+    assert isinstance(result, ReleaseUnconfirmed)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [
+        ("inspect", "suspect"),
+        ("dispose", "close-failed"),
+    ]
+    assert runtime.retired is False
+
+
+def test_controlled_role_restoration_failure_reports_invalidation_and_retires() -> None:
+    connection = _FakeConnection(reset_error=RuntimeError("reset denied"))
+    runtime = _adapter(connection).open()
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with resource:
+        pass
+
+    result = resource.cleanup_result
+    assert isinstance(result, Invalidated)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [
+        ("restore", "authorization-restore-failed")
+    ]
+    assert runtime.retired is True
+    assert connection.closes == 1
+
+
+def test_controlled_runtime_rejects_a_foreign_authorization_value() -> None:
+    runtime = _adapter(_FakeConnection()).open()
+
+    with pytest.raises(InvalidAuthorizationError, match="requires a PostgresRole"):
+        runtime.principal_execution(cast("Any", "tenant_reader"))
 
 
 def test_cancelling_asks_the_driver_and_survives_a_refusal() -> None:
@@ -443,7 +621,7 @@ def test_cancelling_asks_the_driver_and_survives_a_refusal() -> None:
 def _scope_of(execution: PostgresInterleavedExecution) -> Any:
     """One open acquisition of ``execution``'s session, as a control action sees it."""
     runtime = cast("Any", execution)._runtime
-    scope = runtime.connection()
+    scope = _context(runtime)
     scope.__enter__()
     return _Releasing(scope)
 
@@ -503,7 +681,7 @@ def test_an_action_captured_in_one_scope_reaches_neither_the_next_nor_its_descri
         connection = _FakeConnection(fd=descriptor, close_raises=RuntimeError("close failed"))
         execution = _execution(connection)
         runtime = cast("Any", execution)._runtime
-        captured = runtime.connection()
+        captured = _context(runtime)
         captured.__enter__()
 
         paused = _PausedCapture(runtime)
@@ -520,7 +698,7 @@ def test_an_action_captured_in_one_scope_reaches_neither_the_next_nor_its_descri
         assert paused.captured.wait(timeout=5.0)
 
         captured.__exit__(None, None, None)
-        with runtime.connection() as replacement:
+        with _context(runtime) as replacement:
             paused.resume.set()
             acting.join(timeout=5.0)
             assert not acting.is_alive()
@@ -566,7 +744,7 @@ def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(acti
     connection = _FakeConnection(parked=park)
     execution = _execution(connection)
     runtime = cast("Any", execution)._runtime
-    captured = runtime.connection()
+    captured = _context(runtime)
     captured.__enter__()
 
     acting = threading.Thread(
@@ -584,7 +762,7 @@ def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(acti
 
     def take_the_session() -> None:
         try:
-            with runtime.connection():
+            with _context(runtime):
                 outcome.append("admitted")
         except ConnectionAcquisitionError:
             outcome.append("refused")
@@ -619,15 +797,14 @@ def test_a_controlled_scope_gives_the_session_back_even_if_revocation_fails(
 
     monkeypatch.setattr(PostgresConnection, "revoke", refuse)
     runtime = _adapter(_FakeConnection()).open()
-    scope = runtime.connection()
+    scope = _context(runtime)
 
     with pytest.raises(RuntimeError), scope:
         pass
 
     assert runtime.active_scope() is None
-    monkeypatch.undo()
-    with runtime.connection():
-        pass
+    assert runtime.retired is True
+    assert isinstance(scope.cleanup_result, Invalidated)
 
 
 def test_a_termination_with_no_live_scope_reports_that_it_reached_nothing() -> None:
@@ -818,7 +995,7 @@ def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_en
     # "retired when the scope that held it releases".
     connection = _FakeConnection()
     runtime = _adapter(connection).open()
-    scope = runtime.connection()
+    scope = _context(runtime)
     scoped = scope.__enter__()
 
     runtime.close()
@@ -828,7 +1005,7 @@ def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_en
     # Admitted before the close, so it finishes what it was going to do.
     assert scoped.execute("select 1 as n", []) == []
     with pytest.raises(ConnectionAcquisitionError) as refused:
-        runtime.connection().__enter__()
+        _context(runtime).__enter__()
     assert refused.value.reason == "closed"
 
     scope.__exit__(None, None, None)
@@ -861,7 +1038,7 @@ def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once()
 
     connection = _FakeConnection(parked=park_the_first_close)
     runtime = _adapter(connection).open()
-    scope = runtime.connection()
+    scope = _context(runtime)
     scope.__enter__()
     runtime.close()
 
@@ -908,11 +1085,41 @@ def test_a_controlled_runtime_publishes_no_pool_measurements() -> None:
     assert _adapter(_FakeConnection()).open().pool_metrics is None
 
 
+def test_a_controlled_runtime_captures_its_actual_session_login() -> None:
+    runtime = _adapter(_FakeConnection(login_identity="controlled-login")).open()
+    assert runtime.login_identity == "controlled-login"
+
+
+@pytest.mark.parametrize("login_identity", ["", None, 7])
+def test_a_controlled_runtime_refuses_a_malformed_login_before_publication(
+    login_identity: object,
+) -> None:
+    connection = _FakeConnection(login_identity=login_identity)
+    adapter = _adapter(connection)
+
+    with pytest.raises(ValueError, match="nonempty session_user"):
+        adapter.open()
+
+    assert adapter.opened is None
+    assert connection.closes == 1
+
+
+def test_a_controlled_runtime_refuses_a_missing_login_row_before_publication() -> None:
+    connection = _FakeConnection(login_rows=[])
+    adapter = _adapter(connection)
+
+    with pytest.raises(ValueError, match="one session_user value"):
+        adapter.open()
+
+    assert adapter.opened is None
+    assert connection.closes == 1
+
+
 def test_leaving_a_controlled_scope_that_was_never_entered_does_nothing() -> None:
     runtime = _adapter(_FakeConnection()).open()
-    scope = runtime.connection()
+    scope = _context(runtime)
     scope.__exit__(None, None, None)
     assert scope.cleanup_result is None
     # And the runtime never thought a scope was open.
-    with runtime.connection():
+    with _context(runtime):
         pass

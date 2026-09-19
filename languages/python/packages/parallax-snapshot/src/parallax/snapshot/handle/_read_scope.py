@@ -55,7 +55,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from parallax.core.db_port import DatabaseConnection, DatabaseRuntime
+from parallax.core.db_port import ConnectionContextSource, DatabaseConnection
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -491,19 +491,19 @@ class _StandaloneRead:
     lease inside its own Stream Batch.
     """
 
-    __slots__ = ("adopted", "lifecycle", "runtime", "selected")
+    __slots__ = ("adopted", "lifecycle", "selected", "source")
 
     def __init__(
         self,
         lifecycle: InstalledLifecycle | None,
         adopted: AdoptedExecution,
         selected: SelectedReadModel,
-        runtime: DatabaseRuntime,
+        source: ConnectionContextSource,
     ) -> None:
         self.lifecycle = lifecycle
         self.adopted = adopted
         self.selected = selected
-        self.runtime = runtime
+        self.source = source
 
     def eager[T](
         self,
@@ -530,7 +530,7 @@ class _StandaloneRead:
                 # statement, the conversion, and the publication it is
                 # materialized into. Held until the result exists, because a
                 # graph half-built from rows is not a result anything may return.
-                resource = self.runtime.connection()
+                resource = self.source.new_context()
                 connection, held_since_ns = enter_connection(resource, read)
                 try:
                     published = body(read, ReadInputs(connection, None, None))
@@ -560,7 +560,7 @@ class _StandaloneRead:
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
         with batch as calls:
-            resource = self.runtime.connection()
+            resource = self.source.new_context()
             connection, held_since_ns = enter_connection(resource, batch)
             try:
                 result = body(calls, ReadInputs(connection, None, None))
@@ -590,12 +590,12 @@ class _StandaloneExecution:
 
     lifecycle: InstalledLifecycle | None
     serving: ServingModel
-    runtime: DatabaseRuntime
+    source: ConnectionContextSource
 
     def begin(self) -> _StandaloneRead:
         adopted = AdoptedExecution(self.serving)
         selected = read_projection(adopted.adopt())
-        return _StandaloneRead(self.lifecycle, adopted, selected, self.runtime)
+        return _StandaloneRead(self.lifecycle, adopted, selected, self.source)
 
 
 @dataclass(frozen=True, slots=True)
@@ -677,12 +677,12 @@ def standalone_read_scope(
     *,
     lifecycle: InstalledLifecycle | None,
     serving: ServingModel,
-    runtime: DatabaseRuntime,
+    source: ConnectionContextSource,
     planner: ReadPlanner,
 ) -> ReadScope:
     return ReadScope(
         lifecycle,
-        _StandaloneExecution(lifecycle, serving, runtime),
+        _StandaloneExecution(lifecycle, serving, source),
         planner,
     )
 

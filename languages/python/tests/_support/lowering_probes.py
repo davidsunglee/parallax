@@ -26,7 +26,7 @@ from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 
 __all__ = ["lower_instruction", "lower_instruction_steps"]
 
@@ -75,7 +75,7 @@ def _stream(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant,
                 concurrency=concurrency,
                 buffered_writes=[

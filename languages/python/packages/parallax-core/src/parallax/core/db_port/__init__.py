@@ -15,7 +15,8 @@ because the connection is what executes: a caller reads it off the value it
 already has rather than choosing a second one beside it.
 
 **Lifetime.** :class:`DatabaseAdapter` is immutable configuration,
-:class:`DatabaseRuntime` is the running resource one connected handle owns, and
+:class:`DatabaseRuntime` is the running resource one connected handle owns,
+:class:`ConnectionContextSource` is a resource-free authorization binding, and
 :class:`ConnectionContext` is one single-use acquisition that yields a scoped
 :class:`DatabaseConnection` and reports a :data:`CleanupResult` when it ends.
 Query code receives execution alone; composition receives the lifetime. That
@@ -69,10 +70,12 @@ from parallax.core.db_port._resources import (
     CleanupResult,
     ConnectionAcquisitionError,
     ConnectionContext,
+    ConnectionContextSource,
     DatabaseAdapter,
     DatabaseRuntime,
     DatabaseStartupError,
     Invalidated,
+    InvalidAuthorizationError,
     ReleaseUnconfirmed,
     Returned,
     StartupPhase,
@@ -94,12 +97,14 @@ __all__ = [
     "Committed",
     "ConnectionAcquisitionError",
     "ConnectionContext",
+    "ConnectionContextSource",
     "DatabaseAdapter",
     "DatabaseConnection",
     "DatabaseRuntime",
     "DatabaseStartupError",
     "DeclaresDialect",
     "DocumentReadOrdinals",
+    "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",

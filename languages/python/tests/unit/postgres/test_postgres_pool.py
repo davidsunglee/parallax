@@ -38,12 +38,17 @@ from parallax.core.db_port import (
     ReleaseUnconfirmed,
     Returned,
 )
-from parallax.postgres import OnDemandOptions, PoolOptions
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresRole
 from parallax.postgres._connection import ConnectionPreparation, IncompatibleSessionError
 from parallax.postgres._context import PostgresConnectionContext, release
 from parallax.postgres._runtime import PROBE_SQL, PostgresRuntime, open_runtime
 
-_PROBE_ROW = {"ready": 1, "temporal_bound": INFINITY, "document": {"ready": True}}
+_PROBE_ROW = {
+    "ready": 1,
+    "temporal_bound": INFINITY,
+    "document": {"ready": True},
+    "login_identity": "runtime-login",
+}
 
 
 class _Column:
@@ -98,18 +103,29 @@ class _FakeConnection:
         status_error: Exception | None = None,
         close_error: Exception | None = None,
         execute_error: BaseException | None = None,
+        reset_error: Exception | None = None,
     ) -> None:
         self.rows = rows if rows is not None else [dict(_PROBE_ROW)]
         self.status = status
         self.status_error = status_error
         self.close_error = close_error
         self.execute_error: BaseException | None = execute_error
+        self.reset_error = reset_error
         self.statements: list[str] = []
         self.closes = 0
         self.pgconn = _FakePgConn(self)
 
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
+
+    def execute(self, sql: object, binds: Sequence[object] | None = None) -> _FakeCursor:
+        text = sql.decode() if isinstance(sql, bytes) else str(sql)
+        if text == "RESET ROLE" and self.reset_error is not None:
+            self.statements.append(text)
+            raise self.reset_error
+        cursor = self.cursor()
+        cursor.execute(sql, binds)
+        return cursor
 
     def close(self) -> None:
         self.closes += 1
@@ -173,14 +189,25 @@ def _preparation() -> ConnectionPreparation:
     return ConnectionPreparation()
 
 
-def _context(pool: Any, *, deadline: float | None = None, admit: Any = None) -> Any:
+def _context(
+    pool: Any,
+    *,
+    deadline: float | None = None,
+    admit: Any = None,
+    role: PostgresRole | None = None,
+) -> Any:
     runtime = _runtime(pool)
     return PostgresConnectionContext(
         pool,
         admit if admit is not None else runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         deadline if deadline is not None else monotonic() + 5.0,
         _preparation(),
+        role,
     )
+
+
+def _login_context(runtime: PostgresRuntime) -> Any:
+    return runtime.login_execution().new_context()
 
 
 # --------------------------------------------------------------------------- #
@@ -204,8 +231,8 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
 ) -> None:
     # Waiting for a minimum is not readiness: it says a connection exists rather
     # than that a statement works. The probe reads an integer, a neutral
-    # unbounded instant, and a structured document through the same initialized
-    # execution an application gets.
+    # unbounded instant, a structured document, and the authenticated login
+    # through the same initialized execution an application gets.
     pool = _opened(monkeypatch, _pool())
     runtime = open_runtime("", PoolOptions(min_size=1), 5)
 
@@ -214,6 +241,7 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
     # A ready runtime publishes its measurements; what one answers is
     # `test_pool_metrics.py`'s.
     assert runtime.pool_metrics is not None
+    assert runtime.login_identity == "runtime-login"
 
 
 def test_a_zero_minimum_and_on_demand_wait_for_nothing_and_still_probe(
@@ -310,9 +338,37 @@ def test_a_startup_acquisition_that_fails_carries_its_phase_and_cleanup(
 @pytest.mark.parametrize(
     "row",
     [
-        {"ready": 0, "temporal_bound": INFINITY, "document": {"ready": True}},
-        {"ready": 1, "temporal_bound": "2026-01-01", "document": {"ready": True}},
-        {"ready": 1, "temporal_bound": INFINITY, "document": "not a document"},
+        {
+            "ready": 0,
+            "temporal_bound": INFINITY,
+            "document": {"ready": True},
+            "login_identity": "runtime-login",
+        },
+        {
+            "ready": 1,
+            "temporal_bound": "2026-01-01",
+            "document": {"ready": True},
+            "login_identity": "runtime-login",
+        },
+        {
+            "ready": 1,
+            "temporal_bound": INFINITY,
+            "document": "not a document",
+            "login_identity": "runtime-login",
+        },
+        {
+            "ready": 1,
+            "temporal_bound": INFINITY,
+            "document": {"ready": True},
+            "login_identity": "",
+        },
+        {
+            "ready": 1,
+            "temporal_bound": INFINITY,
+            "document": {"ready": True},
+            "login_identity": 7,
+        },
+        {"ready": 1, "temporal_bound": INFINITY, "document": {"ready": True}},
     ],
 )
 def test_a_probe_that_does_not_read_back_what_it_asked_for_fails_startup(
@@ -416,6 +472,7 @@ def test_a_timeout_names_the_initialization_refusal_on_record() -> None:
         runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         monotonic() + 5.0,
         preparation,
+        None,
     )
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -499,6 +556,7 @@ def test_a_late_native_success_is_released_rather_than_admitted(
         runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         monotonic() + 5.0,
         _preparation(),
+        None,
     )
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -543,6 +601,124 @@ def test_each_acquisition_yields_fresh_execution_access() -> None:
     second = _context(pool)
     with first as one, second as two:
         assert one is not two
+
+
+def test_authority_binding_and_context_creation_acquire_nothing() -> None:
+    pool = _pool()
+    runtime = _runtime(pool)
+
+    source = runtime.principal_execution(PostgresRole("tenant_reader"))
+    first = source.new_context()
+    second = source.new_context()
+
+    assert first is not second
+    assert pool.checkouts == []
+    assert not hasattr(runtime, "connection")
+
+
+def test_principal_acquisition_installs_the_role_before_execution_and_resets_it_on_exit() -> None:
+    connection = _FakeConnection()
+    runtime = _runtime(_pool(connection))
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with resource as scoped:
+        scoped.execute("select current_user", [])
+
+    assert "SET ROLE" in connection.statements[0]
+    assert "tenant_reader" in connection.statements[0]
+    assert connection.statements[1:] == ["select current_user", "RESET ROLE"]
+    assert resource.cleanup_result == Returned()
+
+
+def test_role_installation_failure_is_an_authorization_refusal_and_disposes_the_session() -> None:
+    failure = RuntimeError("role denied")
+    connection = _FakeConnection(execute_error=failure)
+    pool = _pool(connection)
+    resource = _context(pool, role=PostgresRole("tenant_reader"))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "authorization_failed"
+    assert refused.value.__cause__ is failure
+    assert isinstance(resource.cleanup_result, Invalidated)
+    assert connection.closes == 1
+    assert "RESET ROLE" not in connection.statements
+
+
+def test_role_installation_preserves_a_control_flow_exception() -> None:
+    connection = _FakeConnection(execute_error=KeyboardInterrupt())
+    resource = _context(_pool(connection), role=PostgresRole("tenant_reader"))
+
+    with pytest.raises(KeyboardInterrupt):
+        resource.__enter__()
+
+    assert isinstance(resource.cleanup_result, Invalidated)
+    assert connection.closes == 1
+    assert "RESET ROLE" not in connection.statements
+
+
+def test_admission_is_checked_again_after_successful_role_installation() -> None:
+    connection = _FakeConnection()
+    calls = 0
+
+    def admit(_deadline: float) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ConnectionAcquisitionError("closed during authorization", reason="closed")
+
+    pool = _pool(connection)
+    resource = _context(pool, admit=admit, role=PostgresRole("tenant_reader"))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "closed"
+    assert calls == 2
+    assert connection.statements[-1] == "RESET ROLE"
+    assert resource.cleanup_result == Returned()
+    assert pool.returned == [connection]
+
+
+def test_role_restoration_failure_forces_disposal_and_is_reported() -> None:
+    connection = _FakeConnection(reset_error=RuntimeError("reset denied"))
+    pool = _pool(connection)
+    resource = _context(pool, role=PostgresRole("tenant_reader"))
+
+    with resource:
+        pass
+
+    result = resource.cleanup_result
+    assert isinstance(result, Invalidated)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [
+        ("restore", "authorization-restore-failed")
+    ]
+    assert connection.closes == 1
+    assert pool.returned == [connection]
+
+
+def test_reused_session_does_not_bleed_principal_authority_into_later_acquisitions() -> None:
+    connection = _FakeConnection()
+    runtime = _runtime(_pool(connection))
+
+    with runtime.principal_execution(PostgresRole("reader_a")).new_context():
+        pass
+    with runtime.principal_execution(PostgresRole("reader_b")).new_context():
+        pass
+    with runtime.login_execution().new_context():
+        pass
+
+    assert (
+        sum(
+            "SET ROLE" in statement and statement != "RESET ROLE"
+            for statement in connection.statements
+        )
+        == 2
+    )
+    assert connection.statements.count("RESET ROLE") == 2
+    assert "reader_a" in connection.statements[0]
+    assert "reader_b" in connection.statements[2]
 
 
 # --------------------------------------------------------------------------- #
@@ -596,6 +772,26 @@ def test_a_connection_that_is_not_idle_is_disposed_of_rather_than_repaired() -> 
     assert isinstance(result, Invalidated)
     assert [issue.code for issue in result.issues] == ["not-idle"]
     assert connection.statements == []
+
+
+@pytest.mark.parametrize(
+    "connection",
+    [
+        _FakeConnection(),
+        _FakeConnection(status=TransactionStatus.INERROR),
+        _FakeConnection(status_error=RuntimeError("state unavailable")),
+    ],
+)
+def test_unsafe_principal_release_skips_role_restoration(connection: _FakeConnection) -> None:
+    result = release(
+        _pool(connection),
+        cast("Any", connection),
+        suspect=connection.status == TransactionStatus.IDLE and connection.status_error is None,
+        restore_role=True,
+    )
+
+    assert isinstance(result, Invalidated)
+    assert "RESET ROLE" not in connection.statements
 
 
 def test_a_failed_disposal_does_not_fall_back_to_returning_a_suspect_connection() -> None:
@@ -655,7 +851,7 @@ def test_close_is_idempotent_and_permanent() -> None:
 
     assert pool.closes == 1
     with pytest.raises(ConnectionAcquisitionError) as refused:
-        runtime.connection().__enter__()
+        _login_context(runtime).__enter__()
     assert refused.value.reason == "closed"
 
 
@@ -667,7 +863,7 @@ def test_a_scope_admitted_before_a_close_may_still_finish() -> None:
     pool = _pool(connection)
     runtime = _runtime(pool)
 
-    with runtime.connection() as scoped:
+    with _login_context(runtime) as scoped:
         runtime.close()
         scoped.execute("select 1", [])
 
@@ -699,7 +895,7 @@ def test_a_native_close_problem_is_reported_rather_than_raised(
 def test_the_ordinary_acquisition_budget_comes_from_the_configured_timeout() -> None:
     pool = _pool()
     runtime = _runtime(pool, PoolOptions(acquire_timeout=3.0))
-    with runtime.connection():
+    with _login_context(runtime):
         pass
     (given,) = pool.checkouts
     assert given is not None and 0.0 < given <= 3.0
@@ -710,7 +906,7 @@ def test_close_holds_no_lock_across_a_checkout() -> None:
     # acquisition that blocks cannot block a close.
     pool = _pool()
     runtime = _runtime(pool)
-    resource = runtime.connection()
+    resource = _login_context(runtime)
     with resource:
         runtime.close()
     assert pool.closes == 1
@@ -718,6 +914,27 @@ def test_close_holds_no_lock_across_a_checkout() -> None:
 
 def test_a_runtime_answers_the_dialect_its_statements_are_spelled_in() -> None:
     assert _runtime(_pool()).dialect.name == "postgres"
+
+
+def test_login_identity_is_unavailable_before_startup_completion() -> None:
+    runtime = _runtime(_pool())
+
+    with pytest.raises(RuntimeError, match="not completed startup"):
+        _ = runtime.login_identity
+
+
+def test_startup_completion_installs_the_login_exactly_once() -> None:
+    runtime = _runtime(_pool())
+
+    runtime._complete_startup(  # pyright: ignore[reportPrivateUsage] - direct startup state pin
+        "first-login"
+    )
+
+    assert runtime.login_identity == "first-login"
+    with pytest.raises(RuntimeError, match="already completed startup"):
+        runtime._complete_startup(  # pyright: ignore[reportPrivateUsage] - direct startup state pin
+            "second-login"
+        )
 
 
 def test_the_on_demand_policy_selects_the_native_null_pool(

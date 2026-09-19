@@ -60,6 +60,9 @@ _EXPLANATIONS: Final[dict[CleanupCode, str]] = {
     "suspect": "the execution declared the connection untrustworthy, so it was not reused",
     "close-failed": "closing the connection failed, so its disposal is not established",
     "handoff-failed": "returning the connection failed, so its accounting is not established",
+    "authorization-restore-failed": (
+        "restoring the connection's authorization failed, so it was not offered for reuse"
+    ),
 }
 """One fixed sentence per cleanup code, and the whole of what may be said.
 

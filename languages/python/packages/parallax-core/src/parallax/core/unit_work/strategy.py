@@ -46,6 +46,7 @@ __all__ = [
     "OPEN_END",
     "PREDECESSOR_END",
     "PREDECESSOR_START",
+    "ActorIdentity",
     "AuditStrategy",
     "AuthoredFrom",
     "AuthoredState",
@@ -55,20 +56,21 @@ __all__ = [
     "ChangedState",
     "Concurrency",
     "ConcurrencyStrategy",
+    "DatabaseLoginActor",
     "MilestoneClosure",
     "MilestoneSuccessor",
     "MilestoneTopology",
     "OpenEnd",
     "PredecessorEnd",
     "PredecessorStart",
-    "SubjectIdentity",
+    "SubjectActor",
     "SuccessorState",
     "TemporalStrategy",
     "UndecoratedAudit",
     "ValidTimeBound",
     "ValidTimeWindow",
     "VersionArithmetic",
-    "capture_subject_identity",
+    "actor_identity_to_audit_string",
     "concurrency_preference",
 ]
 
@@ -108,35 +110,37 @@ def concurrency_preference(value: object) -> Concurrency:
 
 
 @dataclass(frozen=True, slots=True)
-class SubjectIdentity:
-    """The stable, opaque planning input identifying the subject actor captured
-    by the invoking Execution Scope (``m-execution-authority``).
-
-    Unit Work owns this value type exactly as it already owns the Write
-    Observation vocabulary, so a Planning Request is well-typed before any
-    provenance behavior exists. Construction performs no validation: an
-    audit-neutral implementation MUST NOT inspect, validate, retain,
-    serialize, persist, lower, or bind the supplied value, and two planning
-    calls differing only in Subject Identity MUST produce equal Write Plans
-    and identical emitted SQL and binds. The nonempty requirement
-    `m-unit-work.md` states is enforced where a raw value is captured
-    (:func:`capture_subject_identity`), not by this type.
-    """
+class SubjectActor:
+    """A validated application Subject Identity carried through planning."""
 
     value: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not self.value:  # pyright: ignore[reportUnnecessaryIsInstance] - validate runtime callers
+            raise ValueError("SubjectActor.value must be a nonempty string")
+        if self.value.startswith("db-login:"):
+            raise ValueError("SubjectActor.value must not begin with 'db-login:'")
 
-def capture_subject_identity(value: str) -> SubjectIdentity:
-    """Construct a Subject Identity from a freshly captured value.
 
-    Capture belongs to Execution Authority, not to Write Planning
-    (``m-unit-work.md`` "Subject Identity") — this is where the scope's nonempty
-    check runs, once, at the moment a raw value becomes a Subject Identity, so
-    the value type itself stays inert.
-    """
-    if not value:
-        raise ValueError("a Subject Identity is nonempty")
-    return SubjectIdentity(value)
+@dataclass(frozen=True, slots=True)
+class DatabaseLoginActor:
+    """A validated database-authenticated login carried through planning."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not self.value:  # pyright: ignore[reportUnnecessaryIsInstance] - validate runtime callers
+            raise ValueError("DatabaseLoginActor.value must be a nonempty string")
+
+
+type ActorIdentity = SubjectActor | DatabaseLoginActor
+
+
+def actor_identity_to_audit_string(actor: ActorIdentity) -> str:
+    """Project one Actor Identity to the neutral audit string exactly once."""
+    if isinstance(actor, SubjectActor):
+        return actor.value
+    return f"db-login:{actor.value}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,7 +371,7 @@ class AuditStrategy(Protocol):
 
     Decoration consumes the settled Insert Origins and Close Causes and adds
     ordinary planned values; it changes no topology, classifies no gate, and
-    emits no SQL. ``subject_identity`` and ``transaction_instant`` are the
+    emits no SQL. ``actor_identity`` and ``transaction_instant`` are the
     request-scoped inputs a real provenance adapter needs — the identity to
     stamp and the shared instant to stamp it at — passed through unevaluated:
     an implementation that never resolves ``transaction_instant`` costs the
@@ -377,7 +381,7 @@ class AuditStrategy(Protocol):
     Only eagerly settled steps reach this port. A Materialized Write Group's
     rows are rebuilt on demand from a segment holding no strategy object and
     no unevaluated instant, so they cannot be decorated one step at a time;
-    every row of one group shares one authored mutation, one Subject Identity,
+    every row of one group shares one authored mutation, one Actor Identity,
     and one instant, so a group's provenance is one overlay resolved at settle
     time rather than a per-row decoration.
     """
@@ -386,7 +390,7 @@ class AuditStrategy(Protocol):
         self,
         step: PlannedWrite,
         *,
-        subject_identity: SubjectIdentity,
+        actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> PlannedWrite: ...
 
@@ -399,7 +403,7 @@ class UndecoratedAudit:
         self,
         step: PlannedWrite,
         *,
-        subject_identity: SubjectIdentity,
+        actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> PlannedWrite:
         return step

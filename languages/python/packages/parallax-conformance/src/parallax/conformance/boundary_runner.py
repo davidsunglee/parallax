@@ -64,6 +64,7 @@ from parallax.core.db_port import (
     CleanupResult,
     ConnectionAcquisitionError,
     ConnectionContext,
+    ConnectionContextSource,
     DatabaseAdapter,
     DatabaseConnection,
     DatabaseRuntime,
@@ -578,10 +579,26 @@ class _Refused(Exception):
     """
 
 
-class _ResourceFaultingRuntime:
+@dataclass(frozen=True, slots=True)
+class _ResourceFaultingSource:
+    inner: ConnectionContextSource
+    seam: _ResourceSeam
+    persistent: bool
+    state: _FaultState
+
+    def new_context(self) -> ConnectionContext:
+        return ResourceFaultingContext(
+            self.inner.new_context(),
+            seam=self.seam,
+            persistent=self.persistent,
+            state=self.state,
+        )
+
+
+class _ResourceFaultingRuntime[Authorization]:
     def __init__(
         self,
-        inner: DatabaseRuntime,
+        inner: DatabaseRuntime[Authorization],
         *,
         seam: _ResourceSeam,
         persistent: bool,
@@ -600,9 +617,21 @@ class _ResourceFaultingRuntime:
     def pool_metrics(self) -> PoolMetricsSource | None:
         return self._inner.pool_metrics
 
-    def connection(self) -> ConnectionContext:
-        return ResourceFaultingContext(
-            self._inner.connection(),
+    @property
+    def login_identity(self) -> str:
+        return self._inner.login_identity
+
+    def login_execution(self) -> ConnectionContextSource:
+        return _ResourceFaultingSource(
+            self._inner.login_execution(),
+            seam=self._seam,
+            persistent=self._persistent,
+            state=self._state,
+        )
+
+    def principal_execution(self, authorization: Authorization) -> ConnectionContextSource:
+        return _ResourceFaultingSource(
+            self._inner.principal_execution(authorization),
             seam=self._seam,
             persistent=self._persistent,
             state=self._state,
@@ -612,10 +641,10 @@ class _ResourceFaultingRuntime:
         self._inner.close()
 
 
-class _ResourceFaultingAdapter:
+class _ResourceFaultingAdapter[Authorization]:
     def __init__(
         self,
-        inner: DatabaseAdapter,
+        inner: DatabaseAdapter[Authorization],
         *,
         seam: _ResourceSeam,
         persistent: bool,
@@ -630,7 +659,7 @@ class _ResourceFaultingAdapter:
     def dialect(self) -> Dialect:
         return self._inner.dialect
 
-    def open(self) -> DatabaseRuntime:
+    def open(self) -> DatabaseRuntime[Authorization]:
         return _ResourceFaultingRuntime(
             self._inner.open(),
             seam=self._seam,
@@ -639,9 +668,9 @@ class _ResourceFaultingAdapter:
         )
 
 
-def fault_injecting_adapter(
-    adapter: DatabaseAdapter, *, fault: str | None, persistent: bool
-) -> DatabaseAdapter:
+def fault_injecting_adapter[Authorization](
+    adapter: DatabaseAdapter[Authorization], *, fault: str | None, persistent: bool
+) -> DatabaseAdapter[Authorization]:
     """``adapter``'s configuration with ``fault`` armed at the seam it belongs to.
 
     One :class:`_FaultState` is closed over here, so a one-shot injection stays

@@ -1,6 +1,6 @@
 """The Write Planner: the single finalization authority (m-unit-work).
 
-:class:`WritePlanner` turns one flush's boundary-captured Subject Identity,
+:class:`WritePlanner` turns one flush's boundary-captured Actor Identity,
 lazy Transaction Instant, concurrency mode, and buffered writes into a
 :class:`~parallax.core.unit_work.write_settlement.WritePlanningResult`. A write
 that settles against existing state arrives carrying the claim its verb took for
@@ -85,11 +85,11 @@ from parallax.core.unit_work.planner import (
     resolve_object_key,
 )
 from parallax.core.unit_work.strategy import (
+    ActorIdentity,
     AuditStrategy,
     BatchingStrategy,
     Concurrency,
     ConcurrencyStrategy,
-    SubjectIdentity,
     TemporalStrategy,
 )
 from parallax.core.unit_work.write_settlement import (
@@ -99,8 +99,8 @@ from parallax.core.unit_work.write_settlement import (
 )
 
 __all__ = [
+    "ActorIdentity",
     "PlanningRequest",
-    "SubjectIdentity",
     "WritePlanner",
 ]
 
@@ -111,12 +111,12 @@ type BufferedWrites = Sequence[BufferItem]
 class PlanningRequest:
     """One flush's complete planning input.
 
-    Keyword-only and Subject Identity first: planning occurs under already
+    Keyword-only and Actor Identity first: planning occurs under already
     captured Execution Authority, and field order emphasizes that without
     making it a positional API.
     """
 
-    subject_identity: SubjectIdentity
+    actor_identity: ActorIdentity
     transaction_instant: TransactionInstant
     concurrency: Concurrency
     buffered_writes: BufferedWrites
@@ -161,7 +161,7 @@ class WritePlanner:
         claims the settled writes carried.
 
         Pure with respect to its inputs — no database I/O, no direct clock
-        access, no SQL. ``request.subject_identity`` is accepted and never
+        access, no SQL. ``request.actor_identity`` is accepted and never
         inspected. ``request.transaction_instant`` is threaded unevaluated
         until a surviving temporal mutation needs it.
 
@@ -187,7 +187,7 @@ class WritePlanner:
         return self._settlement.settle(
             self._order(batched, families),
             concurrency=request.concurrency,
-            subject_identity=request.subject_identity,
+            actor_identity=request.actor_identity,
             transaction_instant=request.transaction_instant,
         )
 

@@ -191,7 +191,7 @@ class ProvisionedRun(ProfileRun):
 
     def adapter_for_session_default(  # pragma: no cover - Docker
         self, level: str
-    ) -> DatabaseAdapter:
+    ) -> DatabaseAdapter[Any]:
         """Configuration whose connections carry ``level`` as their own default
         before the adapter initializes one (`m-db-port` connection intake)."""
         return self._provisioner.adapter_for_session_default(level)
@@ -212,6 +212,17 @@ class ProvisionedRun(ProfileRun):
         return self._provisioner.configured(
             pool=pool, prepare_threshold=prepare_threshold, settings=settings
         )
+
+    @property
+    def login_identity(self) -> str:  # pragma: no cover - Docker
+        return self._provisioner.login_identity
+
+    @property
+    def default_role(self) -> Any:  # pragma: no cover - Docker
+        return self._provisioner.default_role
+
+    def authorization(self, selector: str) -> Any:  # pragma: no cover - Docker
+        return self._provisioner.authorization(selector)
 
     def release_case_runtimes(self) -> None:  # pragma: no cover - Docker
         """Close every runtime a case composed a Database over and left open."""

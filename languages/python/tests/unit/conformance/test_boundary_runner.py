@@ -219,13 +219,19 @@ class _FakePort(ConnectsAsItself):
         return body_outcome(self, body)
 
 
-def _faulted(adapter: DatabaseAdapter, *, fault: str | None, persistent: bool) -> DatabaseAdapter:
+def _faulted(
+    adapter: DatabaseAdapter[Any], *, fault: str | None, persistent: bool
+) -> DatabaseAdapter[Any]:
     """``adapter`` with ``fault`` armed on every connection it acquires."""
     return fault_injecting_adapter(adapter, fault=fault, persistent=persistent)
 
 
-def _db(adapter: DatabaseAdapter) -> Database:
+def _db(adapter: DatabaseAdapter[Any]) -> Database:
     return Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
+
+
+def _context(runtime: Any) -> Any:
+    return runtime.login_execution().new_context()
 
 
 def test_run_boundary_actions_read_then_update() -> None:
@@ -666,7 +672,7 @@ def test_an_acquisition_fault_refuses_before_it_takes_anything() -> None:
     # connection taken, found unusable, disposed of deliberately, and refused.
     inner = _FakePort(rows=[])
     faulted = _faulted(inner, fault="connection-acquisition-failure", persistent=False)
-    context = faulted.open().connection()
+    context = _context(faulted.open())
 
     before = context.cleanup_result
     assert before is None, "a context nobody entered has established nothing"
@@ -687,8 +693,8 @@ def test_a_one_shot_acquisition_fault_lets_the_next_acquisition_through() -> Non
     runtime = _faulted(inner, fault="connection-acquisition-failure", persistent=False).open()
 
     with pytest.raises(ConnectionAcquisitionError):
-        runtime.connection().__enter__()
-    with runtime.connection() as scoped:
+        _context(runtime).__enter__()
+    with _context(runtime) as scoped:
         assert scoped is inner
 
 
@@ -698,7 +704,7 @@ def test_a_persistent_acquisition_fault_refuses_every_acquisition() -> None:
 
     for _ in range(2):
         with pytest.raises(ConnectionAcquisitionError):
-            runtime.connection().__enter__()
+            _context(runtime).__enter__()
 
 
 def test_a_cleanup_fault_lets_the_connection_go_back_and_reports_that_it_did_not() -> None:
@@ -709,7 +715,7 @@ def test_a_cleanup_fault_lets_the_connection_go_back_and_reports_that_it_did_not
     inner = _FakePort(rows=[])
     runtime = _faulted(inner, fault="connection-cleanup-failure", persistent=False).open()
 
-    context = runtime.connection()
+    context = _context(runtime)
     with context as scoped:
         assert scoped is inner
     established = context.cleanup_result
@@ -723,10 +729,10 @@ def test_a_spent_cleanup_fault_reports_what_the_inner_context_established() -> N
     inner = _FakePort(rows=[])
     runtime = _faulted(inner, fault="connection-cleanup-failure", persistent=False).open()
 
-    first = runtime.connection()
+    first = _context(runtime)
     with first:
         pass
-    second = runtime.connection()
+    second = _context(runtime)
     with second:
         pass
 
@@ -744,7 +750,9 @@ def test_a_resource_faulting_adapter_stands_in_for_the_configuration_it_decorate
     assert faulted.dialect is inner.dialect
     assert runtime.dialect is inner.dialect
     assert runtime.pool_metrics is None
-    assert isinstance(runtime.connection(), ResourceFaultingContext)
+    assert runtime.login_identity == "test-login"
+    assert isinstance(runtime.login_execution().new_context(), ResourceFaultingContext)
+    assert isinstance(runtime.principal_execution(object()).new_context(), ResourceFaultingContext)
     runtime.close()
 
 
@@ -783,6 +791,9 @@ def test_a_fault_injecting_adapter_stands_in_for_the_configuration_it_decorates(
     assert faulted.dialect is inner.dialect
     assert runtime.dialect is inner.dialect
     assert runtime.pool_metrics is None
-    with runtime.connection() as scoped:
+    assert runtime.login_identity == "test-login"
+    with runtime.login_execution().new_context() as scoped:
+        assert isinstance(scoped, FaultInjectingPort)
+    with runtime.principal_execution(object()).new_context() as scoped:
         assert isinstance(scoped, FaultInjectingPort)
     runtime.close()

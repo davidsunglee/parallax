@@ -116,6 +116,7 @@ def _item_row(row: Mapping[str, object]) -> MappingRow:
 
 
 _RETURNED: Final[CleanupResult] = Returned()
+_LOGIN: Final = "snapshot-delivery-report"
 
 
 class _SoleScope:
@@ -154,7 +155,18 @@ class _SoleRuntime:
     def pool_metrics(self) -> None:
         return None
 
-    def connection(self) -> _SoleScope:
+    @property
+    def login_identity(self) -> str:
+        return _LOGIN
+
+    def login_execution(self) -> _SoleRuntime:
+        return self
+
+    def principal_execution(self, authorization: object) -> _SoleRuntime:
+        del authorization
+        return self
+
+    def new_context(self) -> _SoleScope:
         return _SoleScope(self._connection)
 
     def close(self) -> None:

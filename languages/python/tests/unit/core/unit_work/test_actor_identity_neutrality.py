@@ -1,22 +1,8 @@
-"""Subject Identity is audit-neutral (m-unit-work "Subject Identity").
-
-Until provenance decoration is implemented, an implementation MUST NOT inspect,
-validate, retain, serialize, persist, lower, or bind the supplied Subject
-Identity, and two planning calls differing only in Subject Identity MUST
-produce equal Write Plans and identical emitted SQL and binds. This is
-observable only from inside an implementation — no emitted statement can carry
-"how many distinct Subject Identities were used" — so this suite proves it
-directly: planning one flush twice under different Subject Identities and
-comparing the resulting Write Plans, statements, and binds, across every
-mutation shape the corpus witnesses (non-temporal insert/update/delete,
-readless predicate write, batching, and a temporal close-and-chain).
-"""
+"""Actor Identity is audit-neutral throughout write planning and lowering."""
 
 from __future__ import annotations
 
 from decimal import Decimal
-
-import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
@@ -24,21 +10,22 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
+    ActorIdentity,
     BufferItem,
     Concurrency,
+    DatabaseLoginActor,
     KeyedWrite,
     ObjectKey,
     PlanningRequest,
     PredecessorRow,
     PredicateSelection,
     PredicateWrite,
-    SubjectIdentity,
+    SubjectActor,
     TemporalObservation,
     TransactionInstant,
     VersionObservation,
     WriteObservation,
     WritePlan,
-    capture_subject_identity,
     object_key,
 )
 from parallax.snapshot.handle import build_write_planner, stream_lowered
@@ -50,25 +37,12 @@ _ACCOUNT = _MODELS["account"]
 _WALLET = _MODELS["wallet"]
 _BALANCE = _MODELS["balance"]
 
-# Two Subject Identities differing only in their opaque string — neither is
-# more "real" than the other; audit-neutrality means the choice cannot matter.
-_SUBJECT_A = SubjectIdentity("subject-alpha")
-_SUBJECT_B = SubjectIdentity("subject-beta-differs")
-
-
-def test_capturing_a_subject_identity_requires_a_nonempty_value() -> None:
-    # Nonemptiness is enforced at Execution Scope capture, not by
-    # the value type itself, which an audit-neutral plan must never inspect.
-    with pytest.raises(ValueError, match="nonempty"):
-        capture_subject_identity("")
-
-
-def test_the_subject_identity_type_itself_performs_no_validation() -> None:
-    assert SubjectIdentity("").value == ""
+_SUBJECT = SubjectActor("subject-alpha")
+_LOGIN = DatabaseLoginActor("runtime-login")
 
 
 def _plan_under(
-    subject: SubjectIdentity,
+    actor: ActorIdentity,
     buffer: list[BufferItem | KeyedWrite | PredicateWrite],
     model: Metamodel,
     *,
@@ -80,7 +54,7 @@ def _plan_under(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=subject,
+                actor_identity=actor,
                 transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
                 concurrency=concurrency,
                 buffered_writes=observed_buffer(buffer, model, observations),
@@ -102,45 +76,45 @@ def _assert_neutral(
     concurrency: Concurrency = "locking",
     tx_instant_literal: str | None = None,
 ) -> None:
-    tx_instant_a = None if tx_instant_literal is None else instant_at(tx_instant_literal)
-    tx_instant_b = None if tx_instant_literal is None else instant_at(tx_instant_literal)
-    plan_a = _plan_under(
-        _SUBJECT_A,
+    subject_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
+    login_instant = None if tx_instant_literal is None else instant_at(tx_instant_literal)
+    subject_plan = _plan_under(
+        _SUBJECT,
         buffer,
         model,
         observations=observations,
         concurrency=concurrency,
-        tx_instant=tx_instant_a,
+        tx_instant=subject_instant,
     )
-    plan_b = _plan_under(
-        _SUBJECT_B,
+    login_plan = _plan_under(
+        _LOGIN,
         buffer,
         model,
         observations=observations,
         concurrency=concurrency,
-        tx_instant=tx_instant_b,
+        tx_instant=login_instant,
     )
-    assert plan_a == plan_b  # structural equality: identical Write Plans
 
-    statements_a = _statements(plan_a, model)
-    statements_b = _statements(plan_b, model)
-    assert statements_a == statements_b  # identical SQL and binds
+    assert subject_plan == login_plan
+    subject_statements = _statements(subject_plan, model)
+    login_statements = _statements(login_plan, model)
+    assert subject_statements == login_statements
 
-    # No literal Subject Identity value survives anywhere the plan or its
-    # lowered statements can be inspected.
-    rendered = repr(plan_a) + "".join(f"{s.sql}{s.binds!r}" for s in statements_a)
-    assert _SUBJECT_A.value not in rendered
-    assert _SUBJECT_B.value not in rendered
+    rendered = repr(subject_plan) + "".join(
+        f"{statement.sql}{statement.binds!r}" for statement in subject_statements
+    )
+    assert _SUBJECT.value not in rendered
+    assert _LOGIN.value not in rendered
 
 
-def test_a_non_temporal_insert_is_audit_neutral() -> None:
+def test_a_non_temporal_insert_is_actor_neutral() -> None:
     insert = KeyedWrite(
         "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)
     )
     _assert_neutral([insert], _ACCOUNT)
 
 
-def test_a_versioned_update_with_an_observation_is_audit_neutral() -> None:
+def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
     update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
@@ -152,12 +126,11 @@ def test_a_versioned_update_with_an_observation_is_audit_neutral() -> None:
     )
 
 
-def test_a_keyed_delete_is_audit_neutral() -> None:
-    delete = KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2}))
-    _assert_neutral([delete], _WALLET)
+def test_a_keyed_delete_is_actor_neutral() -> None:
+    _assert_neutral([KeyedWrite("delete", "Wallet", ({"id": 1}, {"id": 2}))], _WALLET)
 
 
-def test_a_readless_predicate_write_is_audit_neutral() -> None:
+def test_a_readless_predicate_write_is_actor_neutral() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
@@ -167,15 +140,15 @@ def test_a_readless_predicate_write_is_audit_neutral() -> None:
     _assert_neutral([predicate], _WALLET)
 
 
-def test_a_batched_insert_run_is_audit_neutral() -> None:
+def test_a_batched_insert_run_is_actor_neutral() -> None:
     buffer: list[BufferItem | KeyedWrite | PredicateWrite] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
-        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2.00")},)),
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1")},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2")},)),
     ]
     _assert_neutral(buffer, _WALLET)
 
 
-def test_a_temporal_close_and_chain_is_audit_neutral() -> None:
+def test_a_temporal_close_and_chain_is_actor_neutral() -> None:
     update = KeyedWrite(
         "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
     )

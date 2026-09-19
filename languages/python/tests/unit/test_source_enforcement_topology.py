@@ -353,6 +353,10 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._postgres_control",
         "parallax.postgres._connection",
     ): frozenset({"PostgresConnection", "initialize_connection"}),
+    (
+        "parallax.conformance._postgres_control",
+        "parallax.postgres._authorization",
+    ): frozenset({"install_role", "restore_role"}),
 }
 
 

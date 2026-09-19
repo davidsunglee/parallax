@@ -89,7 +89,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._transact_support import (
     INFINITY_INSTANT,
@@ -1108,7 +1108,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         meta=model,
         flush_executor=_no_flush,
         planner=build_write_planner(model),
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
     )
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
@@ -1149,7 +1149,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
         meta=model,
         flush_executor=_no_flush,
         planner=build_write_planner(model),
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
     )
     assert isinstance(observation, TemporalObservation)
     assert observation.predecessor.document == stored

@@ -143,6 +143,7 @@
     "Committed",
     "ConnectionAcquisitionError",
     "ConnectionContext",
+    "ConnectionContextSource",
     "DatabaseAdapter",
     "DatabaseConnection",
     "DatabaseRuntime",
@@ -150,6 +151,7 @@
     "DeclaresDialect",
     "DocumentReadOrdinals",
     "ISOLATION_LEVELS",
+    "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
@@ -500,6 +502,7 @@
     "OnDemandOptions",
     "PoolOptions",
     "PostgresAdapter",
+    "PostgresRole",
     "isolation_spelling"
   ],
   "parallax.snapshot": [

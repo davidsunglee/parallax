@@ -515,6 +515,31 @@ not a fault.
 
 ## Session settings
 
+### Execution authority and session affinity
+
+Each runtime authenticates every physical connection as the login named by its
+connection string and captures that exact `session_user` during readiness. A
+login-bound execution source adds no role command. A source bound to a
+`PostgresRole` replaces the session's effective privileges with a safely quoted
+session-level `SET ROLE` before modeled execution and, when the session remains
+reusable, performs exactly one `RESET ROLE` before returning it. This is
+replacement and containment, not additive privilege elevation: the login must
+be allowed to assume the role, and work under that role receives only privileges
+PostgreSQL resolves for that role.
+
+`RESET ROLE` restores the connection's configured startup default. A failed role
+installation, an unsafe session, or failed restoration disposes the physical
+connection instead of repairing it into reuse. In the normal reusable case the
+principal envelope therefore costs two provider commands, in addition to the
+modeled work itself.
+
+This contract requires end-to-end session affinity. Transaction-pooling and
+statement-pooling proxies are unsupported because `SET ROLE`, modeled work, and
+`RESET ROLE` could reach different server sessions. Parallax performs no runtime
+proxy detection: deployment topology is an operator-owned prerequisite, and a
+proxy that happens to accept the commands is not evidence that it preserves the
+required affinity.
+
 The connection string is libpq's own grammar — keyword/value pairs, a
 `postgresql://` URI, a `service=` reference, or the empty string, which asks
 libpq to take everything from the environment. It is stored exactly as given,
@@ -533,7 +558,8 @@ alike. Everything else a string, an environment, a service file or a server
 default establishes is preserved: the time zone, a stronger default isolation, a
 read-only session, a search path, statement and lock timeouts. Parallax owns
 autocommit, physical-close semantics, row shape, and its own codecs, and does
-not restore caller settings because it never changes them.
+not restore caller settings it did not change. Scoped principal execution is the
+one deliberate session mutation and is restored as described above.
 
 `prepare_threshold` is the driver's server-side auto-preparation after that many
 identical executions, defaulting to 5. Pass `None` where the same connection may

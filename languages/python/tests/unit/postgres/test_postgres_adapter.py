@@ -1,7 +1,7 @@
 """Postgres scoped-execution internal-seam unit tests (Docker-free).
 
-The public exports are ``PostgresAdapter``, the two retention policies, and
-``isolation_spelling`` (§8 topology); psycopg bind mechanics and the scoped
+The public exports are ``PostgresAdapter``, ``PostgresRole``, the two retention
+policies, and ``isolation_spelling`` (§8 topology); psycopg bind mechanics and the scoped
 connection under an acquisition stay internal. The bind-adaptation seam — the
 neutral ``JsonDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
 boundary — the `m-db-error` port-boundary re-raise (every psycopg exception
@@ -65,6 +65,7 @@ def test_public_surface_is_the_adapter_its_options_and_this_engines_isolation_sp
         "OnDemandOptions",
         "PoolOptions",
         "PostgresAdapter",
+        "PostgresRole",
         "isolation_spelling",
     ]
     assert not hasattr(parallax.postgres, "Json")

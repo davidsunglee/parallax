@@ -55,8 +55,8 @@ from parallax.core.unit_work.planner import (
     resolve_object_key,
 )
 from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
-from parallax.core.unit_work.strategy import Concurrency
-from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
+from parallax.core.unit_work.strategy import ActorIdentity, Concurrency
+from parallax.core.unit_work.write_planner import PlanningRequest, WritePlanner
 
 __all__ = [
     "Concurrency",
@@ -177,6 +177,7 @@ class UnitOfWork:
     """
 
     __slots__ = (
+        "_actor_identity",
         "_buffer",
         "_claims",
         "_closed",
@@ -188,7 +189,6 @@ class UnitOfWork:
         "_planner",
         "_rollback_cause",
         "_rollback_only",
-        "_subject_identity",
         "_transaction_instant",
         "clock",
         "companion",
@@ -206,7 +206,7 @@ class UnitOfWork:
         meta: Metamodel,
         flush_executor: FlushExecutor,
         planner: WritePlanner,
-        subject_identity: SubjectIdentity,
+        actor_identity: ActorIdentity,
         write_batch_opening: WriteBatchOpening | None = None,
     ) -> None:
         self.settings = settings
@@ -221,10 +221,10 @@ class UnitOfWork:
         # only through its strategy ports. Production and the conformance
         # engine both drive writes through this SAME shell.
         self._planner = planner
-        # The Subject Identity execution orchestration supplies for every flush
+        # The Actor Identity execution orchestration supplies for every flush
         # this attempt plans. A forced flush reuses it unchanged; a retry attempt
         # receives its own new `UnitOfWork` and therefore its own copy.
-        self._subject_identity = subject_identity
+        self._actor_identity = actor_identity
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers
         # it via `active_unit_of_work()`. The shell never reads it, and it needs
@@ -441,7 +441,7 @@ class UnitOfWork:
     def _flush_buffer(self, trigger: WriteBatchTrigger) -> None:
         """Plan the buffer, execute what survived, and spend the survivors' claims."""
         request = PlanningRequest(
-            subject_identity=self._subject_identity,
+            actor_identity=self._actor_identity,
             transaction_instant=self._transaction_instant,
             concurrency=self.settings.concurrency,
             buffered_writes=tuple(self._buffer),
@@ -564,7 +564,7 @@ def run_unit_of_work[T](
     meta: Metamodel,
     flush_executor: FlushExecutor,
     planner: WritePlanner,
-    subject_identity: SubjectIdentity,
+    actor_identity: ActorIdentity,
     write_batch_opening: WriteBatchOpening | None = None,
 ) -> T:
     """Run ``body`` in a unit of work — joining the active one or opening a new frame.
@@ -573,13 +573,13 @@ def run_unit_of_work[T](
     body receives the same unit of work and its return value is returned
     immediately (commit and abort belong to the outermost frame), and the passed
     ``settings`` / ``clock`` / ``meta`` / ``flush_executor`` /
-    ``write_batch_opening`` / ``planner`` / ``subject_identity`` are ignored in
+    ``write_batch_opening`` / ``planner`` / ``actor_identity`` are ignored in
     favor of the active transaction's (``db.transact`` performs the
     option-conflict check before calling).
     Otherwise a new outermost frame is opened, and its value is returned only
     after a durable flush; an abort withholds it. ``planner`` is the injected
-    Write Planner a new outermost frame's flushes call, and ``subject_identity``
-    the boundary-captured Subject Identity every one of its Planning Requests
+    Write Planner a new outermost frame's flushes call, and ``actor_identity``
+    the boundary-captured Actor Identity every one of its Planning Requests
     carries.
     """
     active = active_unit_of_work()
@@ -591,7 +591,7 @@ def run_unit_of_work[T](
         meta=meta,
         flush_executor=flush_executor,
         planner=planner,
-        subject_identity=subject_identity,
+        actor_identity=actor_identity,
         write_batch_opening=write_batch_opening,
     )
     return uow.run_outermost(body)

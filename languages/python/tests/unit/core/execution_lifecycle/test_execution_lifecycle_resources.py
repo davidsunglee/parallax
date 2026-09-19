@@ -40,6 +40,7 @@ from parallax.core.db_port import (
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
+    report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES
@@ -729,7 +730,18 @@ class _UnusableRuntime:
     def pool_metrics(self) -> None:
         return None
 
-    def connection(self) -> Any:
+    @property
+    def login_identity(self) -> str:
+        return "unusable-runtime"
+
+    def login_execution(self) -> _UnusableRuntime:
+        return self
+
+    def principal_execution(self, authorization: object) -> _UnusableRuntime:
+        del authorization
+        return self
+
+    def new_context(self) -> Any:
         return _UnusableContext(self._failure)
 
     def close(self) -> None:
@@ -967,3 +979,23 @@ def test_the_fallback_log_states_the_classification_and_nothing_the_diagnostic_h
     assert "the pool refused the connection" not in rendered
     assert record.exc_info is None
     assert not hasattr(record, "cleanup_issues")
+
+
+def test_authorization_restoration_has_a_fixed_restricted_log_projection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    result = ReleaseUnconfirmed(
+        (
+            CleanupIssue(
+                phase="restore",
+                code="authorization-restore-failed",
+                diagnostic=_issue_diagnostic(),
+            ),
+        )
+    )
+
+    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME):
+        report_resource_issues("operation", result)
+
+    (record,) = _resource_records(caplog)
+    assert "restore/authorization-restore-failed" in record.getMessage()

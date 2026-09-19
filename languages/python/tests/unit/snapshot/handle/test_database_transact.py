@@ -77,7 +77,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -333,7 +333,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
         meta=model,
         flush_executor=executor,
         planner=build_write_planner(model),
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
     )
 
 

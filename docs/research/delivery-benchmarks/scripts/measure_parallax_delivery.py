@@ -134,7 +134,18 @@ class _Runtime:
     def pool_metrics(self) -> None:
         return None
 
-    def connection(self) -> _Scope:
+    @property
+    def login_identity(self) -> str:
+        return "delivery-research"
+
+    def login_execution(self) -> _Runtime:
+        return self
+
+    def principal_execution(self, authorization: object) -> _Runtime:
+        del authorization
+        return self
+
+    def new_context(self) -> _Scope:
         return _Scope(self._connection)
 
     def close(self) -> None:

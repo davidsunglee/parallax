@@ -254,10 +254,21 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
         def pool_metrics(self) -> Any:
             return self.metrics
 
+        @property
+        def login_identity(self) -> str:
+            return "refusing-runtime"
+
         def open(self) -> Any:
             return self
 
-        def connection(self) -> Any:
+        def login_execution(self) -> Any:
+            return self
+
+        def principal_execution(self, authorization: object) -> Any:
+            del authorization
+            return self
+
+        def new_context(self) -> Any:
             raise AssertionError("no acquisition expected")
 
         def close(self) -> None:
@@ -290,10 +301,21 @@ class _ParkedRuntime:
     def pool_metrics(self) -> Any:
         return self.metrics
 
+    @property
+    def login_identity(self) -> str:
+        return "parked-runtime"
+
     def open(self) -> Any:
         return self
 
-    def connection(self) -> Any:
+    def login_execution(self) -> _ParkedRuntime:
+        return self
+
+    def principal_execution(self, authorization: object) -> _ParkedRuntime:
+        del authorization
+        return self
+
+    def new_context(self) -> Any:
         raise AssertionError("no acquisition expected")
 
     def close(self) -> None:

@@ -136,7 +136,7 @@ from parallax.core.unit_work import (
     PredicateWrite,
     RetainedObservation,
     StaleWriteError,
-    SubjectIdentity,
+    SubjectActor,
     TemporalObservation,
     TransactionInstant,
     VersionObservation,
@@ -259,11 +259,11 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 # "a non-temporal entry's clock value is inert, pick something deterministic").
 INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 
-# The compile lane's own audit-neutral Subject Identity: this lane never opens
+# The compile lane's own audit-neutral Subject Actor: this lane never opens
 # a real Execution Scope, and a Planning Request requires one regardless
 # (`m-unit-work`) — the harness proves the value is never inspected, so any
 # nonempty constant serves every pure re-lowering call below identically.
-_PLANNING_SUBJECT: Final[SubjectIdentity] = SubjectIdentity("conformance-compile-lane")
+_PLANNING_ACTOR: Final[SubjectActor] = SubjectActor("conformance-compile-lane")
 
 
 def _pinned_instant(tx_instant: str) -> TransactionInstant:
@@ -1150,7 +1150,7 @@ def _lower_resolved(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=_PLANNING_SUBJECT,
+                actor_identity=_PLANNING_ACTOR,
                 transaction_instant=instant,
                 concurrency=concurrency,
                 buffered_writes=buffer,
@@ -1224,7 +1224,7 @@ def _lower_predicate_write_step(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=_PLANNING_SUBJECT,
+                actor_identity=_PLANNING_ACTOR,
                 transaction_instant=instant,
                 concurrency=concurrency,
                 buffered_writes=[prepared],
@@ -3347,7 +3347,7 @@ def _lower_conflict_write(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=_PLANNING_SUBJECT,
+                actor_identity=_PLANNING_ACTOR,
                 transaction_instant=instant,
                 concurrency=concurrency,
                 buffered_writes=[

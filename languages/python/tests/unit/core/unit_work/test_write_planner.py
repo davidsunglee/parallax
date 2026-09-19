@@ -49,6 +49,7 @@ from parallax.core.unit_work import (
     STALE_WRITE,
     UNGATED,
     UNVERSIONED,
+    ActorIdentity,
     BufferItem,
     ChunkedColumnBuilder,
     Concurrency,
@@ -73,7 +74,6 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
-    SubjectIdentity,
     TemporalColumns,
     TemporalObservation,
     TransactionInstant,
@@ -103,7 +103,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
@@ -143,7 +143,7 @@ def _plan(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
                 concurrency=concurrency,
                 buffered_writes=observed_buffer(buffer, model, observations),
@@ -1610,7 +1610,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
                 buffered_writes=prepared,
@@ -1674,15 +1674,17 @@ class _CountingAudit:
     """The neutral strategy, recording each step it was handed."""
 
     decorated: list[PlannedWrite]
+    actors: list[ActorIdentity]
 
     def decorate(
         self,
         step: PlannedWrite,
         *,
-        subject_identity: SubjectIdentity,
+        actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> PlannedWrite:
         self.decorated.append(step)
+        self.actors.append(actor_identity)
         return step
 
 
@@ -1696,14 +1698,14 @@ def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
     # strategy hands back the step it was given, so each eager step of the frozen
     # plan is the IDENTICAL object settlement produced — decoration sits between
     # settling a step and packing it, and packing copies nothing.
-    audit = _CountingAudit([])
+    audit = _CountingAudit([], [])
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     model = _wallet_and_account()
     plan = (
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=_INSTANT,
                 concurrency="locking",
                 buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
@@ -1713,6 +1715,7 @@ def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
     )
     assert len(plan.steps) == 3
     assert len(audit.decorated) == 2
+    assert audit.actors == [TEST_ACTOR_IDENTITY, TEST_ACTOR_IDENTITY]
     assert plan.steps[0] is audit.decorated[0]
     assert plan.steps[2] is audit.decorated[1]
     assert all(decorated is not plan.steps[1] for decorated in audit.decorated)
@@ -1726,7 +1729,7 @@ def test_provenance_decorates_the_topology_temporal_expansion_produced(
     # carried: the close reaches the strategy first, its chained successors reach
     # it in their already-decided order, and no step of the frozen plan reaches it
     # twice or not at all.
-    audit = _CountingAudit([])
+    audit = _CountingAudit([], [])
     monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
     update = KeyedWrite(
         "update",
@@ -1778,7 +1781,7 @@ def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
         PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency="locking",
             buffered_writes=buffer,

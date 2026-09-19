@@ -40,6 +40,8 @@ from parallax.core.db_port import (
     Returned,
 )
 from parallax.core.diagnostics import diagnostic_for
+from parallax.postgres._authorization import PostgresRole, install_role
+from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import ConnectionPreparation, PostgresConnection
 
 __all__ = ["Admit", "NativePool", "PostgresConnectionContext", "checkout", "release"]
@@ -152,7 +154,11 @@ def _status(connection: psycopg.Connection[TupleRow]) -> TransactionStatus | Non
 
 
 def release(
-    pool: NativePool, connection: psycopg.Connection[TupleRow], *, suspect: bool
+    pool: NativePool,
+    connection: psycopg.Connection[TupleRow],
+    *,
+    suspect: bool,
+    restore_role: bool = False,
 ) -> CleanupResult:
     """End this connection's exclusive use, and report what that established.
 
@@ -183,6 +189,13 @@ def release(
             dispose = True
             issues.append(_issue("inspect", "not-idle", _Condition(f"its state was {status.name}")))
 
+    if not dispose and restore_role:
+        try:
+            _restore_role(connection)
+        except Exception as exc:
+            dispose = True
+            issues.append(_issue("restore", "authorization-restore-failed", exc))
+
     if dispose:
         try:
             connection.close()
@@ -201,8 +214,10 @@ class PostgresConnectionContext:
     """One single-use acquisition of a connection from a native pool.
 
     Creating it takes nothing. Entering it checks out, verifies the connection
-    is idle, checks admission against the deadline, and yields fresh execution
-    access. Leaving it revokes that access and releases the connection once.
+    is idle, checks admission against the deadline, installs any bound role,
+    rechecks admission after that provider work, and yields fresh execution
+    access. Leaving it revokes that access and releases the connection once,
+    restoring an installed role only where the session remains reusable.
 
     Entry is permitted once and once only, including after an entry that failed:
     a failed entry has already run cleanup over whatever it took and left what
@@ -212,12 +227,14 @@ class PostgresConnectionContext:
 
     __slots__ = (
         "_admit",
+        "_authorized",
         "_cleanup_result",
         "_deadline",
         "_execution",
         "_native",
         "_pool",
         "_preparation",
+        "_role",
         "_spent",
     )
 
@@ -227,12 +244,15 @@ class PostgresConnectionContext:
         admit: Admit,
         deadline: float,
         preparation: ConnectionPreparation,
+        role: PostgresRole | None,
     ) -> None:
         self._pool = pool
         self._admit = admit
         self._deadline = deadline
         self._preparation = preparation
+        self._role = role
         self._spent = False
+        self._authorized = False
         self._native: psycopg.Connection[TupleRow] | None = None
         self._execution: PostgresConnection | None = None
         self._cleanup_result: CleanupResult | None = None
@@ -256,6 +276,30 @@ class PostgresConnectionContext:
             # made twice.
             self._cleanup_result = release(self._pool, connection, suspect=False)
             raise
+        role = self._role
+        if role is not None:
+            try:
+                install_role(connection, role)
+            except BaseException as exc:
+                self._cleanup_result = release(self._pool, connection, suspect=True)
+                if not isinstance(exc, Exception):
+                    raise
+                raise ConnectionAcquisitionError(
+                    "the requested database principal could not be installed",
+                    reason="authorization_failed",
+                ) from exc
+            self._authorized = True
+            try:
+                self._admit(self._deadline)
+            except BaseException:
+                self._cleanup_result = release(
+                    self._pool,
+                    connection,
+                    suspect=False,
+                    restore_role=True,
+                )
+                self._authorized = False
+                raise
         self._native = connection
         execution = PostgresConnection(connection)
         self._execution = execution
@@ -289,7 +333,13 @@ class PostgresConnectionContext:
         finally:
             self._native = None
             self._execution = None
-            self._cleanup_result = release(self._pool, connection, suspect=suspect)
+            self._cleanup_result = release(
+                self._pool,
+                connection,
+                suspect=suspect,
+                restore_role=self._authorized,
+            )
+            self._authorized = False
 
     def _require_idle(self, connection: psycopg.Connection[TupleRow]) -> None:
         """Refuse a checkout that did not hand over an idle connection.
