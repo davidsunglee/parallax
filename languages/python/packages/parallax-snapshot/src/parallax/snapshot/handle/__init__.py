@@ -21,9 +21,10 @@ belongs to it — so a name's ``__module__`` reports its private defining module
 which no specification or public-surface check promises. Where the exported names
 live:
 
-- :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
-  :func:`prepare_model`: the composition root, which prepares a Domain Model of
-  either provenance or takes a Serving Model as handed, and connects to it.
+- :mod:`~parallax.snapshot.handle._database` — :class:`Database`,
+  :class:`ScopedDatabase`, :func:`connect`, and :func:`prepare_model`: the
+  resource-owning composition root and the immutable authority-selected views
+  that expose modeled execution.
 - :mod:`~parallax.snapshot.handle._options` — :class:`DatabaseOptions`, the
   one record the root's transaction defaults, an outer invocation's resolved
   options, and ``Transaction.options`` share. The module also owns the field
@@ -31,15 +32,14 @@ live:
   the private marker that keeps an omitted keyword distinguishable from every
   value; neither is exported.
 - :mod:`~parallax.snapshot.handle._transaction_runner` —
-  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
-  :class:`TransactionRollbackError`: the refusals of the spec §5 callback
-  demarcation (explicit options validated first and omitted ones resolved
-  against the root's defaults, join through the exact originating ``Database``
-  with the option-conflict check against the active transaction's resolved
-  record, the ``m-auto-retry`` bounded retry loop with one adoption per
-  attempt, the injected flush executor, and the one refusal that substitutes
-  an error of its own — a rollback that did not complete, whose two live
-  errors neither alone reports).
+  :class:`TransactionAuthorityError`, :class:`TransactionOptionConflictError`,
+  :class:`TransactionOwnershipError`, and :class:`TransactionRollbackError`:
+  the refusals of the spec §5 callback demarcation. Explicit options are
+  validated first; a join then checks the shared resource root, rollback-only
+  state, captured authority, and explicit options in that order. An outer call
+  resolves omissions against the scope's defaults, runs the ``m-auto-retry``
+  loop with one adoption per attempt, and injects the flush executor. A rollback
+  that did not complete substitutes the one error carrying both live failures.
 - :mod:`~parallax.snapshot.handle._adoption` — :class:`ExecutionFailure`, the
   contextualized form every ordinary failure escaping an adopted execution
   takes: the edition that execution adopted, and the error itself as its
@@ -64,8 +64,9 @@ live:
   :meth:`Transaction.find`, and the resolved :attr:`Transaction.options`.
 - :mod:`~parallax.snapshot.handle._read_scope` — :data:`WireQuery`, the three
   spellings a Wire read accepts for one canonical Object Query, beside the read
-  composition that lowers them: the private Read Scope each ``Database`` and
-  each ``Transaction`` owns exactly one of, its Typed and Wire verbs, and the
+  composition that lowers them: the private Read Scope each
+  ``ScopedDatabase`` and each ``Transaction`` owns exactly one of, its Typed
+  and Wire verbs, and the
   standalone and participating execution policies below them. Nothing else here
   crosses this package's boundary — the scope is an implementation seam rather
   than an extension point.

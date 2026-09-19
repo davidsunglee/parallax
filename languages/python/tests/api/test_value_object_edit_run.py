@@ -38,6 +38,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
+from tests._support.root_ownership import own_root
 
 _CUSTOMER = MODELS["customer"]
 
@@ -56,7 +57,9 @@ def _connect_and_seed(
 ) -> ScopedDatabase:
     profile_run.reset(model_of(_CUSTOMER), {})
     provider = None if observed is None else observed.provider
-    db = connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider)
+    ).using_database_login()
     db.transact(
         lambda tx: tx.insert(
             Customer(

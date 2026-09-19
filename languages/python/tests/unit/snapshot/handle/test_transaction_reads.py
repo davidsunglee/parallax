@@ -1,6 +1,6 @@
 """Participating-read unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
 
-`Transaction.find` and `Database.find`: force-flush before a read
+`Transaction.find` and `ScopedDatabase.find`: force-flush before a read
 (read-your-own-writes), the lock suffix each materialized level's own Effective
 Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
@@ -60,6 +60,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -369,7 +370,7 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
             ]
         )
     )
-    db = Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
     statement = mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
@@ -399,7 +400,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
         )
     )
     rate = MODELS["rate"]
-    db = Database.connect(port, rate, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, rate, clock=FixedClock(FIXED))).using_database_login()
     statement = im.DepositRate.where(im.DepositRate.all).as_of(valid_time=LATEST, tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
@@ -608,7 +609,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     from parallax.core import Pin
 
     port = ScriptedAdapter(Read(rows=_balance_history_rows()))
-    db = Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
     # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
     # `scans_an_axis` reads the Temporal Selection map, so no other clause can
     # stand between the scan and its classification.
@@ -620,7 +621,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
-    db = Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
@@ -648,7 +649,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))])),
         Transact(Read(rows=_balance_history_rows())),
     )
-    db = Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
     pinned = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     assert _retained_evidence(pinned) is not None
 
@@ -831,8 +832,8 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(QueryTargetError) as caught:
-        Database.connect(
-            ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)
+        own_root(
+            Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -850,8 +851,8 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
         )
 
     with raises_contextualized(DeferredFeatureError) as caught:
-        Database.connect(
-            ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)
+        own_root(
+            Database.connect(ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED))
         ).using_database_login().transact(fn)
     assert caught.value.code == "execution-feature-deferred"
     assert caught.value.features == ("snapshot-history-includes",)
@@ -869,7 +870,9 @@ def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
         # (`test_find_force_flushes_pending_writes_first`) never ran.
         assert port.calls == [BeginCall()]
 
-    Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().transact(fn)
+    own_root(
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    ).using_database_login().transact(fn)
     assert port.calls == [BeginCall(), WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)), CommitCall()]
 
 

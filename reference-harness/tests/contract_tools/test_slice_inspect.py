@@ -24,7 +24,6 @@ _EXPECTED_MODULE_UNIONS = {
         "m-conformance-adapter",
         "m-core",
         "m-db-error",
-        "m-db-port",
         "m-deep-fetch",
         "m-descriptor",
         "m-dialect",
@@ -171,7 +170,7 @@ _BASE_CASE_SHAPES = [
             "slice-snapshot-1",
             "m-snapshot-read",
             "m-identity-map",
-            [],
+            ["m-db-port"],
             [*_BASE_CASE_SHAPES, "evolution"],
         ),
         (

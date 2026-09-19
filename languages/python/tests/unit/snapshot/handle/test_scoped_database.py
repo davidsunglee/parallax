@@ -117,6 +117,21 @@ class _Principal:
     database_authorization: object
 
 
+def test_required_scope_arguments_are_positional_only() -> None:
+    root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    principal = _Principal("alice", "role-a")
+    scoped = root.using_database_login()
+
+    with pytest.raises(TypeError):
+        cast("Any", root.using_principal)(principal=principal)
+
+    def no_op(_tx: Any) -> None:
+        return None
+
+    with pytest.raises(TypeError):
+        cast("Any", scoped.transact)(fn=no_op)
+
+
 class _InterleavingPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 

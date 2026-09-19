@@ -4,21 +4,21 @@ The keyed write verbs decide which verbs accept a value from its **provenance**
 (`m-unit-work` *Write value provenance*), and the source that provenance names is
 the managed value lifecycle — the machinery that materializes rows into instances
 and attaches to each the state by which it later recognizes its own — never the
-`Database` that issued the read. The Snapshot runtime ships exactly one such
-lifecycle, so every `Database` over one store is one source: a value any handle
-read is `thisSource`, and `ForeignLifecycle` names a value some *other* lifecycle
-produced. `validate_write_value` therefore reads only `lifecycle_state_of` (is
+`ScopedDatabase` that issued the read. The Snapshot runtime ships exactly one
+such lifecycle, so scopes from every Database Root over one store are one
+source: a value any scope read is `thisSource`, and `ForeignLifecycle` names a
+value some *other* lifecycle produced. `validate_write_value` therefore reads only `lifecycle_state_of` (is
 there any managed state?) and `snapshot_state_of` (is it this lifecycle's?), and
 `SnapshotNodeState` carries `entity`, `views`, `pin`, and `edge` and no handle
-identity, which is the same stance `_ConnectedModel` already takes — "two
-Databases over one Domain Model hold equal state and neither is preferred".
+identity, which is the same stance the selected read model already takes — two
+Database Roots over one Domain Model hold equal state and neither is preferred.
 
 The load-bearing consequence is what provenance does *not* promise. Provenance
 answers which lifecycle produced a value; it carries no guarantee about what an
 earlier read saw, and none is asked of it. The framework's axis of guarantee is
 **did this unit of work observe this row**: `UnitOfWork._observations` is fresh
 per unit of work and is populated only by `record_observations`, which runs inside
-the transaction-scoped read that recorded it. `Database.find` deliberately records
+the transaction-scoped read that recorded it. `ScopedDatabase.find` deliberately records
 nothing — "there being no unit of work to observe into, this passes the executor
 no observation collector at all" — and it is a first-class part of the read
 surface, not an escape hatch.
@@ -94,25 +94,25 @@ into `thisSource`, which `m-unit-work-018` already witnesses, alongside
 case built around two handles would pin a Python-shaped implementation detail into
 the neutral corpus, which states provenance and never how to obtain it. The
 equivalence is held instead by Python unit tests, which pin that a second
-`Database` over one store and a non-transactional `Database.find` on the writing
-handle classify identically — the second being what fails first if handle identity
-is ever threaded through the read path.
+Database Root over one store and a non-transactional `ScopedDatabase.find` on a
+scope of the writing root classify identically — the second being what fails
+first if resource-root or scope identity is ever threaded through the read path.
 
 ## Amendment (2026-08): evidence rides on the source value, and the target Entity decides
 
 The decision above is unchanged — a source is a lifecycle rather than a
-`Database` handle, provenance answers which lifecycle produced a value, and a
+Database Root, provenance answers which lifecycle produced a value, and a
 cross-handle arrangement is definitionally not another source. What this
 amendment replaces is the mechanism it illustrated the decision with, and the
 three outcomes it derived from that mechanism.
 
 **Where evidence lives.** The paragraph above locates the framework's axis of
 guarantee in a per-unit-of-work observation ledger, populated only by a
-transaction-scoped read, and states that `Database.find` "deliberately records
+transaction-scoped read, and states that `ScopedDatabase.find` "deliberately records
 nothing". Evidence now rides on the **source value** itself, behind a private
 Read Origin that names the object the value denotes, the participation its read
 licensed, and the observation retained for the state it saw. A standalone
-`Database.find` builds exactly the same hints and retains exactly the same
+`ScopedDatabase.find` builds exactly the same hints and retains exactly the same
 observations a participating read does — a value's evidence belongs to the value
 whether or not a transaction is in sight — and what makes a read standalone is
 only that it stamps no participation. The unit of work holds a weak index of what

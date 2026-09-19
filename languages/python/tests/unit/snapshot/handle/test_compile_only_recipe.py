@@ -49,7 +49,7 @@ _CASE: Path = (
 
 def test_the_compile_lane_names_the_same_seams_the_runtime_flush_does() -> None:
     """Not "an equivalent planner" — the identical factory and lowering
-    function ``Database.transact`` injects, reached under their own names."""
+    function ``ScopedDatabase.transact`` injects, reached under their own names."""
     lane: Mapping[str, object] = vars(scenario)
     assert lane["build_write_planner"] is handle.build_write_planner
     assert lane["stream_lowered"] is handle.stream_lowered

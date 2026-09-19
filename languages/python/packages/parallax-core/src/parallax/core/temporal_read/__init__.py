@@ -608,7 +608,7 @@ def query_pin(query: ObjectQueryNode, entity: EntityMetadata) -> Pin:
     A SCANNED dimension (``history`` / ``asOfRange`` — "a scan is not a pin") is
     absent; a PINNED dimension carries its coordinate, including the explicit
     :data:`LATEST` sentinel. Authoring-defaulted Transaction Time has already
-    normalized to that explicit selection. The whole-graph pin ``Database.find``
+    normalized to that explicit selection. The whole-graph pin ``ScopedDatabase.find``
     / ``Transaction.find`` attach to the returned ``Snapshot``.
 
     A side-effect-free read of the query's own clause, never a database round

@@ -52,6 +52,7 @@ from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction, TransactionTimePinReadOnlyError
 from tests._support.adoption import raises_contextualized
+from tests._support.root_ownership import own_root
 
 _BALANCE = MODELS["balance"]
 _BRANCH = MODELS["branch"]
@@ -92,7 +93,9 @@ def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
     profile_run: Any, concurrency: Concurrency
 ) -> None:
     profile_run.reset(model_of(_BALANCE), {})
-    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
     _seed_balance(db)
 
     node, edge = render_balance_milestone(db, id=1)  # RENDER time
@@ -118,7 +121,9 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
     # and the one no gate and no lock can cover, because it happened before the
     # transaction started.
     profile_run.reset(model_of(_BALANCE), {})
-    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I3])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I3]))
+    ).using_database_login()
     _seed_balance(db)
 
     _node, edge = render_balance_milestone(db, id=1)  # RENDER time -- the stale edge
@@ -154,7 +159,9 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
     # read-only in either mode. The copy derived from it carries the same pin, so
     # the refusal lands at the verb, before any DML.
     profile_run.reset(model_of(_BALANCE), {})
-    db = connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
     _seed_balance(db)
     _node, edge = render_balance_milestone(db, id=1)
 
@@ -178,7 +185,9 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
     profile_run: Any, concurrency: Concurrency
 ) -> None:
     profile_run.reset(model_of(_BRANCH), {})
-    db = connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
     _seed_branch(db)
 
     node, edge = render_branch_milestone(db, id=1)  # RENDER time
@@ -211,7 +220,9 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
     # CURRENT milestone, whose edge is the concurrent writer's -- so the
     # comparison refuses the stale submit before it authors anything.
     profile_run.reset(model_of(_BRANCH), {})
-    db = connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I3])).using_database_login()
+    db = own_root(
+        connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
+    ).using_database_login()
     _seed_branch(db)
 
     _node, edge = render_branch_milestone(db, id=1)  # RENDER time — the stale edge

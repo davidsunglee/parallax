@@ -59,6 +59,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.model_capabilities import graph_construction_for
+from tests._support.root_ownership import own_root
 from tests.unit._authored_storage_support import answering_for_instance_state, stored_state
 from tests.unit._transact_support import (
     BALANCE,
@@ -947,6 +948,6 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         tx.update(invalid_customer.edit(name="Rejected"))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        connect(port, vo.CUSTOMER_MODEL).using_database_login().transact(fn)
+        own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)

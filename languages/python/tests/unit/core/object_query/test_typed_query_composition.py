@@ -50,7 +50,7 @@ rule-coded ignore asserts its diagnostic, because an unsuppressed diagnostic
 fails `just python-typecheck`.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
-`preflight` — the seam `Database.find` and `Transaction.find` both call —
+`preflight` — the seam `ScopedDatabase.find` and `Transaction.find` both call —
 rather than expecting a rejection from `Entity.where`. That is where the
 model-aware validator states these rules, and it is what covers the wire path
 and any untyped caller identically.

@@ -35,7 +35,7 @@ whose target the connected model does not declare;
 :class:`DeferredFeatureError`, of a valid query whose execution Features this
 implementation has deferred; :class:`SnapshotConnectionError`, of a model that
 cannot materialize rows; :class:`TransactionOwnershipError`, the demarcation's
-own refusal of a nested ``transact`` through a handle that did not open it;
+refusal of a nested ``transact`` through a scope from a different Database Root;
 :class:`SnapshotDecodingError`, of classified stored data that prevents atomic
 result publication; and
 :class:`SnapshotMaterializationError`, the one translation of a failure to build

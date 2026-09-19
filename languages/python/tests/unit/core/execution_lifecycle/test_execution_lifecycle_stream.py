@@ -65,6 +65,7 @@ from tests._support.db_port import (
     Transact,
     Write,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, account_db
 
@@ -135,8 +136,8 @@ class _QuarantiningProvider:
 
 
 def _connected(adapter: DatabaseAdapter, model: Any, provider: Any) -> ScopedDatabase:
-    return connect(
-        adapter, model, clock=FixedClock(_FIXED), lifecycle_provider=provider
+    return own_root(
+        connect(adapter, model, clock=FixedClock(_FIXED), lifecycle_provider=provider)
     ).using_database_login()
 
 
@@ -624,8 +625,8 @@ def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_en
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ORDERS_MODEL, edition="orders-a"))
     port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
-    db = connect(
-        port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder
+    db = own_root(
+        connect(port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder)
     ).using_database_login()
 
     with db.stream(_active_orders(), batch_size=2) as stream:

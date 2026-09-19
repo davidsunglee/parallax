@@ -820,7 +820,7 @@ def _binds_row_observations(
     This decides OBSERVATION BINDING only, never statement count:
     :func:`_build_instructions` buffers one single-row instruction per row
     regardless, and leaves every merge to the planner's own collapse stage
-    (:func:`_lower_resolved`, `parallax.snapshot.handle.Database.transact`).
+    (:func:`_lower_resolved`, `parallax.snapshot.handle.ScopedDatabase.transact`).
     What a bound observation changes is that the planner refuses to merge that
     row at all, which is exactly the point — a merged multi-row instruction has
     nowhere to carry a per-row observed version. The question is answered with
@@ -1123,7 +1123,7 @@ def _lower_resolved(
     shadow: TemporalShadow,
 ) -> tuple[LoweredStatement, ...]:
     """Plan one write buffer through the SAME ``build_write_planner`` factory
-    the composition layer uses (`parallax.snapshot.handle.Database.transact`)
+    the composition layer uses (`parallax.snapshot.handle.ScopedDatabase.transact`)
     and lower each survivor — PURE, no database. The planner is the ONE
     authority that merges a case entry's rows: every entry arrives as its own
     per-row instructions, and which of them share a statement is decided HERE,
@@ -3340,7 +3340,7 @@ def _lower_conflict_write(
 ) -> tuple[LoweredStatement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
     plan the whole buffer through the SAME ``build_write_planner`` factory the
-    composition layer uses (`parallax.snapshot.handle.Database.transact`) and
+    composition layer uses (`parallax.snapshot.handle.ScopedDatabase.transact`) and
     lower every survivor, so a MULTI-KEY attempt reports the ONE set-based
     statement its real execution emits rather than the per-row statements an
     uncollapsed plan would have rendered.

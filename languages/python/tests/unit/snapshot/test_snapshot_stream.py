@@ -76,6 +76,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
     Transact,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, db_for
 
@@ -137,7 +138,11 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
     # stream answers is answered inside its own scope, `pin` included, so
     # "outside the scope, everything raises" is one rule rather than one rule
     # with an exception.
-    stream = Database(RefusingAdapter(), ORDERS_MODEL).using_database_login().stream(_all_orders())
+    stream = (
+        own_root(Database(RefusingAdapter(), ORDERS_MODEL))
+        .using_database_login()
+        .stream(_all_orders())
+    )
     with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
         _ = stream.pin
     with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -289,7 +294,9 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
     # The same gate an eager read crosses, in the same position relative to I/O:
     # a target the connected model does not declare is refused at entry, by a
     # port that raises if it is touched at all.
-    stream = Database(RefusingAdapter(), ACCOUNT).using_database_login().stream(_all_orders())
+    stream = (
+        own_root(Database(RefusingAdapter(), ACCOUNT)).using_database_login().stream(_all_orders())
+    )
     with pytest.raises(QueryTargetError):
         stream.__enter__()
 
@@ -297,7 +304,11 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
     # A stream reports what it is and where it stands. Nothing about the page
     # plan, the cursor, or the port is readable off it.
-    stream = Database(RefusingAdapter(), ORDERS_MODEL).using_database_login().stream(_all_orders())
+    stream = (
+        own_root(Database(RefusingAdapter(), ORDERS_MODEL))
+        .using_database_login()
+        .stream(_all_orders())
+    )
     assert repr(stream) == "SnapshotStream(target='parallax.compatibility.Order', state='created')"
 
 
@@ -1140,7 +1151,7 @@ def test_a_publication_mid_delivery_leaves_every_later_page_on_the_entered_editi
         *paged_reads([_order_row(index) for index in (1, 2, 3)], size=1),
         Read(rows=[_order_row(1)]),
     )
-    db = Database.connect(port, serving).using_database_login()
+    db = own_root(Database.connect(port, serving)).using_database_login()
     delivered: list[int] = []
     with db.stream(_all_orders(), batch_size=1) as stream:
         for root in stream:

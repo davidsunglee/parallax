@@ -1,7 +1,7 @@
 """Executable Usage-Guide recipes for the Snapshot read surface.
 
 Each function here is one executable read over the **public** developer surface
-(``parallax.snapshot.connect`` -> ``db.find``), and its own source is the
+(``parallax.snapshot.connect`` → authority selection → ``db.find``), and its own source is the
 Usage-Guide snippet (``api_suite.RECIPES``). Unlike a story
 (:mod:`parallax.conformance.graph_stories`), a recipe mirrors a SPEC section
 rather than one corpus case: what each of these shows is a **declaration**
@@ -9,9 +9,9 @@ together with the runtime states that declaration produces, which spans more
 than any single case's goldens — registering one under a borrowed case id would
 misrepresent what that case grades.
 
-A recipe seeds nothing: its caller supplies a ``Database`` already holding the
-rows the recipe reads, so the same body serves as both the rendered snippet and
-an executable proof.
+A recipe seeds nothing: its caller supplies a ``ScopedDatabase`` whose owning
+root remains open while the recipe reads, so the same body serves as both the
+rendered snippet and an executable proof.
 """
 
 from __future__ import annotations

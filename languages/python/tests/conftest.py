@@ -17,6 +17,7 @@ import pytest
 from tests._support import cost_durations
 from tests._support.distributions import ALL_PACKAGES, Wheelhouse
 from tests._support.repo import PY_ROOT
+from tests._support.root_ownership import close_owned_roots
 
 if TYPE_CHECKING:
     from parallax.conformance.profile import Profile
@@ -266,7 +267,8 @@ def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
     fixture, because requesting it would put it in every item's fixture closure
     and reclassify the whole suite as database-backed.
     """
-    yield
+    with close_owned_roots():
+        yield
     for fixture in _DATABASE_FIXTURES.intersection(request.fixturenames):
         request.getfixturevalue(fixture).release_case_runtimes()
 

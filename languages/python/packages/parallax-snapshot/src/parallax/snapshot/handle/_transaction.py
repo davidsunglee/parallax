@@ -325,7 +325,8 @@ class Transaction:
     no-op, zero round trips), :meth:`delete` a node or instance (keys off its
     primary key). :meth:`find` runs a participating read and returns
     ``Snapshot[T]``: force-flush + the lock suffix each materialized level's own
-    target Entity calls for, otherwise identical to :meth:`Database.find`. The predicate-selected
+    target Entity calls for, otherwise identical to
+    :meth:`ScopedDatabase.find`. The predicate-selected
     ``_where`` verb family (`python.md` §5) —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
@@ -629,7 +630,7 @@ class Transaction:
         transaction's one Concurrency Preference and the Entity's Optimistic
         Lock Facet, takes the dialect's shared row lock under Locking and none
         under Optimistic. One deep fetch may therefore lock some levels and not
-        others. Otherwise identical to :meth:`Database.find` — the SAME
+        others. Otherwise identical to :meth:`ScopedDatabase.find` — the SAME
         :func:`~parallax.snapshot.handle._preflight.preflight` gate, which
         runs BEFORE the force-flush so a refused read flushes nothing, the SAME
         shared find executor, the SAME frozen-node wrapping, and the SAME

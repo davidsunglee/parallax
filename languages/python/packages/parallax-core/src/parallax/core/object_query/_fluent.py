@@ -390,7 +390,7 @@ class ObjectQuery[E, S]:
     def __bool__(self) -> bool:
         raise TypeError(
             "an Object Query has no truth value before it runs; execute it through "
-            "Database.find / Transaction.find and inspect the Snapshot it returns"
+            "ScopedDatabase.find / Transaction.find and inspect the Snapshot it returns"
         )
 
     def _canonical(self) -> ObjectQueryNode:

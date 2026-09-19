@@ -390,7 +390,7 @@ def entity_read_lock(
     depending on the model rather than on the call.
 
     ``preference`` is ``None`` for a read no unit of work owns — a standalone
-    :meth:`~parallax.snapshot.handle.Database.find` — which has no participation
+    :meth:`~parallax.snapshot.handle.ScopedDatabase.find` — which has no participation
     to derive a strategy from and therefore never locks.
     """
     if preference is None:

@@ -27,6 +27,7 @@ from parallax.conformance.vo_models import Customer
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import InvalidData, Transaction
 from tests._support.corpus import case_fixtures
+from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
 
 _CASES = write_value_runner.reachable_write_value_cases()
@@ -40,8 +41,8 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
     observed = LifecycleObservation()
-    db = connect(
-        profile_run.port, model, lifecycle_provider=observed.provider
+    db = own_root(
+        connect(profile_run.port, model, lifecycle_provider=observed.provider)
     ).using_database_login()
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle

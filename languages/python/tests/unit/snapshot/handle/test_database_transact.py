@@ -1,7 +1,8 @@
-"""`Database` transaction runner unit tests (spec §§3, 5, Docker-free fake ports).
+"""Scoped transaction runner unit tests (spec §§3, 5, Docker-free fake ports).
 
 The observable behavior of `parallax.snapshot.handle._transaction_runner`,
-driven entirely through the public `Database` surface: `Database.transact`
+driven entirely through the public `ScopedDatabase` surface:
+`ScopedDatabase.transact`
 composes the unit-of-work shell, write lowering, and the `m-auto-retry` bounded
 loop over an injected `m-db-port` — commit and abort wiring, join semantics
 (same Transaction, option conflicts, rollback-only foreclosure), resolution of
@@ -84,6 +85,7 @@ from tests._support.db_port import (
     body_outcome,
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -440,7 +442,7 @@ def _raise_inner(_tx: Transaction) -> None:
 
 
 def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> None:
-    # `Database.find` is outside demarcation entirely: no `begin`, no `commit`,
+    # `ScopedDatabase.find` is outside demarcation entirely: no `begin`, no `commit`,
     # and so no unit of work whose participation its values could carry. That is
     # the demarcation fact behind the read executor's own rule — a read with no
     # unit of work behind it stamps no participation and files into no index,
@@ -477,9 +479,8 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Exact originating-Database ownership (ADR 0007): the demarcation records the  #
-# exact `Database` that opened it, and a nested `transact` joins only through   #
-# that object. Settled BEFORE everything the join section above pins.           #
+# Resource-root ownership (ADR 0007): scopes from one root or its aliases join, #
+# while scopes from an unrelated root do not. Settled before the later guards. #
 # --------------------------------------------------------------------------- #
 def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() -> None:
     port = ScriptedAdapter(Transact())
@@ -554,8 +555,12 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
 
 def test_the_ownership_refusal_reaches_no_adapter() -> None:
     port = ScriptedAdapter(Transact())
-    owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
-    foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
+    owner = own_root(
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    ).using_database_login()
+    foreign = own_root(
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    ).using_database_login()
 
     def outer(_tx: Transaction) -> str:
         # The boundary's script holds no statement, so returning at all is the
@@ -567,7 +572,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
     assert owner.transact(outer) == "survived"
 
 
-def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> None:
+def test_ownership_is_settled_before_rollback_only_before_option_conflicts() -> None:
     port = ScriptedAdapter(Transact())
     owner = account_db(port)
     foreign = account_db(port)
@@ -582,12 +587,10 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
             foreign.transact(_must_not_run, max_retries=3)
         # Nothing beyond the outer boundary's own `begin` ever reached the port.
         assert port.calls == [BeginCall()]
-        # Through the owner, the same conflicting option answers next…
-        with pytest.raises(TransactionOptionConflictError, match="max_retries"):
-            owner.transact(_must_not_run, max_retries=3)
-        # …and with no option left to conflict, the doomed boundary answers last.
+        # Through the owner, rollback-only foreclosure answers before the
+        # otherwise-conflicting option is compared.
         with pytest.raises(RollbackOnlyError):
-            owner.transact(_must_not_run)
+            owner.transact(_must_not_run, max_retries=3)
         return "unreachable value"
 
     with raises_contextualized(RollbackOnlyError):
@@ -783,9 +786,9 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     port = ScriptedAdapter(Transact(begin=never_began))
     serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
     with raises_contextualized(DatabaseError) as excinfo:
-        Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login().transact(
-            _must_not_run_callback
-        )
+        own_root(
+            Database.connect(port, serving, clock=FixedClock(FIXED))
+        ).using_database_login().transact(_must_not_run_callback)
     assert excinfo.value is never_began
     assert excinfo.edition == "adopted-before-begin"
     assert port.calls.count(BeginCall()) == 1
@@ -854,7 +857,7 @@ _B = prepare_model(ACCOUNT, edition="b")
 
 
 def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> ScopedDatabase:
-    return Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login()
+    return own_root(Database.connect(port, serving, clock=FixedClock(FIXED))).using_database_login()
 
 
 def test_a_static_connection_reports_one_edition_across_attempts_and_invocations() -> None:
@@ -1198,8 +1201,8 @@ _CONFIGURED = DatabaseOptions(
 
 
 def _configured_db(port: DatabaseAdapter, options: DatabaseOptions = _CONFIGURED) -> ScopedDatabase:
-    return Database.connect(
-        port, ACCOUNT, options=options, clock=FixedClock(FIXED)
+    return own_root(
+        Database.connect(port, ACCOUNT, options=options, clock=FixedClock(FIXED))
     ).using_database_login()
 
 

@@ -9,7 +9,8 @@ no-drift against the corpus's own ``when.objectQuery`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
 GENERIC, unlike the write/graph stories: a single runner
 (``tests/api/test_story_run.py``) drives EVERY entry through the
-SAME shipped surface (``parallax.snapshot.connect`` -> ``db.find``), grading
+SAME shipped surface (``parallax.snapshot.connect`` → authority selection →
+``db.find``), grading
 the mirrored case's own ``then.rows`` (order-insensitive, exact-typed) and
 ``then.roundTrips`` — a hand-rolled per-case story function would only repeat
 the identical three-step shape (reset, `db.find(build())`, compare) for every

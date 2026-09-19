@@ -70,6 +70,7 @@ from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.query_probes import canonical_document
+from tests._support.root_ownership import own_root
 
 _ORDER_ROW: MappingRow = {
     "id": 1,
@@ -315,7 +316,7 @@ def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> ScopedDataba
     # A story's clock is a FACTORY precisely so this consumer drives its own
     # script rather than one `test_story_run.py` already advanced.
     clock = story.clock() if story.clock is not None else None
-    return Database.connect(port, MODELS[story.model], clock=clock).using_database_login()
+    return own_root(Database.connect(port, MODELS[story.model], clock=clock)).using_database_login()
 
 
 def _db(
@@ -407,7 +408,7 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_to_one_view]
     port = _WritingCannedPort(_responses_for(story.run))
     snapshot, loaded_order, _reread = story.run(
-        Database.connect(port, MODELS[story.model]).using_database_login()
+        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
     )
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
     assert snapshot.result().order is loaded_order
@@ -422,7 +423,9 @@ def test_the_loaded_empty_composition_story_keeps_an_empty_view_across_its_inser
     # absent.
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_empty_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot = story.run(Database.connect(port, MODELS[story.model]).using_database_login())
+    snapshot = story.run(
+        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
+    )
     order = snapshot.result()
     assert [(sql, binds) for sql, binds in port.writes] == [
         (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
@@ -438,7 +441,9 @@ def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert()
     # halves of the distinction, differing only in the include the read declared.
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_an_unloaded_relationship_absent]
     port = _WritingCannedPort(_responses_for(story.run))
-    order = story.run(Database.connect(port, MODELS[story.model]).using_database_login()).result()
+    order = story.run(
+        own_root(Database.connect(port, MODELS[story.model])).using_database_login()
+    ).result()
     assert [(sql, binds) for sql, binds in port.writes] == [
         (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
     ]
@@ -732,8 +737,8 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     # this Docker-free driver exactly like a registered story does. The canned
     # port's `execute_write` refuses outright, so reaching the raise at all is
     # also the proof that the verb rejects the value before buffering any DML.
-    db = Database.connect(
-        _TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"]
+    db = own_root(
+        Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
     ).using_database_login()
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
@@ -747,5 +752,5 @@ def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> No
     # counted toward any case's exercised status — see `graph_stories`'s own
     # module docstring), but its body still needs a Docker-free driver exactly
     # like every registered story.
-    db = Database.connect(_CannedPort(), MODELS["rate"]).using_database_login()
+    db = own_root(Database.connect(_CannedPort(), MODELS["rate"])).using_database_login()
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

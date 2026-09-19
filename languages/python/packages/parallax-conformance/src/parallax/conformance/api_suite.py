@@ -26,6 +26,7 @@ from parallax.conformance import (
     database_options_stories,
     database_pooling_stories,
     edit_runner,
+    execution_authority_stories,
     execution_lifecycle_stories,
     model_publication_stories,
     read_models,
@@ -568,6 +569,16 @@ EXAMPLES: Final[list[Example]] = [
         "m-execution-lifecycle-006",
         "A joined unit of work is observed inside the OUTER transaction attempt",
         execution_lifecycle_stories.joined_lifecycle_snippet(),
+    ),
+    # Scoped execution authority: unlike the portable boundary oracle, this
+    # story shows the public root lifetime, both authority-selection spellings,
+    # option derivation, and an independently captured equal-principal join.
+    # `tests/api/test_execution_authority.py` executes the same source against
+    # real Postgres.
+    Example(
+        "m-execution-authority-001",
+        "Scopes capture login or principal authority under one owned Database Root",
+        execution_authority_stories.scoped_authority_snippet(),
     ),
     # Root-configured transaction defaults (m-unit-work / m-auto-retry /
     # m-db-port, ADR 0065): the case's own oracle states what a joining call is
@@ -1595,9 +1606,10 @@ _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
     "an execution-authority join witness graded end-to-end by the case-driven boundary "
     "runner (`tests/api/test_boundary_run.py`), which derives the case's outer and "
     "independently authored joining scopes from one REAL Database Root and verifies the "
-    "case's outcome and exact modeled round-trip count. The public scope-selection and join "
-    "spelling is covered directly by that suite, so a second idiomatic story would duplicate "
-    "the same developer surface"
+    "case's outcome and exact modeled round-trip count. The Usage Guide's "
+    "`m-execution-authority-001` story separately executes the public root lifetime, scope "
+    "selection, option derivation, and both authority modes; these remaining cases add only "
+    "the refusal or login-equality variant already graded by the boundary runner"
 )
 
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
@@ -1674,7 +1686,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-edit-010": _WIRE_EDIT_OCCURRENCE_REASON,
     "m-edit-011": _WIRE_EDIT_OCCURRENCE_REASON,
     # -- m-execution-authority: dedicated boundary runner -------------------- #
-    "m-execution-authority-001": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
     "m-execution-authority-002": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
     "m-execution-authority-003": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
     "m-execution-authority-004": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,

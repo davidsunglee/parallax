@@ -571,7 +571,7 @@ Thus the valid staged `snapshot-history-includes` composition is never
 misclassified as an invalid query, while a missing implementation for a Feature
 claimed by the active Conformance Slice remains a defect rather than an
 allowable deferral. All four steps are one private seam, `preflight`, in
-that fixed order, which `Database.find`, `Transaction.find`, the Wire read
+that fixed order, which `ScopedDatabase.find`, `Transaction.find`, the Wire read
 interfaces beside them, the values lane's `read_rows`, and the later
 Session read boundary call rather than reimplementing.
 
@@ -593,28 +593,28 @@ Work buffering, SQL, or adapter access, and before the inheritance-family
 refusal, because an inherited member's Assignment addresses the declaring
 Entity. Delete and terminate forms accept no Assignments.
 
-The outermost `Database.transact(...)` demarcation stores a strong
-reference to its exact originating Database object. A nested call joins only
-through that same object (`requested_database is active_owner`); an alias joins
-and receives the identical Transaction, while every different handle fails
-even if it carries the same Domain Model, adapter, dialect, clock, or equivalent
-configuration. A mismatch raises exported
+The outermost `ScopedDatabase.transact(...)` demarcation stores the shared
+resource identity behind its Database Root and the scope's captured execution
+authority. A nested call first requires a scope derived from that same resource
+root; scopes derived from a root alias therefore join and receive the identical
+Transaction, while scopes from every different root fail even if they carry the
+same Domain Model, adapter, dialect, clock, or equivalent configuration. After
+rollback-only foreclosure, a same-root join also requires value-equal authority;
+only then are its explicit options compared. An ownership mismatch raises exported
 `TransactionOwnershipError(RuntimeError)` with sole stable code
-`transaction-owner-mismatch`, before option
-comparison, rollback-only joining, Principal resolution, closure execution, Unit
-of Work mutation, SQL, connection acquisition, or adapter access, and retains
-neither handle. It is a `RuntimeError` rather than a `ValueError` because the
-refusal reports that the ambient per-thread demarcation is owned by another
-object: nothing about the call's arguments is wrong and the identical call
-succeeds from the owner. That is what distinguishes it from
+`transaction-owner-mismatch`, before rollback-only joining, authority or option
+comparison, closure execution, Unit of Work mutation, SQL, connection
+acquisition, or adapter access, and retains neither scope. It is a `RuntimeError`
+rather than a `ValueError` because the refusal reports that the ambient
+per-thread demarcation belongs to another resource root: nothing about the
+call's arguments is wrong and the identical call succeeds from a scope of the
+owner. That is what distinguishes it from
 `TransactionOptionConflictError`, which rejects an argument *value*, and it
 matches every sibling scoped-state refusal on this join path
 (`UnitOfWorkError`, `RollbackOnlyError`) and the `RuntimeError` specified for
 `QueryTargetError`. The class carries its code and no other state, so "retains
-neither handle" holds by construction. After exact-owner success,
-existing rollback-only, option-conflict, same-Transaction, and outermost-only
-commit/abort/retry semantics remain unchanged. The demarcation owner is scoped
-state, not a Database, model, or adapter registry.
+neither scope" holds by construction. The demarcation owner is scoped state,
+not a Database-object, model, or adapter registry.
 
 Entity actively overrides Pydantic's inherited `model_copy(...)`. Every call,
 with or without `update=`, raises `EditError(code="edit-use-edit")` and creates

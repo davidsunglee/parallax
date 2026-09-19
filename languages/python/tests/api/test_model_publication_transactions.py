@@ -20,6 +20,7 @@ from parallax.conformance.story_models import Account
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Transaction
 from tests._support.corpus import case_fixtures
+from tests._support.root_ownership import own_root
 
 _CASE_ID = "m-execution-lifecycle-004"
 
@@ -40,7 +41,7 @@ def test_a_publication_during_a_transaction_leaves_that_transaction_on_a(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving).using_database_login()
+    db = own_root(connect(_seeded(profile_run), serving)).using_database_login()
 
     def body(tx: Transaction) -> tuple[str, str, Decimal]:
         before = tx.edition
@@ -58,7 +59,7 @@ def test_a_publication_during_a_transaction_leaves_that_transaction_on_a(
 def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
     a, b, serving = _editions()
     port = fault_injecting_adapter(_seeded(profile_run), fault="deadlock", persistent=False)
-    db = connect(port, serving).using_database_login()
+    db = own_root(connect(port, serving)).using_database_login()
     seen: list[str] = []
 
     def body(tx: Transaction) -> str:
@@ -73,14 +74,14 @@ def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
     # loop re-executes the callback on a fresh attempt, which adopts B.
     assert db.transact(body) == "2026-09-b"
     assert seen == ["2026-09-a", "2026-09-b"]
-    verify = connect(profile_run.port, MODELS["account"]).using_database_login()
+    verify = own_root(connect(profile_run.port, MODELS["account"])).using_database_login()
     committed = verify.transact(lambda tx: tx.find(Account.where(Account.id == TARGET_ID)).result())
     assert committed.balance == Decimal("251.00")
 
 
 def test_a_join_stays_on_the_outer_attempts_edition(profile_run: Any) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving).using_database_login()
+    db = own_root(connect(_seeded(profile_run), serving)).using_database_login()
 
     def outer(tx: Transaction) -> tuple[str, bool]:
         serving.publish(b, expected=a)

@@ -1,7 +1,8 @@
 """``parallax.conformance.stories`` — executable API-suite write stories.
 
 Each story is ONE executable function over the **public** developer surface
-(`parallax.snapshot.connect` → ``db.transact``), mirroring one corpus case, and
+(`parallax.snapshot.connect` → authority selection → ``db.transact``), mirroring
+one corpus case, and
 is the single source three consumers share (python.md §"API Conformance Suite" /
 IMPLEMENTING.md "Continuous API Conformance Lane"):
 

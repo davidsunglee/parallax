@@ -1,7 +1,7 @@
 """Executable API-suite snapshot and graph stories.
 
 Each story is ONE executable function over the **public** developer surface
-(``parallax.snapshot.connect`` -> ``db.find``), mirroring one corpus
+(``parallax.snapshot.connect`` → authority selection → ``db.find``), mirroring one corpus
 ``m-snapshot-read`` (or a closely related ``m-navigate``/``m-value-object``/
 ``m-unit-work``) case whose oracle is a materialized **graph** — a
 `then.graph`/`then.graphs`

@@ -115,8 +115,9 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # module-wide reason), m-metamodel (its one
 # primary-module case is a foundational model reject, reasoned case-scoped), and
 # m-execution-lifecycle (its joined case is a real idiomatic story and the other
-# five name the grader that runs them), and m-execution-authority (all five name
-# the dedicated boundary runner), so neither needs a module-wide reason.
+# five name the grader that runs them), and m-execution-authority (one is a real
+# idiomatic story and four name the dedicated boundary runner), so neither needs
+# a module-wide reason.
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
         "m-execution-lifecycle",

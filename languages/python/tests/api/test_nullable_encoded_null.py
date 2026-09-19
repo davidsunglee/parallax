@@ -17,6 +17,7 @@ from parallax.core.object_query import deserialize
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
 from tests._support import mirrored_models as mm
+from tests._support.root_ownership import own_root
 
 _TARGET = "parallax.compatibility.WritableScalar"
 _ROW_QUERY = deserialize(
@@ -36,7 +37,7 @@ def test_nullable_encoded_sql_null_survives_delivery_and_predecessor_observation
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(mm.WRITABLE_SCALARS_MODEL), {})
-    db = connect(profile_run.port, mm.WRITABLE_SCALARS_MODEL).using_database_login()
+    db = own_root(connect(profile_run.port, mm.WRITABLE_SCALARS_MODEL)).using_database_login()
     db.transact(
         lambda tx: tx.insert(
             mm.WritableScalar(

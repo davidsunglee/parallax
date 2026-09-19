@@ -245,7 +245,7 @@ class Database[Authorization]:
             ),
         )
 
-    def using_principal(self, principal: Principal[Authorization]) -> ScopedDatabase:
+    def using_principal(self, principal: Principal[Authorization], /) -> ScopedDatabase:
         capture = capture_principal(self._resources.runtime, principal)
         return self._resources.scoped(capture, self._options)
 
@@ -334,6 +334,7 @@ class ScopedDatabase:
     def transact[T](
         self,
         fn: Callable[[Transaction], T],
+        /,
         *,
         max_retries: int | Omitted = OMITTED,
         concurrency: Concurrency | Omitted = OMITTED,

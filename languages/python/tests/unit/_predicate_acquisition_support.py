@@ -52,6 +52,7 @@ from parallax.core.unit_work.instructions import PreparedPredicateWrite
 from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
+from tests._support.root_ownership import own_root
 
 __all__ = [
     "ACQUISITION_LEVELS",
@@ -243,8 +244,8 @@ class _Abandoned(Exception):
 
 def database(case: Case) -> ScopedDatabase:
     """A connected handle over ``case``'s port, composed outside every window."""
-    return Database(
-        AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT)
+    return own_root(
+        Database(AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT))
     ).using_database_login()
 
 

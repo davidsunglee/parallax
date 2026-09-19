@@ -89,6 +89,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -99,8 +100,8 @@ from tests.unit._transact_support import (
 
 
 def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
-    return connect(
-        adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider
+    return own_root(
+        connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
     ).using_database_login()
 
 
@@ -887,11 +888,13 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
         raise shared
 
     with raises_contextualized(ValueError, match="raised three times"):
-        connect(
-            port,
-            ACCOUNT,
-            clock=FixedClock(FIXED),
-            lifecycle_provider=recorder,
+        own_root(
+            connect(
+                port,
+                ACCOUNT,
+                clock=FixedClock(FIXED),
+                lifecycle_provider=recorder,
+            )
         ).using_database_login().transact(body, max_retries=0)
 
     root = _only(recorder)
@@ -1196,7 +1199,7 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
 def test_a_transaction_with_no_provider_installed_records_nothing() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().transact(
+    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().transact(
         _increase_balance
     )
     assert recorder.roots == ()

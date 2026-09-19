@@ -34,6 +34,7 @@ from parallax.core import LATEST
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
+from tests._support.root_ownership import own_root
 
 _POSITION = MODELS["position"]
 
@@ -72,8 +73,8 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
     # only observable that separates the two outcomes, and it needs a real
     # database to read.
     profile_run.reset(model_of(_POSITION), {})
-    db = connect(
-        profile_run.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3])
+    db = own_root(
+        connect(profile_run.port, _POSITION, clock=ScriptedClock([_T1, _T2, _T3]))
     ).using_database_login()
 
     db.transact(

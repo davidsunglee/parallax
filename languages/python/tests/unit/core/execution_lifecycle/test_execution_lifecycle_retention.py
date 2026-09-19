@@ -33,7 +33,7 @@ turns on later.
 that calls ``db.transact`` again nests a second joining scope inside the first,
 and nothing bounds how often that repeats. Depth is therefore read as a grid the
 same way `N` and `P` are, over that construction driven through the public
-``Database.transact`` — the only door it has — and graded by the same two
+``ScopedDatabase.transact`` — the only door it has — and graded by the same two
 readings. Read across the Provider counts as well, because `P + D` is an
 addition: what one more level costs must not depend on how many Providers are
 active, nor one more Provider on how deep the root is, and a cost in `P * D`
@@ -83,7 +83,7 @@ The **crossing** is
 for the counts and
 :func:`test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it`
 for the bytes, over :data:`_GRID` and its corners, every workload of it driven
-through ``Database.transact`` on one worker thread per root. The **roots grid**
+through ``ScopedDatabase.transact`` on one worker thread per root. The **roots grid**
 is :func:`test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once`, which
 crosses `N` and `P` at the seam over two different root SHAPES rather than one —
 what the crossing cannot ask for, because one workload drives one shape. The
@@ -230,6 +230,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -615,10 +616,10 @@ def _bytes_within_the_bound(measured: Mapping[_Point, int]) -> None:
 
 
 def _public_db(adapter: DatabaseAdapter, provider: ExecutionLifecycleProvider) -> ScopedDatabase:
-    """A handle over ``port`` whose roots are opened by ``Database.transact``
+    """A handle over ``port`` whose roots are opened by ``ScopedDatabase.transact``
     itself rather than at the seam, observed by ``provider``."""
-    return connect(
-        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    return own_root(
+        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
     ).using_database_login()
 
 
@@ -1570,7 +1571,7 @@ def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_on
     # per-root cost affine in `P` and in `D` with no term in their product — and
     # it is taken from four workloads and answered for at all seventy-five.
     #
-    # Every workload is driven through `Database.transact` on one worker thread
+    # Every workload is driven through `ScopedDatabase.transact` on one worker thread
     # per root, so what is graded is `N` accepted roots each nested `D` levels
     # deep at the public door. A join registry that turned on only while several
     # roots were open, retaining each of them at every joined level, would grow

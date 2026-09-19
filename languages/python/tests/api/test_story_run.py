@@ -75,6 +75,7 @@ from tests._support.corpus import (
     instance_row,
 )
 from tests._support.db_port import ConnectsAsItself
+from tests._support.root_ownership import own_root
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -130,7 +131,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     # A story's scripted-clock factory supplies this consumer with a fresh
     # clock independent of `test_write_no_drift.py`.
     clock = story.clock() if story.clock is not None else None
-    db = connect(profile_run.port, meta, clock=clock).using_database_login()
+    db = own_root(connect(profile_run.port, meta, clock=clock)).using_database_login()
 
     result = story.run(db)
     if result is not None:
@@ -1248,7 +1249,7 @@ def test_statement_capture_forwards_document_read_metadata() -> None:
 def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_run: Any) -> None:
     meta = _reset_for(story.case_id, profile_run)
     port = _StatementCapturePort(profile_run.port)
-    db = connect(port, meta).using_database_login()
+    db = own_root(connect(port, meta)).using_database_login()
     if story.concurrency is not None:
         snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:

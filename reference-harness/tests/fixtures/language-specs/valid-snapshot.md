@@ -15,7 +15,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-db-port", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-execution-authority", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-execution-authority", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "edit", "error", "concurrencySuccess", "rejected", "evolution"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -25,7 +25,8 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 }
 ```
 
-There are no unclaimed implementation prerequisites.
+`m-db-port` is an unclaimed implementation prerequisite: it is contract-covered
+rather than case-covered.
 Deferred behavior is recorded separately. Verification selects the active slice
 tag intersected with the relevant capability tags.
 

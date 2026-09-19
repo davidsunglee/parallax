@@ -4,7 +4,7 @@
 # equal without a caller value or authorization fixture. The joining body runs
 # and the boundary commits after the one observing read.
 model: models/account.yaml
-tags: [slice-snapshot-1, m-execution-authority, m-unit-work, m-db-port, m-api-conformance, authority, join]
+tags: [slice-snapshot-1, m-execution-authority, m-unit-work, m-api-conformance, authority, join]
 lane: api-conformance
 shape: boundary
 compileEligibility:
