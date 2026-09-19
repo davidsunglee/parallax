@@ -38,8 +38,8 @@ from parallax.core.db_port import (
     CleanupIssue,
     ConnectionAcquisitionError,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES
@@ -111,8 +111,8 @@ def _issue_diagnostic() -> Any:
     return diagnostic_for(RuntimeError("the pool refused the connection"))
 
 
-def _handoff_failed() -> Unrelinquished:
-    return Unrelinquished(
+def _handoff_failed() -> ReleaseUnconfirmed:
+    return ReleaseUnconfirmed(
         (CleanupIssue(phase="return", code="handoff-failed", diagnostic=_issue_diagnostic()),)
     )
 
@@ -302,15 +302,15 @@ def test_a_release_reports_what_letting_go_established_without_changing_the_outc
     # The read published and the connection could not be handed back: two facts
     # that stand side by side, and neither rewrites the other.
     recorder = RecordingLifecycleProvider()
-    unrelinquished = _handoff_failed()
-    adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), cleanup_results=[unrelinquished])
+    release_unconfirmed = _handoff_failed()
+    adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), cleanup_results=[release_unconfirmed])
 
     with _db(adapter, recorder) as db:
         assert db.find(mm.Account.where(mm.Account.id == 7)).result() is not None
 
     (root,) = recorder.roots
     (release,) = _of(root, ReleaseFinished)
-    assert release.cleanup_result is unrelinquished
+    assert release.cleanup_result is release_unconfirmed
     read_finished = root.events[-1]
     assert type(read_finished).__name__ == "ReadFinished"
 
@@ -658,7 +658,7 @@ def test_a_fatal_exception_on_the_acquisitions_finished_still_gives_the_connecti
     assert adapter.calls == []
 
 
-def test_a_fatal_exception_on_the_releases_started_still_relinquishes() -> None:
+def test_a_fatal_exception_on_the_releases_started_still_releases() -> None:
     # The Release scope's own opening is the only part of a release that can
     # refuse to happen, and when it does the connection still goes back.
     handler = _FailingOn(ReleaseStarted, KeyboardInterrupt())
@@ -821,14 +821,14 @@ def test_an_ordinary_handler_failure_on_the_release_changes_no_outcome() -> None
     assert reported.diagnostic.message == "the exporter queue is full"
 
 
-def test_an_operations_own_failure_survives_a_release_that_could_not_relinquish() -> None:
+def test_an_operations_own_failure_survives_an_unconfirmed_release() -> None:
     # Existing primary-error precedence: what the caller catches is the failure
     # the work produced, and the cleanup fact reaches the Handler instead of
     # replacing it.
     failure = DatabaseError(category=None, native_code=None, message="the statement failed")
-    unrelinquished = _handoff_failed()
+    release_unconfirmed = _handoff_failed()
     recorder = RecordingLifecycleProvider()
-    adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[unrelinquished])
+    adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[release_unconfirmed])
 
     with _db(adapter, recorder) as db, raises_contextualized(DatabaseError) as raised:
         _read(db)
@@ -836,7 +836,7 @@ def test_an_operations_own_failure_survives_a_release_that_could_not_relinquish(
     assert raised.value is failure
     (root,) = recorder.roots
     (release,) = _of(root, ReleaseFinished)
-    assert release.cleanup_result is unrelinquished
+    assert release.cleanup_result is release_unconfirmed
 
 
 # --------------------------------------------------------------------------- #

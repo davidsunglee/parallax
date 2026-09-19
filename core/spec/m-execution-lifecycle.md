@@ -452,7 +452,7 @@ ordinary Holding rule, which is what makes the owner's own failure `caused` by
 it.
 
 `cleanupResult` is the `m-db-port` cleanup outcome — `returned`, `invalidated`,
-or `unrelinquished`, each with the finite conditions it met on the way. On a
+or `release-unconfirmed`, each with the finite conditions it met on the way. On a
 failed Acquisition it is the partial cleanup that acquisition already ran over
 whatever it had taken, and is absent where it owned nothing to clean up; it
 rides there rather than on a Release because no hold was granted for a release
@@ -647,7 +647,7 @@ This module owns ten cases:
 | streamed delivery | a Snapshot Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
-| cleanup after commit | a Release reporting an unrelinquished connection leaves the attempt committed and the invocation committed |
+| cleanup after commit | a Release reporting an unconfirmed release leaves the attempt committed and the invocation committed |
 
 Every Started transition of an adoption-owning activity in those cases — a
 standalone Read, a standalone Snapshot Stream, and every Transaction Attempt —

@@ -84,7 +84,7 @@ class _DecoratingContext:
 
     Everything about the lifetime is the inner context's, including what it
     reports afterwards: decoration adds a layer to what the caller executes
-    through and takes no part in checking out, relinquishing, or classifying
+    through and takes no part in checking out, releasing, or classifying
     what that established.
     """
 

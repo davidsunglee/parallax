@@ -14,7 +14,7 @@ worker. A :class:`DatabaseRuntime` is the running resource one ``Database``
 owns from composition until close. A :class:`ConnectionContext` is one
 acquisition: single-use, entered once, and reporting a
 :data:`CleanupResult` afterwards that says whether the connection was handed
-back, disposed of deliberately, or could not be relinquished at all.
+back, disposed of deliberately, or its release could not be confirmed.
 
 Nothing here names a driver, a pool library, a cursor, or a native connection.
 A cleanup result carries detached strings and nothing live.
@@ -45,8 +45,8 @@ __all__ = [
     "DatabaseRuntime",
     "DatabaseStartupError",
     "Invalidated",
+    "ReleaseUnconfirmed",
     "Returned",
-    "Unrelinquished",
 ]
 
 type CleanupPhase = Literal["inspect", "dispose", "return"]
@@ -79,13 +79,13 @@ fail after that verdict.
 A code describes the CONDITION met, not the disposition reached: a recovered
 ``not-idle`` accompanies a successful :class:`Invalidated`, and a
 ``handoff-failed`` is what makes an otherwise safe disposal
-:class:`Unrelinquished`.
+:class:`ReleaseUnconfirmed`.
 """
 
 
 @dataclass(frozen=True, slots=True)
 class CleanupIssue:
-    """One condition met while relinquishing a connection.
+    """One condition met while releasing a connection.
 
     ``phase`` and ``code`` are the classification a restricted log may state;
     ``diagnostic`` is the detached projection of the underlying exception, for a
@@ -126,7 +126,7 @@ class Invalidated:
 
 
 @dataclass(frozen=True, slots=True)
-class Unrelinquished:
+class ReleaseUnconfirmed:
     """Required disposal or the accounting after it failed, or could not be confirmed.
 
     This is the honest report of a resource whose fate is unknown. It is never
@@ -138,10 +138,10 @@ class Unrelinquished:
 
     def __post_init__(self) -> None:
         if not self.issues:
-            raise ValueError("an unrelinquished connection reports at least one cleanup issue")
+            raise ValueError("a release-unconfirmed connection reports at least one cleanup issue")
 
 
-type CleanupResult = Returned | Invalidated | Unrelinquished
+type CleanupResult = Returned | Invalidated | ReleaseUnconfirmed
 """How one acquisition ended, as a closed union of exactly one member.
 
 Absence of a result is not a member: a context that was never entered, or is
@@ -196,7 +196,7 @@ class DatabaseStartupError(Exception):
 
     ``phase`` names where readiness stopped and ``cleanup_result`` carries what
     is known about a startup connection that had already been acquired — which
-    is how a successful probe followed by an unconfirmed relinquishment is
+    is how a successful probe followed by an unconfirmed release is
     reported without fabricating an exception that never existed.
 
     An earlier startup failure stays primary: cleanup that follows it reports
@@ -217,7 +217,7 @@ class DatabaseStartupError(Exception):
 
 @runtime_checkable
 class ConnectionContext(Protocol):
-    """One acquisition, from checkout to relinquishment: a single-use context
+    """One acquisition, from checkout to release: a single-use context
     manager over a scoped :class:`~parallax.core.db_port.DatabaseConnection`.
 
     Creating one takes no connection. Entering it checks out, prepares, and
@@ -225,7 +225,7 @@ class ConnectionContext(Protocol):
     cleanup over whatever partial ownership it took, so nothing is left for the
     caller to release and what that cleanup established is on
     :attr:`cleanup_result`. Leaving it revokes the execution access it yielded
-    and relinquishes the connection exactly once.
+    and releases the connection exactly once.
 
     Single-use is the whole lifetime rule: re-entering one, entering one that
     already exited, and entering one whose entry failed each raise
@@ -240,7 +240,7 @@ class ConnectionContext(Protocol):
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
-        """What relinquishing this acquisition established, once it has happened.
+        """What releasing this acquisition established, once it has happened.
 
         ``None`` before entry, during use, and after an acquisition failure that
         never reached Parallax ownership — absence, never success. Stable once

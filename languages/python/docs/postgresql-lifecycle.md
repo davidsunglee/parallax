@@ -4,7 +4,7 @@ How a Parallax application over PostgreSQL gets connections, holds them, and
 gives them back — and what a deployment has to decide because of it.
 
 This is operational guidance. The normative contracts are `core/spec/m-db-port.md`
-(configuration, runtime, acquisition, relinquishment, and what a pool publishes),
+(configuration, runtime, acquisition, release, and what a pool publishes),
 `core/spec/m-execution-lifecycle.md` (observation, including pool observation),
 and `languages/python/spec/python.md` (the Python realization). Nothing here
 restates them normatively; where the two could disagree, they win.
@@ -548,7 +548,7 @@ interchangeable and only one of them is yours to redact.
 | Path | Carries | Policy |
 |---|---|---|
 | Lifecycle events (a Handler you installed) | Rich detached diagnostics: bounded message and stack, error type and code, the cleanup a release established | **Yours.** You decide what is exported and what is redacted. Detaching and truncating a native message does not sanitize it |
-| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and — where a cleanup is what failed — the cleanup phase, the cleanup code, and the one fixed sentence that code stands for. Nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because nothing was relinquished | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
+| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and — where a cleanup is what failed — the cleanup phase, the cleanup code, and the one fixed sentence that code stands for. Nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because no connection release occurred | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
 | `psycopg.pool` (the driver's own logger) | Whatever the driver logs, exception text included | **The driver's.** Parallax's restriction does not reach it. Configure it yourself |
 
 `parallax.resources` is a fixed logger name so an operator silences or routes

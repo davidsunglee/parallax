@@ -488,7 +488,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._database = ContainerDatabase(self._configuration(), self._session)
         # Every scoped session that may still be alive. One removes itself as
         # soon as its session is gone — which is its close, or, for a close that
-        # waited on a borrower, the relinquishment that completed it. What
+        # waited on a borrower, the release that completed it. What
         # remains is what a caller never closed and what would not close, and
         # `close` below is the backstop that ends both.
         self._open: set[PostgresControl | PostgresInterleavedExecution] = set()

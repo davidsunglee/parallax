@@ -117,7 +117,7 @@ decoding the read path depends on through it, and requires it back. Readiness
 runs under ONE cooperative budget that is checked between phases and never
 restarted; a budget stops the next phase from starting and makes no claim about
 interrupting a call already in flight. An open that fails publishes nothing and
-releases what it took on the way out, under the relinquishment rule below: what
+releases what it took on the way out, under the release rule below: what
 it reports is what that release ESTABLISHED, never a promise of reclamation a
 native disposal or accounting that itself failed cannot make.
 
@@ -126,7 +126,7 @@ Entering it acquires, prepares, and admits, or fails having already run that
 same cleanup over whatever partial ownership it took — so nothing is left for
 the caller to release, and what the cleanup established is readable on the
 context. Leaving it revokes the execution it yielded and
-relinquishes the connection exactly once. Re-entering one, entering one that has
+releases the connection exactly once. Re-entering one, entering one that has
 exited, and entering one whose entry failed are each refused without touching
 the resource. Each entry yields FRESH execution access even where the physical
 connection is reused, so a reference kept past the exit executes nothing and
@@ -138,7 +138,7 @@ transaction outcomes stay the execution interface's, authoritative and unchanged
 **Admission decides what may finish.** Starting an acquisition reserves no right
 to execute. Expiry and closure are decided together, once, immediately before
 the connection is handed over. A native success that arrives after the budget is
-spent is relinquished and reported as a timeout rather than admitted. Work
+spent is released and reported as a timeout rather than admitted. Work
 already admitted may finish everything it was going to do, including statements
 it has not issued yet; anything needing a NEW acquisition after a close — a
 retry, a delivery that has not read its first page — is refused from then on.
@@ -152,7 +152,7 @@ that fails does not widen that window. A reading already in progress is not
 revoked by detachment and MAY complete, as the source section below states. Ordinary problems met while closing are diagnostic-only: a handle that
 refused to close would leave a caller unwinding with nothing better to do.
 
-## What relinquishing a connection establishes
+## What releasing a connection establishes
 
 Every acquisition — however it ends, including a statement failure, a conversion
 failure, a transaction that could not be undone, an abandoned delivery, an
@@ -163,7 +163,7 @@ path, and that path reports what it ESTABLISHED rather than what it attempted:
 |---|---|
 | Returned | The handoff completed. It promises nothing about retention, idle availability, or later background work |
 | Invalidated | Physical disposal was established BEFORE the handoff, and the handoff then completed for accounting |
-| Unrelinquished | Required disposal or the accounting after it failed, or could not be confirmed |
+| ReleaseUnconfirmed | Required disposal or the accounting after it failed, or could not be confirmed |
 
 Reuse is offered only for a connection that is idle and that the execution did
 not declare suspect. Anything else is disposed of FIRST and handed back second:

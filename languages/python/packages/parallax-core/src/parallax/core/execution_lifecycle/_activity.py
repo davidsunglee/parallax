@@ -470,7 +470,7 @@ class ConnectionReleaseActivity(Protocol):
         """
         ...
 
-    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
+    def released(self, cleanup_result: CleanupResult | None, /) -> None:
         """What letting the connection go ESTABLISHED."""
         ...
 
@@ -805,7 +805,7 @@ class _InertActivity:
 
     def unacquired(self, cleanup_result: CleanupResult | None, /) -> None: ...
 
-    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None: ...
+    def released(self, cleanup_result: CleanupResult | None, /) -> None: ...
 
     def read_completed(self, returned_rows: Sized, /) -> None: ...
 
@@ -1499,7 +1499,7 @@ class _LiveRelease(_LiveActivity):
         if self._publisher.active:
             self._completed_ns = time.perf_counter_ns()
 
-    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
+    def released(self, cleanup_result: CleanupResult | None, /) -> None:
         self._cleanup_result = cleanup_result
 
     def __enter__(self) -> _LiveRelease:

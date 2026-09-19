@@ -1,0 +1,26 @@
+# Different subjects refuse a join (m-execution-authority): the outer scope is
+# `alice` under `role-a`, while the joining call independently selects `bob`
+# under the equal authorization fixture. Principal inequality alone makes the
+# actors unequal. Refusal happens before the joining body; the earlier observing
+# read is the only database call and the authority-mismatch surfaces.
+model: models/account.yaml
+tags: [m-execution-authority, m-unit-work, m-api-conformance, authority, join]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection authority join intent (shape:boundary)"
+when:
+  actorIdentity: {kind: subject, value: alice}
+  databaseAuthorization: role-a
+  boundary:
+    - action: read
+      note: the outer body reaches modeled work before the refused call
+    - action: join
+      actorIdentity: {kind: subject, value: bob}
+      databaseAuthorization: role-a
+      note: the independently selected subject differs
+then:
+  outcome: authority-mismatch
+  roundTrips: 1

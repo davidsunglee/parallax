@@ -101,7 +101,7 @@ def report_unregistration_failure() -> None:
     """Report that a pool observation would not close, and never raise.
 
     Deliberately parameterless. There is no cleanup phase or code here — nothing
-    was relinquished — and what raised is the application's own observer holding
+    was released — and what raised is the application's own observer holding
     the application's own state, so a message assembled from it would be exactly
     the unaudited disclosure this logger exists to prevent. The one fact worth
     stating is that an interest registered at composition outlived the handle

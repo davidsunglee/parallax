@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final, Literal, NamedTuple, assert_never, cast
 
-from parallax.core.db_port import CleanupResult, Invalidated, Returned, Unrelinquished
+from parallax.core.db_port import CleanupResult, Invalidated, ReleaseUnconfirmed, Returned
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleHandler
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -413,8 +413,8 @@ def _cleanup_fields(result: CleanupResult | None) -> dict[str, object]:
             disposition = "returned"
         case Invalidated(issues):
             disposition = "invalidated"
-        case Unrelinquished(issues):
-            disposition = "unrelinquished"
+        case ReleaseUnconfirmed(issues):
+            disposition = "release-unconfirmed"
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
     return {

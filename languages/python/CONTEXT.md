@@ -611,35 +611,44 @@ _Avoid_: plan assembly, row binding, settlement port, settlement service
 ### Transactions
 
 **Principal Protocol**:
-The application-implemented structural interface whose `subject()` method
-returns the stable, nonempty Subject Identity required by an outer database
-operation. Parallax Python snapshots and otherwise preserves that string
-verbatim before database interaction and outside any retry loop. A non-string
-or empty result raises `InvalidPrincipalError`; an exception raised by
-`subject()` propagates unchanged. Parallax supplies no generic concrete
-Principal that would erase provider- or domain-specific identity structure. A
-joined `db.transact(principal, body)` snapshots the supplied Principal once and
-raises `PrincipalMismatchError` before `body` when it differs from the outer
-transaction's captured identity; operations on `tx` inherit without a
-Principal argument. A nested join first validates every explicit transaction
-option it was handed, then proves that the transaction belongs to the exact
-originating Database, compares those explicit options against the active
-transaction's resolved `tx.options`, checks rollback-only state without
-evaluating the Principal, and last resolves and validates the Principal and
-compares Subject Identity before invoking the body.
+The application-implemented generic structural interface with read-only
+`subject: str` and `database_authorization: Authorization` properties. A
+Database Root's `using_principal` reads each property once, validates and
+captures the values, invokes the runtime's typed authorization binder, and
+retains neither the Principal nor exception state. Invalid subject values or a
+provider's invalid-authorization refusal become `InvalidPrincipalError` with a
+cause; application property exceptions propagate unchanged. Parallax supplies
+no generic concrete Principal.
 _Avoid_: raw subject string, generic Subject wrapper, framework user model
+
+**Scoped Database**:
+`ScopedDatabase`, the frozen, slotted, non-generic modeled-execution surface
+returned by `Database.using_principal(...)` or
+`Database.using_database_login()`. It captures one actor, bound source, complete
+`DatabaseOptions`, root-shared transaction runner, and read composition; it
+owns no runtime, exposes no close or authority-reselection operation, and is the
+only surface with reads, streams, and `transact`.
+_Avoid_: handle, session, connection owner, optional principal
+
+**Transaction Authority Error**:
+`TransactionAuthorityError`, raised before joined-body entry when an
+independently selected `ScopedDatabase` carries an actor unequal to the active
+transaction's captured actor. Ownership and rollback-only eligibility precede
+this check; explicit option comparison follows it. A caught refusal leaves a
+healthy outer transaction usable.
+_Avoid_: PrincipalMismatchError, authentication error, option conflict
 
 **Database Options**:
 The frozen `DatabaseOptions` record exported from `parallax.snapshot` beside
 `connect`: `max_retries`, `concurrency`, `retry_optimistic_conflicts`, and
 `isolation`, each validated at construction and never `None`. One type serves
 three surfaces — the defaults a Database Root is connected with through
-`connect(..., options=...)`, the record an outer `db.transact` resolves its
+`connect(..., options=...)`, the record an outer `scope.transact` resolves its
 omitted keywords into, and what `tx.options` answers.
 _Avoid_: transaction settings, options manager, sentinel record, config dict
 
 **Omitted Keyword**:
-A `db.transact` option the caller did not pass, carried by a private typed
+A `ScopedDatabase.transact` option the caller did not pass, carried by a private typed
 marker each keyword defaults to. Omission alone inherits — the root's default
 on an outer call, the active transaction's resolved value on a join — while an
 explicit value, `None` included, is validated against its field's contract.

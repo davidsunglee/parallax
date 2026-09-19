@@ -51,6 +51,10 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     assert ("m-sql", "m-storage-layout") in edges
     assert ("m-deep-fetch", "m-navigate") in edges  # the "surprising" direction is declared
     assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
+    assert {dependency for owner, dependency in edges if owner == "m-execution-authority"} == {
+        "m-db-port",
+        "m-unit-work",
+    }
 
 
 def test_cycle_is_rejected() -> None:
@@ -100,6 +104,7 @@ def test_real_catalog_matches_the_graph() -> None:
     assert catalog["m-agg"]["status"] == "deferred"  # aggregation is deferred
     assert catalog["m-core"]["status"] == "active"
     assert catalog["m-storage-layout"] == {"status": "active", "coverage": "cases"}
+    assert catalog["m-execution-authority"] == {"status": "active", "coverage": "cases"}
 
 
 def test_parse_catalog_rejects_an_unknown_status() -> None:

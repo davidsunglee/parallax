@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0066
+---
+
 # Principal is required at every database operation boundary
 
 Every handle-level read and outermost unit of work requires a caller-supplied Principal before its query or transaction body; Parallax obtains and validates the Principal's nonempty Subject Identity once at that boundary, before opening a connection, obtaining a Transaction Instant, executing a query, or invoking a transaction body. This capture surrounds the complete retry loop rather than each attempt. A non-string or empty result fails with the language implementation's stable invalid-principal error, while an exception raised by application code inside the Principal propagates unchanged and no database interaction begins.

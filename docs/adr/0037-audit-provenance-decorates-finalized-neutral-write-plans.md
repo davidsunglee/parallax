@@ -46,13 +46,10 @@ effective-change and no-op rules.
 The catalog records the resulting direct edges:
 
 ```text
-m-principal --> m-core
+m-execution-authority --> m-unit-work
+m-execution-authority --> m-db-port
 
-m-unit-work --> m-principal
-m-snapshot-read --> m-principal
-m-op-list --> m-principal
-
-m-audit-provenance --> m-principal
+m-audit-provenance --> m-execution-authority
 m-audit-provenance --> m-metamodel
 m-audit-provenance --> m-model-formation
 m-audit-provenance --> m-inheritance
@@ -61,36 +58,25 @@ m-audit-provenance --> m-temporal-read
 m-audit-provenance --> m-unit-work
 ```
 
-Both modules are active, case-covered common-runtime behavior claimed by
-`slice-snapshot-1` and `slice-managed-1`. SQL, dialect, temporal, and batch
-planning modules remain independent of Audit Provenance.
+Both modules are common-runtime behavior. SQL, dialect, temporal, and batch
+planning modules remain independent of Audit Provenance. Slice membership is
+declared only by `core/spec/slices.md`.
 
-## Amendment (2026-07): `m-unit-work --> m-principal` is not a required edge
+## Amendment (2026-09): execution authority replaces the absent principal module
 
-The edge list above records `m-unit-work --> m-principal` because Unit Work needs
-a Subject Identity to plan an audited write. That requirement is real; the edge
-is not the only way to satisfy it.
+ADR 0066 supersedes ADR 0034 and establishes `m-execution-authority`; there is no
+`m-principal` module. Unit Work owns the closed Actor Identity values that
+planning receives, while Execution Authority owns explicit scope selection,
+capture, provider authorization, retry propagation, and join comparison. The
+dependency direction is therefore `m-execution-authority --> m-unit-work`, not
+the reverse. Audit Provenance consumes both the captured actor and the finalized
+plan, so it depends on Execution Authority and Unit Work independently.
 
-**Superseding decision:** the edge is **not required** while `m-unit-work` owns
-the `SubjectIdentity` **value type** and `m-principal` owns the **behavior** —
-obtaining and validating one Subject Identity at an outer database operation
-boundary, propagating it through joined scopes and automatic retries, and
-comparing it verbatim. Unit Work already owns the write-planning value
-vocabulary, so owning one more opaque value type introduces no new concept, and a
-planning request stays well-typed with no dependency on the boundary that filled
-it in. `m-principal` still depends on `m-core`, and `m-audit-provenance` still
-depends on both `m-principal` and `m-unit-work`, so the cycle-free direction this
-ADR establishes is unchanged: identity flows *into* planning as a value, and
-provenance decoration consumes the finalized neutral plan.
-
-The other ten edges recorded above are unaffected. `m-snapshot-read --> m-principal`
-and `m-op-list --> m-principal` remain, because those surfaces evaluate a
-Principal at a boundary rather than merely accepting an already-normalized value.
-
-This amendment removes one declared edge from an accepted decision. It changes no
-provenance semantics, no disposition interpretation, and no ownership of
-decoration. A later decision may re-home `SubjectIdentity` into `m-principal`
-when that module is implemented; nothing here forecloses it.
+Snapshot and managed execution surfaces do not gain direct behavioral edges to
+authority merely because they carry an already-captured actor. Capture is
+orchestration behavior and neutral planning and materialization remain
+authority-unaware. This amendment changes no provenance semantics, disposition
+interpretation, or ownership of decoration.
 
 ## Amendment (2026-07): the closed algebra superseded this ADR's own disposition vocabulary
 

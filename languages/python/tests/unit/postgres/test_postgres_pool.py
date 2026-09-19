@@ -2,7 +2,7 @@
 
 Three things live here and nowhere else, so they are proven here rather than
 against a container: what readiness establishes before a handle is published,
-what one acquisition is allowed to do, and what relinquishing one establishes.
+what one acquisition is allowed to do, and what releasing one establishes.
 The failures that matter most are the ones a real server will not produce on
 demand — a checkout that hands over a connection in a transaction, a physical
 close that raises, a native return that raises after it may already have handed
@@ -35,12 +35,12 @@ from parallax.core.db_port import (
     ConnectionAcquisitionError,
     DatabaseStartupError,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.postgres._connection import ConnectionPreparation, IncompatibleSessionError
-from parallax.postgres._context import PostgresConnectionContext, relinquish
+from parallax.postgres._context import PostgresConnectionContext, release
 from parallax.postgres._runtime import PROBE_SQL, PostgresRuntime, open_runtime
 
 _PROBE_ROW = {"ready": 1, "temporal_bound": INFINITY, "document": {"ready": True}}
@@ -325,15 +325,15 @@ def test_a_probe_that_does_not_read_back_what_it_asked_for_fails_startup(
         open_runtime("", PoolOptions(min_size=0), 5)
 
     assert failed.value.phase == "probe"
-    # The probe scope is relinquished on the way out rather than leaked.
+    # The probe scope is released on the way out rather than leaked.
     assert pool.returned == [connection]
     assert pool.closes == 1
 
 
-def test_a_probe_scope_that_cannot_be_relinquished_fails_startup_at_release(
+def test_a_probe_scope_whose_release_cannot_be_confirmed_fails_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A successful probe followed by an unconfirmed relinquishment is not a
+    # A successful probe followed by an unconfirmed release is not a
     # ready runtime: the connection's fate is unknown and nothing else will
     # revisit it.
     pool = _opened(monkeypatch, _pool(putconn_error=RuntimeError("the return failed")))
@@ -342,7 +342,7 @@ def test_a_probe_scope_that_cannot_be_relinquished_fails_startup_at_release(
         open_runtime("", PoolOptions(min_size=0), 5)
 
     assert failed.value.phase == "release"
-    assert isinstance(failed.value.cleanup_result, Unrelinquished)
+    assert isinstance(failed.value.cleanup_result, ReleaseUnconfirmed)
     assert failed.value.__cause__ is None
     assert pool.closes == 1
 
@@ -481,7 +481,7 @@ def test_a_checkout_that_hands_over_a_connection_in_a_transaction_is_refused() -
     assert connection.closes == 1
 
 
-def test_a_late_native_success_is_relinquished_rather_than_admitted(
+def test_a_late_native_success_is_released_rather_than_admitted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The caller has already been waiting past what it asked for; its own
@@ -546,7 +546,7 @@ def test_each_acquisition_yields_fresh_execution_access() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Relinquishment: what a cleanup result is allowed to claim.                   #
+# Release: what a cleanup result is allowed to claim.                          #
 # --------------------------------------------------------------------------- #
 
 
@@ -554,7 +554,7 @@ def test_an_idle_untrusted_free_connection_is_offered_for_reuse() -> None:
     connection = _FakeConnection()
     pool = _pool(connection)
 
-    result = relinquish(pool, cast("Any", connection), suspect=False)
+    result = release(pool, cast("Any", connection), suspect=False)
 
     assert result == Returned()
     assert connection.closes == 0
@@ -568,7 +568,7 @@ def test_an_execution_that_declared_the_connection_suspect_disposes_of_it_first(
     connection = _FakeConnection()
     pool = _pool(connection)
 
-    result = relinquish(pool, cast("Any", connection), suspect=True)
+    result = release(pool, cast("Any", connection), suspect=True)
 
     assert isinstance(result, Invalidated)
     assert [(issue.phase, issue.code) for issue in result.issues] == [("inspect", "suspect")]
@@ -580,7 +580,7 @@ def test_a_connection_whose_state_cannot_be_read_is_disposed_of() -> None:
     connection = _FakeConnection(status_error=RuntimeError("the state is gone"))
     pool = _pool(connection)
 
-    result = relinquish(pool, cast("Any", connection), suspect=False)
+    result = release(pool, cast("Any", connection), suspect=False)
 
     assert isinstance(result, Invalidated)
     assert [issue.code for issue in result.issues] == ["state-unreadable"]
@@ -591,7 +591,7 @@ def test_a_connection_that_is_not_idle_is_disposed_of_rather_than_repaired() -> 
     connection = _FakeConnection(status=TransactionStatus.INERROR)
     pool = _pool(connection)
 
-    result = relinquish(pool, cast("Any", connection), suspect=False)
+    result = release(pool, cast("Any", connection), suspect=False)
 
     assert isinstance(result, Invalidated)
     assert [issue.code for issue in result.issues] == ["not-idle"]
@@ -605,9 +605,9 @@ def test_a_failed_disposal_does_not_fall_back_to_returning_a_suspect_connection(
     connection = _FakeConnection(close_error=RuntimeError("close failed"))
     pool = _pool(connection)
 
-    result = relinquish(pool, cast("Any", connection), suspect=True)
+    result = release(pool, cast("Any", connection), suspect=True)
 
-    assert isinstance(result, Unrelinquished)
+    assert isinstance(result, ReleaseUnconfirmed)
     assert [issue.code for issue in result.issues] == ["suspect", "close-failed"]
     assert pool.returned == []
 
@@ -619,16 +619,16 @@ def test_a_failed_handoff_is_neither_retried_nor_followed_by_a_close() -> None:
     connection = _FakeConnection()
     pool = _pool(connection, putconn_error=RuntimeError("the return failed"))
 
-    result = relinquish(pool, cast("Any", connection), suspect=False)
+    result = release(pool, cast("Any", connection), suspect=False)
 
-    assert isinstance(result, Unrelinquished)
+    assert isinstance(result, ReleaseUnconfirmed)
     assert [(issue.phase, issue.code) for issue in result.issues] == [("return", "handoff-failed")]
     assert connection.closes == 0
 
 
 def test_a_cleanup_issue_carries_a_detached_diagnostic_and_no_live_object() -> None:
     connection = _FakeConnection(status=TransactionStatus.INTRANS)
-    result = relinquish(_pool(connection), cast("Any", connection), suspect=False)
+    result = release(_pool(connection), cast("Any", connection), suspect=False)
 
     (issue,) = result.issues
     assert isinstance(issue.diagnostic.message, str)
@@ -636,9 +636,9 @@ def test_a_cleanup_issue_carries_a_detached_diagnostic_and_no_live_object() -> N
     assert not hasattr(issue.diagnostic, "__traceback__")
 
 
-def test_an_unrelinquished_result_must_name_at_least_one_issue() -> None:
+def test_a_release_unconfirmed_result_must_name_at_least_one_issue() -> None:
     with pytest.raises(ValueError, match="at least one cleanup issue"):
-        Unrelinquished(())
+        ReleaseUnconfirmed(())
 
 
 # --------------------------------------------------------------------------- #
@@ -838,7 +838,7 @@ def test_configuration_opens_the_runtime_it_describes(monkeypatch: pytest.Monkey
 
 def test_leaving_a_context_that_was_never_entered_does_nothing() -> None:
     # Total on every exit: a context a caller built and abandoned has taken
-    # nothing, so leaving it relinquishes nothing and reports nothing.
+    # nothing, so leaving it releases nothing and reports nothing.
     pool = _pool()
     resource = _context(pool)
     resource.__exit__(None, None, None)

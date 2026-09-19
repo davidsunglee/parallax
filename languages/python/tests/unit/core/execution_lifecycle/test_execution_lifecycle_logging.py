@@ -28,8 +28,8 @@ from parallax.core.db_port import (
     CleanupIssue,
     DatabaseAdapter,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import (
@@ -475,7 +475,7 @@ def test_the_resource_records_state_the_classification_and_never_the_native_text
             ),
         )
     )
-    unrelinquished = Unrelinquished(
+    release_unconfirmed = ReleaseUnconfirmed(
         (
             CleanupIssue(
                 phase="return",
@@ -498,7 +498,7 @@ def test_the_resource_records_state_the_classification_and_never_the_native_text
                 AcquisitionFailed("timeout", DirectFailure(_DATABASE_FAILURE.failure), partial),
             ),
             ReleaseStarted(EXECUTION.id, 4, 4, 1),
-            ReleaseFinished(EXECUTION.id, 5, 4, 1, 13, 14, unrelinquished),
+            ReleaseFinished(EXECUTION.id, 5, 4, 1, 13, 14, release_unconfirmed),
             ReleaseFinished(EXECUTION.id, 6, 5, 1, 15, 16, None),
         ],
         detail="diagnostic",
@@ -511,7 +511,7 @@ def test_the_resource_records_state_the_classification_and_never_the_native_text
     assert failed.fields["cleanup"] == "invalidated"
     assert failed.fields["cleanup_issues"] == ("inspect/not-idle",)
     assert release_started.fields["transition"] == "releaseStarted"
-    assert released.fields["cleanup"] == "unrelinquished"
+    assert released.fields["cleanup"] == "release-unconfirmed"
     assert released.fields["cleanup_issues"] == ("return/handoff-failed",)
     assert (released.fields["duration_ns"], released.fields["hold_duration_ns"]) == (13, 14)
     # A context that established nothing on its way out says so rather than

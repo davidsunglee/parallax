@@ -30,8 +30,8 @@ from parallax.core.db_port import (
     CleanupIssue,
     ConnectionAcquisitionError,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
@@ -318,20 +318,20 @@ def _issue() -> Any:
 
 
 def test_a_successful_read_survives_a_cleanup_problem() -> None:
-    unrelinquished = Unrelinquished(
+    release_unconfirmed = ReleaseUnconfirmed(
         (CleanupIssue(phase="return", code="handoff-failed", diagnostic=_issue()),)
     )
-    adapter = ScriptedAdapter(Read(rows=[_ACCOUNT_ROW]), cleanup_results=[unrelinquished])
+    adapter = ScriptedAdapter(Read(rows=[_ACCOUNT_ROW]), cleanup_results=[release_unconfirmed])
 
     with _db(adapter) as db:
         assert db.find(_account_query()).result().owner == "Newton"
 
 
 def test_a_committed_transaction_survives_a_cleanup_problem() -> None:
-    unrelinquished = Unrelinquished(
+    release_unconfirmed = ReleaseUnconfirmed(
         (CleanupIssue(phase="dispose", code="close-failed", diagnostic=_issue()),)
     )
-    adapter = ScriptedAdapter(Transact(Write()), cleanup_results=[unrelinquished])
+    adapter = ScriptedAdapter(Transact(Write()), cleanup_results=[release_unconfirmed])
 
     with _db(adapter) as db:
 
@@ -344,10 +344,10 @@ def test_a_committed_transaction_survives_a_cleanup_problem() -> None:
 
 def test_an_operations_own_failure_is_not_replaced_by_a_cleanup_problem() -> None:
     failure = DatabaseError(category=None, native_code=None, message="the statement failed")
-    unrelinquished = Unrelinquished(
+    release_unconfirmed = ReleaseUnconfirmed(
         (CleanupIssue(phase="return", code="handoff-failed", diagnostic=_issue()),)
     )
-    adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[unrelinquished])
+    adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[release_unconfirmed])
 
     with _db(adapter) as db, pytest.raises(ExecutionFailure) as raised:
         db.find(_account_query()).result()
@@ -370,7 +370,7 @@ def test_a_cleanup_problem_reports_its_phase_code_and_fixed_text_and_nothing_els
     issue = CleanupIssue(phase="return", code="handoff-failed", diagnostic=diagnostic_for(native))
 
     with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME):
-        report_resource_issues("operation", Unrelinquished((issue,)))
+        report_resource_issues("operation", ReleaseUnconfirmed((issue,)))
 
     (record,) = caplog.records
     assert record.name == RESOURCE_LOGGER_NAME
@@ -399,7 +399,7 @@ def test_reporting_never_raises_whatever_logging_does(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(resource_logging._LOGGER, "warning", refuse)  # pyright: ignore[reportPrivateUsage] - the restricted logger is module-private and is the seam this proves nothing reaches
     issue = CleanupIssue(phase="inspect", code="suspect", diagnostic=_issue())
-    report_resource_issues("startup", Unrelinquished((issue,)))
+    report_resource_issues("startup", ReleaseUnconfirmed((issue,)))
 
 
 class _NeverAcquires(ConnectsAsItself):

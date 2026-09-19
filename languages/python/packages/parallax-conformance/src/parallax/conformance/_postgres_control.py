@@ -75,7 +75,7 @@ __all__ = ["PostgresControl", "PostgresInterleavedExecution"]
 
 _BACKEND_PID: Final[str] = "select pg_backend_pid() as pid"
 _TERMINATE_BACKEND: Final[str] = "select pg_terminate_backend(%s) as terminated"
-_RELINQUISHED: Final[CleanupResult] = Returned()
+_RELEASED: Final[CleanupResult] = Returned()
 
 
 def initialized_session(
@@ -255,25 +255,25 @@ class ControlledScope:
         execution = self._execution
         if execution is None:
             return
-        # Relinquished even if revocation does not complete: the runtime serves
+        # Released even if revocation does not complete: the runtime serves
         # one scope at a time, so a scope that failed to give the session back
         # would leave it refusing every later acquisition.
         try:
             execution.revoke()
         finally:
             self._execution = None
-            self._runtime.relinquish(self)
+            self._runtime.release(self)
             # The dedicated session is not returned anywhere: it is this
             # runtime's for its whole life, so what ended is the exclusive use
             # of it.
-            self._cleanup_result = _RELINQUISHED
+            self._cleanup_result = _RELEASED
 
 
 class ControlledRuntime:
     """A runtime over exactly ONE dedicated driver session.
 
     It is a real :class:`~parallax.core.db_port.DatabaseRuntime` — a Database
-    composed over it acquires, executes, and relinquishes through the ordinary
+    composed over it acquires, executes, and releases through the ordinary
     contract — and it manages no pool at all. That is the point: a session the
     harness may cancel, close, or tear down at the socket must be one nothing
     else can be handed, and a pool exists precisely to hand connections around.
@@ -300,7 +300,7 @@ class ControlledRuntime:
         self._admission = threading.Lock()
         # Held across every native end of this session and the completion it
         # publishes, and taken BEFORE the state lock. Retirement is reached from
-        # paths that run on different threads — a close, the relinquishment a
+        # paths that run on different threads — a close, the release a
         # deferred close waits for, and the termination ladder — and two of them
         # that each observed a live session would otherwise both close the same
         # driver connection, which is libpq finishing a connection another
@@ -345,7 +345,7 @@ class ControlledRuntime:
             self._active = scope
             return PostgresConnection(self._connection)
 
-    def relinquish(self, scope: ControlledScope) -> None:
+    def release(self, scope: ControlledScope) -> None:
         with self._state:
             if self._active is scope:
                 self._active = None
@@ -387,7 +387,7 @@ class ControlledRuntime:
         it; this one has exactly one session and nothing to hand it to, so
         closing the runtime is what ends it. It does NOT end it under a
         borrower: a scope admitted before this close finishes everything it was
-        going to do, and the session is retired when that scope relinquishes —
+        going to do, and the session is retired when that scope releases —
         which is what a pool does when a checked-out connection comes back.
 
         Never raises, because a runtime is closed by a caller that is unwinding.
@@ -454,7 +454,7 @@ class ControlledRuntime:
         """Call *observer* once this session is gone, immediately if it already is.
 
         Retirement is not always finished by the caller that asked for it: a
-        close under a borrower completes on the thread that relinquishes, which
+        close under a borrower completes on the thread that releases, which
         can be long afterwards and is never the closer's own. An opener deciding
         whether it may forget this runtime therefore cannot learn the answer by
         asking :attr:`retired` once, and this is how it is told instead.
@@ -481,7 +481,7 @@ class ControlledRuntime:
         """Record the session as gone and tell whoever asked to be told.
 
         The one completion of retirement, whichever path reached it: a close,
-        the relinquishment that a deferred close was waiting for, or the
+        the release that a deferred close was waiting for, or the
         termination ladder. Retirement and the notification that ends the
         opener's bookkeeping are the same transition, so nothing can complete
         one without the other. Called under :meth:`retiring`, which is what
@@ -679,7 +679,7 @@ class PostgresInterleavedExecution:
 
         The release is reported to the opener once the session is gone — because
         the ladder condemned it, because this close retired it, or because the
-        borrower that was holding it relinquished afterwards and the deferred
+        borrower that was holding it released afterwards and the deferred
         retirement completed then. That last one arrives on the borrower's
         thread, which is why the report is asked for rather than tested here: a
         close that only looked once would leave a dead execution on its opener's

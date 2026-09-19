@@ -185,7 +185,9 @@
         "lane": { "const": "api-conformance" },
         "when": {
           "required": ["boundary"],
-          "propertyNames": { "enum": ["boundary", "uow"] }
+          "propertyNames": {
+            "enum": ["boundary", "uow", "actorIdentity", "databaseAuthorization"]
+          }
         },
         "then": {
           "required": ["outcome"],
@@ -268,6 +270,47 @@
     }
   ],
   "allOf": [
+    {
+      "description": "Execution-authority selectors belong to boundary cases alone. An outer selector is optional because the eventual runner explicitly selects database-login authority when it is absent; an authored selector states authority-sensitive behavior and must not be silently ignored by another case lane.",
+      "if": {
+        "required": ["when"],
+        "properties": {
+          "when": {
+            "anyOf": [
+              {"required": ["actorIdentity"]},
+              {"required": ["databaseAuthorization"]}
+            ]
+          }
+        }
+      },
+      "then": {"properties": {"shape": {"const": "boundary"}}}
+    },
+    {
+      "description": "An outer subject selection is complete only with an authorization fixture, while database-login has neither a caller-supplied identity value nor an authorization. Authorization cannot stand without an actor selector.",
+      "if": {
+        "required": ["when"],
+        "properties": {"when": {"required": ["actorIdentity"]}}
+      },
+      "then": {
+        "properties": {
+          "when": {
+            "oneOf": [
+              {
+                "properties": {"actorIdentity": {"required": ["kind"], "properties": {"kind": {"const": "subject"}}}},
+                "required": ["databaseAuthorization"]
+              },
+              {
+                "properties": {"actorIdentity": {"required": ["kind"], "properties": {"kind": {"const": "database-login"}}}},
+                "not": {"required": ["databaseAuthorization"]}
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {"when": {"not": {"required": ["databaseAuthorization"]}}}
+      }
+    },
     {
       "description": "Every case but an `evolution` case names one model at the top level. An evolution case names TWO endpoints instead, under `when.evolve`, and its own branch refuses a top-level `model` beside them — so the requirement is stated here rather than in the envelope's own `required`, where it could only be stated for all eleven shapes or for none.",
       "if": {"required": ["shape"], "properties": {"shape": {"not": {"const": "evolution"}}}},
@@ -614,7 +657,7 @@
           }
         },
         "fault": {
-          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Three kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure`: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used cannot be relinquished when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (`maxRetries: 0`, the callback-withheld-on-abort case).",
+          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Three kinds are not failures of the WORK, and each is terminal for a different reason. `isolation-setup-failure`: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed` on a connection it did acquire, and the callback is never called (m-db-port *Mapping obligations*). `connection-acquisition-failure`: the attempt's Acquisition grants no connection at all, so it carries the partial cleanup it ran, no release follows it, and the attempt finishes `beginFailed` CAUSED by it — an acquisition failure is outside the `m-db-error` categories and is never retriable. `connection-cleanup-failure`: the connection the attempt used reaches release-unconfirmed when the attempt gives it back, which is diagnostic rather than an outcome — the work stands and the boundary commits. Absent when the case exercises only loop configuration (`maxRetries: 0`, the callback-withheld-on-abort case).",
           "enum": [
             "serialization-failure",
             "deadlock",
@@ -636,6 +679,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "actorIdentity": {
+          "description": "Boundary cases only. The outer execution actor selected independently of transaction options. A subject selector requires the sibling provider-owned databaseAuthorization fixture; database-login carries no caller-supplied value or authorization. Absence means the language runner explicitly selects its runtime login scope.",
+          "$ref": "#/$defs/actorIdentity"
+        },
+        "databaseAuthorization": {
+          "description": "Boundary cases only. The provider-neutral fixture name paired with a subject actor selector. The provider resolves it to its immutable authorization value; it is not a serialized production role.",
+          "$ref": "#/$defs/databaseAuthorization"
+        },
         "uow": {
           "description": "The transaction options the action's outer invocation EXPLICITLY requests (m-unit-work strategy selection + m-auto-retry/m-opt-lock bounded automatic retry + the m-db-port Isolation Level). Every member is optional and none may be null: a field the case omits is omitted at the invocation and resolves to the Database Root's default. Descriptive apart from `isolation`: it declares the resolved Concurrency Preference (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `locking` forces the effective Locking strategy for every lockable Entity. `optimistic` is the default and selects Optimistic for an Entity with an explicit-version or Transaction-Time-derived optimistic key, while an unversioned Non-Temporal Entity falls back to Locking. The target Entity's Effective Concurrency Strategy decides gate presence by itself, never the mutation kind: Optimistic omits the shared read lock and gates every observation-requiring write; Locking takes the qualifying shared read lock and emits no gate, though a versioned UPDATE still advances the version. The rule is uniform across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close. The harness executes the authored golden SQL either way; the block documents WHICH preference produced it. `isolation` is the one member that is never merely descriptive: it names the portable Isolation Level every boundary the case opens is opened at, and a runner that opens no boundary at all carries it nowhere.",
           "type": "object",
@@ -1115,6 +1166,14 @@
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
                 "enum": ["read", "create", "update", "terminate", "delete", "join"]
               },
+              "actorIdentity": {
+                "description": "The independently selected actor for THIS joining call. Legal on a join alone. Absence reuses the enclosing scope; presence derives an independent scope even where its values equal the outer selection.",
+                "$ref": "#/$defs/actorIdentity"
+              },
+              "databaseAuthorization": {
+                "description": "The provider-neutral authorization fixture paired with a subject actor on THIS joining call. Legal on a join alone and forbidden for database-login mode.",
+                "$ref": "#/$defs/databaseAuthorization"
+              },
               "maxRetries": {
                 "description": "The retry bound THIS joining call explicitly names, spelled as `when.uow.maxRetries` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the bound inherits the active transaction's resolved bound, naming that bound is accepted, and naming any other — the Database Root's own default included, where the outer call overrode it — is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone.",
                 "$ref": "#/$defs/transactionOptions/maxRetries"
@@ -1148,9 +1207,28 @@
                     { "not": { "required": ["maxRetries"] } },
                     { "not": { "required": ["concurrency"] } },
                     { "not": { "required": ["retryOptimisticConflicts"] } },
-                    { "not": { "required": ["isolation"] } }
+                    { "not": { "required": ["isolation"] } },
+                    { "not": { "required": ["actorIdentity"] } },
+                    { "not": { "required": ["databaseAuthorization"] } }
                   ]
                 }
+              },
+              {
+                "description": "A subject selection is complete only with an authorization fixture, while database-login has neither a caller-supplied identity value nor an authorization. Authorization cannot stand without an actor selector.",
+                "if": {"required": ["actorIdentity"]},
+                "then": {
+                  "oneOf": [
+                    {
+                      "properties": {"actorIdentity": {"required": ["kind"], "properties": {"kind": {"const": "subject"}}}},
+                      "required": ["databaseAuthorization"]
+                    },
+                    {
+                      "properties": {"actorIdentity": {"required": ["kind"], "properties": {"kind": {"const": "database-login"}}}},
+                      "not": {"required": ["databaseAuthorization"]}
+                    }
+                  ]
+                },
+                "else": {"not": {"required": ["databaseAuthorization"]}}
               }
             ]
           }
@@ -1442,7 +1520,7 @@
           "minProperties": 1
         },
         "outcome": {
-          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled), or one of the three refusals a boundary OPTION produces: `option-conflict` (a joining call named an option the boundary it joined was not opened with, refused before the joined callback runs), `boundary-failed` (the boundary never opened — its session setup failed, so no attempt ran and the callback was never called), and `connection-refused` (the adapter refused the connection it was handed, before any boundary). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts. A DIALECT-KEYED map states an outcome that differs by engine — the same form `then.nativeCode` and `then.sql` use, and with the same rule that a dialect absent from the map means the case does not apply there, which is how a nonportable engine floor is graded without claiming the other engine reaches it.",
+          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled), or one of the pre-body refusals: `authority-mismatch` (a joining scope's actor differs after ownership and rollback-only eligibility are established and before option comparison), `option-conflict` (a joining call named an option the boundary it joined was not opened with), `boundary-failed` (the boundary never opened), and `connection-refused` (the adapter refused the connection it was handed). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts. A DIALECT-KEYED map states an outcome that differs by engine — the same form `then.nativeCode` and `then.sql` use, and with the same rule that a dialect absent from the map means the case does not apply there.",
           "oneOf": [
             { "$ref": "#/$defs/boundaryOutcome" },
             {
@@ -2172,7 +2250,7 @@
       "properties": {}
     },
     "lifecycleCleanupIssue": {
-      "description": "One condition met while relinquishing a connection (m-db-port): the `phase` of the finite inspect/dispose/return sequence it was met in, and the stable `code` classifying it. A code describes the CONDITION met rather than the disposition reached — a recovered `not-idle` accompanies a successful `invalidated`, while a `handoff-failed` is what makes an otherwise safe disposal `unrelinquished`. The detached diagnostic each issue also carries is the implementation's own native evidence and is not portable, exactly as a failed Database Call's message and native code are not.",
+      "description": "One condition met while releasing a connection (m-db-port): the `phase` of the finite inspect/dispose/return sequence it was met in, and the stable `code` classifying it. A code describes the CONDITION met rather than the disposition reached — a recovered `not-idle` accompanies a successful `invalidated`, while a `handoff-failed` is what makes an otherwise safe disposal `release-unconfirmed`. The detached diagnostic each issue also carries is the implementation's own native evidence and is not portable, exactly as a failed Database Call's message and native code are not.",
       "type": "object",
       "additionalProperties": false,
       "required": ["phase", "code"],
@@ -2189,7 +2267,7 @@
       "properties": {
         "outcome": {"enum": ["acquired", "failed"]},
         "reason": {"enum": ["timeout", "queue-rejected", "closed", "preparation-failed"]},
-        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "cleanup": {"enum": ["returned", "invalidated", "release-unconfirmed"]},
         "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}},
         "attribution": {"enum": ["direct", "caused"]},
         "cause": {"type": "integer", "minimum": 1},
@@ -2220,25 +2298,25 @@
           "then": {"required": ["cleanup"]}
         },
         {
-          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome. The partial cleanup a failed acquisition ran is the same cleanup a release runs and reaches the same outcomes under the same rule.",
-          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "description": "A release-unconfirmed connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome. The partial cleanup a failed acquisition ran is the same cleanup a release runs and reaches the same outcomes under the same rule.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "release-unconfirmed"}}},
           "then": {"required": ["issues"]}
         }
       ]
     },
     "lifecycleReleaseFinished": {
-      "description": "The connection the activity held was let go, and `cleanup` is what that ESTABLISHED (m-db-port): `returned` handed it back and the handoff completed, `invalidated` established physical disposal FIRST and then completed the handoff for accounting, and `unrelinquished` is the honest report of a resource whose fate is unknown — required disposal or the accounting after it failed or could not be confirmed, which is why it always carries at least one issue. `issues` records the conditions the cleanup met on the way and is omitted where it met none, so a deliberate invalidation is legible without being an error. A release has ONE ending: what it established is a value the adapter reports rather than something read off an exception, and it never rewrites the outcome of the activity above it — a read that published, a stream that exhausted, and an attempt that committed each keep what they established whatever the release ran into. Both monotonic durations, the acquisition's own and the whole hold's, are not portable and are absent.",
+      "description": "The connection the activity held was let go, and `cleanup` is what that ESTABLISHED (m-db-port): `returned` handed it back and the handoff completed, `invalidated` established physical disposal FIRST and then completed the handoff for accounting, and `release-unconfirmed` is the honest report of a resource whose fate is unknown — required disposal or the accounting after it failed or could not be confirmed, which is why it always carries at least one issue. `issues` records the conditions the cleanup met on the way and is omitted where it met none, so a deliberate invalidation is legible without being an error. A release has ONE ending: what it established is a value the adapter reports rather than something read off an exception, and it never rewrites the outcome of the activity above it — a read that published, a stream that exhausted, and an attempt that committed each keep what they established whatever the release ran into. Both monotonic durations, the acquisition's own and the whole hold's, are not portable and are absent.",
       "type": "object",
       "additionalProperties": false,
       "required": ["cleanup"],
       "properties": {
-        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "cleanup": {"enum": ["returned", "invalidated", "release-unconfirmed"]},
         "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}}
       },
       "allOf": [
         {
-          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome.",
-          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "description": "A release-unconfirmed connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "release-unconfirmed"}}},
           "then": {"required": ["issues"]}
         }
       ]
@@ -2324,6 +2402,31 @@
         }
       ]
     },
+    "actorIdentity": {
+      "description": "One provider-neutral Actor Identity selector. Subject mode carries the nonempty, verbatim application subject and reserves the exact `db-login:` prefix. Database-login mode carries no value: its identity comes from the opened runtime, never from case input.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {"const": "subject"},
+            "value": {"type": "string", "minLength": 1, "pattern": "^(?!db-login:)[\\s\\S]+$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "database-login"}}
+        }
+      ]
+    },
+    "databaseAuthorization": {
+      "description": "A nonempty provider-owned fixture selector. Core cases compare selector intent but assign no production authorization syntax to this string.",
+      "type": "string",
+      "minLength": 1
+    },
     "boundaryOutcome": {
       "description": "One portable boundary outcome, in either of the two places `then.outcome` admits one: stated directly, or as a dialect-keyed map's value.",
       "enum": [
@@ -2333,6 +2436,7 @@
         "deadlock",
         "serialization-failure",
         "lock-wait-timeout",
+        "authority-mismatch",
         "option-conflict",
         "boundary-failed",
         "connection-refused"

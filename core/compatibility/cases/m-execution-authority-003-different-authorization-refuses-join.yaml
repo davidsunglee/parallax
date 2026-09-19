@@ -1,0 +1,26 @@
+# Different authorization refuses a join (m-execution-authority): both scopes
+# carry subject `alice`, but the outer selection uses `role-a` and the joining
+# selection uses `role-b`. Subject equality is insufficient when authorization
+# differs. Refusal happens before the joining body and leaves the earlier read
+# as the only database call.
+model: models/account.yaml
+tags: [m-execution-authority, m-unit-work, m-api-conformance, authority, join]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection authority join intent (shape:boundary)"
+when:
+  actorIdentity: {kind: subject, value: alice}
+  databaseAuthorization: role-a
+  boundary:
+    - action: read
+      note: the outer body reaches modeled work before the refused call
+    - action: join
+      actorIdentity: {kind: subject, value: alice}
+      databaseAuthorization: role-b
+      note: the independently selected authorization differs
+then:
+  outcome: authority-mismatch
+  roundTrips: 1

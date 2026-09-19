@@ -390,7 +390,7 @@
       "properties": {}
     },
     "lifecycleCleanupIssue": {
-      "description": "One condition met while relinquishing a connection (m-db-port): the `phase` of the finite inspect/dispose/return sequence it was met in, and the stable `code` classifying it. A code describes the CONDITION met rather than the disposition reached — a recovered `not-idle` accompanies a successful `invalidated`, while a `handoff-failed` is what makes an otherwise safe disposal `unrelinquished`. The detached diagnostic each issue also carries is the implementation's own native evidence and is not portable, exactly as a failed Database Call's message and native code are not.",
+      "description": "One condition met while releasing a connection (m-db-port): the `phase` of the finite inspect/dispose/return sequence it was met in, and the stable `code` classifying it. A code describes the CONDITION met rather than the disposition reached — a recovered `not-idle` accompanies a successful `invalidated`, while a `handoff-failed` is what makes an otherwise safe disposal `release-unconfirmed`. The detached diagnostic each issue also carries is the implementation's own native evidence and is not portable, exactly as a failed Database Call's message and native code are not.",
       "type": "object",
       "additionalProperties": false,
       "required": ["phase", "code"],
@@ -407,7 +407,7 @@
       "properties": {
         "outcome": {"enum": ["acquired", "failed"]},
         "reason": {"enum": ["timeout", "queue-rejected", "closed", "preparation-failed"]},
-        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "cleanup": {"enum": ["returned", "invalidated", "release-unconfirmed"]},
         "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}},
         "attribution": {"enum": ["direct", "caused"]},
         "cause": {"type": "integer", "minimum": 1},
@@ -438,25 +438,25 @@
           "then": {"required": ["cleanup"]}
         },
         {
-          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome. The partial cleanup a failed acquisition ran is the same cleanup a release runs and reaches the same outcomes under the same rule.",
-          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "description": "A release-unconfirmed connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome. The partial cleanup a failed acquisition ran is the same cleanup a release runs and reaches the same outcomes under the same rule.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "release-unconfirmed"}}},
           "then": {"required": ["issues"]}
         }
       ]
     },
     "lifecycleReleaseFinished": {
-      "description": "The connection the activity held was let go, and `cleanup` is what that ESTABLISHED (m-db-port): `returned` handed it back and the handoff completed, `invalidated` established physical disposal FIRST and then completed the handoff for accounting, and `unrelinquished` is the honest report of a resource whose fate is unknown — required disposal or the accounting after it failed or could not be confirmed, which is why it always carries at least one issue. `issues` records the conditions the cleanup met on the way and is omitted where it met none, so a deliberate invalidation is legible without being an error. A release has ONE ending: what it established is a value the adapter reports rather than something read off an exception, and it never rewrites the outcome of the activity above it — a read that published, a stream that exhausted, and an attempt that committed each keep what they established whatever the release ran into. Both monotonic durations, the acquisition's own and the whole hold's, are not portable and are absent.",
+      "description": "The connection the activity held was let go, and `cleanup` is what that ESTABLISHED (m-db-port): `returned` handed it back and the handoff completed, `invalidated` established physical disposal FIRST and then completed the handoff for accounting, and `release-unconfirmed` is the honest report of a resource whose fate is unknown — required disposal or the accounting after it failed or could not be confirmed, which is why it always carries at least one issue. `issues` records the conditions the cleanup met on the way and is omitted where it met none, so a deliberate invalidation is legible without being an error. A release has ONE ending: what it established is a value the adapter reports rather than something read off an exception, and it never rewrites the outcome of the activity above it — a read that published, a stream that exhausted, and an attempt that committed each keep what they established whatever the release ran into. Both monotonic durations, the acquisition's own and the whole hold's, are not portable and are absent.",
       "type": "object",
       "additionalProperties": false,
       "required": ["cleanup"],
       "properties": {
-        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "cleanup": {"enum": ["returned", "invalidated", "release-unconfirmed"]},
         "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}}
       },
       "allOf": [
         {
-          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome.",
-          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "description": "A release-unconfirmed connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "release-unconfirmed"}}},
           "then": {"required": ["issues"]}
         }
       ]
