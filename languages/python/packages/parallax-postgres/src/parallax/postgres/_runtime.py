@@ -79,9 +79,11 @@ PROBE_SQL: Final = """SELECT
 It proves the three decodings the read path cannot work without and that a bare
 connectivity check does not exercise: an ordinary integer, the neutral sentinel a
 temporal interval's open upper bound reads back as, and a structured document
-decoded to a mapping. It reads no model, opens no explicit transaction, and
-registers nothing — the connection it runs on was already initialized like every
-other. It is a smoke probe, not a substitute for the codec suites.
+decoded to a mapping. It also captures the authenticated ``session_user`` that
+database-login execution projects as its identity. It reads no model, opens no
+explicit transaction, and registers nothing — the connection it runs on was
+already initialized like every other. It is a smoke probe, not a substitute for
+the codec suites.
 """
 
 _CLOSED = "this Database is closed, so it opens no new database connection"
@@ -363,12 +365,12 @@ def _await_minimum(
 
 
 def _probe(runtime: PostgresRuntime, deadline: float) -> str:
-    """Acquire one real connection, prove it decodes, and give it back.
+    """Acquire one real connection, prove it decodes, capture its login, and give it back.
 
     Startup owns no model and adopts no edition, so this creates no execution
     and reports through no observer: it runs on an initialized connection
-    exactly as later work will, and what it establishes is that later work can
-    run at all.
+    exactly as later work will. It establishes that later work can run at all
+    and records the authenticated login identity before the runtime is published.
     """
     _remaining(deadline, "acquire")
     resource = runtime.acquisition(deadline)

@@ -444,7 +444,7 @@ Work that INHERITS a connection emits neither: a participating read, write batch
 stream batch, or joined invocation runs on the attempt's connection.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
-`queue-rejected`, `closed`, `preparation-failed` — and is outside the
+`queue-rejected`, `closed`, `preparation-failed`, `authorization-failed` — and is outside the
 `m-db-error` categories, because no modeled statement ran to be classified.
 `failure` is an ordinary Activity Failure and is always `direct`: an Acquisition
 opens no child, so it has none to name. The owner holds it afterwards under the

@@ -354,7 +354,7 @@ wired, and it exposes exactly **one** planning operation:
 ```text
 finalize(
     PlanningRequest(
-        subject_identity:     SubjectIdentity,
+        actor_identity:       ActorIdentity,
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
         buffered_writes:      BufferedWrites,
@@ -468,7 +468,7 @@ cancellation, and known no-op elimination, with temporal topology and correctnes
 semantics already decided.
 
 - A Write Plan **MUST NOT** retain a Transaction Instant, a raw Write
-  Observation, the transaction's Concurrency Preference, a Subject Identity, a strategy
+  Observation, the transaction's Concurrency Preference, an Actor Identity, a strategy
   object, a barrier marker, a private group, or any other planning context.
   Derived values are materialized *into* the steps instead.
 - A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
@@ -1119,19 +1119,20 @@ The Transaction Instant is planning and flush context. It **MUST NOT** become a
 durable Write Instruction field, and it **MUST NOT** survive in a Write Plan:
 every step that needed it already carries the resulting concrete value.
 
-## Subject Identity
+## Actor Identity
 
-A **Subject Identity** — the stable, nonempty, opaque string identifying the
-subject actor captured by the invoking Execution Scope (`m-execution-authority`)
-— is a
-**required** planning input and the first field of the planning request. Its
-value type is owned by this module, exactly as the Write Observation vocabulary
-is, so a planning request is well-typed before any provenance behavior exists.
+An **Actor Identity** is the closed identity projection of the Execution Actor
+captured by the invoking Execution Scope (`m-execution-authority`): either the
+stable, nonempty, opaque application Subject Identity or the actual nonempty
+Database Login Identity. It is a **required** planning input and the first field
+of the planning request. Its value type is owned by this module, exactly as the
+Write Observation vocabulary is, so a planning request is well-typed before any
+provenance behavior exists.
 
 An **audit-neutral** plan makes no use of it. Until provenance decoration is
 implemented, an implementation **MUST NOT** inspect, validate, retain, serialize,
-persist, lower, or bind the supplied Subject Identity, and two planning calls
-differing only in Subject Identity **MUST** produce equal Write Plans and
+persist, lower, or bind the supplied Actor Identity, and two planning calls
+differing only in Actor Identity **MUST** produce equal Write Plans and
 identical emitted SQL and binds. Reserving the field now is what lets provenance
 decoration later become an internal stage rather than an interface change.
 
@@ -1297,8 +1298,8 @@ result-correctness.
 
 Two contracts above are deliberately **not** witnessed by golden SQL, because no
 emitted statement can carry them: how many times an attempt consulted the Clock
-Strategy, and that a Subject Identity left no trace. Both are observable only
+Strategy, and that an Actor Identity left no trace. Both are observable only
 from inside an implementation, so each language target proves them in its own
 suite — clock access through a counting Clock Strategy, and audit neutrality by
-planning one flush twice under different Subject Identities and comparing the
+planning one flush twice under different Actor Identities and comparing the
 resulting Write Plans, SQL, and binds.

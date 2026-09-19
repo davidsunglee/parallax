@@ -45,7 +45,6 @@ from parallax.core.db_port import (
     MappingRow,
     PipelineStatement,
     ReleaseUnconfirmed,
-    Returned,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.postgres import PostgresRole
@@ -525,7 +524,7 @@ def test_controlled_authorization_rechecks_admission_before_publication(
 
     assert refused.value.reason == "closed"
     assert connection.statements[-1] == ("RESET ROLE", ())
-    assert resource.cleanup_result == Returned()
+    assert resource.cleanup_result == Invalidated()
     assert runtime.retired is True
 
 
@@ -574,6 +573,51 @@ def test_controlled_authorization_failure_reports_an_unconfirmed_disposal() -> N
         ("inspect", "suspect"),
         ("dispose", "close-failed"),
     ]
+    assert runtime.retired is False
+
+
+def test_controlled_authorization_recheck_reports_an_unconfirmed_disposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.conformance import _postgres_control as control_module
+
+    connection = _FakeConnection(close_raises=RuntimeError("close denied"))
+    runtime = _adapter(connection).open()
+    install_role = control_module.install_role  # pyright: ignore[reportPrivateImportUsage] - the test wraps the exact imported operation the controlled runtime invokes
+
+    def install_then_close(native: Any, role: PostgresRole) -> None:
+        install_role(native, role)
+        runtime.close()
+
+    monkeypatch.setattr(control_module, "install_role", install_then_close)
+    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+
+    with pytest.raises(ConnectionAcquisitionError):
+        resource.__enter__()
+
+    result = resource.cleanup_result
+    assert isinstance(result, ReleaseUnconfirmed)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [("dispose", "close-failed")]
+    assert runtime.retired is False
+
+
+@pytest.mark.parametrize("principal", [False, True])
+def test_controlled_scope_reports_a_deferred_retirement_failure(principal: bool) -> None:
+    connection = _FakeConnection(close_raises=RuntimeError("close denied"))
+    runtime = _adapter(connection).open()
+    source = (
+        runtime.principal_execution(PostgresRole("tenant_reader"))
+        if principal
+        else runtime.login_execution()
+    )
+    resource = source.new_context()
+
+    with resource:
+        runtime.close()
+
+    result = resource.cleanup_result
+    assert isinstance(result, ReleaseUnconfirmed)
+    assert [(issue.phase, issue.code) for issue in result.issues] == [("dispose", "close-failed")]
     assert runtime.retired is False
 
 
@@ -831,6 +875,45 @@ def test_terminating_stops_at_the_driver_connections_own_close() -> None:
     with _scope_of(execution):
         assert execution.terminate_active() == TerminationReport(terminated=True)
     assert connection.closes == 1
+
+
+def test_termination_owns_principal_cleanup_until_the_session_is_condemned() -> None:
+    # A termination that has claimed native teardown and a principal scope exiting
+    # at the same time serialize on that one claim. The exit neither sends RESET
+    # ROLE into the connection being closed nor starts another close; once the
+    # ladder condemns the session, its cleanup reports the established disposal.
+    closing = threading.Event()
+    proceed = threading.Event()
+
+    def park_close() -> None:
+        closing.set()
+        assert proceed.wait(timeout=5.0)
+
+    connection = _FakeConnection(parked=park_close)
+    execution = _execution(connection)
+    runtime = cast("Any", execution)._runtime
+    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope.__enter__()
+    reports: list[TerminationReport] = []
+
+    terminating = threading.Thread(target=lambda: reports.append(execution.terminate_active()))
+    terminating.start()
+    assert closing.wait(timeout=5.0)
+
+    retirement = observing(runtime, "_retirement")
+    cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
+    cleaning.start()
+    assert retirement.contended.wait(timeout=5.0)
+    assert all(statement != "RESET ROLE" for statement, _ in connection.statements)
+
+    proceed.set()
+    terminating.join(timeout=5.0)
+    cleaning.join(timeout=5.0)
+
+    assert reports == [TerminationReport(terminated=True)]
+    assert connection.closes == 1
+    assert all(statement != "RESET ROLE" for statement, _ in connection.statements)
+    assert scope.cleanup_result == Invalidated()
 
 
 def test_terminating_a_session_the_ladder_already_destroyed_attempts_no_rung() -> None:

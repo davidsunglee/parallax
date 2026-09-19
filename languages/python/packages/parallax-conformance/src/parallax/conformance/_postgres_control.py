@@ -285,15 +285,14 @@ class ControlledScope:
                 self._runtime.confirm_authorization(self)
             except BaseException:
                 try:
-                    restore_role(self._runtime.native)
+                    self._runtime.restore_authorization()
                 except Exception as restore_error:
                     self._cleanup_result = self._runtime.invalidate(
                         self,
                         (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
                     )
                 else:
-                    self._runtime.release(self)
-                    self._cleanup_result = _RELEASED
+                    self._cleanup_result = self._runtime.release(self)
                 raise
         self._execution = execution
         return execution
@@ -324,18 +323,16 @@ class ControlledScope:
                 )
             elif self._role is not None:
                 try:
-                    restore_role(self._runtime.native)
+                    self._runtime.restore_authorization()
                 except Exception as restore_error:
                     self._cleanup_result = self._runtime.invalidate(
                         self,
                         (_cleanup_issue("restore", "authorization-restore-failed", restore_error),),
                     )
                 else:
-                    self._runtime.release(self)
-                    self._cleanup_result = _RELEASED
+                    self._cleanup_result = self._runtime.release(self)
             else:
-                self._runtime.release(self)
-                self._cleanup_result = _RELEASED
+                self._cleanup_result = self._runtime.release(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,32 +444,38 @@ class ControlledRuntime:
                     reason="closed",
                 )
 
-    def release(self, scope: ControlledScope) -> Exception | None:
+    def restore_authorization(self) -> None:
+        """Restore the login role unless session retirement already owns cleanup."""
+        with self._retirement:
+            with self._state:
+                retired = self._retired
+            if not retired:
+                restore_role(self._connection)
+
+    def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:
             if self._active is scope:
                 self._active = None
-            deferred = self._closed and self._active is None
-        if deferred:
+            closed = self._closed
+        if closed:
             # A close arrived while this scope held the session, so retirement
             # waited for the borrower exactly as a pooled connection's close
-            # waits for it to come back. Nothing here can be raised at — the
-            # caller is leaving a scope, not closing a runtime — so a refusal is
-            # dropped and stays readable as an unretired runtime.
+            # waits for it to come back. The scope reports whether disposal was
+            # established rather than raising while its caller is unwinding.
             try:
                 self._retire_session()
             except Exception as exc:
-                return exc
-        return None
+                return ReleaseUnconfirmed((_cleanup_issue("dispose", "close-failed", exc),))
+            return Invalidated()
+        return _RELEASED
 
     def invalidate(self, scope: ControlledScope, issues: tuple[CleanupIssue, ...]) -> CleanupResult:
         with self._state:
             self._closed = True
-        close_error = self.release(scope)
-        if close_error is not None:
-            return ReleaseUnconfirmed(
-                (*issues, _cleanup_issue("dispose", "close-failed", close_error))
-            )
-        return Invalidated(issues)
+        result = self.release(scope)
+        if isinstance(result, ReleaseUnconfirmed):
+            return ReleaseUnconfirmed((*issues, *result.issues))
+        return Invalidated((*issues, *result.issues))
 
     @contextlib.contextmanager
     def holding(self, scope: ControlledScope | None) -> Generator[bool]:

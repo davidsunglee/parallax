@@ -78,8 +78,9 @@ type CleanupCode = Literal[
 reuse cannot be established; ``not-idle`` means it was read and the connection
 was not idle, which no cleanup repairs into reuse; ``suspect`` means the
 execution itself declared the connection untrustworthy, whatever its state now
-reads as. ``close-failed`` and ``handoff-failed`` are the two steps that can
-fail after that verdict.
+reads as. ``authorization-restore-failed`` means scoped authorization could not
+be removed from an otherwise reusable session. ``close-failed`` and
+``handoff-failed`` are the two steps that can fail after a disposal verdict.
 
 A code describes the CONDITION met, not the disposition reached: a recovered
 ``not-idle`` accompanies a successful :class:`Invalidated`, and a
@@ -168,7 +169,8 @@ queue refusing to hold another waiter. ``closed`` is the runtime no longer
 admitting work. ``preparation_failed`` covers establishing or preparing
 execution access: a direct connection attempt that failed, a session
 configuration the codecs cannot execute under, and a checkout that handed over a
-connection which was not idle.
+connection which was not idle. ``authorization_failed`` means the provider could
+not establish the bound authorization before admitting modeled work.
 
 These are separate from `m-db-error`'s SQL categories on purpose. No modeled
 statement ran, so nothing was classified, and no retry rule reads them.

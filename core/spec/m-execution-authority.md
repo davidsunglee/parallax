@@ -10,6 +10,7 @@ The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, and
 - **Subject Identity** — the nonempty application subject string read from a Principal and preserved verbatim.
 - **Database Login Identity** — the provider-authenticated login captured by an opened Database runtime. Its audit projection uses the reserved `db-login:` prefix.
 - **Database Authorization** — an immutable provider-owned value that describes the database privilege context paired by a Principal. Core treats this value as opaque.
+- **Actor Identity** — the provider-neutral identity projection carried into planning: either a Subject Identity or a Database Login Identity.
 - **Execution Actor** — the immutable authority captured by an Execution Scope: either a Subject Identity paired with Database Authorization or a Database Login Identity using the runtime login's existing authority.
 - **Execution Scope** — the explicit, runtime-affine capability through which work is invoked. It captures exactly one Execution Actor for its lifetime.
 - **Capture** — copying the invoking Execution Scope's immutable Execution Actor into transaction state after begin succeeds.
