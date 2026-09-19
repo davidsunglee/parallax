@@ -221,10 +221,9 @@ class UnitOfWork:
         # only through its strategy ports. Production and the conformance
         # engine both drive writes through this SAME shell.
         self._planner = planner
-        # The boundary-captured Subject Identity every flush this attempt
-        # plans with (`m-principal`'s eventual capture point; a transitional
-        # constant until then). Reused unchanged by a forced flush; a retry
-        # attempt receives its own new `UnitOfWork` and therefore its own copy.
+        # The Subject Identity execution orchestration supplies for every flush
+        # this attempt plans. A forced flush reuses it unchanged; a retry attempt
+        # receives its own new `UnitOfWork` and therefore its own copy.
         self._subject_identity = subject_identity
         # An opaque demarcation-layer companion (the `db.transact` transaction
         # facade), published for the scope's duration so a joining call recovers

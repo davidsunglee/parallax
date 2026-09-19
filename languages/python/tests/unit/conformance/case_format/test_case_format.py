@@ -409,6 +409,46 @@ def test_authority_reader_rejects_malformed_combinations(
         case_format.actor_selection(case)
 
 
+def test_authority_reader_rejects_outer_selection_on_an_unrelated_shape(tmp_path: Path) -> None:
+    case = case_format.load_case(
+        _write(
+            tmp_path,
+            "m-core-999-misplaced-authority.yaml",
+            """model: models/account.yaml
+tags: [m-core]
+shape: read
+when:
+  actorIdentity: {kind: database-login}
+""",
+        )
+    )
+
+    with pytest.raises(ValueError, match="only for boundary cases"):
+        case_format.actor_selection(case)
+
+
+def test_authority_reader_rejects_step_selection_on_a_non_join_action(tmp_path: Path) -> None:
+    case = case_format.load_case(
+        _write(
+            tmp_path,
+            "m-execution-authority-999-misplaced-step-authority.yaml",
+            """model: models/account.yaml
+tags: [m-execution-authority]
+shape: boundary
+when:
+  boundary:
+    - action: read
+      actorIdentity: {kind: database-login}
+""",
+        )
+    )
+    when = cast("dict[str, object]", case.document["when"])
+    boundary = cast("list[dict[str, object]]", when["boundary"])
+
+    with pytest.raises(ValueError, match="only on a join action"):
+        case_format.step_actor_selection(boundary[0], where="when.boundary[0]")
+
+
 def test_load_case_rejects_bad_filename(tmp_path: Path) -> None:
     path = _write(tmp_path, "not-a-case.yaml", "shape: read\ntags: [m-core]\n")
     with pytest.raises(ValueError, match="<module>-NNN"):

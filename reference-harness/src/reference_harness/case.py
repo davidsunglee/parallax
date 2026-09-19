@@ -571,6 +571,10 @@ class DatabaseLoginSelection:
 type ActorSelection = SubjectSelection | DatabaseLoginSelection
 
 
+def _authors_actor_selection(container: Mapping[str, object]) -> bool:
+    return "actorIdentity" in container or "databaseAuthorization" in container
+
+
 def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSelection | None:
     if "actorIdentity" not in container:
         if "databaseAuthorization" in container:
@@ -1051,13 +1055,23 @@ class Case:
     def actor_selection(self) -> ActorSelection | None:
         """The outer boundary's authored authority, or ``None`` for the runner's
         explicit login-scope default."""
+        if not self.is_boundary and _authors_actor_selection(self.when):
+            raise ValueError(
+                f"{self.path.name}: when authority selection is legal only for boundary cases"
+            )
         return _actor_selection(self.when, where=f"{self.path.name}: when")
 
     def boundary_action_actor_selection(self, index: int) -> ActorSelection | None:
         """The authority selected independently by one joining action, or ``None``
         when that action reuses its enclosing scope."""
+        action = self.boundary[index]
+        if action.get("action") != "join" and _authors_actor_selection(action):
+            raise ValueError(
+                f"{self.path.name}: when.boundary[{index}] authority selection is legal only "
+                "on a join action"
+            )
         return _actor_selection(
-            self.boundary[index],
+            action,
             where=f"{self.path.name}: when.boundary[{index}]",
         )
 

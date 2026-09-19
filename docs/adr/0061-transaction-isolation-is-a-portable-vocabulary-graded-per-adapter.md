@@ -19,7 +19,7 @@ adapter must interpret the request either way. Keeping the vocabulary at the
 port gives the Transaction Invocation descriptor, logs, errors, and
 compatibility cases one set of names, and puts the mapping where it is graded.
 
-The alternatives were a handle-side translation to dialect strings, which
+The alternatives were an execution-surface translation to dialect strings, which
 cannot express MariaDB's choreography and would spread level knowledge across
 the dialect module and every adapter, and a portable value beside a native
 escape string, which would put two vocabularies through one option with graded

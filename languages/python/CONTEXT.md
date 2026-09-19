@@ -121,7 +121,7 @@ S]` — parameterized by the Entity it queries and the Entity its result returns
 which `narrow` and only `narrow` moves. It retains no model. Only
 `Entity.where(...)` constructs one; its chainable clauses return new values and
 fill sibling clauses of the one canonical query value it holds throughout, which
-a first-party seam reads for execution by a handle or transaction.
+a first-party seam reads for execution by a `ScopedDatabase` or Transaction.
 _Avoid_: find query, find statement, statement, query builder, queryset, cursor
 
 **Predicate**:
@@ -248,8 +248,8 @@ _Avoid_: lenient Snapshot, copied result, ignore-invalid mode, partitioned
 result
 
 **Wire Interface**:
-The class-independent read-and-write interface reached through `db.wire` or
-`tx.wire`. It shares the underlying handle and, within a transaction, the same
+The class-independent read-and-write interface reached through `scope.wire` or
+`tx.wire`. It shares the underlying read composition and, within a transaction, the same
 Unit Work and observations as the Typed interface; it is not a format option or
 transaction mode. Its `find` accepts either the canonical Object Query mapping
 or, for a class-backed model, the Typed Object Query authoring value; a
@@ -286,7 +286,7 @@ insert licenses it. Every other keyed write resolves evidence under the source
 Entity's effective concurrency strategy. Under an effective Locking strategy
 that source must have participated in the current transaction, proving that it
 acquired and still holds the shared row lock. Under an effective Optimistic strategy an authentic
-versioned or temporal source from `db.wire.find` may instead contribute its
+versioned or temporal source from `scope.wire.find` may instead contribute its
 privately retained version or milestone evidence; the emitted database gate
 detects intervening writes. An unversioned Non-Temporal source has no optimistic
 gate and must still come from the current transaction's locking read.
@@ -649,13 +649,13 @@ _Avoid_: transaction settings, options manager, sentinel record, config dict
 
 **Omitted Keyword**:
 A `ScopedDatabase.transact` option the caller did not pass, carried by a private typed
-marker each keyword defaults to. Omission alone inherits — the root's default
-on an outer call, the active transaction's resolved value on a join — while an
+marker each keyword defaults to. Omission alone inherits — the invoking scope's
+effective value on an outer call, the active transaction's resolved value on a join — while an
 explicit value, `None` included, is validated against its field's contract.
 _Avoid_: `None` sentinel, nullable option, missing default
 
 **Transaction Body**:
-The closure passed to `db.transact`, receiving the Parallax Transaction; it
+The closure passed to `scope.transact`, receiving the Parallax Transaction; it
 must be safe to re-execute because the bounded automatic retry loop re-runs it
 against fresh state in a new atomic scope.
 _Avoid_: with-block, context manager, transaction script

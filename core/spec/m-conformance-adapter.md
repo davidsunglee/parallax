@@ -552,7 +552,7 @@ durations, runtime type names, or diagnostic text.
 The observation reports events the implementation's own installed recording
 Handler received, never a re-derivation from the case. The adapter prepares a
 case's model explicitly under one Model Edition, the model descriptor's file
-stem — `account` for `models/account.yaml` — and hands its Handles that
+stem — `account` for `models/account.yaml` — and hands its modeled execution surfaces that
 prepared selection, so every Started transition that carries an `edition` states
 that literal and a case can assert it. A case runs one edition end to end; a
 publication landing mid-run is a language-level scenario the API Conformance

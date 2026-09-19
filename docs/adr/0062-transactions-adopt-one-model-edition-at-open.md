@@ -37,7 +37,7 @@ expected and the actually held selection, and leaves the current selection
 unchanged. The comparison is selection identity, not edition equality or
 ordering. "Serving" is the vocabulary's own word for a Database's relationship
 to its model, and the holder is a separate object rather than a `Database`
-verb so that holding a handle confers no authority to change the model it
+verb so that holding a Database Root confers no authority to change the model it
 serves. There is no custom Serving Model protocol, separate constant holder,
 or generic updater seam, and a Database keeps no additional current-selection
 cache.
@@ -115,7 +115,7 @@ drain cannot eliminate the overlap window.
 
 Preparing on first adoption was rejected because a structurally accepted but
 unpreparable candidate would fail requests after publication. Falling back
-inside Database would instead give the Serving Model and the handle competing
+inside Database would instead give the Serving Model and the root competing
 notions of the current edition. Publishing opaque ready selections makes
 readiness a construction guarantee while keeping refresh and rollout policy
 with the application. Resolving per operation was rejected because one

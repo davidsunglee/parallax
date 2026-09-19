@@ -1,7 +1,7 @@
 # m-execution-lifecycle — Transient Execution Observability
 
-`m-execution-lifecycle` specifies the transient, synchronous lifecycle of work
-performed through a Parallax Handle. It replaces retained execution history with
+`m-execution-lifecycle` specifies the transient, synchronous lifecycle of modeled
+work performed through an Execution Scope or Transaction. It replaces retained execution history with
 a composition-level Provider that may open one fresh Handler for each accepted
 Root Execution. The Handler receives a closed stream of immutable Started and
 Finished events while execution proceeds; results, snapshots, streams, and
@@ -16,7 +16,7 @@ discovers a provider or records history for this module.
 
 ## Root execution and opening
 
-A **Root Execution** is one outermost Handle operation and everything it causally
+A **Root Execution** is one outermost modeled operation and everything it causally
 contains. Its immutable descriptor carries exactly:
 
 - `id` — a random UUIDv4 whose equality and canonical text are meaningful;
@@ -251,8 +251,8 @@ JoinedInvocation()
 
 `isolation` is the Isolation Level this invocation **requested**, in the
 `m-db-port` portable vocabulary, and is **absent** when it requested none. An
-invocation a Database Root opens always requests one — the explicit level, else
-the root's configured default (ADR 0065) — so it always states one here;
+modeled outer invocation always requests one — the explicit level, else its
+invoking Execution Scope's effective value (ADRs 0065 and 0066) — so it always states one here;
 absence is the form a lower-level caller takes when it asks the port for no
 level. It is the requested level, not the level the database used: a boundary
 requesting none opens at whatever its adapter defaults to, and that default is
@@ -493,7 +493,7 @@ events to a Handler that would have to be retained for a root that never ends.
 
 The seam is the Provider already named at composition. A Provider that also
 implements the optional **pool observation** method is offered the runtime's
-Pool Metrics Source (`m-db-port`) once, before the connected handle is
+Pool Metrics Source (`m-db-port`) once, before the Database Root is
 published, and answers with a **Pool Observation** — a registration whose only
 verb is closing it — or with nothing, which declines. Implementing the method is
 the whole declaration of interest: there is no capability flag and no second
@@ -509,7 +509,7 @@ root and ignore it.
 compose
   prepare model -> open ready runtime
   offer the source to an interested provider -> registration or decline
-  publish the handle
+  publish the Database Root
 
 close
   close the runtime, which detaches the source
@@ -517,15 +517,15 @@ close
 ```
 
 Registration happens BEFORE publication, so a registration that fails ordinarily
-fails the composition: no handle is published, the runtime that was opened is
+fails the composition: no Database Root is published, the runtime that was opened is
 closed, and the exception keeps its own identity rather than being wrapped or
 reinterpreted as a decline. Where several Providers are composed, the ones that
 already registered are closed on the way out — a registration nobody holds could
 never be closed — and every one of those closes is attempted.
 
-The handle owns the REGISTRATION and nothing behind it. Closing gives the
+The Database Root owns the REGISTRATION and nothing behind it. Closing gives the
 interest up; it never closes the exporter, queue, or client the application
-built, which outlive the handle. Closing the runtime comes first, because the
+built, which outlive the root. Closing the runtime comes first, because the
 runtime is what the interest was in, and the registrations are closed afterwards
 in every case, including one where closing the runtime itself failed. An
 ordinary failure to close a registration is contained and reaches the restricted
@@ -553,11 +553,11 @@ delivery for it, runs required database cleanup without further events, and
 propagates unchanged. It produces no Handler Error report.
 
 Provider opening, event delivery, and error reporting are **lifecycle contexts**.
-Calling an operation through the originating Handle or Transaction from one of
+Calling an operation through the originating Execution Scope or Transaction from one of
 those contexts is Execution Lifecycle Re-entry. It is refused before execution
 state, clocks, or database work. Re-entry during opening becomes the Provider
 Error's cause; re-entry escaping a Handler is an ordinary handler failure and
-causes quarantine. Unrelated handles remain usable.
+causes quarantine. Unrelated scopes remain usable.
 
 An event carrying a cleanup fact — a failed Acquisition's partial cleanup, and
 every Release — additionally has a **delivery completion**: whether at least one

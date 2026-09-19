@@ -1,8 +1,9 @@
 # Different authorization refuses a join (m-execution-authority): both scopes
 # carry subject `alice`, but the outer selection uses `role-a` and the joining
 # selection uses `role-b`. Subject equality is insufficient when authorization
-# differs. Refusal happens before the joining body and leaves the earlier read
-# as the only database call.
+# differs. The read following the join is the joining body's observable:
+# pre-body refusal leaves the earlier read as the only database call, while a
+# late authority check would execute a second call and fail the round-trip oracle.
 model: models/account.yaml
 tags: [m-execution-authority, m-unit-work, m-api-conformance, authority, join]
 lane: api-conformance
@@ -21,6 +22,8 @@ when:
       actorIdentity: {kind: subject, value: alice}
       databaseAuthorization: role-b
       note: the independently selected authorization differs
+    - action: read
+      note: the refused joining body must not reach this database call
 then:
   outcome: authority-mismatch
   roundTrips: 1

@@ -94,7 +94,7 @@ take or give one back.
 
 ```text
 adapter configuration   immutable, resource-free; opens an independent runtime
-  runtime               the running resource one connected handle owns
+  runtime               the running resource one Database Root owns
     connection context  one single-use acquisition, yielding scoped execution
 ```
 
@@ -103,7 +103,7 @@ pool, and no background worker, and MUST validate what it can locally, so it is
 safe to build before a process forks and to share between threads. It is
 immutable: settings change by constructing another value, never by mutating one
 a runtime was opened from. Every open produces an **independent** runtime — two
-handles built from one configuration own two runtimes, and closing either leaves
+Database Roots built from one configuration own two runtimes, and closing either leaves
 the other working. External inputs a connection string refers to (environment,
 service files, credentials, server defaults) resolve when each physical
 connection is created rather than being frozen at construction.
@@ -149,7 +149,7 @@ runtime owns. It neither waits for borrowers nor interrupts their statements.
 Detachment precedes the release, so a reading BEGUN after it reports detachment
 rather than reaching a resource being torn down, and a release that is slow or
 that fails does not widen that window. A reading already in progress is not
-revoked by detachment and MAY complete, as the source section below states. Ordinary problems met while closing are diagnostic-only: a handle that
+revoked by detachment and MAY complete, as the source section below states. Ordinary problems met while closing are diagnostic-only: a Database Root that
 refused to close would leave a caller unwinding with nothing better to do.
 
 ## What releasing a connection establishes
@@ -283,10 +283,10 @@ for it and silently govern the next one — and an adapter that cannot open a
 boundary at the requested isolation **reports a boundary failure** rather than
 opening one at a different level, because a request silently downgraded is
 indistinguishable from one honored. Absence at the port asks for nothing and
-leaves whatever the adapter or its driver already defaults to. A Database Root
-never uses that form for a transaction: an omitted isolation there resolves to
-the root's configured default, which itself defaults to Read Committed, and the
-port is asked for that concrete level on every attempt (ADR 0065). Absence
+leaves whatever the adapter or its driver already defaults to. A modeled outer
+transaction never uses that form: an omitted isolation resolves to its invoking
+Execution Scope's effective value, whose root-built-in value is Read Committed,
+and the port is asked for that concrete level on every attempt (ADRs 0065 and 0066). Absence
 remains the port's own lower-level capability for a caller below the root.
 
 For each `documentReads` pair, the adapter reads both cells before building the

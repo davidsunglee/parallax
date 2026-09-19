@@ -250,7 +250,7 @@ author called was the right one.
 
 A **framework-managed source** is one managed value lifecycle: the machinery that
 materializes values from reads and attaches to each the state by which it later
-recognizes its own. A source is not a connection, a handle, or a transaction. Any
+recognizes its own. A source is not a connection, an Execution Scope, or a transaction. Any
 number of those sharing one lifecycle over one store are **one** source, and a
 value any of them read is a value that source produced. Provenance therefore
 carries no cross-read guarantee, and none is asked of it: whether a write may
@@ -1122,7 +1122,8 @@ every step that needed it already carries the resulting concrete value.
 ## Subject Identity
 
 A **Subject Identity** — the stable, nonempty, opaque string identifying the
-Principal captured at the outer database operation boundary (ADR 0034) — is a
+subject actor captured by the invoking Execution Scope (`m-execution-authority`)
+— is a
 **required** planning input and the first field of the planning request. Its
 value type is owned by this module, exactly as the Write Observation vocabulary
 is, so a planning request is well-typed before any provenance behavior exists.
@@ -1134,8 +1135,8 @@ differing only in Subject Identity **MUST** produce equal Write Plans and
 identical emitted SQL and binds. Reserving the field now is what lets provenance
 decoration later become an internal stage rather than an interface change.
 
-Capture, propagation across joined scopes and retries, and verbatim comparison
-belong to the Principal boundary, not to this module.
+Scope-time capture, propagation across joined scopes and retries, and verbatim
+comparison belong to Execution Authority, not to this module.
 
 ## Affected-row enforcement
 
@@ -1184,8 +1185,9 @@ attribution of a shortfall to the step that caused it.
 ## Strategy selection — one preference, an effective strategy per Entity
 
 An outer unit of work resolves one **Concurrency Preference**, `locking` or
-`optimistic`, from its boundary options. Omission resolves to the Database
-Root's configured default, which itself defaults to **`optimistic`** (ADR 0065).
+`optimistic`, from its boundary options. Omission resolves to the invoking
+Execution Scope's effective value, whose root-built-in value is
+**`optimistic`** (ADRs 0065 and 0066).
 A joining boundary inherits that resolved preference and may not renegotiate it.
 The preference is not itself the correctness mechanism: the Unit Work combines it
 with the target Entity's Optimistic Lock Facet to derive an **Effective
@@ -1252,15 +1254,15 @@ to a statement. A read taking the shared lock is no exception: the lock and the
 level compose, so a Locking read inside a Repeatable Read boundary both holds its
 lock and reads at the level.
 
-Omission resolves to the Database Root's configured default, which itself
-defaults to **Read Committed** — a concrete request the boundary makes on every
-attempt, not a fallback to the adapter's own default (ADR 0065, `m-db-port`
+Omission resolves to the invoking Execution Scope's effective value, whose
+root-built-in value is **Read Committed** — a concrete request the boundary makes on every
+attempt, not a fallback to the adapter's own default (ADRs 0065 and 0066, `m-db-port`
 *Mapping obligations*). A joining boundary inherits the resolved level and may
 not renegotiate it, on the same terms as the Concurrency Preference: omitting
 inherits, naming the resolved level is accepted, and naming a different one is
-refused before the joined callback runs. The root's default never enters that
-comparison on its own: under an outer boundary that named a level, a join
-naming the root's default conflicts, because an isolation is a property of a
+refused before the joined callback runs. Scope defaults never enter that
+comparison on their own: under an outer boundary that named a level, a join
+naming its scope's default conflicts, because an isolation is a property of a
 boundary only at the moment it opens. Levels are exact options rather than an
 ordered substitution rule: a join naming Read Committed under a Serializable
 boundary is a conflict, not a weakening the boundary already satisfies.

@@ -856,7 +856,7 @@ formulation the harness asserts returns the same rows (`m-case-format`).
 
 A Transaction-Time-Only write is an **ordered DML sequence**, not a single
 statement. Let `txInstant` be the finite Transaction-Time instant supplied by the
-handle clock. The canonical Postgres DML:
+Database Root's Clock Strategy. The canonical Postgres DML:
 
 | Mutation | Golden DML |
 |---|---|
@@ -911,7 +911,7 @@ SQL shape to `m-temporal-read`.
 ### Bitemporal write sequences — the rectangle split
 
 A Bitemporal write that bounds a change to a Valid-Time window is an ordered DML
-sequence over both dimensions. Let `txInstant` be the handle-supplied
+sequence over both dimensions. Let `txInstant` be the Database Root-supplied
 Transaction-Time instant and `[vf, until)` the Valid-Time window. The canonical
 Postgres DML:
 

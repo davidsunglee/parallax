@@ -1,6 +1,6 @@
 # Typed and Wire are peer interfaces over one transaction
 
-Typed and Wire reads and writes are peer interfaces over the same handle and,
+Typed and Wire reads and writes are peer interfaces over the same execution surface and,
 inside a transaction, the same Unit Work, observation ledger, locking, and
 transient Execution Lifecycle. Each keyed write takes an observed source from
 its own
@@ -14,9 +14,9 @@ the writing Unit Work validates and adopts. Observed State Keys remain internal.
 Every existing-object keyed write requires
 an authentic Parallax read source. Under the source Entity's effective Locking strategy the source must have
 participated in the current transaction: that read acquired the shared row lock
-which licenses the otherwise ungated write, and a `db.wire.find` result cannot
+which licenses the otherwise ungated write, and a `scope.wire.find` result cannot
 prove current lock ownership. Under its effective Optimistic strategy, an authentic versioned or
-temporal source from `db.wire.find` may contribute its retained version or
+temporal source from `scope.wire.find` may contribute its retained version or
 milestone evidence without an in-transaction read; the emitted database gate
 detects an intervening write. Optimistic mode requests no shared-lock SQL for
 any find, including a participating transaction find. An unversioned
@@ -140,8 +140,8 @@ and object identity address the object across states. This replaces the earlier
 `ObservationKey` shape, whose absent milestone arm collapsed every observed
 version of one object into one slot.
 
-Python realizes the peer interface as `db.find` / `tx.find` for Typed work and
-`db.wire.find` / `tx.wire.find` plus `tx.wire` verbs for Wire work. The Wire
+Python realizes the peer interface as `scope.find` / `tx.find` for Typed work and
+`scope.wire.find` / `tx.wire.find` plus `tx.wire` verbs for Wire work. The Wire
 namespace is a lightweight view, not a connection or transaction mode. This was
 chosen over partitioned transaction protocols, a runtime `format=` argument,
 overloaded Typed verbs, public observation values, flat `wire_*` methods, and a

@@ -523,7 +523,7 @@ requires coordination.
 Applying schema change stays with the application because the generator returns
 results rather than producing effects, because schema statements are not
 transactional on every adapter, and because a tenant runs many processes whose
-handles would otherwise race to migrate the same database on the request path.
+Database Roots would otherwise race to migrate the same database on the request path.
 The alternatives were leaving schema change entirely external, which makes
 every service reverse-engineer table layouts the framework already compiled,
 and one module for evolution and statements together, which would hand the

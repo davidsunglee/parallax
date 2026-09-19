@@ -511,7 +511,7 @@ projection split that section otherwise fixes:
   instance-form (developer-surface) witness.
 
 This per-variant node shape is scoped, for now, to a read case's own top-level
-`then.graph` leaves — the shape a `db.find` on an abstract multi-concrete
+`then.graph` leaves — the shape a `scope.find` on an abstract multi-concrete
 position returns. A **deep-fetch or snapshot CHILD level**'s graph node shape
 (`m-snapshot-read-012`'s narrowed-vs-broad diamond, for example) is a distinct,
 already-established convention this decision does not touch; reconciling the
