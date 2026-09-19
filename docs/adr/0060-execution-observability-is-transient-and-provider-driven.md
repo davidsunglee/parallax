@@ -38,8 +38,10 @@ have begun. An ordinary Handler failure instead quarantines that handler for the
 rest of the root, reports a detached Handler Error through its Provider, and
 does not change query semantics. Fan-out opens Providers in declaration order,
 shares each event object across active children, and quarantines a failing child
-without hiding the event from later children. Re-entry through the originating
-Execution Scope or Transaction during lifecycle callbacks is refused.
+without hiding the event from later children. Re-entry through any Execution
+Scope or Transaction belonging to the originating Database Root during
+lifecycle callbacks is refused; Execution Scopes belonging to other Database
+Roots remain usable.
 
 The built-in logging integration writes detached structured records to an
 application-configured Python logger and leaves queueing, sinks, flushing, and

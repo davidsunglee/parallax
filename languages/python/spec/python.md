@@ -3992,11 +3992,13 @@ of shared edition identity.
   deliberately not offered: the core retry contract requires re-executing the
   closure, which a `with` block cannot do; a decorator form is a possible
   additive future. Bounded automatic retry follows core: deadlock-category
-  failures retriable by default, the bound resolved from the root (built-in
-  default 10), `max_retries=0` disables the loop, exhaustion surfaces
+  failures retriable by default, the bound taken from the outer invocation's
+  resolved options (root-built-in default 10), `max_retries=0` disables the
+  loop, exhaustion surfaces
   diagnosably with the attempt count; optimistic-lock conflicts join the
   retriable set only where the resolved `retry_optimistic_conflicts` is
-  `True`, whether the root or the call set it. Each attempt adopts the Serving Model's
+  `True`, whether inherited from the invoking scope or explicitly supplied by
+  the call. Each attempt adopts the Serving Model's
   current selection before its boundary opens and `tx.edition` names it; an
   ordinary failure escaping the call surfaces as `ExecutionFailure` under the
   edition of the attempt that failed last, with the underlying error as its
@@ -4184,11 +4186,12 @@ ordinary reporting failure writes one sanitized correlation-only line to
 for the root, aborts and cleans up without further events, and propagates
 unchanged; it produces no Handler Error.
 
-Calls through the originating `ScopedDatabase` or `Transaction` from `open`,
-`handle`, or `report_handler_error` raise `ExecutionLifecycleReentryError`
-before execution state or database work. During opening it becomes the
-Provider Error's cause; from a Handler it is an ordinary delivery failure if it
-escapes. Unrelated Execution Scopes remain usable.
+Calls through any `ScopedDatabase` or `Transaction` belonging to the originating
+Database Root from `open`, `handle`, or `report_handler_error` raise
+`ExecutionLifecycleReentryError` before execution state or database work.
+During opening it becomes the Provider Error's cause; from a Handler it is an
+ordinary delivery failure if it escapes. Execution Scopes belonging to other
+Database Roots remain usable.
 
 `ExecutionEvent` is a closed union of frozen, slotted concrete classes:
 `ReadStarted`/`ReadFinished`, `WriteBatchStarted`/`WriteBatchFinished`,
