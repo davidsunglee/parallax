@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack, nullcontext
 from types import TracebackType
@@ -1005,6 +1006,14 @@ def test_termination_interrupts_a_blocked_principal_restoration() -> None:
     terminating = threading.Thread(target=lambda: reports.append(execution.terminate_active()))
     terminating.start()
     assert closing.wait(timeout=5.0)
+    assert cleaning.is_alive()
+
+    # Native close is still parked, so the retirement claim stays active; once
+    # the unblocked RESET ROLE returns, cleanup can only be waiting behind it.
+    with runtime._retirement_changed:
+        deadline = time.monotonic() + 5.0
+        while runtime._restoration_pending:
+            assert runtime._retirement_changed.wait(timeout=deadline - time.monotonic())
     assert cleaning.is_alive()
 
     finish_close.set()
