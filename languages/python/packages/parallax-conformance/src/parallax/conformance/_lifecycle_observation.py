@@ -164,10 +164,12 @@ _ACQUISITION_REASON: Final[dict[AcquisitionReason, str]] = {
     "queue_rejected": "queue-rejected",
     "closed": "closed",
     "preparation_failed": "preparation-failed",
+    "authorization_failed": "authorization-failed",
 }
 
 _CLEANUP_PHASE: Final[dict[CleanupPhase, str]] = {
     "inspect": "inspect",
+    "restore": "restore",
     "dispose": "dispose",
     "return": "return",
 }
@@ -178,6 +180,7 @@ _CLEANUP_CODE: Final[dict[CleanupCode, str]] = {
     "suspect": "suspect",
     "close-failed": "close-failed",
     "handoff-failed": "handoff-failed",
+    "authorization-restore-failed": "authorization-restore-failed",
 }
 
 

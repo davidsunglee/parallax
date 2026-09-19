@@ -411,6 +411,7 @@ def test_a_failed_acquisitions_reason_is_projected_member_by_member() -> None:
         ("queue_rejected", "queue-rejected"),
         ("closed", "closed"),
         ("preparation_failed", "preparation-failed"),
+        ("authorization_failed", "authorization-failed"),
     ):
         outcome = AcquisitionFailed(member, DirectFailure(_diagnostic()), None)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
         finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
@@ -477,6 +478,7 @@ def test_every_cleanup_condition_is_projected_member_by_member() -> None:
         ("inspect", "suspect"),
         ("dispose", "close-failed"),
         ("return", "handoff-failed"),
+        ("restore", "authorization-restore-failed"),
     ):
         issue = CleanupIssue(
             phase=cast("CleanupPhase", phase),

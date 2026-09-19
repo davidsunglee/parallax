@@ -57,7 +57,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.planned import PlannedWrite
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_model_support import model as corpus_model
 
 _ACCOUNT = corpus_model("account")
@@ -81,7 +81,7 @@ def _locking_policy(
         build_write_planner(model)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="locking",
                 buffered_writes=observed_buffer([write], model, observations),

@@ -52,7 +52,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence, retain_evidence
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 
 _MODELS = models.load_models()
@@ -197,7 +197,7 @@ def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]
         meta=model,
         flush_executor=_no_flush,
         planner=build_write_planner(model),
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
     )
 
 

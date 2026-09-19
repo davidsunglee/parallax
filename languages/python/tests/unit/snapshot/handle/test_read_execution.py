@@ -62,7 +62,7 @@ from parallax.snapshot.handle._publication import SelectedReadModel, ServingMode
 from parallax.snapshot.handle._read_scope import ReadInputs
 from tests._support.db_port import RefusingAdapter, ScriptedAdapter
 from tests._support.model_capabilities import cataloged_for, graph_construction_for
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._transact_support import ACCOUNT, FIXED
 
 # The two production adapters are what this suite grades, and module privacy is
@@ -213,7 +213,7 @@ def _participating[T](
             flush_executor=executor,
             write_batch_opening=attempt.write_batch,
             planner=build_write_planner(_META),
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
         )
         attempt.committed()
         return answered
@@ -228,7 +228,7 @@ def test_each_policy_answers_the_selection_it_was_built_with() -> None:
     # what both promise is that the record arrives through the begun read
     # rather than off the handle.
     runtime = ScriptedAdapter().open()
-    standalone = _Standalone(None, _SERVING, runtime)
+    standalone = _Standalone(None, _SERVING, runtime.login_execution())
     current = read_projection(_SERVING.current())
     assert standalone.begin().selected is current
     assert standalone.begin().selected is current
@@ -248,7 +248,7 @@ def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
     a = prepare_model(ACCOUNT, edition="a")
     b = prepare_model(ACCOUNT, edition="b")
     serving = ServingModel(a)
-    execution = _Standalone(None, serving, ScriptedAdapter().open())
+    execution = _Standalone(None, serving, ScriptedAdapter().open().login_execution())
 
     first = execution.begin()
     serving.publish(b, expected=a)
@@ -266,7 +266,7 @@ def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
 def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
     runtime = ScriptedAdapter().open()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime)
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime.login_execution())
     body = _Body(provider)
 
     assert execution.begin().eager(_TARGET, "typed", body) is _ANSWER
@@ -295,7 +295,7 @@ def test_a_standalone_body_is_handed_its_own_connection_and_no_preference_or_led
     # the three values are actually chosen — and over a connection this read
     # acquired for itself rather than one the handle was holding.
     adapter = ScriptedAdapter()
-    execution = _Standalone(None, _SERVING, adapter.open())
+    execution = _Standalone(None, _SERVING, adapter.open().login_execution())
     body = _Body()
 
     execution.begin().eager(_TARGET, "typed", body)
@@ -316,7 +316,11 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
     # participating read brackets nothing, because the invocation above it
     # names the attempt's edition once.
     provider = RecordingLifecycleProvider()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, ScriptedAdapter().open())
+    execution = _Standalone(
+        installed_lifecycle(provider),
+        _SERVING,
+        ScriptedAdapter().open().login_execution(),
+    )
     boom = RuntimeError("the executor failed")
 
     def failing(_activity: object, _inputs: ReadInputs) -> object:
@@ -353,7 +357,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
 
 
 def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> None:
-    execution = _Standalone(None, _SERVING, ScriptedAdapter().open())
+    execution = _Standalone(None, _SERVING, ScriptedAdapter().open().login_execution())
 
     def interrupting(_activity: object, _inputs: ReadInputs) -> object:
         raise KeyboardInterrupt
@@ -439,7 +443,11 @@ def test_a_participating_body_is_handed_the_connection_the_preference_and_the_un
 # --------------------------------------------------------------------------- #
 def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, ScriptedAdapter().open())
+    execution = _Standalone(
+        installed_lifecycle(provider),
+        _SERVING,
+        ScriptedAdapter().open().login_execution(),
+    )
 
     activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "typed", 5)
     with activity:
@@ -483,7 +491,7 @@ def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
 def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing() -> None:
     provider = RecordingLifecycleProvider()
     runtime = ScriptedAdapter().open()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime)
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime.login_execution())
     body = _Body(provider)
 
     read = execution.begin()
@@ -566,7 +574,7 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
     # stream above it; the ADVANCE is where a standalone delivery names its
     # edition, once, on the way out to the caller. A participating advance is
     # the body itself.
-    execution = _Standalone(None, _SERVING, ScriptedAdapter().open())
+    execution = _Standalone(None, _SERVING, ScriptedAdapter().open().login_execution())
     boom = RuntimeError("the page failed")
 
     def failing() -> object:

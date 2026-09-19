@@ -11280,7 +11280,7 @@
             "predicate-acquisition": "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows through production acquisition to a buffered Materialized Write Group; no ingress preparation, JSON parsing, flush, or serialization"
           }
         },
-        "workloadDigest": "70ab6544ba63d592cc24ee7133a84e10ca7555ff488d9f8d8408df112a48da55"
+        "workloadDigest": "c1343c87d634cf79a28950c4f2aeddfd8c5280492d4d5ca3e8ba5552a13e958d"
       },
       "readings": [
         {

@@ -8,11 +8,12 @@ The two are separate on purpose: query code receives execution alone and can
 neither acquire nor release, while composition receives the lifetime Interface
 and never executes.
 
-Three values, three lifetimes. A :class:`DatabaseAdapter` is immutable
+Four values, three lifetimes. A :class:`DatabaseAdapter` is immutable
 configuration that owns nothing — constructing one opens no connection, pool, or
 worker. A :class:`DatabaseRuntime` is the running resource one ``Database``
-owns from composition until close. A :class:`ConnectionContext` is one
-acquisition: single-use, entered once, and reporting a
+owns from composition until close. A :class:`ConnectionContextSource` is one
+resource-free authorization binding and creates fresh contexts without I/O. A
+:class:`ConnectionContext` is one acquisition: single-use, entered once, and reporting a
 :data:`CleanupResult` afterwards that says whether the connection was handed
 back, disposed of deliberately, or its release could not be confirmed.
 
@@ -41,29 +42,33 @@ __all__ = [
     "CleanupResult",
     "ConnectionAcquisitionError",
     "ConnectionContext",
+    "ConnectionContextSource",
     "DatabaseAdapter",
     "DatabaseRuntime",
     "DatabaseStartupError",
+    "InvalidAuthorizationError",
     "Invalidated",
     "ReleaseUnconfirmed",
     "Returned",
 ]
 
-type CleanupPhase = Literal["inspect", "dispose", "return"]
+type CleanupPhase = Literal["inspect", "restore", "dispose", "return"]
 """Which step of the finite cleanup sequence met a problem.
 
-The sequence is exactly these three and always in this order: ``inspect`` reads
+The sequence is exactly these four and always in this order: ``inspect`` reads
 the controlled native state and the suspect marker an execution may have left,
-``dispose`` establishes physical disposal of a connection that must not be
-reused, and ``return`` hands the connection back to whatever manages it. There
-is no fourth step and no loop, which is what bounds the issues one cleanup can
-report without retaining a history.
+``restore`` removes scoped authorization from a reusable session, ``dispose``
+establishes physical disposal of a connection that must not be reused, and
+``return`` hands the connection back to whatever manages it. There is no fifth
+step and no loop, which is what bounds the issues one cleanup can report without
+retaining a history.
 """
 
 type CleanupCode = Literal[
     "state-unreadable",
     "not-idle",
     "suspect",
+    "authorization-restore-failed",
     "close-failed",
     "handoff-failed",
 ]
@@ -148,7 +153,13 @@ Absence of a result is not a member: a context that was never entered, or is
 still in use, reports ``None`` instead.
 """
 
-type AcquisitionReason = Literal["timeout", "queue_rejected", "closed", "preparation_failed"]
+type AcquisitionReason = Literal[
+    "timeout",
+    "queue_rejected",
+    "closed",
+    "preparation_failed",
+    "authorization_failed",
+]
 """Why an acquisition did not produce a usable connection.
 
 ``timeout`` is the cooperative acquisition budget running out — including a
@@ -179,6 +190,10 @@ class ConnectionAcquisitionError(Exception):
     def __init__(self, message: str, *, reason: AcquisitionReason) -> None:
         super().__init__(message)
         self.reason: AcquisitionReason = reason
+
+
+class InvalidAuthorizationError(ValueError):
+    """An adapter refused the shape of a resource-free authorization value."""
 
 
 type StartupPhase = Literal["open", "minimum_ready", "acquire", "probe", "release"]
@@ -261,7 +276,16 @@ class ConnectionContext(Protocol):
 
 
 @runtime_checkable
-class DatabaseRuntime(Protocol):
+class ConnectionContextSource(Protocol):
+    """A resource-free source of fresh single-use connection contexts."""
+
+    def new_context(self) -> ConnectionContext:
+        """Construct a context without acquiring a connection or performing I/O."""
+        ...
+
+
+@runtime_checkable
+class DatabaseRuntime[Authorization = object](Protocol):
     """The running database resource one connected ``Database`` owns.
 
     It hands out acquisitions and it stops. It is not a pool manager: there is
@@ -283,6 +307,11 @@ class DatabaseRuntime(Protocol):
         ...
 
     @property
+    def login_identity(self) -> str:
+        """The actual authenticated login captured before runtime publication."""
+        ...
+
+    @property
     def pool_metrics(self) -> PoolMetricsSource | None:
         """This runtime's read-only pool measurements, where it keeps any.
 
@@ -292,8 +321,12 @@ class DatabaseRuntime(Protocol):
         """
         ...
 
-    def connection(self) -> ConnectionContext:
-        """A fresh single-use acquisition context. Nothing is checked out yet."""
+    def login_execution(self) -> ConnectionContextSource:
+        """Bind execution under the authenticated login without I/O."""
+        ...
+
+    def principal_execution(self, authorization: Authorization) -> ConnectionContextSource:
+        """Validate and bind one provider authorization without I/O."""
         ...
 
     def close(self) -> None:
@@ -302,7 +335,7 @@ class DatabaseRuntime(Protocol):
 
 
 @runtime_checkable
-class DatabaseAdapter(Protocol):
+class DatabaseAdapter[Authorization = object](Protocol):
     """Immutable, resource-free configuration that knows how to open a runtime.
 
     Constructing one performs no I/O and allocates no resource, so it is safe to
@@ -322,7 +355,7 @@ class DatabaseAdapter(Protocol):
         without opening anything."""
         ...
 
-    def open(self) -> DatabaseRuntime:
+    def open(self) -> DatabaseRuntime[Authorization]:
         """Open one independent ready runtime, or raise
         :class:`DatabaseStartupError` having published nothing and released what
         it had taken, so far as that release could be established."""

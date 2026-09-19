@@ -49,6 +49,7 @@ from parallax.core.db_port import (
     Committed,
     ConnectionAcquisitionError,
     ConnectionContext,
+    ConnectionContextSource,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -89,6 +90,17 @@ _REVOKED = "this scripted connection's scope has ended"
 
 _RETURNED: Final[CleanupResult] = Returned()
 """What a completed release establishes where nothing had to be reclaimed."""
+
+_TEST_LOGIN: Final = "test-login"
+
+
+@dataclass(frozen=True, slots=True)
+class _TestExecutionSource:
+    runtime: SoleConnectionRuntime | ScriptedRuntime | RefusingAdapter
+    authorization: object | None = None
+
+    def new_context(self) -> ConnectionContext:
+        return self.runtime.new_bound_context(self.authorization)
 
 
 class SoleConnectionScope:
@@ -142,7 +154,18 @@ class SoleConnectionRuntime:
     def pool_metrics(self) -> PoolMetricsSource | None:
         return None
 
-    def connection(self) -> ConnectionContext:
+    @property
+    def login_identity(self) -> str:
+        return _TEST_LOGIN
+
+    def login_execution(self) -> ConnectionContextSource:
+        return _TestExecutionSource(self)
+
+    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+        return _TestExecutionSource(self, authorization)
+
+    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+        del authorization
         if self.closed:
             raise ConnectionAcquisitionError(
                 "this runtime is closed, so it opens no new connection", reason="closed"
@@ -463,7 +486,18 @@ class ScriptedRuntime:
         """
         return self.adapter.metrics
 
-    def connection(self) -> ConnectionContext:
+    @property
+    def login_identity(self) -> str:
+        return _TEST_LOGIN
+
+    def login_execution(self) -> ConnectionContextSource:
+        return _TestExecutionSource(self)
+
+    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+        return _TestExecutionSource(self, authorization)
+
+    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+        del authorization
         return ScriptedContext(self)
 
     def close(self) -> None:
@@ -663,7 +697,18 @@ class RefusingAdapter:
     def pool_metrics(self) -> PoolMetricsSource | None:
         return None
 
-    def connection(self) -> ConnectionContext:
+    @property
+    def login_identity(self) -> str:
+        return _TEST_LOGIN
+
+    def login_execution(self) -> ConnectionContextSource:
+        return _TestExecutionSource(self)
+
+    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+        return _TestExecutionSource(self, authorization)
+
+    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+        del authorization
         raise AssertionError("no acquisition expected — this adapter refuses the database")
 
     def close(self) -> None:

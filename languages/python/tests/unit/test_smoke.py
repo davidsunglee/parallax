@@ -75,15 +75,15 @@ def test_top_package_public_surfaces() -> None:
         "pin_of",
         "edge_of",
     }
-    # §8 topology fixes the adapter's public exports as the adapter itself, the
-    # two retention policies it is configured with, and this engine's name for
-    # each portable Isolation Level, which the conformance rounds runner spells
-    # a declared level through; psycopg bind mechanics (Jsonb), the native pool,
-    # and the scoped connection under an acquisition stay internal to it.
+    # §8 topology fixes the adapter's public exports as the adapter itself, its
+    # principal-role value, the two retention policies, and this engine's name
+    # for each portable Isolation Level; psycopg bind mechanics (Jsonb), the
+    # native pool, and the scoped connection under an acquisition stay internal.
     assert set(parallax.postgres.__all__) == {
         "OnDemandOptions",
         "PoolOptions",
         "PostgresAdapter",
+        "PostgresRole",
         "isolation_spelling",
     }
     # §8 pins the Descriptor Frontend's surface closed, so the committed

@@ -114,7 +114,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit._metamodel_support import instant as timestamp
 from tests.unit.memory_instruments import (
@@ -338,7 +338,7 @@ def _flush_of(entities: int, writes: int) -> Seam:
     model = _model(entities)
     planner = build_write_planner(model)
     request = PlanningRequest(
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
         concurrency="optimistic",
         buffered_writes=tuple(_prepared_writes(model, writes)),
@@ -400,7 +400,7 @@ def _planner_having_settled_every_entity(entities: int) -> Seam:
     """
     model = _model(entities)
     request = PlanningRequest(
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
         concurrency="optimistic",
         buffered_writes=tuple(
@@ -447,7 +447,7 @@ def _versioned_settlement(rows: int) -> _Settlement:
     return _Settlement(
         planner=build_write_planner(model),
         request=PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=INSTANT,
             concurrency="optimistic",
             buffered_writes=(_version_group(model, rows),),
@@ -466,7 +466,7 @@ def _temporal_settlement(rows: int) -> _Settlement:
     return _Settlement(
         planner=build_write_planner(model),
         request=PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=(_temporal_group(model, rows),),

@@ -49,8 +49,8 @@ from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
+    ConnectionContextSource,
     DatabaseConnection,
-    DatabaseRuntime,
     IsolationLevel,
     RollbackFailed,
     RolledBack,
@@ -70,7 +70,7 @@ from parallax.core.unit_work import (
     Concurrency,
     OptimisticLockConflictError,
     RollbackOnlyError,
-    SubjectIdentity,
+    SubjectActor,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
@@ -78,7 +78,6 @@ from parallax.core.unit_work import (
     WritePlan,
     WritePlanner,
     active_unit_of_work,
-    capture_subject_identity,
     concurrency_preference,
     enforce_affected_rows,
     run_unit_of_work,
@@ -112,13 +111,12 @@ __all__ = [
     "TransactionRunner",
 ]
 
-# The audit-neutral Subject Identity every production planning request carries
-# while no Principal attributes one: private, module-local, and captured through
-# the boundary's own nonempty check (`capture_subject_identity`) — never a
+# The audit-neutral Subject Actor every production planning request carries
+# while no Principal attributes one: private and module-local — never a
 # Principal implementation, a default identity, or a public caller option.
 # Attributed capture belongs to the outer database-operation boundary a Principal
 # is read at, which is the only place that can name a subject.
-_UNATTRIBUTED_SUBJECT_IDENTITY: Final[SubjectIdentity] = capture_subject_identity("unattributed")
+_UNATTRIBUTED_ACTOR: Final[SubjectActor] = SubjectActor("unattributed")
 
 
 class TransactionOptionConflictError(ValueError):
@@ -231,18 +229,18 @@ class TransactionRunner:
     the active transaction on core's per-thread binding alone.
     """
 
-    __slots__ = ("_clock", "_defaults", "_lifecycle", "_planner", "_runtime", "_serving")
+    __slots__ = ("_clock", "_defaults", "_lifecycle", "_planner", "_serving", "_source")
 
     def __init__(
         self,
-        runtime: DatabaseRuntime,
+        source: ConnectionContextSource,
         clock: Clock,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
         defaults: DatabaseOptions,
     ) -> None:
-        self._runtime = runtime
+        self._source = source
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
@@ -325,7 +323,7 @@ class TransactionRunner:
                     flush_executor=active.flush_executor,
                     write_batch_opening=active.write_batch_opening,
                     planner=joined.planner,
-                    subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
+                    actor_identity=_UNATTRIBUTED_ACTOR,
                 )
         options = _resolved(
             self._defaults,
@@ -403,7 +401,7 @@ class TransactionRunner:
                                 # and reused by every join into it rather than
                                 # re-adopted.
                                 planner=write.planner,
-                                subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
+                                actor_identity=_UNATTRIBUTED_ACTOR,
                             )
 
                         # One connection for this attempt and everything inside
@@ -414,7 +412,7 @@ class TransactionRunner:
                         # resource is carried into its successor; the pool may
                         # well hand back the same physical connection, which is
                         # its business rather than this loop's.
-                        resource = self._runtime.connection()
+                        resource = self._source.new_context()
                         try:
                             conn, held_since_ns = enter_connection(resource, physical)
                         except Exception as unacquired:

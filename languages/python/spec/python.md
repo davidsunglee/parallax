@@ -6362,7 +6362,11 @@ parallax.postgres --> parallax.core.dialect
   One further reach is the harness's own driver sessions:
   `parallax.conformance._postgres_control` imports
   `parallax.postgres._connection.initialize_connection` and
-  `parallax.postgres._connection.PostgresConnection`. The harness opens sessions
+  `parallax.postgres._connection.PostgresConnection`, plus the shared
+  `parallax.postgres._authorization.install_role` and `restore_role` operations.
+  The latter keep the dedicated-session authority envelope identical to the
+  pooled provider's without giving the harness a second role implementation.
+  The harness opens sessions
   an application never would — the per-case schema reset, a peer holding its own
   transaction, a case's verbatim golden SQL, and the dedicated session an
   interleaved choreography may destroy — and every statement it runs on one must

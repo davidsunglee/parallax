@@ -29,7 +29,7 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
     FixedClock,
     PlanningRequest,
-    SubjectIdentity,
+    SubjectActor,
     TransactionInstant,
     WritePlan,
     buffered_write,
@@ -295,7 +295,7 @@ def _planned(
         build_write_planner(POSITION)
         .finalize(
             PlanningRequest(
-                subject_identity=SubjectIdentity("unattributed"),
+                actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
                 buffered_writes=[buffered_write(prepared, None)],
@@ -402,7 +402,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
         build_write_planner(account)
         .finalize(
             PlanningRequest(
-                subject_identity=SubjectIdentity("unattributed"),
+                actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(
                     FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
                 ),

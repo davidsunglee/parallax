@@ -111,13 +111,13 @@ from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.planner import FamilyFacts, family_facts
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
+    ActorIdentity,
     AuditStrategy,
     AuthoredState,
     CarriedState,
     ChangedState,
     Concurrency,
     ConcurrencyStrategy,
-    SubjectIdentity,
     TemporalStrategy,
     VersionArithmetic,
 )
@@ -352,7 +352,7 @@ class WriteSettlement:
         ordered_writes: Sequence[OrderedWrite],
         *,
         concurrency: Concurrency,
-        subject_identity: SubjectIdentity,
+        actor_identity: ActorIdentity,
         transaction_instant: TransactionInstant,
     ) -> WritePlanningResult:
         """The whole ordered sequence as one Write Planning Result.
@@ -381,7 +381,7 @@ class WriteSettlement:
         they are packed and after each one's topology is settled; a Materialized
         Write Group's rows stay as its segment produced them.
 
-        ``subject_identity`` is passed to the audit port and never inspected
+        ``actor_identity`` is passed to the audit port and never inspected
         here; ``transaction_instant`` is threaded unevaluated until a surviving
         temporal write needs it.
         """
@@ -408,7 +408,7 @@ class WriteSettlement:
                 pending.append(
                     self._audit.decorate(
                         step,
-                        subject_identity=subject_identity,
+                        actor_identity=actor_identity,
                         transaction_instant=transaction_instant,
                     )
                 )

@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     )
     from parallax.core.db_port import (
         Bind,
-        ConnectionContext,
+        ConnectionContextSource,
         DatabaseAdapter,
         DatabaseConnection,
         DocumentReadOrdinals,
@@ -77,7 +77,7 @@ if TYPE_CHECKING:
     from parallax.core.entity import DomainModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
-    from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+    from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresRole
     from parallax.snapshot import DatabaseOptions
     from parallax.snapshot.handle import ServingModel
 
@@ -341,6 +341,14 @@ _SESSION_DEFAULTS: Mapping[str, str] = {
     "read-uncommitted": "-c default_transaction_isolation=read\\ uncommitted",
 }
 
+_TEST_LOGIN = "parallax_conformance_login"
+_TEST_PASSWORD = "parallax-conformance-password"
+_DEFAULT_ROLE = "parallax_conformance_default"
+_ROLE_AUTHORIZATIONS: Mapping[str, str] = {
+    "role-a": "parallax_conformance_role_a",
+    "role-b": "parallax_conformance_role_b",
+}
+
 
 class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed lanes
     """One provisioned database as the two halves a case needs of it.
@@ -360,13 +368,13 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
     def __init__(self, adapter: PostgresAdapter, session: DriverControl) -> None:
         self._adapter = adapter
         self._session = session
-        self._opened: list[DatabaseRuntime] = []
+        self._opened: list[DatabaseRuntime[PostgresRole]] = []
 
     @property
     def dialect(self) -> Dialect:
         return self._session.dialect
 
-    def open(self) -> DatabaseRuntime:
+    def open(self) -> DatabaseRuntime[PostgresRole]:
         runtime = _TrackedRuntime(self._adapter.open(), self._opened.remove)
         self._opened.append(runtime)
         return runtime
@@ -406,9 +414,13 @@ class _TrackedRuntime:  # pragma: no cover - exercised by the Docker-backed lane
     actually left behind.
     """
 
-    def __init__(self, inner: DatabaseRuntime, on_close: Callable[[DatabaseRuntime], None]) -> None:
+    def __init__(
+        self,
+        inner: DatabaseRuntime[PostgresRole],
+        on_close: Callable[[DatabaseRuntime[PostgresRole]], None],
+    ) -> None:
         self._inner = inner
-        self._on_close: Callable[[DatabaseRuntime], None] | None = on_close
+        self._on_close: Callable[[DatabaseRuntime[PostgresRole]], None] | None = on_close
 
     @property
     def dialect(self) -> Dialect:
@@ -418,8 +430,15 @@ class _TrackedRuntime:  # pragma: no cover - exercised by the Docker-backed lane
     def pool_metrics(self) -> PoolMetricsSource | None:
         return self._inner.pool_metrics
 
-    def connection(self) -> ConnectionContext:
-        return self._inner.connection()
+    @property
+    def login_identity(self) -> str:
+        return self._inner.login_identity
+
+    def login_execution(self) -> ConnectionContextSource:
+        return self._inner.login_execution()
+
+    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
+        return self._inner.principal_execution(authorization)
 
     def close(self) -> None:
         self._inner.close()
@@ -471,7 +490,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         self._container = PostgresContainer(constants.POSTGRES_IMAGE)
         self._container.start()
-        self._conninfo = self._container.get_connection_url().replace(
+        self._admin_conninfo = self._container.get_connection_url().replace(
             "postgresql+psycopg2://", "postgresql://"
         )
         # `prepare_threshold=None` throughout: a connection here can outlive
@@ -483,7 +502,13 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         # quirk, not a Parallax-level concern; an ordinary long-lived application
         # connection against one stable schema keeps the default).
         self._session = self._control().open(
-            self._conninfo, autocommit=True, prepare_threshold=None
+            self._admin_conninfo, autocommit=True, prepare_threshold=None
+        )
+        self._install_authority_fixtures()
+        from psycopg.conninfo import make_conninfo
+
+        self._conninfo = make_conninfo(
+            self._admin_conninfo, user=_TEST_LOGIN, password=_TEST_PASSWORD
         )
         self._database = ContainerDatabase(self._configuration(), self._session)
         # Every scoped session that may still be alive. One removes itself as
@@ -511,6 +536,17 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             **conninfo_options,
         )
 
+    def _install_authority_fixtures(self) -> None:
+        roles = (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values())
+        for role in roles:
+            self._session.execute_write(f'create role "{role}"', [])
+        self._session.execute_write(
+            f"create role \"{_TEST_LOGIN}\" login password '{_TEST_PASSWORD}'", []
+        )
+        for role in roles:
+            self._session.execute_write(f'grant "{role}" to "{_TEST_LOGIN}"', [])
+        self._session.execute_write(f'alter role "{_TEST_LOGIN}" set role to "{_DEFAULT_ROLE}"', [])
+
     def _built(
         self,
         *,
@@ -537,6 +573,25 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         """The running container's libpq connection string for isolated report children."""
         return self._conninfo
 
+    @property
+    def login_identity(self) -> str:
+        return _TEST_LOGIN
+
+    @property
+    def default_role(self) -> PostgresRole:
+        from parallax.postgres import PostgresRole
+
+        return PostgresRole(_DEFAULT_ROLE)
+
+    def authorization(self, selector: str) -> PostgresRole:
+        from parallax.postgres import PostgresRole
+
+        try:
+            role = _ROLE_AUTHORIZATIONS[selector]
+        except KeyError as unknown:
+            raise ValueError(f"unknown database authorization fixture {selector!r}") from unknown
+        return PostgresRole(role)
+
     def control(self, *, autocommit: bool = True) -> DriverControl:
         """A separately owned second session to the same container (provider `peer`).
 
@@ -553,7 +608,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         alive.
         """
         control = self._control().open(
-            self._conninfo,
+            self._admin_conninfo,
             autocommit=autocommit,
             prepare_threshold=None,
             on_release=self._open.discard,
@@ -621,7 +676,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             **options,
         )
 
-    def adapter_for_session_default(self, level: str) -> DatabaseAdapter:
+    def adapter_for_session_default(self, level: str) -> DatabaseAdapter[PostgresRole]:
         """Configuration whose connections carry ``level`` as their OWN default.
 
         ``m-db-port`` puts the default's check at INTAKE — an adapter inspects a
@@ -651,6 +706,14 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             self._session.execute_write(statement, [])
         for sql, binds in fixture_statements(model, fixtures, dialect):
             self._session.execute_write(dialect.to_driver_sql(sql), binds)
+        self._session.execute_write(f'grant usage on schema public to "{_DEFAULT_ROLE}"', [])
+        self._session.execute_write(
+            f"grant select, insert, update, delete on all tables in schema public "
+            f'to "{_DEFAULT_ROLE}"',
+            [],
+        )
+        for role in _ROLE_AUTHORIZATIONS.values():
+            self._session.execute_write(f'grant usage on schema public to "{role}"', [])
 
     def close(self) -> None:
         """Close this provisioning, and anything a caller left open behind it."""

@@ -98,7 +98,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
@@ -526,7 +526,7 @@ def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -599,7 +599,7 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -933,7 +933,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_temporal_group("Balance", "id", rows)],
@@ -960,7 +960,7 @@ def _account_plan(group: MaterializedWriteGroup) -> WritePlan:
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -1048,7 +1048,7 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=TransactionInstant(clock),
                 concurrency="optimistic",
                 buffered_writes=[_temporal_group("Balance", "id", rows)],
@@ -1102,7 +1102,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_temporal_group("Balance", "id", rows)],
@@ -1126,7 +1126,7 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
@@ -1150,7 +1150,7 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_temporal_group("Balance", "id", rows)],
@@ -1211,7 +1211,7 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
         build_write_planner(_BALANCE)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -1277,7 +1277,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
         build_write_planner(_BRANCH)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -1352,7 +1352,7 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[group],
@@ -1372,7 +1372,7 @@ def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
@@ -1384,7 +1384,7 @@ def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -
         build_write_planner(_ACCOUNT)
         .finalize(
             PlanningRequest(
-                subject_identity=TEST_SUBJECT_IDENTITY,
+                actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="optimistic",
                 buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],

@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.db_port import ISOLATION_LEVELS, isolation_level
+from parallax.core.db_port import (
+    ISOLATION_LEVELS,
+    ConnectionContext,
+    ConnectionContextSource,
+    InvalidAuthorizationError,
+    isolation_level,
+)
 
 
 class UnhashableName(str):
@@ -56,3 +62,15 @@ def test_an_accepted_level_comes_back_as_a_plain_hashable_str() -> None:
 
     assert level == "serializable"
     assert {level: "an adapter's per-level spelling"}
+
+
+def test_a_connection_context_source_declares_resource_free_context_creation() -> None:
+    class _Source:
+        def new_context(self) -> ConnectionContext:
+            raise AssertionError("the structural check must perform no I/O")
+
+    assert isinstance(_Source(), ConnectionContextSource)
+
+
+def test_invalid_authorization_is_a_caller_value_error() -> None:
+    assert issubclass(InvalidAuthorizationError, ValueError)

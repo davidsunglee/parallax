@@ -70,7 +70,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot.handle import stream_lowered
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _structural_geometry_support as geometry_support
 
@@ -486,7 +486,7 @@ def settle(case: Case, codec: EntityRowCodec, planner: WritePlanner) -> Settled:
     item = buffered_write(prepared, case.observation)
     plan = planner.finalize(
         PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="locking",
             buffered_writes=(item,),

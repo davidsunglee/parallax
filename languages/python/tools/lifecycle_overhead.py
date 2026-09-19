@@ -150,6 +150,7 @@ DISPATCH_CEILING_US: Final = 5.0
 P50_OVERHEAD_CEILING: Final = 0.05
 P95_OVERHEAD_CEILING: Final = 0.10
 SUBJECT: Final = "lifecycle-overhead"
+_LOGIN: Final = "lifecycle-overhead"
 
 
 class _SoleRuntime:
@@ -173,7 +174,18 @@ class _SoleRuntime:
     def pool_metrics(self) -> None:
         return None
 
-    def connection(self) -> _SoleScope:
+    @property
+    def login_identity(self) -> str:
+        return _LOGIN
+
+    def login_execution(self) -> _SoleRuntime:
+        return self
+
+    def principal_execution(self, authorization: object) -> _SoleRuntime:
+        del authorization
+        return self
+
+    def new_context(self) -> _SoleScope:
         return _SoleScope(self._connection)
 
     def close(self) -> None:

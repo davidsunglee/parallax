@@ -55,7 +55,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
 
 _MODELS = models.load_models()
@@ -98,7 +98,7 @@ def _run[T](
         meta=resolved_meta,
         flush_executor=executor or _noop,
         planner=build_write_planner(resolved_meta),
-        subject_identity=TEST_SUBJECT_IDENTITY,
+        actor_identity=TEST_ACTOR_IDENTITY,
         write_batch_opening=opening,
     )
 
@@ -383,7 +383,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
         PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
+            actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="locking",
             buffered_writes=carriers,

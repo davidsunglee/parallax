@@ -78,7 +78,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.planned import ValidatedMutationSelection
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -581,7 +581,7 @@ def test_the_audit_port_decorates_nothing_by_default() -> None:
     # is what makes the seam cost nothing while nothing is wired behind it.
     step = PlannedInsert(entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),))
     decorated = NO_AUDIT.decorate(
-        step, subject_identity=TEST_SUBJECT_IDENTITY, transaction_instant=inert_instant()
+        step, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=inert_instant()
     )
     assert decorated is step
     assert isinstance(NO_AUDIT, AuditStrategy)

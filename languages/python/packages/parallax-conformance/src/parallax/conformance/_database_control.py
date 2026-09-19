@@ -23,7 +23,7 @@ value below is development-only, and modeled work still runs through the shipped
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from parallax.core.db_port import DatabaseAdapter, DatabaseConnection
 
@@ -60,7 +60,7 @@ class TerminationReport:
     failures: tuple[str, ...] = ()
 
 
-class CaseDatabase(DatabaseConnection, DatabaseAdapter, Protocol):
+class CaseDatabase(DatabaseConnection, DatabaseAdapter[Any], Protocol):
     """What one conformance run executes against, in the two forms a case needs.
 
     A case does two different things with a database, and they are not the same

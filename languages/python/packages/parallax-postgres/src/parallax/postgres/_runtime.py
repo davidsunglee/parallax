@@ -16,8 +16,10 @@ It is a cooperative budget: it stops the next phase from starting, and it cannot
 interrupt a native call already in flight or the cleanup that must follow one.
 
 **Admission.** Starting an acquisition reserves no right to execute. The
-deadline and the runtime's open state are checked together, once, immediately
-before the acquired connection is handed over. A scope admitted before a close
+deadline and the runtime's open state are checked together immediately before
+the acquired connection is handed over. Principal acquisition checks again
+after role installation, so a close or expiry during provider setup publishes
+no execution access. A scope admitted before a close
 may finish everything it was going to do, including statements it has not issued
 yet; anything needing a NEW acquisition after that close is refused.
 
@@ -37,6 +39,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from dataclasses import dataclass
 from time import monotonic
 from typing import Final
 
@@ -47,7 +50,9 @@ from parallax.core.db_port import (
     CleanupIssue,
     ConnectionAcquisitionError,
     ConnectionContext,
+    ConnectionContextSource,
     DatabaseStartupError,
+    InvalidAuthorizationError,
     PoolMetricsSource,
     ReleaseUnconfirmed,
     Row,
@@ -56,6 +61,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.postgres._authorization import PostgresRole
 from parallax.postgres._connection import CONNECT_KWARGS, ConnectionPreparation
 from parallax.postgres._context import NativePool, PostgresConnectionContext
 from parallax.postgres._options import PoolOptions, RetentionOptions
@@ -66,7 +72,8 @@ __all__ = ["PROBE_SQL", "PostgresRuntime", "open_runtime"]
 PROBE_SQL: Final = """SELECT
     1 AS ready,
     'infinity'::timestamptz AS temporal_bound,
-    '{"ready": true}'::jsonb AS document"""
+    '{"ready": true}'::jsonb AS document,
+    session_user AS login_identity"""
 """The one statement a runtime runs before it is usable.
 
 It proves the three decodings the read path cannot work without and that a bare
@@ -89,7 +96,15 @@ class PostgresRuntime:
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_admission", "_closed", "_metrics", "_options", "_pool", "_preparation")
+    __slots__ = (
+        "_admission",
+        "_closed",
+        "_login_identity",
+        "_metrics",
+        "_options",
+        "_pool",
+        "_preparation",
+    )
 
     def __init__(
         self,
@@ -102,6 +117,7 @@ class PostgresRuntime:
         self._preparation = preparation
         self._metrics = PostgresPoolMetrics(pool)
         self._closed = False
+        self._login_identity: str | None = None
         # Held only across the two field reads that decide admission, never
         # across a checkout, a statement, or a callback: an acquisition that
         # blocks must not be able to block a close.
@@ -118,9 +134,31 @@ class PostgresRuntime:
         """
         return self._metrics
 
-    def connection(self) -> ConnectionContext:
-        """A fresh single-use acquisition under this runtime's acquisition budget."""
-        return self.acquisition(monotonic() + self._options.acquire_timeout)
+    @property
+    def login_identity(self) -> str:
+        """The authenticated login captured by this runtime's readiness probe."""
+        identity = self._login_identity
+        if identity is None:
+            raise RuntimeError("the database runtime has not completed startup")
+        return identity
+
+    def _complete_startup(self, login: str) -> None:
+        """Install the readiness probe's validated login exactly once."""
+        if self._login_identity is not None:
+            raise RuntimeError("the database runtime has already completed startup")
+        self._login_identity = login
+
+    def login_execution(self) -> ConnectionContextSource:
+        """Bind execution under the authenticated login without acquiring."""
+        return _PostgresExecutionSource(self, None)
+
+    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
+        """Bind execution under ``authorization`` without acquiring."""
+        if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the public boundary
+            raise InvalidAuthorizationError(
+                "PostgreSQL principal execution requires a PostgresRole"
+            )
+        return _PostgresExecutionSource(self, authorization)
 
     def acquisition(self, deadline: float) -> PostgresConnectionContext:
         """A fresh acquisition bounded by ``deadline`` rather than by the ordinary budget.
@@ -129,7 +167,16 @@ class PostgresRuntime:
         acquisition it makes has to fit inside, rather than an ordinary
         acquisition timeout added to it.
         """
-        return PostgresConnectionContext(self._pool, self._admit, deadline, self._preparation)
+        return PostgresConnectionContext(self._pool, self._admit, deadline, self._preparation, None)
+
+    def _context(self, role: PostgresRole | None) -> PostgresConnectionContext:
+        return PostgresConnectionContext(
+            self._pool,
+            self._admit,
+            monotonic() + self._options.acquire_timeout,
+            self._preparation,
+            role,
+        )
 
     def close(self) -> None:
         """Stop admitting work and close the native pool. Idempotent and permanent.
@@ -176,10 +223,19 @@ class PostgresRuntime:
                 raise ConnectionAcquisitionError(_CLOSED, reason="closed")
             if monotonic() >= deadline:
                 raise ConnectionAcquisitionError(
-                    "a database connection arrived after the acquisition timeout, so no "
-                    "statement was run on it",
+                    "database acquisition exceeded its timeout during checkout or provider "
+                    "setup, so no modeled statement was run",
                     reason="timeout",
                 )
+
+
+@dataclass(frozen=True, slots=True)
+class _PostgresExecutionSource:
+    runtime: PostgresRuntime
+    role: PostgresRole | None
+
+    def new_context(self) -> ConnectionContext:
+        return self.runtime._context(self.role)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
 
 
 def open_runtime(
@@ -199,7 +255,7 @@ def open_runtime(
     runtime = PostgresRuntime(pool, options, preparation)
     try:
         _await_minimum(pool, options, deadline, preparation)
-        _probe(runtime, deadline)
+        runtime._complete_startup(_probe(runtime, deadline))  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
     except BaseException:
         with contextlib.suppress(Exception):
             pool.close()
@@ -306,7 +362,7 @@ def _await_minimum(
         ) from (refusal if refusal is not None else exc)
 
 
-def _probe(runtime: PostgresRuntime, deadline: float) -> None:
+def _probe(runtime: PostgresRuntime, deadline: float) -> str:
     """Acquire one real connection, prove it decodes, and give it back.
 
     Startup owns no model and adopts no edition, so this creates no execution
@@ -326,7 +382,7 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> None:
             cleanup_result=resource.cleanup_result,
         ) from exc
     try:
-        _check_probe(connection.execute(PROBE_SQL, []))
+        login = _check_probe(connection.execute(PROBE_SQL, []))
     except BaseException as exc:
         resource.__exit__(type(exc), exc, exc.__traceback__)
         report_resource_issues("startup", resource.cleanup_result)
@@ -352,18 +408,25 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> None:
             cleanup_result=result,
         )
     _remaining(deadline, "release")
+    return login
 
 
-def _check_probe(rows: list[Row]) -> None:
+def _check_probe(rows: list[Row]) -> str:
     if len(rows) != 1:
         raise ValueError(f"the startup probe returned {len(rows)} rows rather than one")
     (row,) = rows
+    if len(row) != 4:
+        raise ValueError(f"the startup probe returned {len(row)} columns rather than four")
     if row[0] != 1:
         raise ValueError("the startup probe did not read its integer back")
     if row[1] is not INFINITY:
         raise ValueError("the startup probe did not read an unbounded instant back")
     if row[2] != {"ready": True}:
         raise ValueError("the startup probe did not read its structured document back")
+    login = row[3]
+    if not isinstance(login, str) or not login:
+        raise ValueError("the startup probe did not read a nonempty session_user")
+    return login
 
 
 def _remaining(deadline: float, phase: StartupPhase) -> float:

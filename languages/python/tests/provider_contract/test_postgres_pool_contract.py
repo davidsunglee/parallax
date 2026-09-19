@@ -29,6 +29,7 @@ from parallax.core.db_port import (
 from parallax.postgres import OnDemandOptions, PoolOptions
 
 _BACKEND = "select pg_backend_pid() as pid"
+_SESSION_USER = "select session_user as login_identity"
 
 
 def _pid(connection: Any) -> int:
@@ -40,18 +41,33 @@ def _runtime(profile_run: Any, **options: Any) -> Any:
     return profile_run.configured(**options).open()
 
 
+def _context(runtime: Any) -> Any:
+    return runtime.login_execution().new_context()
+
+
 # --------------------------------------------------------------------------- #
 # Reuse, capacity, and the queue.                                              #
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.adapter_smoke
+def test_runtime_login_identity_is_the_server_authenticated_session_user(profile_run: Any) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=0))
+    try:
+        with _context(runtime) as connection:
+            (row,) = connection.execute(_SESSION_USER, [])
+        assert runtime.login_identity == row[0]
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
 def test_a_retaining_runtime_reuses_the_connection_it_kept(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
     try:
-        with runtime.connection() as first:
+        with _context(runtime) as first:
             first_pid = _pid(first)
-        with runtime.connection() as second:
+        with _context(runtime) as second:
             assert _pid(second) == first_pid
     finally:
         runtime.close()
@@ -63,13 +79,13 @@ def test_capacity_bounds_how_many_scopes_are_open_at_once(profile_run: Any) -> N
     # waits for one of them rather than opening a connection past the ceiling.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2, acquire_timeout=1.0))
     try:
-        with runtime.connection() as first, runtime.connection() as second:
+        with _context(runtime) as first, _context(runtime) as second:
             assert _pid(first) != _pid(second)
             with pytest.raises(ConnectionAcquisitionError) as refused:
-                runtime.connection().__enter__()
+                _context(runtime).__enter__()
         assert refused.value.reason == "timeout"
         # The ceiling is not a leak: capacity is available again afterwards.
-        with runtime.connection() as third:
+        with _context(runtime) as third:
             assert _pid(third)
     finally:
         runtime.close()
@@ -87,13 +103,13 @@ def test_a_bounded_queue_refuses_a_further_waiter_rather_than_holding_it(
 
     def wait_for_capacity() -> None:
         try:
-            with runtime.connection():
+            with _context(runtime):
                 pass
         except ConnectionAcquisitionError as refused:  # pragma: no cover - timing
             refusals.append(refused.reason)
 
     try:
-        with runtime.connection():
+        with _context(runtime):
             queued = threading.Thread(target=wait_for_capacity)
             queued.start()
             # The waiter is really queued before the next acquisition asks —
@@ -103,7 +119,7 @@ def test_a_bounded_queue_refuses_a_further_waiter_rather_than_holding_it(
             # for.
             _wait_until_queued(runtime)
             with pytest.raises(ConnectionAcquisitionError) as rejected:
-                runtime.connection().__enter__()
+                _context(runtime).__enter__()
             assert rejected.value.reason == "queue_rejected"
         queued.join(timeout=10.0)
         assert refusals == []
@@ -117,7 +133,7 @@ def test_a_closed_runtime_admits_nothing_further(profile_run: Any) -> None:
     runtime.close()
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
-        runtime.connection().__enter__()
+        _context(runtime).__enter__()
 
     assert refused.value.reason == "closed"
 
@@ -128,11 +144,11 @@ def test_two_runtimes_from_one_configuration_are_independent(profile_run: Any) -
     first = configured.open()
     second = configured.open()
     try:
-        with first.connection() as one, second.connection() as two:
+        with _context(first) as one, _context(second) as two:
             assert _pid(one) != _pid(two)
         first.close()
         # Closing one leaves the other working.
-        with second.connection() as still_working:
+        with _context(second) as still_working:
             assert _pid(still_working)
     finally:
         first.close()
@@ -151,9 +167,9 @@ def test_an_on_demand_runtime_keeps_no_idle_connection(profile_run: Any) -> None
     # without inventory rather than a promise of a brand-new session each time.
     runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=2))
     try:
-        with runtime.connection() as first:
+        with _context(runtime) as first:
             first_pid = _pid(first)
-        with runtime.connection() as second:
+        with _context(runtime) as second:
             assert _pid(second) != first_pid
     finally:
         runtime.close()
@@ -163,8 +179,8 @@ def test_an_on_demand_runtime_keeps_no_idle_connection(profile_run: Any) -> None
 def test_an_on_demand_runtime_still_bounds_concurrency(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1, acquire_timeout=1.0))
     try:
-        with runtime.connection(), pytest.raises(ConnectionAcquisitionError) as refused:
-            runtime.connection().__enter__()
+        with _context(runtime), pytest.raises(ConnectionAcquisitionError) as refused:
+            _context(runtime).__enter__()
         assert refused.value.reason == "timeout"
     finally:
         runtime.close()
@@ -188,7 +204,7 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     assert "connect_timeout" not in conninfo_to_dict(configured.connection_string)
     runtime = configured.open()
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             assert _pid(scoped)
     finally:
         runtime.close()
@@ -207,12 +223,12 @@ def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
     handed: list[int] = []
 
     def wait_for_the_handoff() -> None:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             handed.append(_pid(scoped))
 
     try:
         waiter = threading.Thread(target=wait_for_the_handoff)
-        with runtime.connection() as held:
+        with _context(runtime) as held:
             held_pid = _pid(held)
             waiter.start()
             _wait_until_queued(runtime)
@@ -274,7 +290,7 @@ def test_every_connection_a_runtime_creates_decodes_the_same_way(profile_run: An
         runtime = _runtime(profile_run, pool=options)
         try:
             for _ in range(3):
-                with runtime.connection() as scoped:
+                with _context(runtime) as scoped:
                     (row,) = scoped.execute(_CODEC_PROBE, [])
                 assert row == (INFINITY, {"present": None}, None, None, 42)
         finally:
@@ -291,9 +307,9 @@ def test_a_grown_connection_decodes_exactly_as_the_first_one_does(profile_run: A
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=3))
     try:
         with (
-            runtime.connection() as first,
-            runtime.connection() as second,
-            runtime.connection() as third,
+            _context(runtime) as first,
+            _context(runtime) as second,
+            _context(runtime) as third,
         ):
             grown = [first, second, third]
             assert len({_pid(scoped) for scoped in grown}) == 3
@@ -311,14 +327,13 @@ def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any)
     # REPLACEMENT rather than a failed statement. The replacement is a physical
     # connection the runtime created on its own, so it also has to decode.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
-    executioner = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
+    executioner = profile_run.control()
     try:
-        with runtime.connection() as first:
+        with _context(runtime) as first:
             retained = _pid(first)
-        with executioner.connection() as killer:
-            killer.execute("select pg_terminate_backend(%s) as ended", [retained])
+        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
 
-        with runtime.connection() as replacement:
+        with _context(runtime) as replacement:
             assert _pid(replacement) != retained
             (row,) = replacement.execute(_CODEC_PROBE, [])
         assert row == (INFINITY, {"present": None}, None, None, 42)
@@ -331,7 +346,7 @@ def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any)
 def test_a_finite_timestamp_still_decodes_beside_the_unbounded_one(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             (row,) = scoped.execute(
                 "select '2026-01-02 03:04:05+00'::timestamptz as at, "
                 "'infinity'::timestamptz as forever",
@@ -354,7 +369,7 @@ def test_checkout_validation_can_be_opted_out_of_without_changing_what_executes(
         profile_run, pool=PoolOptions(min_size=1, max_size=1, validate_on_checkout=False)
     )
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             assert scoped.execute("select 1 as n", []) == [(1,)]
     finally:
         runtime.close()
@@ -370,7 +385,7 @@ def test_two_scopes_hold_isolated_transactions(profile_run: Any) -> None:
     profile_run.reset(*_grade_model())
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2))
     try:
-        with runtime.connection() as writer, runtime.connection() as reader:
+        with _context(runtime) as writer, _context(runtime) as reader:
 
             def insert(conn: Any) -> None:
                 conn.execute_write(
@@ -393,9 +408,9 @@ def test_a_scope_leaves_no_transaction_open_behind_it(profile_run: Any) -> None:
     # and the next scope over it starts clean.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
     try:
-        with runtime.connection() as first:
+        with _context(runtime) as first:
             first.execute("select 1", [])
-        with runtime.connection() as second:
+        with _context(runtime) as second:
             (row,) = second.execute("select txid_current_if_assigned() as tx", [])
         assert row[0] is None
     finally:
@@ -415,7 +430,7 @@ def test_indirect_connection_inputs_resolve_at_each_physical_connection(
     configured = profile_run.configured(pool=OnDemandOptions(max_size=1))
 
     def resolved_application_name(runtime: Any) -> str:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             (row,) = scoped.execute("select current_setting('application_name') as name", [])
         return str(row[0])
 
@@ -446,7 +461,7 @@ def test_settings_a_deployment_configured_survive_initialization(profile_run: An
         },
     )
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             (row,) = scoped.execute(
                 "select current_setting('timezone') as timezone, "
                 "current_setting('default_transaction_read_only') as read_only, "
@@ -474,7 +489,7 @@ def test_a_session_default_arrives_with_the_connection_rather_than_after_it(
     # connection this configuration opens carries it.
     runtime = profile_run.adapter_for_session_default("read-uncommitted").open()
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             (row,) = scoped.execute("show default_transaction_isolation", [])
         # Postgres HAS no level below Read Committed and runs a Read Uncommitted
         # request as Read Committed, so the floor is met and the connection is
@@ -533,7 +548,7 @@ def test_sampling_takes_no_connection_and_runs_no_statement(profile_run: Any) ->
     # reading — so the reading was not itself a caller.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0))
     try:
-        with runtime.connection() as held:
+        with _context(runtime) as held:
             assert _pid(held)
             before = _measurements(runtime)
             after = _measurements(runtime)
@@ -549,7 +564,7 @@ def test_the_counters_follow_the_work_the_runtime_actually_did(profile_run: Any)
     try:
         before = _measurements(runtime)
         for _ in range(3):
-            with runtime.connection() as scoped:
+            with _context(runtime) as scoped:
                 assert _pid(scoped)
         after = _measurements(runtime)
     finally:
@@ -568,7 +583,7 @@ def test_an_on_demand_runtime_keeps_no_idle_inventory_to_report(profile_run: Any
     # exporter must not read as "exhausted".
     runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=2))
     try:
-        with runtime.connection() as scoped:
+        with _context(runtime) as scoped:
             assert _pid(scoped)
         measurements = _measurements(runtime)
     finally:
@@ -599,11 +614,11 @@ def test_a_queued_borrower_is_visible_as_queue_depth(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=5.0))
     contended: list[str] = []
     try:
-        with runtime.connection() as held:
+        with _context(runtime) as held:
             assert _pid(held)
 
             def contend() -> None:
-                with runtime.connection() as second:
+                with _context(runtime) as second:
                     contended.append(str(_pid(second)))
 
             waiter = threading.Thread(target=contend)
