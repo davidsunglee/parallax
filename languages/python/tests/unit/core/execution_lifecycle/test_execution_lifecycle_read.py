@@ -739,7 +739,7 @@ def test_a_standalone_reads_started_event_carries_the_edition_it_adopted() -> No
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     snapshot = (
-        connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+        own_root(connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder))
         .using_database_login()
         .find(mm.Account.where(mm.Account.id == 7))
     )

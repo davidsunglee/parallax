@@ -412,7 +412,7 @@ def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"street": "Main"})}])
     )
     customer = (
-        connect(port, vo.CUSTOMER_MODEL)
+        own_root(connect(port, vo.CUSTOMER_MODEL))
         .using_database_login()
         .find(vo.Customer.where(vo.Customer.id == 1))
         .result()
@@ -894,7 +894,7 @@ def test_a_hydratable_invalid_root_carries_no_write_authority() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"city": "Berlin"})}])
     )
     record = (
-        connect(port, vo.CUSTOMER_MODEL)
+        own_root(connect(port, vo.CUSTOMER_MODEL))
         .using_database_login()
         .find(vo.Customer.where(vo.Customer.id == 1))
         .checked()

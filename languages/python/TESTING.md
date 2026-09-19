@@ -64,7 +64,7 @@ no test command of its own.
 | `_support/frontend_probes.py`, `_support/frontend_probes_stringized.py` | Declaration probes on the live-annotation and stringized-annotation paths |
 | `_support/inheritance_models.py`, `_support/mirrored_models.py`, `_support/snapshot_models.py`, `_support/value_object_models.py` | Idiomatic Entity and Value Object classes mirroring the corpus models |
 | `_support/write_values.py` | The invalid-Customer read shared by the API and unit keyed-write provenance lanes |
-| `_support/root_ownership.py` | The Database Root owner used by execution helpers: `own_root` retains roots explicitly; the autouse finalizer closes them after each test, and standalone reading tools close theirs at process exit |
+| `_support/root_ownership.py` | The Database Root owner used by execution helpers: `own_root` retains roots explicitly and the autouse finalizer closes them after each test; standalone reading tools own roots lexically so repeated measurement seams cannot accumulate them |
 
 A symbol reads `from tests._support.corpus import case_document` and a model
 module reads `from tests._support import mirrored_models as mm`, regardless of

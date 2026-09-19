@@ -173,8 +173,8 @@ import gc
 import sys
 import threading
 import tracemalloc
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import ExitStack, suppress
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import ExitStack, contextmanager, suppress
 from itertools import product
 from typing import Final, NamedTuple, cast, get_type_hints
 
@@ -230,7 +230,6 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
-from tests._support.root_ownership import own_root
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -615,16 +614,20 @@ def _bytes_within_the_bound(measured: Mapping[_Point, int]) -> None:
         assert kept * unit <= least * _bound(point), (smallest, least, point, kept)
 
 
-def _public_db(adapter: DatabaseAdapter, provider: ExecutionLifecycleProvider) -> ScopedDatabase:
+@contextmanager
+def _public_db(
+    adapter: DatabaseAdapter, provider: ExecutionLifecycleProvider
+) -> Generator[ScopedDatabase]:
     """A handle over ``port`` whose roots are opened by ``ScopedDatabase.transact``
     itself rather than at the seam, observed by ``provider``."""
-    return own_root(
-        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
-    ).using_database_login()
+    with connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider) as root:
+        yield root.using_database_login()
 
 
-def _observed_db(adapter: DatabaseAdapter) -> ScopedDatabase:
-    return _public_db(adapter, PROVIDER)
+@contextmanager
+def _observed_db(adapter: DatabaseAdapter) -> Generator[ScopedDatabase]:
+    with _public_db(adapter, PROVIDER) as database:
+        yield database
 
 
 def _one_read(db: ScopedDatabase) -> Callable[[], None]:
@@ -1036,7 +1039,8 @@ def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
     return run
 
 
-def _workload(point: _Point) -> Seam:
+@contextmanager
+def _workload(point: _Point) -> Generator[Seam]:
     """The workload ``point`` describes, at the public door: its roots open at
     once on their own threads, each joined to its depth, through one composition
     of its Providers.
@@ -1046,7 +1050,8 @@ def _workload(point: _Point) -> Seam:
     port that recorded its calls would accumulate them across the repetitions a
     byte reading takes.
     """
-    return _threaded_roots(point, _public_db(_CountingPort(), _fanout(point.providers)))
+    with _public_db(_CountingPort(), _fanout(point.providers)) as database:
+        yield _threaded_roots(point, database)
 
 
 def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
@@ -1188,7 +1193,8 @@ class _CountingPort(ConnectsAsItself):
         return body_outcome(cast("DatabaseConnection", self), body)
 
 
-def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
+@contextmanager
+def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Generator[Seam]:
     """One transaction whose callback joins itself ``depth`` times, sampled at the
     innermost of them.
 
@@ -1209,21 +1215,41 @@ def _joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> Seam:
     axis alone, because a reading with no worker thread in it carries nothing a
     thread costs and no scheduling to arrange.
     """
-    db = _public_db(_CountingPort(), provider)
+    with _public_db(_CountingPort(), provider) as database:
 
-    def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
-        def body(_tx: Transaction) -> None:
-            if remaining == 0:
-                sample()
-                return
-            db.transact(joining(remaining - 1, sample))
+        def joining(remaining: int, sample: Callable[[], None]) -> Callable[[Transaction], None]:
+            def body(_tx: Transaction) -> None:
+                if remaining == 0:
+                    sample()
+                    return
+                database.transact(joining(remaining - 1, sample))
 
-        return body
+            return body
 
-    def run(sample: Callable[[], None]) -> None:
-        db.transact(joining(depth, sample))
+        def run(sample: Callable[[], None]) -> None:
+            database.transact(joining(depth, sample))
 
-    return run
+        yield run
+
+
+def _live_workload(point: _Point) -> _Live:
+    with _workload(point) as workload:
+        return _live(workload)
+
+
+def _retained_workload(point: _Point) -> int:
+    with _workload(point) as workload:
+        return retained(workload)
+
+
+def _live_joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> _Live:
+    with _joined_depth(depth, provider) as workload:
+        return _live(workload)
+
+
+def _retained_joined_depth(depth: int, provider: ExecutionLifecycleProvider) -> int:
+    with _joined_depth(depth, provider) as workload:
+        return retained(workload)
 
 
 class _JoiningTransitions:
@@ -1303,8 +1329,8 @@ def test_a_completed_read_leaves_no_lifecycle_object_alive() -> None:
     # so a result that could still reach its root's events would keep every one
     # of them alive for exactly that long.
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    db = _observed_db(port)
-    assert _left_behind(_one_read(db)) == []
+    with _observed_db(port) as database:
+        assert _left_behind(_one_read(database)) == []
 
 
 @in_a_child_interpreter
@@ -1313,13 +1339,13 @@ def test_a_completed_transaction_leaves_no_lifecycle_object_alive() -> None:
     # batch over its Database Calls, with a participating read and its dependency
     # batch beside them. Nothing of that tree may outlive the callback.
     port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW])))
-    db = _observed_db(port)
+    with _observed_db(port) as database:
 
-    def body(tx: Transaction) -> None:
-        tx.insert(new_account())
-        tx.find(mm.Account.where(mm.Account.id == 7)).result()
+        def body(tx: Transaction) -> None:
+            tx.insert(new_account())
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
-    assert _left_behind(lambda: db.transact(body)) == []
+        assert _left_behind(lambda: database.transact(body)) == []
 
 
 # A scripted commit failure is one the port still holds when the sample is
@@ -1369,13 +1395,13 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
     # name, because a live traceback holds the frames of every scope it unwound
     # through and would keep their activities alive by itself.
     port = _ReleasingCommitFailurePort(2)
-    db = _observed_db(port)
+    with _observed_db(port) as database:
 
-    def run() -> None:
-        with suppress(ExecutionFailure):
-            db.transact(lambda tx: tx.insert(new_account()), max_retries=1)
+        def run() -> None:
+            with suppress(ExecutionFailure):
+                database.transact(lambda tx: tx.insert(new_account()), max_retries=1)
 
-    assert _left_behind(run) == []
+        assert _left_behind(run) == []
     assert port.begins == 2
 
 
@@ -1385,14 +1411,14 @@ def test_a_hundred_sequential_roots_leave_exactly_what_one_leaves() -> None:
     # as a trend anyone has to read: if a completed root left one reference, a
     # hundred roots would leave a hundred.
     port = ScriptedAdapter(Read(rows=[NEW_ROW], times=101))
-    db = _observed_db(port)
-    one = _one_read(db)
+    with _observed_db(port) as database:
+        one = _one_read(database)
 
-    def many() -> None:
-        for _ in range(100):
-            one()
+        def many() -> None:
+            for _ in range(100):
+                one()
 
-    assert _left_behind(one) == _left_behind(many) == []
+        assert _left_behind(one) == _left_behind(many) == []
 
 
 @in_a_child_interpreter
@@ -1515,7 +1541,7 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     # cost that depended on the depth, is a `P * D` term that agrees with this at
     # one column and disagrees at the others.
     measured = {
-        (depth, providers): _live(_joined_depth(depth, _fanout(providers)))
+        (depth, providers): _live_joined_depth(depth, _fanout(providers))
         for providers in _PROVIDERS
         for depth in _DEPTHS
     }
@@ -1548,7 +1574,7 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     tracemalloc.start()
     try:
         kept = {
-            _Point(1, providers, depth): retained(_joined_depth(depth, _fanout(providers)))
+            _Point(1, providers, depth): _retained_joined_depth(depth, _fanout(providers))
             for providers in _PROVIDERS
             for depth in _DEPTHS
         }
@@ -1577,7 +1603,7 @@ def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_on
     # roots were open, retaining each of them at every joined level, would grow
     # as `N * N * D` — nothing wherever `N` is one, nothing wherever the joined
     # depth is not varied, and nowhere in this fit to sit.
-    measured = {point: _live(_workload(point)) for point in _GRID}
+    measured = {point: _live_workload(point) for point in _GRID}
     fit = _fitted(measured)
     assert measured == {point: _predicts(fit, point) for point in _GRID}, (fit, measured)
     assert min(fit.root) > 0 and min(fit.provider) > 0 and min(fit.level) > 0, fit
@@ -1603,7 +1629,7 @@ def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it
     # needed a second root open beside the first is inside it.
     tracemalloc.start()
     try:
-        kept = {point: retained(_workload(point)) for point in _CROSSINGS}
+        kept = {point: _retained_workload(point) for point in _CROSSINGS}
     finally:
         tracemalloc.stop()
     assert kept[_LEAST] > 0, "a live root weighs nothing, or nothing is being sampled"
@@ -1622,9 +1648,11 @@ def test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled() -> 
     point = _Point(4, 1, 8)
     scopes = _OpenScopes()
     port = _CountingPort()
-    db = _public_db(port, _SharedProvider(scopes))
     at_the_rendezvous: list[tuple[int, int, int, int]] = []
-    _threaded_roots(point, db)(lambda: at_the_rendezvous.append((*scopes.reading(), port.begins)))
+    with _public_db(port, _SharedProvider(scopes)) as database:
+        _threaded_roots(point, database)(
+            lambda: at_the_rendezvous.append((*scopes.reading(), port.begins))
+        )
     assert at_the_rendezvous == [(point.roots, point.roots * point.depth, 0, point.roots)]
     assert scopes.reading() == (
         point.roots,
@@ -1643,12 +1671,12 @@ def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> No
     # line under it, and the bytes second to establish that this is what refuses
     # it — which is the whole reason both are read over every grid.
     provider = _SharedProvider(_HoardingHandler())
-    measured = {depth: _live(_joined_depth(depth, provider)) for depth in _DEPTHS}
+    measured = {depth: _live_joined_depth(depth, provider) for depth in _DEPTHS}
     _affine(measured, _DEPTHS)
     _at_most_proportional(measured, _DEPTHS)
     tracemalloc.start()
     try:
-        kept = {_Point(1, 1, depth): retained(_joined_depth(depth, provider)) for depth in _DEPTHS}
+        kept = {_Point(1, 1, depth): _retained_joined_depth(depth, provider) for depth in _DEPTHS}
     finally:
         tracemalloc.stop()
     with pytest.raises(AssertionError):
@@ -1690,17 +1718,18 @@ def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() 
     # Finished, and they close in the reverse of the order they opened.
     transitions = _JoiningTransitions()
     port = ScriptedAdapter(Transact())
-    db = _public_db(port, _SharedProvider(transitions))
     depth = 5
 
-    def joining(remaining: int) -> Callable[[Transaction], None]:
-        def body(_tx: Transaction) -> None:
-            if remaining > 0:
-                db.transact(joining(remaining - 1))
+    with _public_db(port, _SharedProvider(transitions)) as database:
 
-        return body
+        def joining(remaining: int) -> Callable[[Transaction], None]:
+            def body(_tx: Transaction) -> None:
+                if remaining > 0:
+                    database.transact(joining(remaining - 1))
 
-    db.transact(joining(depth))
+            return body
+
+        database.transact(joining(depth))
 
     assert [phase for phase, _ in transitions.order] == ["started"] * depth + ["finished"] * depth
     opened = [activity for phase, activity in transitions.order if phase == "started"]
@@ -1776,11 +1805,10 @@ def test_nothing_of_a_closed_root_is_alive_once_the_sample_is_past() -> None:
     # all, at sixteen roots open at once, at sixteen joining calls nested, and at
     # the threaded crossing of the two once its workers have been joined.
     deepest, _ = _SHAPES[1]
-    nested = _joined_depth(16, _fanout(3))
-    crossed = _workload(_Point(8, 3, 8))
-    assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
-    assert _left_behind(lambda: nested(lambda: None)) == []
-    assert _left_behind(lambda: crossed(lambda: None)) == []
+    with _joined_depth(16, _fanout(3)) as nested, _workload(_Point(8, 3, 8)) as crossed:
+        assert _left_behind(lambda: _concurrent_roots(16, 3, deepest)(lambda: None)) == []
+        assert _left_behind(lambda: nested(lambda: None)) == []
+        assert _left_behind(lambda: crossed(lambda: None)) == []
 
 
 if __name__ == "__main__":

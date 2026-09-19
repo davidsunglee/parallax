@@ -24,7 +24,8 @@ carried by this MODULE's underscore. Never imported by production code.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 
@@ -52,7 +53,6 @@ from parallax.core.unit_work.instructions import PreparedPredicateWrite
 from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
-from tests._support.root_ownership import own_root
 
 __all__ = [
     "ACQUISITION_LEVELS",
@@ -242,11 +242,13 @@ class _Abandoned(Exception):
     """Raised after the checkpoint so the transaction rolls back unflushed."""
 
 
-def database(case: Case) -> ScopedDatabase:
+@contextmanager
+def database(case: Case) -> Generator[ScopedDatabase]:
     """A connected handle over ``case``'s port, composed outside every window."""
-    return own_root(
-        Database(AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT))
-    ).using_database_login()
+    with Database(
+        AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT)
+    ) as root:
+        yield root.using_database_login()
 
 
 def acquire(

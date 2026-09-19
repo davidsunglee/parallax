@@ -2456,8 +2456,8 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
     # each row through is not retained anywhere in the buffered group.
     case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
     groups, views = _recorded_groups_and_views(monkeypatch)
-    handle = acquisition_support.database(case)
-    acquisition_support.acquire(handle, case)
+    with acquisition_support.database(case) as handle:
+        acquisition_support.acquire(handle, case)
 
     (group,) = groups
     assert isinstance(group.observations, TemporalColumns)
@@ -2515,8 +2515,8 @@ def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
     # became a second predecessor carrier beside the columns.
     case = acquisition_support.case_named("acquisition.rows-8.document")
     groups, views = _recorded_groups_and_views(monkeypatch)
-    handle = acquisition_support.database(case)
-    acquisition_support.acquire(handle, case)
+    with acquisition_support.database(case) as handle:
+        acquisition_support.acquire(handle, case)
 
     assert len(groups) == 1 and len(views) == case.rows
     gc.collect()
