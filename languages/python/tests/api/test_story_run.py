@@ -57,6 +57,7 @@ from parallax.core.unit_work import Concurrency
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import (
     Database,
+    ScopedDatabase,
     Snapshot,
     Transaction,
     TransactionTimePinReadOnlyError,
@@ -129,7 +130,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     # A story's scripted-clock factory supplies this consumer with a fresh
     # clock independent of `test_write_no_drift.py`.
     clock = story.clock() if story.clock is not None else None
-    db = connect(profile_run.port, meta, clock=clock)
+    db = connect(profile_run.port, meta, clock=clock).using_database_login()
 
     result = story.run(db)
     if result is not None:
@@ -167,7 +168,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
 _GRAPH_STORIES_BY_ID = {story.case_id: story for story in GRAPH_STORIES}
 
 
-class _CountingDatabase(Database):
+class _CountingDatabase(ScopedDatabase):
     """A ``Database`` that records what each of its own operations put on the wire.
 
     A result carries no record of the execution that produced it
@@ -178,12 +179,22 @@ class _CountingDatabase(Database):
     call, in call order, which is the same partition the case's steps draw.
     """
 
+    __slots__ = ("_root", "observation", "round_trips")
+    _root: Database[Any]
+    observation: LifecycleObservation
+    round_trips: list[int]
+
     def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
-        self.observation = LifecycleObservation()
-        super().__init__(
-            adapter.open(), model, clock=clock, lifecycle_provider=self.observation.provider
-        )
-        self.round_trips: list[int] = []
+        observation = LifecycleObservation()
+        root = Database(adapter.open(), model, clock=clock, lifecycle_provider=observation.provider)
+        scoped = cast("Any", root.using_database_login())
+        object.__setattr__(self, "_transaction_runner", scoped._transaction_runner)
+        object.__setattr__(self, "_capture", scoped._capture)
+        object.__setattr__(self, "_options", scoped._options)
+        object.__setattr__(self, "_reads", scoped._reads)
+        object.__setattr__(self, "_root", root)
+        object.__setattr__(self, "observation", observation)
+        object.__setattr__(self, "round_trips", [])
 
     def _counted[T](self, run: Callable[[], T]) -> T:
         mark = self.observation.round_trips
@@ -379,7 +390,7 @@ def test_a_write_keeps_a_loaded_to_one_view(profile_run: Any) -> None:
     assert db.round_trips[0] == 2
 
 
-def _committed_item_ids(db: Database, order_id: int) -> list[int]:
+def _committed_item_ids(db: ScopedDatabase, order_id: int) -> list[int]:
     """The line items ``order_id`` owns in the DATABASE, read after a story ran.
 
     The composition stories' own oracle for the half their returned snapshot
@@ -1237,7 +1248,7 @@ def test_statement_capture_forwards_document_read_metadata() -> None:
 def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_run: Any) -> None:
     meta = _reset_for(story.case_id, profile_run)
     port = _StatementCapturePort(profile_run.port)
-    db = connect(port, meta)
+    db = connect(port, meta).using_database_login()
     if story.concurrency is not None:
         snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
     else:

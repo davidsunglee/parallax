@@ -38,9 +38,9 @@ from parallax.core.unit_work import (
     WriteRejectedError,
 )
 from parallax.snapshot.handle import (
-    Database,
     DeferredFeatureError,
     QueryTargetError,
+    ScopedDatabase,
     Transaction,
     WireEntity,
 )
@@ -391,7 +391,7 @@ def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
     assert db_for(MODELS["orders"], port).read_rows(query).rows == (_ORDER_ROW,)
 
 
-def _policy_db(adapter: DatabaseAdapter) -> Database:
+def _policy_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     return db_for(MODELS["policy"], adapter)
 
 
@@ -441,7 +441,7 @@ def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
     assert _run_on(db_for(MODELS["orders"], port), fn) == ()
 
 
-def _run_on[T](db: Database, fn: Callable[[Transaction], T]) -> T:
+def _run_on[T](db: ScopedDatabase, fn: Callable[[Transaction], T]) -> T:
     return db.transact(fn)
 
 

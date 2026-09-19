@@ -49,7 +49,6 @@ from parallax.core.auto_retry import run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
-    ConnectionContextSource,
     DatabaseConnection,
     IsolationLevel,
     RollbackFailed,
@@ -63,6 +62,7 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     WriteBatchActivity,
     open_transaction_root,
+    refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
@@ -70,7 +70,6 @@ from parallax.core.unit_work import (
     Concurrency,
     OptimisticLockConflictError,
     RollbackOnlyError,
-    SubjectActor,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
@@ -88,6 +87,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`.
 from parallax.snapshot.handle._adoption import AdoptedExecution
 from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
+from parallax.snapshot.handle._execution_authority import ExecutionCapture, same_execution
 from parallax.snapshot.handle._options import (
     OMITTED,
     DatabaseOptions,
@@ -105,18 +105,12 @@ from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = [
+    "TransactionAuthorityError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
     "TransactionRollbackError",
     "TransactionRunner",
 ]
-
-# The audit-neutral Subject Actor every production planning request carries
-# while no Principal attributes one: private and module-local — never a
-# Principal implementation, a default identity, or a public caller option.
-# Attributed capture belongs to the outer database-operation boundary a Principal
-# is read at, which is the only place that can name a subject.
-_UNATTRIBUTED_ACTOR: Final[SubjectActor] = SubjectActor("unattributed")
 
 
 class TransactionOptionConflictError(ValueError):
@@ -146,6 +140,12 @@ class TransactionOwnershipError(RuntimeError):
     """
 
     code: Final[str] = "transaction-owner-mismatch"
+
+
+class TransactionAuthorityError(RuntimeError):
+    """A joining scope carries a different captured execution authority."""
+
+    code: Final[str] = "transaction-authority-mismatch"
 
 
 class TransactionRollbackError(RuntimeError):
@@ -210,7 +210,8 @@ class _ActiveTransaction:
     """
 
     tx: Transaction
-    owner: object
+    root: object
+    capture: ExecutionCapture
     attempt: TransactionAttemptActivity
     planner: WritePlanner
 
@@ -229,29 +230,28 @@ class TransactionRunner:
     the active transaction on core's per-thread binding alone.
     """
 
-    __slots__ = ("_clock", "_defaults", "_lifecycle", "_planner", "_serving", "_source")
+    __slots__ = ("_clock", "_lifecycle", "_planner", "_root", "_serving")
 
     def __init__(
         self,
-        source: ConnectionContextSource,
+        root: object,
         clock: Clock,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
-        defaults: DatabaseOptions,
     ) -> None:
-        self._source = source
+        self._root = root
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
         self._planner = planner
-        self._defaults = defaults
 
     def transact[T](
         self,
         fn: Callable[[Transaction], T],
         *,
-        owner: object,
+        capture: ExecutionCapture,
+        defaults: DatabaseOptions,
         max_retries: int | Omitted,
         concurrency: Concurrency | Omitted,
         retry_optimistic_conflicts: bool | Omitted,
@@ -267,6 +267,7 @@ class TransactionRunner:
         the retry loop with one adoption per attempt, and is contextualized as
         a whole once the loop has resolved.
         """
+        refuse_reentry(self._lifecycle)
         # Every explicit value is validated ahead of the join comparison below,
         # because a value outside its field's contract is the CALL's own defect:
         # comparing it first would report a nonsense value as a disagreement
@@ -292,12 +293,16 @@ class TransactionRunner:
                     "a bare unit of work is active on this thread; db.transact can "
                     "only join a transaction it opened"
                 )
-            if joined.owner is not owner:
+            if joined.root is not self._root:
                 raise TransactionOwnershipError(
-                    "this Database did not open the active transaction, so it cannot "
-                    "join it (transaction-owner-mismatch); only the exact Database "
-                    "object that opened the boundary joins, however equivalent "
-                    "another handle's model, adapter, or clock may be"
+                    "this scope does not belong to the runtime that opened the active "
+                    "transaction (transaction-owner-mismatch)"
+                )
+            active.ensure_not_rollback_only()
+            if not same_execution(joined.capture, capture):
+                raise TransactionAuthorityError(
+                    "the joining scope carries different execution authority "
+                    "(transaction-authority-mismatch)"
                 )
             _check_join_options(
                 joined.tx.options,
@@ -323,10 +328,10 @@ class TransactionRunner:
                     flush_executor=active.flush_executor,
                     write_batch_opening=active.write_batch_opening,
                     planner=joined.planner,
-                    actor_identity=_UNATTRIBUTED_ACTOR,
+                    actor_identity=joined.capture.actor,
                 )
         options = _resolved(
-            self._defaults,
+            defaults,
             max_retries=bound,
             concurrency=preference,
             retry_optimistic_conflicts=opt_in,
@@ -383,7 +388,8 @@ class TransactionRunner:
                                 # so it needs no cleanup.
                                 uow.companion = _ActiveTransaction(
                                     tx=tx,
-                                    owner=owner,
+                                    root=self._root,
+                                    capture=capture,
                                     attempt=physical,
                                     planner=write.planner,
                                 )
@@ -401,7 +407,7 @@ class TransactionRunner:
                                 # and reused by every join into it rather than
                                 # re-adopted.
                                 planner=write.planner,
-                                actor_identity=_UNATTRIBUTED_ACTOR,
+                                actor_identity=capture.actor,
                             )
 
                         # One connection for this attempt and everything inside
@@ -412,7 +418,7 @@ class TransactionRunner:
                         # resource is carried into its successor; the pool may
                         # well hand back the same physical connection, which is
                         # its business rather than this loop's.
-                        resource = self._source.new_context()
+                        resource = capture.source.new_context()
                         try:
                             conn, held_since_ns = enter_connection(resource, physical)
                         except Exception as unacquired:

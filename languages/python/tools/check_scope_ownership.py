@@ -323,9 +323,10 @@ def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
     submodule, and it is the same import either way.
     """
     found: set[str] = set()
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     for scope in dag.SEALED_CHILD_SCOPES:
         parent = dag.CHILD_SCOPE_PARENT[scope]
-        permitted = (scope, *dag.SUPPORT_SCOPE_DEPS[scope])
+        permitted = (scope, *adjacency[scope])
         for relative in paths:
             if not is_inside(module_path(relative), scope):
                 continue

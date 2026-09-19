@@ -62,7 +62,7 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     assert update.after_edition == "2026-09-b"
     assert update.nickname == "rainy-day"
 
-    later = connect(profile_run.port, NICKNAMED_ACCOUNT_MODEL)
+    later = connect(profile_run.port, NICKNAMED_ACCOUNT_MODEL).using_database_login()
     named = later.find(NicknamedAccount.where(NicknamedAccount.id == _TARGET_ID)).result()
     # The write committed into the column the delta added, which is what makes
     # the publication an update rather than a relabelling.
@@ -71,7 +71,7 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     # Edition Overlap: a connection still serving the earlier model reads the
     # same rows against the evolved schema, because an added Attribute is a
     # column that model never selects.
-    earlier = connect(profile_run.port, ACCOUNT_MODEL)
+    earlier = connect(profile_run.port, ACCOUNT_MODEL).using_database_login()
     account = earlier.find(Account.where(Account.id == _TARGET_ID)).result()
     assert account.balance == Decimal("250.00")
     assert not hasattr(account, "nickname")
@@ -81,7 +81,7 @@ def test_a_stale_publisher_is_refused_and_rebases_onto_what_is_held(profile_run:
     port = _seeded(profile_run)
     a = prepare_model(ACCOUNT_MODEL, edition="2026-09-a")
     serving = ServingModel(a)
-    db = connect(port, serving)
+    db = connect(port, serving).using_database_login()
 
     first = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
     evolution = stories.unilateral(evolve(model_of(a.model), model_of(first.model)))

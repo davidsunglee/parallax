@@ -470,6 +470,13 @@ class UnitOfWork:
         """Whether the unit of work is inside a joined (nested) frame."""
         return self._frame_depth > 0
 
+    def ensure_not_rollback_only(self) -> None:
+        """Refuse new joined work when the transaction is already doomed."""
+        if self._rollback_only:
+            raise RollbackOnlyError(
+                "cannot join a rollback-only transaction"
+            ) from self._rollback_cause
+
     # --- internals -------------------------------------------------------- #
     def _ensure_open(self) -> None:
         if self._closed:
@@ -516,11 +523,7 @@ class UnitOfWork:
 
         Driven by :func:`run_unit_of_work`; not part of the developer surface.
         """
-        if self._rollback_only:
-            # No new work may start inside a doomed scope.
-            raise RollbackOnlyError(
-                "cannot join a rollback-only transaction"
-            ) from self._rollback_cause
+        self.ensure_not_rollback_only()
         self._frame_depth += 1
         try:
             # The joined body returns immediately; commit/abort/retry belong to the

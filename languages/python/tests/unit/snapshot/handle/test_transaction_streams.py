@@ -465,7 +465,7 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
     port = ScriptedAdapter(
         Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(raises=failure))
     )
-    db = Database.connect(port, serving, clock=FixedClock(FIXED))
+    db = Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login()
     seen: list[int] = []
 
     def body(tx: Transaction) -> None:

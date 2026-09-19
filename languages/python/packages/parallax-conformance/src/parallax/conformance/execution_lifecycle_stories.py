@@ -113,7 +113,8 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
     while the boundary ran is the whole account of it.
     """
     provider = JoinedShapeProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as db:
+    with connect(adapter, model, lifecycle_provider=provider) as database:
+        db = database.using_database_login()
 
         def outer(tx: Transaction) -> Account:
             current = tx.find(Account.where(Account.id == _TARGET_ID)).result()

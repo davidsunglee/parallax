@@ -11,6 +11,8 @@ database through `parallax.conformance.boundary_runner`'s fault-injecting adapte
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -30,7 +32,12 @@ from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import Transaction, TransactionOptionConflictError
+from parallax.snapshot.handle import (
+    ScopedDatabase,
+    Transaction,
+    TransactionAuthorityError,
+    TransactionOptionConflictError,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, case_fixtures
 
@@ -47,11 +54,21 @@ _FAILURE_CATEGORY: dict[str, str] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _Principal:
+    subject: str
+    database_authorization: object
+
+
 def _make_body(
-    steps: list[boundary_runner.BoundaryStep], *, raise_after: bool, db: Any
+    steps: list[boundary_runner.BoundaryStep],
+    *,
+    raise_after: bool,
+    db: ScopedDatabase,
+    scope_for: Callable[[case_format.ActorSelection], ScopedDatabase],
 ) -> Any:  # Callable[[Transaction], Account | None]
     def body(tx: Transaction) -> Account | None:
-        result = boundary_runner.run_boundary_actions(tx, steps, database=db)
+        result = boundary_runner.run_boundary_actions(tx, steps, database=db, scope_for=scope_for)
         if raise_after:
             raise BoundaryAbort("scripted abort — no injected fault (m-unit-work-004)")
         return result
@@ -61,7 +78,7 @@ def _make_body(
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 def test_boundary_case_runs_through_the_shipped_surface(
-    case: case_format.Case, profile_run: Any
+    case: case_format.Case, profile_run: Any, request: pytest.FixtureRequest
 ) -> None:
     dialect = profile_run.port.dialect
     outcome = boundary_runner.outcome(case, dialect)
@@ -106,14 +123,39 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # stem — so the attempt events the case authors carry the literal it names
     # (`m-conformance-adapter`).
     serving = ServingModel(prepare_model(meta, edition=engine.case_edition(case)))
-    db = connect(port, serving, options=root, lifecycle_provider=observed.provider)
+    database_root = connect(port, serving, options=root, lifecycle_provider=observed.provider)
+    request.addfinalizer(database_root.close)
+
+    scopes: dict[int, ScopedDatabase] = {}
+
+    def scope_for(selection: case_format.ActorSelection) -> ScopedDatabase:
+        key = id(selection)
+        if key not in scopes:
+            if isinstance(selection, case_format.SubjectSelection):
+                principal = _Principal(
+                    selection.subject,
+                    profile_run.authorization(selection.database_authorization),
+                )
+                scopes[key] = database_root.using_principal(principal)
+            else:
+                scopes[key] = database_root.using_database_login()
+        return scopes[key]
+
+    outer_selection = case_format.actor_selection(case)
+    db = (
+        database_root.using_database_login()
+        if outer_selection is None
+        else scope_for(outer_selection)
+    )
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
     # and driving it through the SAME `port` would arm the fault against it.
-    verify_db = connect(profile_run.port, meta)
+    verify_root = connect(profile_run.port, meta)
+    request.addfinalizer(verify_root.close)
+    verify_db = verify_root.using_database_login()
     raise_after = fault is None and outcome == "aborted"
-    body = _make_body(steps, raise_after=raise_after, db=db)
+    body = _make_body(steps, raise_after=raise_after, db=db, scope_for=scope_for)
 
     def run() -> Account | None:
         return db.transact(body, **requests)
@@ -121,11 +163,16 @@ def test_boundary_case_runs_through_the_shipped_surface(
     if outcome == "committed":
         result = run()
         assert result is not None
-        assert result.balance == Decimal("251.00")  # 250.00 + one successful bump (m-opt-lock)
+        expected_balance = (
+            Decimal("251.00")
+            if any(step.action == "update" for step in steps)
+            else Decimal("250.00")
+        )
+        assert result.balance == expected_balance
         verify = verify_db.transact(
             lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
         )
-        assert verify.balance == Decimal("251.00"), "the committed write must persist"
+        assert verify.balance == expected_balance, "the committed write must persist"
     elif outcome == "aborted":
         with raises_contextualized(BoundaryAbort):
             run()
@@ -147,6 +194,9 @@ def test_boundary_case_runs_through_the_shipped_surface(
         assert verify.balance == Decimal("250.00"), (
             "a refused joining option dooms the boundary it tried to renegotiate"
         )
+    elif outcome == "authority-mismatch":
+        with raises_contextualized(TransactionAuthorityError):
+            run()
     elif outcome == "boundary-failed":
         # The boundary never opened, so what surfaces is the error the port made
         # rather than a classified failure of the work. WHICH error is the fault's
@@ -238,6 +288,11 @@ def test_reachable_boundary_cases_cover_the_expected_population() -> None:
         "m-execution-lifecycle-008",
         "m-execution-lifecycle-009",
         "m-execution-lifecycle-010",
+        "m-execution-authority-001",
+        "m-execution-authority-002",
+        "m-execution-authority-003",
+        "m-execution-authority-004",
+        "m-execution-authority-005",
         "m-opt-lock-010",
         "m-opt-lock-011",
         "m-opt-lock-024",

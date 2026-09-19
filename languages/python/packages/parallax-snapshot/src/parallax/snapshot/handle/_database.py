@@ -1,70 +1,14 @@
-"""``parallax.snapshot.handle._database`` — preparation and the composition root.
-
-:func:`prepare_model` runs every finite, fallible model-only derivation into
-one complete :class:`~parallax.snapshot.handle._publication.ModelSelection`,
-and :meth:`Database.connect` opens a runtime from a concrete ``m-db-port``
-adapter and connects it to the Serving Model it will serve. That runtime is what
-the handle owns and what :meth:`Database.close` closes; every operation below
-acquires its own connection from it for exactly as long as that operation lasts.
-The handle itself retains nothing model-derived:
-:meth:`Database.find`, :meth:`Database.stream`, and :meth:`Database.read_rows`
-delegate to the one :class:`~parallax.snapshot.handle._read_scope.ReadScope`
-this connection owns — the same scope its Wire view retains, and the same scope
-every stream it opens is delivered through — and :meth:`Database.transact`
-refuses re-entry and delegates to the one
-:class:`~parallax.snapshot.handle._transaction_runner.TransactionRunner` it
-built at connect, over the root's
-:class:`~parallax.snapshot.handle._options.DatabaseOptions`. Both hold the
-Serving Model and adopt its current selection per execution, so a publication
-reaches every later execution of this handle without the handle caching,
-rebuilding, or comparing anything.
-
-Preparation lives here rather than beside the selection it builds because a
-Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
-:mod:`~parallax.snapshot.handle._publication` scope may not; that scope owns
-:func:`~parallax.snapshot.handle._publication.select_model`, the one builder of
-a :class:`~parallax.snapshot.handle._publication.ModelSelection`, and this
-module is its one caller. A ``Database`` connected to a bare Domain Model
-prepares it once under a generated edition into a private Serving Model of its
-own, so the static shorthand and an explicitly shared Serving Model enter the
-same execution paths.
-
-This is the TOP of the package's internal graph: it imports
-:mod:`~parallax.snapshot.handle._transaction_runner` for the transaction runner,
-:mod:`~parallax.snapshot.handle._options` for the root defaults it configures
-that runner with,
-:mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns
-one of, :mod:`~parallax.snapshot.handle._publication` for the selection it
-prepares and the Serving Model it holds, and
-:mod:`~parallax.snapshot.handle._planning` for the one Write Planner each
-selection carries, and nothing in the package imports it except
-``handle/__init__.py``, which re-exports its three public names
-(:class:`Database`, :func:`connect`, :func:`prepare_model`) through the frozen
-``__all__``.
-"""
+"""Database-root composition and immutable scoped execution views."""
 
 from __future__ import annotations
 
 import threading
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
-from parallax.core.db_port import (
-    DatabaseAdapter,
-    DatabaseRuntime,
-    IsolationLevel,
-)
-
-# Sibling implementation modules. None of these names carries a leading
-# underscore, precisely because it crosses a module boundary: privacy is carried
-# by the private MODULE names and by the package's frozen `__all__`, not by
-# per-name underscores, which under pyright strict would make every intra-package
-# import a reportPrivateUsage error.
-# First-party support, deliberately absent from `parallax.core.entity`'s exports:
-# preparation derives every model-bound capability from the accepted `Metamodel`
-# and the class index, which are the two facts a Domain Model answers.
+from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
@@ -72,7 +16,6 @@ from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     installed_lifecycle,
-    refuse_reentry,
 )
 from parallax.core.execution_lifecycle._pool_observation import (
     PoolObservation,
@@ -83,7 +26,18 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import Clock, Concurrency, SystemClock
 from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._options import OMITTED, DatabaseOptions, Omitted
+from parallax.snapshot.handle._execution_authority import (
+    ExecutionCapture,
+    Principal,
+    capture_database_login,
+    capture_principal,
+)
+from parallax.snapshot.handle._options import (
+    OMITTED,
+    DatabaseOptions,
+    Omitted,
+    patch_options,
+)
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._publication import (
     ModelSelection,
@@ -97,41 +51,19 @@ from parallax.snapshot.handle._read_plan import (
     ReadPlanCache,
     check_read_plan_cache_capacity,
 )
-from parallax.snapshot.handle._read_scope import standalone_read_scope
+from parallax.snapshot.handle._read_scope import ReadScope, standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._transaction_runner import TransactionRunner
 from parallax.snapshot.handle._wire import WireDatabaseView
 
-__all__ = [
-    "Database",
-    "connect",
-    "prepare_model",
-]
+__all__ = ["Database", "ScopedDatabase", "connect", "prepare_model"]
 
 
 def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
-    """Prepare ``model`` under ``edition``: one complete selection, or raise.
-
-    Preparing means constructing every model-bound capability whole — the
-    exact-model layouts, the row codec's per-Entity facts, and, for a
-    class-backed model, the graph construction's — so nothing fallible that
-    depends on the model alone remains to run on a request path. Each
-    collaborator raises on its first refusal and no partial selection escapes.
-    A descriptor-backed model prepares with no graph construction: it serves
-    Wire and the write lanes and refuses Typed materialization where a read
-    reaches the selection it is served under — at the call for an eager
-    ``find``, and at scope entry for a stream, which begins its read there.
-
-    Preparation runs no query, inspects no schema, and promises nothing about
-    stored data, future queries, or database availability. The selection is
-    process-local and holds no connection, transaction, Clock, or lifecycle
-    provider. ``edition`` is an opaque nonempty token compared only for
-    equality; :class:`ValueError` refuses an empty one before any derivation,
-    and :class:`TypeError` refuses a value that is no Domain Model.
-    """
+    """Prepare one complete immutable model selection without database I/O."""
     check_edition(edition)
-    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
+    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(
             f"prepare_model takes a Domain Model — one composed from Entity Classes, or one a "
             f"descriptor produced — not {model!r}"
@@ -163,48 +95,80 @@ _CONSTRUCTOR_REFUSAL = (
 
 
 def served_model(model: DomainModel | ServingModel, refusal: str) -> ServingModel:
-    """``model`` as the Serving Model a connection would serve, or ``refusal``.
-
-    Resource-free and total, which is what lets composition run it BEFORE it
-    opens anything: a Serving Model is held as itself, a Domain Model is
-    prepared whole under a generated opaque edition that stays fixed for the
-    connection's life, and any other value is refused. A model that could never
-    be served — a shape no connection takes, or one preparation itself
-    refuses — therefore costs no runtime.
-
-    Two independent connections over one Domain Model carry two generated
-    editions; sharing one selection is explicit preparation's job.
-    """
+    """Return the Serving Model a root will own, preparing static models once."""
     if isinstance(model, ServingModel):
         return model
-    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named rather than failing on a missing attribute
+    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise SnapshotConnectionError(refusal)
     return ServingModel(prepare_model(model, edition=f"static-{uuid4().hex}"))
 
 
-class Database:
-    """A connected Parallax database handle: one runtime, one Serving Model (spec §5).
-
-    It OWNS the runtime it was built over, and closing it closes that runtime.
-    That ownership is why the handle is a context manager and why
-    :meth:`close` exists at all: the connections an application's operations run
-    on belong to this object's lifetime, and nothing above it can release them.
-    A pool observation an application registered at composition has the same
-    lifetime for the same reason: the runtime it observes is this handle's.
-    """
+class _DatabaseResources[Authorization]:
+    """The one shared resource owner behind every Database alias and scope."""
 
     __slots__ = (
-        "_clock",
-        "_lifecycle",
-        "_observation",
-        "_planner",
-        "_reads",
-        "_runtime",
-        "_shutdown",
-        "_transactions",
+        "clock",
+        "lifecycle",
+        "observation",
+        "planner",
+        "runtime",
+        "serving",
+        "shutdown",
+        "transaction_runner",
     )
 
-    def __init__[Authorization](
+    def __init__(
+        self,
+        runtime: DatabaseRuntime[Authorization],
+        serving: ServingModel,
+        *,
+        capacity: int,
+        clock: Clock | None,
+        lifecycle_provider: ExecutionLifecycleProvider | None,
+    ) -> None:
+        self.runtime = runtime
+        self.serving = serving
+        self.clock: Clock = clock if clock is not None else SystemClock()
+        self.lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
+        self.planner = ReadPlanCache(capacity)
+        self.transaction_runner = TransactionRunner(
+            self,
+            self.clock,
+            self.lifecycle,
+            serving,
+            self.planner,
+        )
+        self.shutdown = threading.RLock()
+        self.observation: PoolObservation | None = register_pool_observation(
+            lifecycle_provider, runtime.pool_metrics
+        )
+
+    def scoped(self, capture: ExecutionCapture, options: DatabaseOptions) -> ScopedDatabase:
+        reads = standalone_read_scope(
+            lifecycle=self.lifecycle,
+            serving=self.serving,
+            capture=capture,
+            planner=self.planner,
+        )
+        return ScopedDatabase.create(self.transaction_runner, capture, options, reads)
+
+    def close(self) -> None:
+        with self.shutdown:
+            try:
+                self.runtime.close()
+            finally:
+                observation = self.observation
+                self.observation = None
+                if observation is not None:
+                    close_pool_observations((observation,))
+
+
+class Database[Authorization]:
+    """The resource-owning Database Root and authority-selection surface."""
+
+    __slots__ = ("_options", "_resources")
+
+    def __init__(
         self,
         runtime: DatabaseRuntime[Authorization],
         model: DomainModel | ServingModel,
@@ -214,163 +178,34 @@ class Database:
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
-        """Connect to ``model``: a Serving Model, or a Domain Model of either
-        provenance.
-
-        ``runtime`` is an ALREADY READY runtime, and this handle takes ownership
-        of it: :meth:`close` closes it, and a composition that refuses the model
-        below leaves it to the caller that opened it. :meth:`connect` is the
-        entry point that opens one and owns both halves, and is what an
-        application uses.
-
-        ``options`` is the root's :class:`DatabaseOptions`: the defaults every
-        outer :meth:`transact` resolves its omitted keywords against. ``None``
-        and omission both mean the built-in record.
-
-        If ``runtime`` publishes pool measurements and ``lifecycle_provider``
-        implements
-        :class:`~parallax.core.execution_lifecycle.PoolMetricsObserver`, the
-        source is offered to it here and the registration it answers with is
-        held until :meth:`close`. Both halves are required and neither is
-        inferred: a runtime managing no pool has nothing to offer, and a
-        Provider that observes only executions is asked nothing.
-
-        A Domain Model is prepared once, under a generated opaque edition
-        that stays fixed for this connection's life, and held in a private
-        Serving Model nothing else can publish to; a Serving Model handed in is
-        held as itself, so two connections over one flip together when it
-        publishes. Either way the connection retains no selection: every
-        transaction attempt and every standalone read adopts whatever the
-        Serving Model holds when it begins, and runs against products derived
-        whole at preparation. Provenance decides capability rather than which
-        constructor ran: a descriptor-backed model composes no Entity Class, so
-        it serves Wire and the write lanes — which name Entities rather than
-        classes — and refuses every modeled read where that read reaches its
-        selection: an eager ``find`` at the call, a stream at scope entry.
-
-        ``read_plan_cache_capacity`` is a nonnegative built-in ``int``. Its
-        default, 16, bounds exact-query Read Plan reuse for this handle; zero
-        disables cross-delivery reuse without bypassing the shared planner.
-        """
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONSTRUCTOR_REFUSAL)
-        defaults = options if options is not None else DatabaseOptions()
-        self._runtime = runtime
-        execution = runtime.login_execution()
-        self._clock: Clock = clock if clock is not None else SystemClock()
-        # Absent by default, and absence is the whole default path: every
-        # operation below branches on it before allocating a UUID, a descriptor,
-        # a publisher, a counter, an event, or a lifecycle clock read
-        # (`m-execution-lifecycle` "Cost and retention"). What is present when a
-        # Provider is installed is that Provider plus this handle's own
-        # per-thread re-entry state, because every call into the Provider has to
-        # be made inside it for an operation coming back OUT of the Provider to
-        # be refusable.
-        self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
-        self._planner = ReadPlanCache(capacity)
-        # The one Read Scope this connection's eager reads run through — its
-        # own Typed verbs and the Wire view it answers alike (spec §5 "Private
-        # read composition") — and the one runner its transactions run through,
-        # which is the only holder of the root's defaults. Both adopt from the
-        # same Serving Model.
-        self._reads = standalone_read_scope(
-            lifecycle=self._lifecycle,
-            serving=serving,
-            source=execution,
-            planner=self._planner,
-        )
-        self._transactions = TransactionRunner(
-            execution, self._clock, self._lifecycle, serving, self._planner, defaults
-        )
-        # Held across the whole of close, so the ordering below is the ordering
-        # every caller sees: a second close waits for the first rather than
-        # returning while the runtime is still being torn down. Reentrant
-        # because what runs under it includes application code. Built before the
-        # registration, so nothing this handle would have to give up can be
-        # taken while a failure here could still leave it with no way to.
-        self._shutdown = threading.RLock()
-        # Last, and outside the execution seam above: pool observation is an
-        # interest in the RUNTIME rather than in any operation, so it is offered
-        # only where the runtime publishes measurements and the Provider asked
-        # for them. Registering here is what makes it precede publication — a
-        # Provider whose registration raises leaves no handle behind, and the
-        # caller that opened the runtime closes it.
-        self._observation: PoolObservation | None = register_pool_observation(
-            lifecycle_provider, runtime.pool_metrics
+        self._options = options if options is not None else DatabaseOptions()
+        self._resources = _DatabaseResources(
+            runtime,
+            serving,
+            capacity=capacity,
+            clock=clock,
+            lifecycle_provider=lifecycle_provider,
         )
 
     @classmethod
-    def connect[Authorization](
+    def connect[Auth](
         cls,
-        adapter: DatabaseAdapter[Authorization],
+        adapter: DatabaseAdapter[Auth],
         model: DomainModel | ServingModel,
         *,
         options: DatabaseOptions | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
-    ) -> Database:
-        """Open a runtime from ``adapter`` and connect it to the model it will serve.
-
-        The composition-root entry point (spec §8): only the root names a
-        concrete adapter; everything above works against the abstract seam, and
-        the dialect every statement is spelled in is that adapter's own.
-        ``options`` is the root's :class:`DatabaseOptions` — the transaction
-        defaults every outer :meth:`transact` resolves its omitted keywords
-        against; omitting it, or passing ``None``, means the built-in record.
-        An invalid record never reaches this call, because constructing one
-        refuses it. ``clock`` defaults to the system clock
-        (inject a fixed clock in tests). ``lifecycle_provider`` is the ONE
-        execution-lifecycle seam (`m-execution-lifecycle`): the Provider owns
-        its own error reporter, so there is no second argument, and omitting it
-        is what makes this connection's operations do no lifecycle work at all.
-
-        ``adapter`` is CONFIGURATION rather than a live resource. This call is
-        what opens a runtime from it and what the returned handle then owns: two
-        handles connected from one configuration own two independent runtimes,
-        and closing either leaves the other working. The model is PREPARED
-        first, so a value that could never be served — a shape no connection
-        takes, or one whose preparation refuses it — costs no resource at all.
-        A composition that fails after the runtime opened closes that runtime
-        before the failure leaves: no half-composed handle is published, and the
-        runtime is not left to a caller who never received one. What closing
-        establishes is closing's own to report, exactly as it is for a handle a
-        caller closes itself. A ``lifecycle_provider`` that also observes the
-        pool is offered this runtime's measurements as part of that composition,
-        before any handle exists to publish — so a registration that raises is
-        one of the failures above rather than something a published handle then
-        has to explain.
-
-        Every handle this returns must be closed — through :meth:`close`, or by
-        using it as a context manager, which are equivalent.
-
-        ``model`` is a :class:`ServingModel`, whose current selection every
-        execution of this handle adopts, or a Domain Model of either
-        provenance — the static shorthand, prepared once into a private Serving
-        Model. WHICH provenance decides capability rather than which
-        constructor ran: a class-backed model supports both public read
-        interfaces, and a descriptor-backed one supports Wire and refuses Typed
-        materialization — at the call for an eager ``find``, at scope entry for
-        a stream, which begins its read there — always before any I/O. A value
-        that is neither is refused here with
-        :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
-        before the adapter is opened, and :meth:`__init__` refuses the same
-        shape one level down. One model connects to any number of Databases, and
-        one Entity Class participates in any number of models.
-
-        ``read_plan_cache_capacity`` defaults to 16 entries. Zero disables
-        cross-delivery Read Plan reuse. Values must be nonnegative built-in
-        integers and are refused before ``adapter`` opens a runtime.
-        """
+    ) -> Database[Auth]:
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
-        # Concrete before the runtime opens, and handed on as the same object:
-        # the constructor keeps what it is given rather than building a second
-        # record.
         defaults = options if options is not None else DatabaseOptions()
         runtime = adapter.open()
         try:
-            return cls(
+            return Database(
                 runtime,
                 serving,
                 options=defaults,
@@ -382,42 +217,46 @@ class Database:
             runtime.close()
             raise
 
+    @classmethod
+    def _alias(
+        cls, resources: _DatabaseResources[Authorization], options: DatabaseOptions
+    ) -> Database[Authorization]:
+        alias = object.__new__(cls)
+        alias._resources = resources
+        alias._options = options
+        return alias
+
+    def with_options(
+        self,
+        *,
+        max_retries: int | Omitted = OMITTED,
+        concurrency: Concurrency | Omitted = OMITTED,
+        retry_optimistic_conflicts: bool | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
+    ) -> Database[Authorization]:
+        return self._alias(
+            self._resources,
+            patch_options(
+                self._options,
+                max_retries=max_retries,
+                concurrency=concurrency,
+                retry_optimistic_conflicts=retry_optimistic_conflicts,
+                isolation=isolation,
+            ),
+        )
+
+    def using_principal(self, principal: Principal[Authorization]) -> ScopedDatabase:
+        capture = capture_principal(self._resources.runtime, principal)
+        return self._resources.scoped(capture, self._options)
+
+    def using_database_login(self) -> ScopedDatabase:
+        capture = capture_database_login(self._resources.runtime)
+        return self._resources.scoped(capture, self._options)
+
     def close(self) -> None:
-        """Close this handle's runtime. Idempotent, and equivalent to leaving its scope.
+        self._resources.close()
 
-        What stops is new work: a read, a stream that has not read its first
-        page, a transaction attempt, and a retry all need a connection of their
-        own from here on and are refused. What does not stop is work already
-        running — a transaction that has its connection finishes on it,
-        including statements it has not issued yet, and a stream that has
-        already read a page reads its remaining pages. This neither waits for
-        them nor interrupts them; their connections are closed as they are
-        returned.
-
-        A retry after this therefore fails rather than replaying: the attempt
-        that would have run it cannot acquire a connection.
-
-        A pool observation registered at composition is closed afterwards, and
-        in every case: the runtime is what the interest was in, so it goes
-        first, and a close that failed must not leave the registration open.
-        What is closed is the REGISTRATION — the exporter, queue, or metrics
-        client behind it is the application's and outlives this handle.
-
-        Serialized, so that ordering holds for every caller rather than only
-        for the first: a close concurrent with one already running waits for it
-        instead of running the registration's close beside a runtime still
-        being torn down, and the registration is therefore closed exactly once.
-        """
-        with self._shutdown:
-            try:
-                self._runtime.close()
-            finally:
-                observation = self._observation
-                self._observation = None
-                if observation is not None:
-                    close_pool_observations((observation,))
-
-    def __enter__(self) -> Database:
+    def __enter__(self) -> Database[Authorization]:
         return self
 
     def __exit__(
@@ -430,99 +269,67 @@ class Database:
         del exc_type, exc, traceback
         self.close()
 
+
+class ScopedDatabase:
+    """An immutable, connectionless execution view with captured authority."""
+
+    __slots__ = ("_capture", "_options", "_reads", "_transaction_runner")
+
+    def __init__(self) -> None:
+        raise TypeError("ScopedDatabase values are created by Database authority selection")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        del name, value
+        raise AttributeError("ScopedDatabase is immutable")
+
+    @classmethod
+    def create(
+        cls,
+        runner: TransactionRunner,
+        capture: ExecutionCapture,
+        options: DatabaseOptions,
+        reads: ReadScope,
+    ) -> ScopedDatabase:
+        scoped = object.__new__(cls)
+        object.__setattr__(scoped, "_transaction_runner", runner)
+        object.__setattr__(scoped, "_capture", capture)
+        object.__setattr__(scoped, "_options", options)
+        object.__setattr__(scoped, "_reads", reads)
+        return scoped
+
+    def with_options(
+        self,
+        *,
+        max_retries: int | Omitted = OMITTED,
+        concurrency: Concurrency | Omitted = OMITTED,
+        retry_optimistic_conflicts: bool | Omitted = OMITTED,
+        isolation: IsolationLevel | Omitted = OMITTED,
+    ) -> ScopedDatabase:
+        return self.create(
+            self._transaction_runner,
+            self._capture,
+            patch_options(
+                self._options,
+                max_retries=max_retries,
+                concurrency=concurrency,
+                retry_optimistic_conflicts=retry_optimistic_conflicts,
+                isolation=isolation,
+            ),
+            self._reads,
+        )
+
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
-        """Execute ``query`` exactly once, materializing fully, and return
-        ``Snapshot[S]`` (spec §3). Non-transactional: no read lock, no
-        Concurrency Preference. ``.history()`` / ``.as_of_range()`` return one root
-        per milestone, each edge-pinned at its own milestone's from-instant.
-
-        Target resolution and query validation are the shared
-        :func:`~parallax.snapshot.handle._preflight.preflight` seam's, so this
-        and :meth:`Transaction.find` differ only in locking, unit-of-work
-        wrapping, and participation. The canonical query is read once here and
-        kept locally through this execution.
-
-        A STANDALONE read still retains the write evidence its rows observed onto
-        the values it publishes — a value's evidence belongs to the value — and
-        simply stamps no participation on them, which is what lets an
-        effective-Optimistic write import that evidence while an
-        effective-Locking one cannot.
-
-        The Snapshot's parameter is the query's RESULT — what ``narrow`` moved
-        it to, or the queried Entity itself — so a narrowed find yields the
-        narrowed rows' type without a caller-side annotation.
-
-        The read adopts the Serving Model's current selection once, for its
-        whole execution, and the Snapshot retains that edition as
-        ``snapshot.edition``. An ordinary failure escaping the execution — a
-        statement, conversion, materialization — surfaces as
-        :class:`~parallax.snapshot.handle.ExecutionFailure` under that edition;
-        the deterministic refusals before it, re-entry and the read gate, keep
-        their own types, and so does a lifecycle Provider that fails to open.
-        """
-        return self._reads.find(query)
+        return cast("Snapshot[S]", self._reads.find(query))
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
-        """Deliver ``query``'s roots one at a time, in the Continuation Order,
-        as the scope-bound single-pass peer of :meth:`find`.
-
-        Nothing executes until the returned stream's scope is entered, and the
-        whole result is never materialized: each page of ``batch_size`` root
-        positions is deep-fetched into one sealed Page and published one root
-        at a time, so what Parallax holds is one page plus one root rather than
-        the result.
-
-        ``batch_size`` counts ROOT positions — never included relationship rows
-        — and, over storage the model describes, is a performance dial alone: it
-        changes neither the order roots arrive in, nor which roots arrive, nor
-        what any of them carries. :class:`SnapshotStream` names the one stored
-        value that falls outside that. It is validated exactly as ``limit`` is,
-        at this call and before any I/O.
-
-        This call judges what it was handed — re-entry first, then the query
-        and the page size — and adopts nothing. The stream adopts the Serving
-        Model's current selection when its scope is entered, which is where a
-        connection that can materialize no Snapshot at all refuses it, and
-        retains that selection through every page; ``stream.edition`` names
-        it inside the scope. An ordinary failure escaping the delivery
-        surfaces as :class:`~parallax.snapshot.handle.ExecutionFailure` under
-        that edition.
-        """
-        return self._reads.stream(query, batch_size)
+        return cast("SnapshotStream[S]", self._reads.stream(query, batch_size))
 
     @property
     def wire(self) -> WireDatabaseView:
-        """This connection's Wire read interface (spec §3).
-
-        A lightweight view over the SAME connected model and adapter —
-        not a second connection and not a format switch. It needs no Entity
-        Class, which is why a descriptor-backed connection answers this and
-        refuses :meth:`find`.
-
-        The view retains this connection's one Read Scope, so a Wire read enters
-        at that scope's own verb rather than at anything this property built:
-        re-entry is refused there, at the same first line ``db.find`` crosses.
-        """
         return WireDatabaseView(self._reads)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
-        """Execute ``query`` exactly once outside any transaction and return its
-        published rows — the values lane, first-party rather than a third public
-        result format.
-
-        It shares the canonicalization, the compilation, and the recorded call
-        with :meth:`find`, and fetches no relationship level and builds no graph
-        at all, because the transformed row is already the representation. A row
-        whose stored state contradicted the model publishes its
-        :class:`~parallax.snapshot.materialize.InvalidData` record in place of
-        itself, exactly as a graph-form root does.
-
-        Non-transactional, exactly as :meth:`find` is: no read lock, no
-        Concurrency Preference, and no stamped participation — and, like every
-        row-form read, no retained evidence at all. It opens its own Read root
-        after the same gate the graph form crosses.
-        """
-        return self._reads.read_rows(query)
+        return cast("RowsResult", self._reads.read_rows(query))
 
     def transact[T](
         self,
@@ -533,77 +340,18 @@ class Database:
         retry_optimistic_conflicts: bool | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
-        """Run ``fn(tx)`` in a transaction, returning its value only after commit.
-
-        Only an OMITTED keyword inherits (spec §5): when this call opens the
-        transaction it takes the root's :class:`DatabaseOptions` default for
-        that field, and when it joins one it takes the active transaction's
-        resolved value. An explicit value is held to the field's contract —
-        ``max_retries`` a nonnegative ``int`` that is not a ``bool``,
-        ``retry_optimistic_conflicts`` a ``bool``, ``concurrency`` and
-        ``isolation`` members of their closed vocabularies — and ``None`` is an
-        invalid value for every field rather than a second spelling of
-        omission. Any invalid value is a deterministic :class:`ValueError`,
-        raised before any transaction is opened or observed, and before this
-        call is even compared against an active transaction, so a joining call
-        naming a level outside the vocabulary is refused as invalid rather than
-        as a conflict. The resolved record is what ``tx.options`` answers.
-
-        ``concurrency`` is a Concurrency PREFERENCE: each Entity's own Optimistic
-        Lock Facet decides whether it participates optimistically or falls back
-        to the shared read lock, so one transaction mixes both (`m-unit-work`
-        "Strategy selection"). ``max_retries`` bounds re-executions rather than
-        total attempts. ``isolation`` names one of the three portable Isolation
-        Levels (:data:`~parallax.core.db_port.IsolationLevel`), each defined by
-        the anomalies it forbids and mapped by the adapter to its own database;
-        the root's built-in default is Read Committed, requested concretely
-        rather than left to the database's configured default. Every physical
-        attempt of one invocation opens at the same resolved level, and
-        `tx.stream` inherits it. A call while a transaction is active on the
-        current thread joins it, but only through the exact ``Database`` that
-        opened the boundary — any other handle raises
-        :class:`TransactionOwnershipError` before every later joining check. A
-        joining call's closure receives the **same** :class:`Transaction`, its
-        value returns immediately, and an explicit option that differs from
-        the active transaction's resolved value raises
-        :class:`TransactionOptionConflictError`. The outermost boundary
-        owns commit, abort, and the ``m-auto-retry`` bounded retry loop; abort
-        withholds the callback value, and an inner failure dooms the whole
-        transaction (rollback-only) even if caught.
-
-        Each outer attempt adopts the Serving Model's current selection before
-        its boundary is asked to begin and retains it through commit or
-        rollback; ``tx.edition`` names it. A retry adopts afresh, so one
-        invocation may run attempts under two editions, and a joining call
-        inherits the active attempt's selection without adopting.
-
-        An ordinary failure that ends the invocation reaches the caller as
-        :class:`~parallax.snapshot.handle.ExecutionFailure`, carrying the
-        edition of the attempt that failed last and, as its cause, the error
-        itself once the rollback has completed — the callback's own exception,
-        or the database's. A rollback that did NOT complete leaves both live
-        errors mattering, so the cause is then
-        :class:`~parallax.snapshot.handle.TransactionRollbackError` carrying
-        each, and that outcome is never retried. A boundary that never opened is
-        terminal for the same reason inverted: no callback ran, so there is
-        nothing to re-execute. The deterministic refusals above, a lifecycle
-        Provider that fails to open, and a control-flow or fatal exception keep
-        their own types and are never contextualized.
-
-        The callback's value is what this answers, directly: an invocation
-        retains no record of what it did, and what a Provider observed about it
-        was delivered while it ran (`m-execution-lifecycle`).
-        """
-        refuse_reentry(self._lifecycle)
-        return self._transactions.transact(
-            fn,
-            owner=self,
-            max_retries=max_retries,
-            concurrency=concurrency,
-            retry_optimistic_conflicts=retry_optimistic_conflicts,
-            isolation=isolation,
+        return cast(
+            "T",
+            self._transaction_runner.transact(
+                fn,
+                capture=self._capture,
+                defaults=self._options,
+                max_retries=max_retries,
+                concurrency=concurrency,
+                retry_optimistic_conflicts=retry_optimistic_conflicts,
+                isolation=isolation,
+            ),
         )
 
 
-# The spec §8 module-level spelling of the composition-root entry point.
 connect = Database.connect

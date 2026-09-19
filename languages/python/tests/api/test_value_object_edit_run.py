@@ -37,7 +37,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Transaction
 
 _CUSTOMER = MODELS["customer"]
 
@@ -51,10 +51,12 @@ unpopulated, so it is absent from the document rather than stored as null — th
 state every assertion below weighs its own stored document against."""
 
 
-def _connect_and_seed(profile_run: Any, observed: LifecycleObservation | None = None) -> Database:
+def _connect_and_seed(
+    profile_run: Any, observed: LifecycleObservation | None = None
+) -> ScopedDatabase:
     profile_run.reset(model_of(_CUSTOMER), {})
     provider = None if observed is None else observed.provider
-    db = connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider)
+    db = connect(profile_run.port, _CUSTOMER, lifecycle_provider=provider).using_database_login()
     db.transact(
         lambda tx: tx.insert(
             Customer(

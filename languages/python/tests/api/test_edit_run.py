@@ -74,7 +74,7 @@ def _pin_refusal(value: object) -> SnapshotInspectionError:
 @pytest.mark.parametrize("case", _READ_CASES, ids=lambda case: case.case_id)
 def test_read_edit_case(case: case_format.Case, profile_run: Any) -> None:
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
-    db = connect(profile_run.port, NOTE_MODEL)
+    db = connect(profile_run.port, NOTE_MODEL).using_database_login()
     root = db.find(Note.where(Note.id == _read_id(case))).result()
     source = edit_runner.follow_path(root, case)
     target = source.target

@@ -57,6 +57,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-bitemp-write",
         "m-read-lock",
         "m-auto-retry",
+        "m-execution-authority",
         "m-execution-lifecycle",
         # `m-batch-write-004` tags both `m-batch-write` and `m-opt-lock`, so the
         # reachability intersection requires both. Buffered-batch cases use

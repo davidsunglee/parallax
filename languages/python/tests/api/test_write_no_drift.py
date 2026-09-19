@@ -52,7 +52,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import KeyedWrite, WriteRejectedError, instructions
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import (
@@ -396,11 +396,11 @@ def _assert_statements(
         compare_binds(binds, golden_binds)
 
 
-def _db(port: _KeyedSeedPort, story: WriteStory) -> Database:
+def _db(port: _KeyedSeedPort, story: WriteStory) -> ScopedDatabase:
     # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    return Database.connect(port, MODELS[story.model], clock=clock)
+    return Database.connect(port, MODELS[story.model], clock=clock).using_database_login()
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`);
@@ -616,7 +616,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _KeyedSeedPort()
-    db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
+    db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]]).using_database_login()
     with raises_contextualized(WriteRejectedError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule

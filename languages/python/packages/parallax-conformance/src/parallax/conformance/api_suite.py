@@ -1591,6 +1591,15 @@ _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON: Final[str] = (
     "did, and only an injected fault reaches that"
 )
 
+_EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "an execution-authority join witness graded end-to-end by the case-driven boundary "
+    "runner (`tests/api/test_boundary_run.py`), which derives the case's outer and "
+    "independently authored joining scopes from one REAL Database Root and verifies the "
+    "case's outcome and exact modeled round-trip count. The public scope-selection and join "
+    "spelling is covered directly by that suite, so a second idiomatic story would duplicate "
+    "the same developer surface"
+)
+
 # The root-configured boundary witnesses (m-case-format *Root configuration*):
 # what each proves is what the loop DOES under a configured root — a zero root
 # bound, a root level over every attempt, a root opt-in, and each one's explicit
@@ -1664,6 +1673,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-edit: portable Wire adapter, independently run-graded -------------- #
     "m-edit-010": _WIRE_EDIT_OCCURRENCE_REASON,
     "m-edit-011": _WIRE_EDIT_OCCURRENCE_REASON,
+    # -- m-execution-authority: dedicated boundary runner -------------------- #
+    "m-execution-authority-001": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
+    "m-execution-authority-002": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
+    "m-execution-authority-003": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
+    "m-execution-authority-004": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
+    "m-execution-authority-005": _EXECUTION_AUTHORITY_BOUNDARY_RUNNER_REASON,
     # -- m-execution-lifecycle: the spine's own two graders -------------------- #
     # (`-006` is an exercised story above: the composition spelling no oracle states)
     "m-execution-lifecycle-001": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,

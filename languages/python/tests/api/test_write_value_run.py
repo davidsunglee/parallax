@@ -40,7 +40,9 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     model = MODELS[Path(case.model).stem]
     observed = LifecycleObservation()
-    db = connect(profile_run.port, model, lifecycle_provider=observed.provider)
+    db = connect(
+        profile_run.port, model, lifecycle_provider=observed.provider
+    ).using_database_login()
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.

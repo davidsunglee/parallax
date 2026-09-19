@@ -100,7 +100,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.unit_work import Clock
-from parallax.snapshot.handle import Database, Snapshot, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 
@@ -123,7 +123,7 @@ class GraphStory:
     case_id: str
     title: str
     model: str
-    run: Callable[[Database], Any]
+    run: Callable[[ScopedDatabase], Any]
     clock: Callable[[], Clock] | None = None
 
 
@@ -132,27 +132,27 @@ def graph_story_snippet(story: GraphStory) -> str:
     return inspect.getsource(story.run).rstrip("\n")
 
 
-def diamond_identity_shares_one_child_node(db: Database) -> Snapshot[Any]:
+def diamond_identity_shares_one_child_node(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.items, Order.items_by_ship_date))
 
 
-def back_reference_cycle_resolves_to_the_root(db: Database) -> Snapshot[Any]:
+def back_reference_cycle_resolves_to_the_root(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.items.order))
 
 
-def closed_world_unloaded_access_raises_without_sql(db: Database) -> Snapshot[Any]:
+def closed_world_unloaded_access_raises_without_sql(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
 
 
-def empty_root_materializes_no_children(db: Database) -> Snapshot[Any]:
+def empty_root_materializes_no_children(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 999).include(Order.items.statuses))
 
 
-def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
+def empty_intermediate_level_short_circuits(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
 
 
-def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
+def pinned_graph_at_a_past_valid_time_instant(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(
         Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
@@ -160,26 +160,26 @@ def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     )
 
 
-def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
+def mutation_has_no_writeback(db: ScopedDatabase) -> tuple[Any, Snapshot[Any]]:
     order = db.find(Order.where(Order.id == 1)).result()
     mutated = order.edit(name="Mutant")  # in-memory only, never DML
     reread = db.find(Order.where(Order.id == 1))  # still observes the ORIGINAL name
     return mutated, reread
 
 
-def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[Any], Any]:
+def an_edited_copy_keeps_its_source_nodes_views(db: ScopedDatabase) -> tuple[Snapshot[Any], Any]:
     snapshot = db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the node's view state
     return snapshot, edited
 
 
-def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any]:
+def an_edit_keeps_a_loaded_relationship_view(db: ScopedDatabase) -> tuple[Snapshot[Any], Any]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the LOADED items
     return snapshot, edited
 
 
-def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+def a_write_keeps_a_loaded_to_one_view(db: ScopedDatabase) -> tuple[Snapshot[Any], Any, Any]:
     snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
     loaded_order = snapshot.result().order
 
@@ -192,20 +192,20 @@ def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any
     return snapshot, loaded_order, reread
 
 
-def a_write_keeps_a_loaded_empty_relationship_view(db: Database) -> Snapshot[Any]:
+def a_write_keeps_a_loaded_empty_relationship_view(db: ScopedDatabase) -> Snapshot[Any]:
     snapshot = db.find(Order.where(Order.id == 3).include(Order.items))  # order 3 owns no items
     db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
     return snapshot  # the loaded-EMPTY view is untouched by the item now in the table
 
 
-def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]:
+def a_write_keeps_an_unloaded_relationship_absent(db: ScopedDatabase) -> Snapshot[Any]:
     snapshot = db.find(Order.where(Order.id == 3))  # no `.include(...)`: `items` stays unloaded
     db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
     return snapshot  # absence is not emptiness, and the write does not make it one
 
 
 def a_delete_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
@@ -220,7 +220,7 @@ def a_delete_keeps_a_loaded_relationship_view(
 
 
 def an_edit_chain_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, Any]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     renamed = snapshot.result().edit(name="Mutant")  # an AUTHORED change
@@ -229,7 +229,7 @@ def an_edit_chain_keeps_a_loaded_relationship_view(
 
 
 def a_write_keeps_a_loaded_value_object_document(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
     loaded_customer = snapshot.result().customer
@@ -258,7 +258,7 @@ def a_write_keeps_a_loaded_value_object_document(
 
 
 def a_write_keeps_a_view_over_freshly_inserted_rows(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[None, Snapshot[Any], Any, None, Snapshot[Any]]:
     def create(tx: Transaction) -> None:
         tx.insert(
@@ -288,7 +288,7 @@ def a_write_keeps_a_view_over_freshly_inserted_rows(
 
 
 def a_grouped_read_observes_its_own_relationship_writes(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Snapshot[Any]]:
     def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
@@ -301,12 +301,12 @@ def a_grouped_read_observes_its_own_relationship_writes(
     return db.transact(read_your_own_writes)
 
 
-def a_multi_hop_access_drops_its_null_branches(db: Database) -> Snapshot[Any]:
+def a_multi_hop_access_drops_its_null_branches(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.statuses.order_item))
 
 
 def a_rectangle_split_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
     snapshot = db.find(
@@ -329,7 +329,7 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
     return snapshot, loaded_coverages, committed, reread
 
 
-def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
+def a_finite_transaction_time_pinned_view_is_read_only(db: ScopedDatabase) -> None:
     """SUPPLEMENTAL — not a registered ``GraphStory``, because `m-identity-map-010`
     is not in :data:`~parallax.conformance.claim.SNAPSHOT_CLAIM`'s active slice
     (`m-identity-map`, `slice-managed-1`): the coverage partition admits an
@@ -361,7 +361,9 @@ def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
     db.transact(mutate_the_pinned_view, concurrency="optimistic")
 
 
-def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -> Snapshot[Any]:
+def history_of_a_concrete_temporal_node_distinguishes_milestones(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """SUPPLEMENTAL — not a registered ``GraphStory`` and not counted toward any
     case's exercised status (`m-inheritance-100`'s own point read is exercised
     by its `ReadStory`, `parallax.conformance.read_stories`, graded by
@@ -377,14 +379,14 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     return db.find(DepositRate.where(DepositRate.all).history(TX_TIME).as_of(valid_time=LATEST))
 
 
-def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
+def one_to_one_peer_attaches_as_a_single_object(db: ScopedDatabase) -> Snapshot[Any]:
     """Every ``Person`` materializes with its single ``Passport`` peer — a
     to-one relationship attaches as ONE object, not a collection, and a
     person with no passport (id 3) gets a null peer."""
     return db.find(Person.where(Person.all).include(Person.passport))
 
 
-def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
+def animal_owner_reaches_root_and_narrowed_subtype_view(db: ScopedDatabase) -> Snapshot[Any]:
     """The animal family's owner exposes both a root-typed
     ``animals`` path (reaching any concrete subtype) and a leaf-typed
     ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
@@ -397,7 +399,7 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
     )
 
 
-def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
+def narrowed_pets_view_populates_per_owner(db: ScopedDatabase) -> Snapshot[Any]:
     """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
     the narrowed hop populates a distinct view keyed by the derived name,
     never marking the broad ``pets`` relationship loaded."""
@@ -406,7 +408,7 @@ def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
     )
 
 
-def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any]:
+def equivalent_narrow_spellings_dedupe_to_one_view(db: ScopedDatabase) -> Snapshot[Any]:
     """Two DIFFERENT authored narrowings resolving to the SAME effective
     concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
     ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
@@ -417,7 +419,7 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any
     )
 
 
-def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Snapshot[Any]:
+def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: ScopedDatabase) -> Snapshot[Any]:
     """A broad hop and a REDUNDANT narrow over the same relationship stay TWO
     hops (`m-inheritance-068`): ``narrow(Pet)`` resolves to the very
     ``{Cat, Dog}`` set the broad ``pets`` hop already reaches, so both views
@@ -431,7 +433,7 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Sn
     )
 
 
-def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any]:
+def distinct_narrowed_views_populate_independently(db: ScopedDatabase) -> Snapshot[Any]:
     """Two narrowings to DIFFERENT concrete sets stay two distinct views
     (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
     independently (dedup identity is the effective concrete set, not the
@@ -443,7 +445,7 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     )
 
 
-def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
+def disjoint_root_guards_fill_one_owner_view(db: ScopedDatabase) -> Snapshot[Any]:
     """``include(Dog.owner, Cat.owner)`` is ONE relationship guarded to disjoint
     root objects (`m-inheritance-074`): ``owner`` is declared on ``Animal``, so
     reaching it through a subtype keeps that identity and adds a path-ROOT guard.
@@ -453,7 +455,7 @@ def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
     return db.find(Animal.where(Animal.all).include(Dog.owner, Cat.owner))
 
 
-def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot[Any]:
+def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: ScopedDatabase) -> Snapshot[Any]:
     """A guarded path subsumed by a broad one beside it still costs its own
     statement (`m-inheritance-075`): ``Dog.owner``'s source set is a strict subset
     of the unguarded path's, and hop identity at the root keys on the RESOLVED
@@ -462,7 +464,7 @@ def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot
     return db.find(Animal.where(Animal.all).include(Animal.owner, Dog.owner))
 
 
-def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
+def guarded_branches_keep_their_own_parents(db: ScopedDatabase) -> Snapshot[Any]:
     """Two guarded branches over one relationship diverge at the next level
     (`m-inheritance-078`): ``Dog.owner`` and ``WildBoar.owner`` fill the same
     ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
@@ -471,7 +473,7 @@ def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
     return db.find(Animal.where(Animal.all).include(Dog.owner, WildBoar.owner, Dog.owner.pets))
 
 
-def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[Any]:
+def a_guarded_root_continues_through_a_narrowed_hop(db: ScopedDatabase) -> Snapshot[Any]:
     """The two narrow positions compose with OPPOSITE view semantics
     (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
     from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
@@ -479,14 +481,14 @@ def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[An
     return db.find(Animal.where(Animal.all).include(Pet.owner.pets.narrow(Dog)))
 
 
-def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
+def transaction_time_only_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
     return db.find(Supplier.where(Supplier.all).as_of(tx_time=LATEST))
 
 
-def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+def transaction_time_only_vo_owner_as_of_a_past_instant(db: ScopedDatabase) -> Snapshot[Any]:
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
@@ -495,14 +497,14 @@ def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapsho
     )
 
 
-def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
     return db.find(Branch.where(Branch.all).as_of(valid_time=LATEST, tx_time=LATEST))
 
 
-def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_a_past_audit_point(db: ScopedDatabase) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
     system knows (`bitemporal_vo_owner_as_of_latest`)."""
@@ -514,7 +516,9 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     )
 
 
-def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+def tph_abstract_root_read_materializes_typed_per_variant_instances(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """The object-lane sibling of the row-form abstract-root read
     (`m-inheritance-106`, `m-inheritance-003` its values-lane witness): each
     materialized instance is its OWN concrete class — a `CardPayment` node
@@ -524,7 +528,7 @@ def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database
 
 
 def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form narrow-to-abstract-subtype
     read (`m-inheritance-107`, `m-inheritance-013` its values-lane witness):
@@ -532,7 +536,9 @@ def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     return db.find(Animal.where(Animal.narrow(Pet)))
 
 
-def tph_or_across_branches_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+def tph_or_across_branches_materializes_typed_per_variant_instances(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """The object-lane sibling of the row-form OR-across-branches read
     (`m-inheritance-108`, `m-inheritance-015` its values-lane witness)."""
     return db.find(
@@ -544,7 +550,7 @@ def tph_or_across_branches_materializes_typed_per_variant_instances(db: Database
 
 
 def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
     read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
@@ -555,7 +561,7 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 
 
-def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
+def customer_nested_eq_city_selects_matching_owners(db: ScopedDatabase) -> Snapshot[Any]:
     """A nested equality predicate through a value-object attribute
     (`m-value-object-001`): the id/name SET this filter selects is the
     behavior under test; the module docstring explains why this is a graph
@@ -563,34 +569,36 @@ def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[An
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 
 
-def customer_deep_nested_eq_country_selects_the_matching_owner(db: Database) -> Snapshot[Any]:
+def customer_deep_nested_eq_country_selects_the_matching_owner(db: ScopedDatabase) -> Snapshot[Any]:
     """A DEEP nested equality predicate, two levels into the composite
     (`m-value-object-002`): only Grace (Boston, US) qualifies."""
     return db.find(Customer.where(Customer.address.geo.country == "US"))
 
 
-def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> Snapshot[Any]:
+def customer_nested_is_null_collapses_every_not_present_state(db: ScopedDatabase) -> Snapshot[Any]:
     """A nested is-null presence test (`m-value-object-007`): the null
     column, the missing key, and the explicit JSON-null leaf all collapse to
     the SAME not-present state."""
     return db.find(Customer.where(Customer.address.city.is_null()))
 
 
-def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[Any]:
+def customer_to_many_nested_exists_is_a_nonempty_test(db: ScopedDatabase) -> Snapshot[Any]:
     """A to-many nested existence test (`m-value-object-015`): true for a row
     whose `phones` array has at least one element; empty and absent states are
     excluded."""
     return db.find(Customer.where(Customer.address.phones.exists()))
 
 
-def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
+def customer_to_many_nested_not_exists_folds_every_not_present_state(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """A to-many nested absence test (`m-value-object-016`): empty and absent
     `phones` states are indistinguishable to the algebra —
     the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
     return db.find(Customer.where(Customer.address.phones.not_exists()))
 
 
-def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapshot[Any]:
+def customer_to_many_any_element_eq_matches_some_element(db: ScopedDatabase) -> Snapshot[Any]:
     """A flat predicate through a `many` segment is ANY-ELEMENT
     (`m-value-object-017`): true iff SOME `phones` element has `type` =
     "home"."""
@@ -598,7 +606,7 @@ def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapsh
 
 
 def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """A scoped `where` requires ONE element to satisfy the WHOLE compound —
     SAME-element, not the unscoped AND (`m-value-object-019`): Linus's single
@@ -612,14 +620,14 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
     )
 
 
-def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snapshot[Any]:
+def customer_owner_materializes_its_whole_nested_composite(db: ScopedDatabase) -> Snapshot[Any]:
     """The whole nested composite arrives WITH the owner in ONE round trip
     (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
     positive proof of the getter-navigation contract to arbitrary depth."""
     return db.find(Customer.where(Customer.all))
 
 
-def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Snapshot[Any]:
+def customer_owner_materializes_its_composite_under_a_filter(db: ScopedDatabase) -> Snapshot[Any]:
     """The SAME materialization rides a FILTERED owner read too
     (`m-value-object-024`, the SAME `nestedEq` as
     `customer_nested_eq_city_selects_matching_owners`): materialization is
@@ -628,7 +636,7 @@ def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Sn
 
 
 def customer_locations_deep_fetch_materializes_the_child_document_too(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """Both the root (Customer) and the child (Location) levels of a deep
     fetch materialize their OWN value-object document (`m-deep-fetch-018`,

@@ -79,7 +79,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Transaction
 
 __all__ = [
     "TARGET_ID",
@@ -144,6 +144,7 @@ class BoundaryStep:
 
     action: str
     keywords: case_format.TransactionKeywords
+    actor_selection: case_format.ActorSelection | None = None
 
 
 def boundary_steps(case: case_format.Case) -> list[BoundaryStep]:
@@ -154,6 +155,9 @@ def boundary_steps(case: case_format.Case) -> list[BoundaryStep]:
         BoundaryStep(
             cast("str", step["action"]),
             case_format.request_keywords(step, where=f"{case.path.name}: when.boundary[{index}]"),
+            case_format.step_actor_selection(
+                step, where=f"{case.path.name}: when.boundary[{index}]"
+            ),
         )
         for index, step in enumerate(steps)
     ]
@@ -192,7 +196,11 @@ def outcome(case: case_format.Case, dialect: Dialect) -> str | None:
 
 
 def run_boundary_actions(
-    tx: Transaction, steps: Sequence[BoundaryStep], *, database: Database | None = None
+    tx: Transaction,
+    steps: Sequence[BoundaryStep],
+    *,
+    database: ScopedDatabase | None = None,
+    scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None = None,
 ) -> Account | None:
     """The ONE deterministic `when.boundary` action -> verb mapping every
     boundary case shares (never a per-case hand function): every
@@ -227,14 +235,15 @@ def run_boundary_actions(
     value — `then.outcome: committed`'s "callback value returned" half),
     ``None`` after a ``delete``.
     """
-    return _run_actions(tx, list(steps), None, database)
+    return _run_actions(tx, list(steps), None, database, scope_for)
 
 
 def _run_actions(
     tx: Transaction,
     steps: list[BoundaryStep],
     current: Account | None,
-    database: Database | None,
+    database: ScopedDatabase | None,
+    scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None,
 ) -> Account | None:
     for index, step in enumerate(steps):
         action = step.action
@@ -259,9 +268,16 @@ def _run_actions(
                     "a `join` action needs the Database that opened the boundary — only that "
                     "object joins it (`python.md` §5)"
                 )
-            return database.transact(
-                lambda joined, rest=steps[index + 1 :], seen=current: _run_actions(
-                    joined, rest, seen, database
+            joining_database = database
+            if step.actor_selection is not None:
+                if scope_for is None:
+                    raise AssertionError(
+                        "a qualified `join` action needs an authority scope selector"
+                    )
+                joining_database = scope_for(step.actor_selection)
+            return joining_database.transact(
+                lambda joined, rest=steps[index + 1 :], seen=current, scope=joining_database: (
+                    _run_actions(joined, rest, seen, scope, scope_for)
                 ),
                 **step.keywords,
             )

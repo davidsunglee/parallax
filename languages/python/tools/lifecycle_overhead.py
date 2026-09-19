@@ -114,7 +114,7 @@ from parallax.core.execution_lifecycle import (
     LoggingLifecycleProvider,
     RootExecution,
 )
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 
 PAIRS: Final = 3_000
 """Timed pairs per configuration. Each contributes one sample to each arm, so the
@@ -417,7 +417,7 @@ def _bounded_logger(
     return logger
 
 
-def _workload(db: Database) -> None:
+def _workload(db: ScopedDatabase) -> None:
     """One unit of work: a standalone read, then a transaction that writes on
     both flush triggers with a participating read between them.
 
@@ -467,7 +467,9 @@ class _Measurement:
 
 
 def _measure(
-    plain: Database, observed: Database, records: queue.Queue[logging.LogRecord]
+    plain: ScopedDatabase,
+    observed: ScopedDatabase,
+    records: queue.Queue[logging.LogRecord],
 ) -> _Measurement:
     """Run both arms ``PAIRS`` times, alternating which of the two goes first.
 
@@ -516,7 +518,11 @@ class _Shape(NamedTuple):
 def _shape() -> _Shape:
     port = _MemoryPort()
     counting = _CountingProvider()
-    _workload(Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=counting))
+    root = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=counting)
+    try:
+        _workload(root.using_database_login())
+    finally:
+        root.close()
     return _Shape(counting.total[0], port.statements)
 
 
@@ -731,11 +737,19 @@ def main(argv: list[str]) -> int:
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()
-    plain = Database(_SoleRuntime(port), ACCOUNT_MODEL)
+    plain_root = Database(_SoleRuntime(port), ACCOUNT_MODEL)
+    plain = plain_root.using_database_login()
     measurements: dict[str, _Measurement] = {}
-    for label, provider in _configurations(records):
-        observed = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=provider)
-        measurements[label] = _measure(plain, observed, records)
+    try:
+        for label, provider in _configurations(records):
+            observed_root = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=provider)
+            try:
+                observed = observed_root.using_database_login()
+                measurements[label] = _measure(plain, observed, records)
+            finally:
+                observed_root.close()
+    finally:
+        plain_root.close()
     contract = BudgetContract.load()
     envelope = build_envelope(contract, _provenance(contract), measurements, shape)
     print(json.dumps(envelope.document(), indent=2, sort_keys=True))

@@ -98,7 +98,9 @@ def test_an_aborting_port_reports_the_dialect_of_the_port_it_decorates() -> None
 
 def test_a_connection_compiles_against_the_dialect_its_own_port_declares() -> None:
     port = _SpellingPort(BACKTICKED)
-    connect(port, ACCOUNT).find(mm.Account.where(mm.Account.id == 7)).result()
+    connect(port, ACCOUNT).using_database_login().find(
+        mm.Account.where(mm.Account.id == 7)
+    ).result()
     (statement,) = port.statements
     assert "t0.`id`" in statement
     assert '"' not in statement
@@ -110,8 +112,8 @@ def test_two_connections_over_one_model_execute_in_their_own_ports_dialects() ->
     postgres_port = _SpellingPort(POSTGRES)
     backticked_port = _SpellingPort(BACKTICKED)
     query = mm.Account.where(mm.Account.id == 7)
-    connect(postgres_port, ACCOUNT).find(query).result()
-    connect(backticked_port, ACCOUNT).find(query).result()
+    connect(postgres_port, ACCOUNT).using_database_login().find(query).result()
+    connect(backticked_port, ACCOUNT).using_database_login().find(query).result()
     assert "`" not in postgres_port.statements[0]
     assert "t0.`id`" in backticked_port.statements[0]
 

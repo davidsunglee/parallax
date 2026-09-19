@@ -25,7 +25,7 @@ from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity import DomainModel, Entity
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect, prepare_model
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -49,8 +49,8 @@ _TARGET_ROW: MappingRow = {
 }
 
 
-def _db(adapter: DatabaseAdapter, domain_model: DomainModel = ACCOUNT_MODEL) -> Database:
-    return connect(adapter, domain_model, clock=FixedClock(FIXED))
+def _db(adapter: DatabaseAdapter, domain_model: DomainModel = ACCOUNT_MODEL) -> ScopedDatabase:
+    return connect(adapter, domain_model, clock=FixedClock(FIXED)).using_database_login()
 
 
 # The second source takes a prepared selection, as the source under test does;
@@ -115,9 +115,11 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     def fn(tx: Transaction) -> Entity:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
-    value = Database.connect(
-        ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED)
-    ).transact(fn)
+    value = (
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED))
+        .using_database_login()
+        .transact(fn)
+    )
     assert isinstance(value, Account)
 
 

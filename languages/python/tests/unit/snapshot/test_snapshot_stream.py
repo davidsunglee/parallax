@@ -59,7 +59,13 @@ from parallax.snapshot import (
     prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, Transaction, _materialization, _read_plan
+from parallax.snapshot.handle import (
+    Database,
+    ScopedDatabase,
+    Transaction,
+    _materialization,
+    _read_plan,
+)
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize import read_origin_of
 from tests._support.adoption import raises_contextualized
@@ -102,7 +108,7 @@ def _status_row(status_id: int, order_id: int) -> MappingRow:
     return {"id": status_id, "order_id": order_id, "order_item_id": None, "code": "NEW"}
 
 
-def _orders(adapter: DatabaseAdapter) -> Database:
+def _orders(adapter: DatabaseAdapter) -> ScopedDatabase:
     return db_for(ORDERS_MODEL, adapter)
 
 
@@ -131,7 +137,7 @@ def test_a_created_stream_answers_nothing_and_reaches_no_port() -> None:
     # stream answers is answered inside its own scope, `pin` included, so
     # "outside the scope, everything raises" is one rule rather than one rule
     # with an exception.
-    stream = Database(RefusingAdapter(), ORDERS_MODEL).stream(_all_orders())
+    stream = Database(RefusingAdapter(), ORDERS_MODEL).using_database_login().stream(_all_orders())
     with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
         _ = stream.pin
     with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -283,7 +289,7 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
     # The same gate an eager read crosses, in the same position relative to I/O:
     # a target the connected model does not declare is refused at entry, by a
     # port that raises if it is touched at all.
-    stream = Database(RefusingAdapter(), ACCOUNT).stream(_all_orders())
+    stream = Database(RefusingAdapter(), ACCOUNT).using_database_login().stream(_all_orders())
     with pytest.raises(QueryTargetError):
         stream.__enter__()
 
@@ -291,7 +297,7 @@ def test_the_read_gate_runs_at_entry_and_before_any_io() -> None:
 def test_the_repr_names_the_target_and_the_state_and_nothing_else() -> None:
     # A stream reports what it is and where it stands. Nothing about the page
     # plan, the cursor, or the port is readable off it.
-    stream = Database(RefusingAdapter(), ORDERS_MODEL).stream(_all_orders())
+    stream = Database(RefusingAdapter(), ORDERS_MODEL).using_database_login().stream(_all_orders())
     assert repr(stream) == "SnapshotStream(target='parallax.compatibility.Order', state='created')"
 
 
@@ -814,7 +820,7 @@ _MILESTONES: Final[tuple[MappingRow, ...]] = (
 )
 
 
-def _positions(adapter: DatabaseAdapter) -> Database:
+def _positions(adapter: DatabaseAdapter) -> ScopedDatabase:
     return db_for(POSITION_MODEL, adapter)
 
 
@@ -918,7 +924,9 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
     )
     with (
         pytest.raises(DeferredFeatureError, match="snapshot-history-includes"),
-        Database(RefusingAdapter(), POLICY_MODEL).stream(query, batch_size=2),
+        Database(RefusingAdapter(), POLICY_MODEL)
+        .using_database_login()
+        .stream(query, batch_size=2),
     ):
         pass  # pragma: no cover - the gate refuses at scope entry
 
@@ -1092,8 +1100,10 @@ def test_an_entered_stream_reports_its_edition_and_an_unentered_one_has_none() -
     # `edition` answers exactly where `pin` does: inside the scope, and never
     # before entry, because a stream that has not entered has adopted nothing.
     a, _b, serving = _editions()
-    stream = Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving).stream(
-        _all_orders()
+    stream = (
+        Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving)
+        .using_database_login()
+        .stream(_all_orders())
     )
     with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
         _ = stream.edition
@@ -1111,8 +1121,10 @@ def test_a_stream_adopts_at_entry_rather_than_at_construction() -> None:
     # the two moments: the delivery is served under what is current when its
     # scope is entered, and the call itself took nothing.
     a, b, serving = _editions()
-    stream = Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving).stream(
-        _all_orders()
+    stream = (
+        Database.connect(ScriptedAdapter(Read(rows=[_order_row(1)])), serving)
+        .using_database_login()
+        .stream(_all_orders())
     )
     serving.publish(b, expected=a)
     with stream:
@@ -1128,7 +1140,7 @@ def test_a_publication_mid_delivery_leaves_every_later_page_on_the_entered_editi
         *paged_reads([_order_row(index) for index in (1, 2, 3)], size=1),
         Read(rows=[_order_row(1)]),
     )
-    db = Database.connect(port, serving)
+    db = Database.connect(port, serving).using_database_login()
     delivered: list[int] = []
     with db.stream(_all_orders(), batch_size=1) as stream:
         for root in stream:

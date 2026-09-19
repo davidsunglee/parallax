@@ -33,7 +33,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import ScopedDatabase
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -107,8 +107,10 @@ def _handler(*children: Any) -> ExecutionLifecycleHandler:
     return opened
 
 
-def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
+    return connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def test_an_empty_fan_out_is_refused_at_construction() -> None:

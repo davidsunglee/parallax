@@ -36,11 +36,10 @@ def test_a_leading_null_under_a_dropped_constraint_is_never_lost_at_a_page_bound
     _write(profile_run, "update orders set active = null where id = 42")
     query = Order.where(Order.all).order_by(Order.active.asc())
 
-    with (
-        connect(profile_run.port, ORDERS_MODEL) as db,
-        db.stream(query, batch_size=batch_size) as stream,
-    ):
-        roots = list(stream.checked())
+    with connect(profile_run.port, ORDERS_MODEL) as root:
+        db = root.using_database_login()
+        with db.stream(query, batch_size=batch_size) as stream:
+            roots = list(stream.checked())
 
     assert all(isinstance(root, Order) for root in roots)
     typed = cast("list[Order]", roots)
@@ -55,17 +54,16 @@ def test_moving_an_authored_sort_key_can_skip_or_duplicate_a_root(
     _seeded(profile_run)
     query = Order.where(Order.all).order_by(Order.qty.asc())
 
-    with (
-        connect(profile_run.port, ORDERS_MODEL) as db,
-        db.stream(query, batch_size=1) as stream,
-    ):
-        roots = iter(stream)
-        delivered = [next(roots).id]
-        if movement == "ahead-to-behind":
-            _write(profile_run, "update orders set qty = 1 where id = 2")
-        else:
-            _write(profile_run, "update orders set qty = 100 where id = 1")
-        delivered.extend(root.id for root in roots)
+    with connect(profile_run.port, ORDERS_MODEL) as root:
+        db = root.using_database_login()
+        with db.stream(query, batch_size=1) as stream:
+            roots = iter(stream)
+            delivered = [next(roots).id]
+            if movement == "ahead-to-behind":
+                _write(profile_run, "update orders set qty = 1 where id = 2")
+            else:
+                _write(profile_run, "update orders set qty = 100 where id = 1")
+            delivered.extend(item.id for item in roots)
 
     if movement == "ahead-to-behind":
         assert delivered == [1, 3, 4, 5, 42]
@@ -83,7 +81,8 @@ def test_a_postgres_locking_stream_continues_and_retains_write_authority(
     _seeded(profile_run)
     query = Order.where(Order.all).order_by(Order.sku.asc())
 
-    with connect(profile_run.port, ORDERS_MODEL) as db:
+    with connect(profile_run.port, ORDERS_MODEL) as root:
+        db = root.using_database_login()
 
         def deliver_and_update(tx: Any) -> list[int]:
             with tx.stream(query, batch_size=2) as stream:

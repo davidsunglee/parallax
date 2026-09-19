@@ -42,7 +42,7 @@ from parallax.core.document_codec._document import (
 from parallax.core.entity import DomainModel, EntityRowCodec
 from parallax.core.unit_work import WritePlanner
 from parallax.snapshot import prepare_model
-from parallax.snapshot.handle import Database, build_write_planner
+from parallax.snapshot.handle import ScopedDatabase, build_write_planner
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -201,7 +201,7 @@ def _keyed_driver(case: lowering_support.Case) -> Driver:
 
 
 def _acquisition_driver(case: acquisition_support.Case) -> Driver:
-    handle: Database = acquisition_support.database(case)
+    handle: ScopedDatabase = acquisition_support.database(case)
 
     def run() -> None:
         acquisition_support.acquire(handle, case)

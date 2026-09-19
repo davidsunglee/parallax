@@ -372,7 +372,9 @@ def test_temporal_updates_over_different_regions_are_refused() -> None:
         tx.update_until(node.edit(value=Decimal("8.00")), valid_from=_OTHER_FROM, until=_UNTIL)
 
     with raises_contextualized(WriteEvidenceError) as refusal:
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
 
 
@@ -386,7 +388,9 @@ def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> No
         tx.update_until(node.edit(value=Decimal("9.00")), valid_from=_VALID_FROM, until=_UNTIL)
         tx.update_until(node.edit(acct_num="B"), valid_from=_VALID_FROM, until=_UNTIL)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     assert len(_writes(port)) == 4  # close + head + middle + tail, once
 
 

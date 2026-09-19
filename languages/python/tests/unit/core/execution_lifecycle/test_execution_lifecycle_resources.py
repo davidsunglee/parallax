@@ -67,7 +67,7 @@ from parallax.core.execution_lifecycle import _fanout as fanout_module
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -84,11 +84,11 @@ _STEP: Final = 1_000
 """What one reading of the stepping clock below advances by."""
 
 
-def _db(adapter: Any, provider: Any = None, model: Any = ACCOUNT) -> Database:
+def _db(adapter: Any, provider: Any = None, model: Any = ACCOUNT) -> Database[Any]:
     return connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
-def _read(db: Database) -> None:
+def _read(db: ScopedDatabase) -> None:
     db.find(mm.Account.where(mm.Account.id == 7)).result()
 
 
@@ -245,7 +245,8 @@ def test_a_failed_acquisition_carries_its_partial_cleanup_and_emits_no_release()
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[partial])
 
-    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -269,7 +270,8 @@ def test_an_acquisition_that_owned_nothing_reports_no_cleanup_at_all() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("closed")])
 
-    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -287,7 +289,8 @@ def test_an_attempt_that_could_not_acquire_finishes_begin_failed_caused_by_it() 
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("timeout")])
 
-    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         db.transact(lambda _tx: None)
 
     (root,) = recorder.roots
@@ -306,7 +309,8 @@ def test_a_release_reports_what_letting_go_established_without_changing_the_outc
     release_unconfirmed = _handoff_failed()
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter, recorder) as db:
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login()
         assert db.find(mm.Account.where(mm.Account.id == 7)).result() is not None
 
     (root,) = recorder.roots
@@ -327,7 +331,8 @@ def test_participating_work_acquires_nothing_of_its_own() -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1.00")))
 
-    with _db(adapter, recorder) as db:
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login()
         db.transact(body)
 
     (root,) = recorder.roots
@@ -355,7 +360,8 @@ def test_each_duration_brackets_its_own_resource_call_and_the_hold_spans_between
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, recorder) as db:
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -383,7 +389,8 @@ def test_a_failed_acquisition_is_still_measured_around_its_own_cleanup(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[_not_idle()])
 
-    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -404,7 +411,8 @@ def test_a_handler_on_the_acquisitions_started_cannot_inflate_the_acquisition(
     handler = _BurningOn(AcquisitionStarted, clock, 5)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, _Provider(handler)) as db:
+    with _db(adapter, _Provider(handler)) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     (acquired,) = [event for event in handler.seen if isinstance(event, AcquisitionFinished)]
@@ -424,7 +432,8 @@ def test_the_hold_includes_the_acquisitions_own_finished_delivery(
     handler = _BurningOn(AcquisitionFinished, clock, 5)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, _Provider(handler)) as db:
+    with _db(adapter, _Provider(handler)) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     (acquired,) = [event for event in handler.seen if isinstance(event, AcquisitionFinished)]
@@ -443,13 +452,12 @@ def test_a_consumer_pause_between_pages_is_outside_every_page_hold(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
 
-    with (
-        _db(adapter, recorder, ORDERS_MODEL) as db,
-        db.stream(_active_orders(), batch_size=2) as stream,
-    ):
-        for root in stream:
-            del root
-            clock.burn(3)
+    with _db(adapter, recorder, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(_active_orders(), batch_size=2) as stream:
+            for root in stream:
+                del root
+                clock.burn(3)
 
     (observed,) = recorder.roots
     released = _of(observed, ReleaseFinished)
@@ -469,7 +477,8 @@ def test_neither_duration_includes_reading_the_cleanup_fact_off_the_resource(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, recorder) as db:
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -488,7 +497,8 @@ def test_a_failed_acquisitions_duration_excludes_reading_its_cleanup_fact(
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[_not_idle()])
 
-    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -505,7 +515,8 @@ def test_an_unobserved_operation_reads_no_lifecycle_clock(
     clock = _stepping(monkeypatch)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), Transact(Write()))
 
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
         db.transact(lambda tx: tx.insert(mm.Account(id=8, owner="Bell", balance=Decimal("1"))))
 
@@ -527,7 +538,8 @@ def test_a_quarantined_handler_leaves_the_rest_of_the_root_reading_no_clock(
     handler = _FailingOn(ReleaseStarted, RuntimeError("the exporter died"))
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, _Provider(handler)) as db:
+    with _db(adapter, _Provider(handler)) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     assert clock.readings == 4
@@ -550,7 +562,8 @@ def test_a_fanout_whose_every_leaf_failed_stops_observing_the_root(
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
     provider = FanoutLifecycleProvider([FanoutLifecycleProvider([inner]), outer])
 
-    with _db(adapter, provider) as db:
+    with _db(adapter, provider) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     assert clock.readings == 0
@@ -610,19 +623,18 @@ def test_a_root_that_quarantined_a_fanout_keeps_no_part_of_it_alive() -> None:
     provider = FanoutLifecycleProvider([FanoutLifecycleProvider([inner])])
     adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
 
-    with (
-        _db(adapter, provider, ORDERS_MODEL) as db,
-        db.stream(_active_orders(), batch_size=2) as stream,
-    ):
-        for order in stream:
-            del order
-            held = {
-                type(value)
-                for value in _reachable(stream)
-                if type(value).__module__ == fanout_module.__name__
-            }
-            assert held == {FanoutLifecycleProvider}
-            break
+    with _db(adapter, provider, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(_active_orders(), batch_size=2) as stream:
+            for order in stream:
+                del order
+                held = {
+                    type(value)
+                    for value in _reachable(stream)
+                    if type(value).__module__ == fanout_module.__name__
+                }
+                assert held == {FanoutLifecycleProvider}
+                break
 
     assert len(inner.reported) == 1
 
@@ -635,7 +647,8 @@ def test_a_fatal_exception_on_the_acquisitions_started_leaves_nothing_acquired()
     provider = _Provider(handler)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, provider) as db, pytest.raises(KeyboardInterrupt):
+    with _db(adapter, provider) as _root_db, pytest.raises(KeyboardInterrupt):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert adapter.acquisitions == 0
@@ -650,7 +663,8 @@ def test_a_fatal_exception_on_the_acquisitions_finished_still_gives_the_connecti
     handler = _FailingOn(AcquisitionFinished, KeyboardInterrupt())
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, _Provider(handler)) as db, pytest.raises(KeyboardInterrupt):
+    with _db(adapter, _Provider(handler)) as _root_db, pytest.raises(KeyboardInterrupt):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert adapter.acquisitions == 1
@@ -665,7 +679,8 @@ def test_a_fatal_exception_on_the_releases_started_still_releases() -> None:
     handler = _FailingOn(ReleaseStarted, KeyboardInterrupt())
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, _Provider(handler)) as db, pytest.raises(KeyboardInterrupt):
+    with _db(adapter, _Provider(handler)) as _root_db, pytest.raises(KeyboardInterrupt):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert adapter.acquisitions == 1
@@ -683,8 +698,9 @@ def test_a_handler_quarantined_before_the_release_receives_no_cleanup_fact(
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, _Provider(handler)) as db,
+        _db(adapter, _Provider(handler)) as _root_db,
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert [type(event).__name__ for event in handler.seen] == ["ReadStarted", "AcquisitionStarted"]
@@ -705,9 +721,10 @@ def test_a_fatal_exception_on_the_releases_finished_deactivates_the_root_and_pro
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, provider) as db,
+        _db(adapter, provider) as _root_db,
         pytest.raises(KeyboardInterrupt),
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert adapter.cleanups == [_handoff_failed()]
@@ -783,7 +800,8 @@ def test_an_acquisition_that_failed_for_no_stated_reason_reports_preparation_fai
     recorder = RecordingLifecycleProvider()
     defect = RuntimeError("the adapter raised something else")
 
-    with _db(_UnusableAdapter(defect), recorder) as db, pytest.raises(ExecutionFailure):
+    with _db(_UnusableAdapter(defect), recorder) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -803,9 +821,10 @@ def test_an_adapter_defect_escaping_acquisition_still_fails_the_attempts_begin()
     defect = RuntimeError("the adapter raised something else")
 
     with (
-        _db(_UnusableAdapter(defect), recorder) as db,
+        _db(_UnusableAdapter(defect), recorder) as _root_db,
         pytest.raises(ExecutionFailure) as raised,
     ):
+        db = _root_db.using_database_login()
         db.transact(lambda _tx: None)
 
     assert raised.value.__cause__ is defect
@@ -825,7 +844,8 @@ def test_an_ordinary_handler_failure_on_the_release_changes_no_outcome() -> None
     provider = _Provider(handler)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with _db(adapter, provider) as db:
+    with _db(adapter, provider) as _root_db:
+        db = _root_db.using_database_login()
         assert db.find(mm.Account.where(mm.Account.id == 7)).result() is not None
 
     assert adapter.cleanups == [Returned()]
@@ -842,7 +862,8 @@ def test_an_operations_own_failure_survives_an_unconfirmed_release() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter, recorder) as db, raises_contextualized(DatabaseError) as raised:
+    with _db(adapter, recorder) as _root_db, raises_contextualized(DatabaseError) as raised:
+        db = _root_db.using_database_login()
         _read(db)
 
     assert raised.value is failure
@@ -866,8 +887,9 @@ def test_a_handler_that_received_the_cleanup_fact_silences_the_fallback_log(
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, recorder) as db,
+        _db(adapter, recorder) as _root_db,
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     (root,) = recorder.roots
@@ -885,8 +907,9 @@ def test_a_quarantined_handler_leaves_the_cleanup_fact_to_the_fallback_log(
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, _Provider(handler)) as db,
+        _db(adapter, _Provider(handler)) as _root_db,
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     (record,) = _resource_records(caplog)
@@ -902,7 +925,8 @@ def test_no_provider_at_all_leaves_the_cleanup_fact_to_the_fallback_log(
     # anyone is watching.
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), cleanup_results=[_handoff_failed()])
 
-    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as db:
+    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     assert len(_resource_records(caplog)) == 1
@@ -913,7 +937,8 @@ def test_a_clean_release_says_nothing_anywhere_but_the_event(
 ) -> None:
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
-    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as db:
+    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     assert _resource_records(caplog) == []
@@ -933,8 +958,9 @@ def test_a_fan_out_whose_every_child_failed_did_not_deliver_the_cleanup_fact(
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, FanoutLifecycleProvider(children)) as db,
+        _db(adapter, FanoutLifecycleProvider(children)) as _root_db,
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert [len(child.reported) for child in children] == [1, 1]
@@ -952,8 +978,9 @@ def test_a_fan_out_one_of_whose_children_returned_did_deliver_it(
 
     with (
         caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
-        _db(adapter, FanoutLifecycleProvider([failing, surviving])) as db,
+        _db(adapter, FanoutLifecycleProvider([failing, surviving])) as _root_db,
     ):
+        db = _root_db.using_database_login()
         _read(db)
 
     assert len(failing.reported) == 1
@@ -968,7 +995,8 @@ def test_the_fallback_log_states_the_classification_and_nothing_the_diagnostic_h
     # that has redacted nothing.
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]), cleanup_results=[_handoff_failed()])
 
-    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as db:
+    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME), _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         _read(db)
 
     (record,) = _resource_records(caplog)

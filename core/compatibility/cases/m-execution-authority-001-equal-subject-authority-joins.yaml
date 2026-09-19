@@ -5,7 +5,7 @@
 # proving that scope or object identity is not execution identity. Both joining
 # bodies run and the boundary commits after the one observing read.
 model: models/account.yaml
-tags: [m-execution-authority, m-unit-work, m-api-conformance, authority, join]
+tags: [slice-snapshot-1, m-execution-authority, m-unit-work, m-api-conformance, authority, join]
 lane: api-conformance
 shape: boundary
 compileEligibility:

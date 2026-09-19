@@ -29,7 +29,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
-from parallax.snapshot.handle import Database, Snapshot
+from parallax.snapshot.handle import ScopedDatabase, Snapshot
 from parallax.snapshot.materialize import WireEntity, read_origin_of
 from tests._support import mirrored_models as mm
 
@@ -135,14 +135,14 @@ def deadlock() -> DatabaseError:
     return DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
 
 
-def account_db(adapter: DatabaseAdapter) -> Database:
+def account_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     # The spec §8 module-level `connect` is the classmethod's alias, so this
     # covers both spellings.
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED))
+    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
 
 
-def db_for(meta: DomainModel, adapter: DatabaseAdapter) -> Database:
-    return Database.connect(adapter, meta, clock=FixedClock(FIXED))
+def db_for(meta: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
+    return connect(adapter, meta, clock=FixedClock(FIXED)).using_database_login()
 
 
 def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservation, ...]:

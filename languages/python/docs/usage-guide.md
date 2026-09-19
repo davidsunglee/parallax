@@ -22,7 +22,7 @@ reuse.
 Corpus case: `m-batch-write-005`
 
 ```python
-def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
+def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     # m-batch-write-005: Wallet carries no version and no temporal axis, so a
     # predicate-selected delete has nothing to gate per row — it lowers
     # DIRECTLY to one set-shaped `delete ... where balance < ?`, no
@@ -43,7 +43,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
 Corpus case: `m-bitemp-write-001`
 
 ```python
-def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
+def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -69,7 +69,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
 Corpus case: `m-bitemp-write-003`
 
 ```python
-def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
+def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert_until(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -85,7 +85,7 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
 Corpus case: `m-bitemp-write-006`
 
 ```python
-def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
+def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None:
     # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
     # two-way degenerate of the rectangle split — no middle, no old tail (the
     # correction runs to infinity): inactivate the original on the Transaction-Time
@@ -115,7 +115,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
 Corpus case: `m-bitemp-write-009`
 
 ```python
-def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> None:
+def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) -> None:
     # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
     # insert of a fully-current rectangle — Valid Time [B, infinity) at
     # Transaction Time [txInstant, infinity), current on BOTH axes. No prior row to
@@ -135,7 +135,7 @@ Corpus case: `m-deep-fetch-018`
 
 ```python
 def customer_locations_deep_fetch_materializes_the_child_document_too(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """Both the root (Customer) and the child (Location) levels of a deep
     fetch materialize their OWN value-object document (`m-deep-fetch-018`,
@@ -287,7 +287,8 @@ def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
     while the boundary ran is the whole account of it.
     """
     provider = JoinedShapeProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as db:
+    with connect(adapter, model, lifecycle_provider=provider) as database:
+        db = database.using_database_login()
 
         def outer(tx: Transaction) -> Account:
             current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
@@ -381,7 +382,7 @@ Person.pets.exists(Pet.narrow(WildBoar))
 Corpus case: `m-inheritance-065`
 
 ```python
-def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
+def narrowed_pets_view_populates_per_owner(db: ScopedDatabase) -> Snapshot[Any]:
     """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
     the narrowed hop populates a distinct view keyed by the derived name,
     never marking the broad ``pets`` relationship loaded."""
@@ -395,7 +396,7 @@ def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
 Corpus case: `m-inheritance-066`
 
 ```python
-def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any]:
+def equivalent_narrow_spellings_dedupe_to_one_view(db: ScopedDatabase) -> Snapshot[Any]:
     """Two DIFFERENT authored narrowings resolving to the SAME effective
     concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
     ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
@@ -411,7 +412,7 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any
 Corpus case: `m-inheritance-067`
 
 ```python
-def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any]:
+def distinct_narrowed_views_populate_independently(db: ScopedDatabase) -> Snapshot[Any]:
     """Two narrowings to DIFFERENT concrete sets stay two distinct views
     (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
     independently (dedup identity is the effective concrete set, not the
@@ -428,7 +429,7 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
 Corpus case: `m-inheritance-068`
 
 ```python
-def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Snapshot[Any]:
+def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: ScopedDatabase) -> Snapshot[Any]:
     """A broad hop and a REDUNDANT narrow over the same relationship stay TWO
     hops (`m-inheritance-068`): ``narrow(Pet)`` resolves to the very
     ``{Cat, Dog}`` set the broad ``pets`` hop already reaches, so both views
@@ -463,7 +464,7 @@ query = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument))
 Corpus case: `m-inheritance-074`
 
 ```python
-def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
+def disjoint_root_guards_fill_one_owner_view(db: ScopedDatabase) -> Snapshot[Any]:
     """``include(Dog.owner, Cat.owner)`` is ONE relationship guarded to disjoint
     root objects (`m-inheritance-074`): ``owner`` is declared on ``Animal``, so
     reaching it through a subtype keeps that identity and adds a path-ROOT guard.
@@ -478,7 +479,7 @@ def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
 Corpus case: `m-inheritance-075`
 
 ```python
-def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot[Any]:
+def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: ScopedDatabase) -> Snapshot[Any]:
     """A guarded path subsumed by a broad one beside it still costs its own
     statement (`m-inheritance-075`): ``Dog.owner``'s source set is a strict subset
     of the unguarded path's, and hop identity at the root keys on the RESOLVED
@@ -492,7 +493,7 @@ def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot
 Corpus case: `m-inheritance-076`
 
 ```python
-def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[Any]:
+def a_guarded_root_continues_through_a_narrowed_hop(db: ScopedDatabase) -> Snapshot[Any]:
     """The two narrow positions compose with OPPOSITE view semantics
     (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
     from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
@@ -505,7 +506,7 @@ def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[An
 Corpus case: `m-inheritance-078`
 
 ```python
-def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
+def guarded_branches_keep_their_own_parents(db: ScopedDatabase) -> Snapshot[Any]:
     """Two guarded branches over one relationship diverge at the next level
     (`m-inheritance-078`): ``Dog.owner`` and ``WildBoar.owner`` fill the same
     ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
@@ -538,7 +539,9 @@ query = DepositRate.where(DepositRate.all).as_of(
 Corpus case: `m-inheritance-106`
 
 ```python
-def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+def tph_abstract_root_read_materializes_typed_per_variant_instances(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """The object-lane sibling of the row-form abstract-root read
     (`m-inheritance-106`, `m-inheritance-003` its values-lane witness): each
     materialized instance is its OWN concrete class — a `CardPayment` node
@@ -553,7 +556,7 @@ Corpus case: `m-inheritance-107`
 
 ```python
 def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form narrow-to-abstract-subtype
     read (`m-inheritance-107`, `m-inheritance-013` its values-lane witness):
@@ -566,7 +569,9 @@ def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
 Corpus case: `m-inheritance-108`
 
 ```python
-def tph_or_across_branches_materializes_typed_per_variant_instances(db: Database) -> Snapshot[Any]:
+def tph_or_across_branches_materializes_typed_per_variant_instances(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """The object-lane sibling of the row-form OR-across-branches read
     (`m-inheritance-108`, `m-inheritance-015` its values-lane witness)."""
     return db.find(
@@ -583,7 +588,7 @@ Corpus case: `m-inheritance-109`
 
 ```python
 def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
     read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
@@ -673,7 +678,7 @@ query = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))
 Corpus case: `m-navigate-013`
 
 ```python
-def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
+def pinned_graph_at_a_past_valid_time_instant(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(
         Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
@@ -714,7 +719,7 @@ query = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).li
 Corpus case: `m-opt-lock-002`
 
 ```python
-def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> None:
+def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
     # m-opt-lock-002: the `locking` preference is the workflow-level override
     # that forces every Entity to participate pessimistically. Its
     # in-transaction read takes a shared row lock, so the keyed update needs no
@@ -825,7 +830,7 @@ db.transact(lambda tx: tx.find(query), concurrency="optimistic")
 Corpus case: `m-snapshot-read-001`
 
 ```python
-def diamond_identity_shares_one_child_node(db: Database) -> Snapshot[Any]:
+def diamond_identity_shares_one_child_node(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.items, Order.items_by_ship_date))
 ```
 
@@ -834,7 +839,7 @@ def diamond_identity_shares_one_child_node(db: Database) -> Snapshot[Any]:
 Corpus case: `m-snapshot-read-004`
 
 ```python
-def empty_root_materializes_no_children(db: Database) -> Snapshot[Any]:
+def empty_root_materializes_no_children(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 999).include(Order.items.statuses))
 ```
 
@@ -843,7 +848,7 @@ def empty_root_materializes_no_children(db: Database) -> Snapshot[Any]:
 Corpus case: `m-snapshot-read-005`
 
 ```python
-def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
+def empty_intermediate_level_short_circuits(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 4).include(Order.items.statuses))
 ```
 
@@ -852,7 +857,7 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
 Corpus case: `m-snapshot-read-007`
 
 ```python
-def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
+def one_to_one_peer_attaches_as_a_single_object(db: ScopedDatabase) -> Snapshot[Any]:
     """Every ``Person`` materializes with its single ``Passport`` peer — a
     to-one relationship attaches as ONE object, not a collection, and a
     person with no passport (id 3) gets a null peer."""
@@ -864,7 +869,7 @@ def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
 Corpus case: `m-snapshot-read-009`
 
 ```python
-def closed_world_unloaded_access_raises_without_sql(db: Database) -> Snapshot[Any]:
+def closed_world_unloaded_access_raises_without_sql(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
 ```
 
@@ -873,7 +878,7 @@ def closed_world_unloaded_access_raises_without_sql(db: Database) -> Snapshot[An
 Corpus case: `m-snapshot-read-010`
 
 ```python
-def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
+def mutation_has_no_writeback(db: ScopedDatabase) -> tuple[Any, Snapshot[Any]]:
     order = db.find(Order.where(Order.id == 1)).result()
     mutated = order.edit(name="Mutant")  # in-memory only, never DML
     reread = db.find(Order.where(Order.id == 1))  # still observes the ORIGINAL name
@@ -885,7 +890,7 @@ def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
 Corpus case: `m-snapshot-read-011`
 
 ```python
-def back_reference_cycle_resolves_to_the_root(db: Database) -> Snapshot[Any]:
+def back_reference_cycle_resolves_to_the_root(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.items.order))
 ```
 
@@ -894,7 +899,7 @@ def back_reference_cycle_resolves_to_the_root(db: Database) -> Snapshot[Any]:
 Corpus case: `m-snapshot-read-012`
 
 ```python
-def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
+def animal_owner_reaches_root_and_narrowed_subtype_view(db: ScopedDatabase) -> Snapshot[Any]:
     """The animal family's owner exposes both a root-typed
     ``animals`` path (reaching any concrete subtype) and a leaf-typed
     ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
@@ -912,7 +917,7 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
 Corpus case: `m-snapshot-read-015`
 
 ```python
-def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[Any], Any]:
+def an_edited_copy_keeps_its_source_nodes_views(db: ScopedDatabase) -> tuple[Snapshot[Any], Any]:
     snapshot = db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the node's view state
     return snapshot, edited
@@ -923,7 +928,7 @@ def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[
 Corpus case: `m-snapshot-read-016`
 
 ```python
-def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any], Any]:
+def an_edit_keeps_a_loaded_relationship_view(db: ScopedDatabase) -> tuple[Snapshot[Any], Any]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the LOADED items
     return snapshot, edited
@@ -934,7 +939,7 @@ def an_edit_keeps_a_loaded_relationship_view(db: Database) -> tuple[Snapshot[Any
 Corpus case: `m-snapshot-read-017`
 
 ```python
-def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any, Any]:
+def a_write_keeps_a_loaded_to_one_view(db: ScopedDatabase) -> tuple[Snapshot[Any], Any, Any]:
     snapshot = db.find(OrderItem.where(OrderItem.id == 11).include(OrderItem.order))
     loaded_order = snapshot.result().order
 
@@ -952,7 +957,7 @@ def a_write_keeps_a_loaded_to_one_view(db: Database) -> tuple[Snapshot[Any], Any
 Corpus case: `m-snapshot-read-018`
 
 ```python
-def a_write_keeps_a_loaded_empty_relationship_view(db: Database) -> Snapshot[Any]:
+def a_write_keeps_a_loaded_empty_relationship_view(db: ScopedDatabase) -> Snapshot[Any]:
     snapshot = db.find(Order.where(Order.id == 3).include(Order.items))  # order 3 owns no items
     db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
     return snapshot  # the loaded-EMPTY view is untouched by the item now in the table
@@ -963,7 +968,7 @@ def a_write_keeps_a_loaded_empty_relationship_view(db: Database) -> Snapshot[Any
 Corpus case: `m-snapshot-read-019`
 
 ```python
-def a_write_keeps_an_unloaded_relationship_absent(db: Database) -> Snapshot[Any]:
+def a_write_keeps_an_unloaded_relationship_absent(db: ScopedDatabase) -> Snapshot[Any]:
     snapshot = db.find(Order.where(Order.id == 3))  # no `.include(...)`: `items` stays unloaded
     db.transact(lambda tx: tx.insert(OrderItem(id=31, order_id=3, sku="C-300", quantity=7)))
     return snapshot  # absence is not emptiness, and the write does not make it one
@@ -975,7 +980,7 @@ Corpus case: `m-snapshot-read-020`
 
 ```python
 def a_delete_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     loaded_items = snapshot.result().items
@@ -995,7 +1000,7 @@ Corpus case: `m-snapshot-read-022`
 
 ```python
 def an_edit_chain_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, Any]:
     snapshot = db.find(Order.where(Order.id == 1).include(Order.items))
     renamed = snapshot.result().edit(name="Mutant")  # an AUTHORED change
@@ -1009,7 +1014,7 @@ Corpus case: `m-snapshot-read-023`
 
 ```python
 def a_write_keeps_a_loaded_value_object_document(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     snapshot = db.find(Location.where(Location.id == 100).include(Location.customer))
     loaded_customer = snapshot.result().customer
@@ -1043,7 +1048,7 @@ Corpus case: `m-snapshot-read-024`
 
 ```python
 def a_write_keeps_a_view_over_freshly_inserted_rows(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[None, Snapshot[Any], Any, None, Snapshot[Any]]:
     def create(tx: Transaction) -> None:
         tx.insert(
@@ -1078,7 +1083,7 @@ Corpus case: `m-snapshot-read-025`
 
 ```python
 def a_rectangle_split_keeps_a_loaded_relationship_view(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Any, None, Snapshot[Any]]:
     pin = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
     snapshot = db.find(
@@ -1106,7 +1111,7 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
 Corpus case: `m-snapshot-read-026`
 
 ```python
-def a_multi_hop_access_drops_its_null_branches(db: Database) -> Snapshot[Any]:
+def a_multi_hop_access_drops_its_null_branches(db: ScopedDatabase) -> Snapshot[Any]:
     return db.find(Order.where(Order.id == 1).include(Order.statuses.order_item))
 ```
 
@@ -1123,7 +1128,7 @@ query = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC
 Corpus case: `m-txtime-write-001`
 
 ```python
-def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
+def transaction_time_only_insert_opens_a_current_milestone(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -1135,7 +1140,7 @@ def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None
 Corpus case: `m-txtime-write-002`
 
 ```python
-def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -1154,7 +1159,7 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
 Corpus case: `m-txtime-write-003`
 
 ```python
-def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
+def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -1177,7 +1182,7 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -
 Corpus case: `m-txtime-write-004`
 
 ```python
-def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -1194,7 +1199,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: Database)
 Corpus case: `m-txtime-write-005`
 
 ```python
-def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
+def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase) -> None:
     # m-txtime-write-005: the fixtures are loaded (`given.fixtures: true`) —
     # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
     # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
@@ -1212,7 +1217,7 @@ def transaction_time_only_chain_update_from_existing_history(db: Database) -> No
 Corpus case: `m-unit-work-001`
 
 ```python
-def insert_then_read_your_own_write(db: Database) -> list[Entity]:
+def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
@@ -1225,7 +1230,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-002`
 
 ```python
-def aborted_update_is_discarded(db: Database) -> list[Entity]:
+def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
     fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
@@ -1244,7 +1249,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-003`
 
 ```python
-def fk_ordered_inserts(db: Database) -> None:
+def fk_ordered_inserts(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -1267,7 +1272,7 @@ def fk_ordered_inserts(db: Database) -> None:
 Corpus case: `m-unit-work-004`
 
 ```python
-def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
+def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
         tx.update(current.edit(balance=Decimal("175.00")))
@@ -1282,7 +1287,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-005`
 
 ```python
-def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
+def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         tx.update(current.edit(balance=Decimal("175.00")))
@@ -1296,7 +1301,7 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-006`
 
 ```python
-def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
+def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
@@ -1310,7 +1315,7 @@ def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-007`
 
 ```python
-def create_then_delete_a_parent_child_pair(db: Database) -> None:
+def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
     def create(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -1338,7 +1343,7 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
 Corpus case: `m-unit-work-009`
 
 ```python
-def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
+def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
@@ -1355,7 +1360,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-011`
 
 ```python
-def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
+def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
@@ -1371,7 +1376,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-012`
 
 ```python
-def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
+def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
@@ -1389,7 +1394,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
 Corpus case: `m-unit-work-015`
 
 ```python
-def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) -> None:
+def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDatabase) -> None:
     # m-unit-work-015: Position id 1 holds TWO rectangles current on Transaction
     # Time, so reading it twice at different Valid-Time coordinates leaves two
     # pieces of evidence about ONE primary key. The correction is written against
@@ -1420,7 +1425,7 @@ Corpus case: `m-unit-work-029`
 
 ```python
 def a_grouped_read_observes_its_own_relationship_writes(
-    db: Database,
+    db: ScopedDatabase,
 ) -> tuple[Snapshot[Any], Snapshot[Any]]:
     def read_your_own_writes(tx: Transaction) -> tuple[Snapshot[Any], Snapshot[Any]]:
         before = tx.find(Order.where(Order.id == 1).include(Order.items))
@@ -1466,7 +1471,8 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
     root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
-    with connect(adapter, model, options=root) as db:
+    with connect(adapter, model, options=root) as database:
+        db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
 
         def outer(tx: Transaction) -> ResolvedOptions:
@@ -1499,7 +1505,7 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
 Corpus case: `m-value-object-001`
 
 ```python
-def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[Any]:
+def customer_nested_eq_city_selects_matching_owners(db: ScopedDatabase) -> Snapshot[Any]:
     """A nested equality predicate through a value-object attribute
     (`m-value-object-001`): the id/name SET this filter selects is the
     behavior under test; the module docstring explains why this is a graph
@@ -1512,7 +1518,7 @@ def customer_nested_eq_city_selects_matching_owners(db: Database) -> Snapshot[An
 Corpus case: `m-value-object-002`
 
 ```python
-def customer_deep_nested_eq_country_selects_the_matching_owner(db: Database) -> Snapshot[Any]:
+def customer_deep_nested_eq_country_selects_the_matching_owner(db: ScopedDatabase) -> Snapshot[Any]:
     """A DEEP nested equality predicate, two levels into the composite
     (`m-value-object-002`): only Grace (Boston, US) qualifies."""
     return db.find(Customer.where(Customer.address.geo.country == "US"))
@@ -1523,7 +1529,7 @@ def customer_deep_nested_eq_country_selects_the_matching_owner(db: Database) -> 
 Corpus case: `m-value-object-007`
 
 ```python
-def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> Snapshot[Any]:
+def customer_nested_is_null_collapses_every_not_present_state(db: ScopedDatabase) -> Snapshot[Any]:
     """A nested is-null presence test (`m-value-object-007`): the null
     column, the missing key, and the explicit JSON-null leaf all collapse to
     the SAME not-present state."""
@@ -1535,7 +1541,7 @@ def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> S
 Corpus case: `m-value-object-015`
 
 ```python
-def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[Any]:
+def customer_to_many_nested_exists_is_a_nonempty_test(db: ScopedDatabase) -> Snapshot[Any]:
     """A to-many nested existence test (`m-value-object-015`): true for a row
     whose `phones` array has at least one element; empty and absent states are
     excluded."""
@@ -1547,7 +1553,9 @@ def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[
 Corpus case: `m-value-object-016`
 
 ```python
-def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
+def customer_to_many_nested_not_exists_folds_every_not_present_state(
+    db: ScopedDatabase,
+) -> Snapshot[Any]:
     """A to-many nested absence test (`m-value-object-016`): empty and absent
     `phones` states are indistinguishable to the algebra —
     the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
@@ -1559,7 +1567,7 @@ def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Databas
 Corpus case: `m-value-object-017`
 
 ```python
-def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapshot[Any]:
+def customer_to_many_any_element_eq_matches_some_element(db: ScopedDatabase) -> Snapshot[Any]:
     """A flat predicate through a `many` segment is ANY-ELEMENT
     (`m-value-object-017`): true iff SOME `phones` element has `type` =
     "home"."""
@@ -1572,7 +1580,7 @@ Corpus case: `m-value-object-019`
 
 ```python
 def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
-    db: Database,
+    db: ScopedDatabase,
 ) -> Snapshot[Any]:
     """A scoped `where` requires ONE element to satisfy the WHOLE compound —
     SAME-element, not the unscoped AND (`m-value-object-019`): Linus's single
@@ -1591,7 +1599,7 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
 Corpus case: `m-value-object-023`
 
 ```python
-def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snapshot[Any]:
+def customer_owner_materializes_its_whole_nested_composite(db: ScopedDatabase) -> Snapshot[Any]:
     """The whole nested composite arrives WITH the owner in ONE round trip
     (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
     positive proof of the getter-navigation contract to arbitrary depth."""
@@ -1603,7 +1611,7 @@ def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snap
 Corpus case: `m-value-object-024`
 
 ```python
-def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Snapshot[Any]:
+def customer_owner_materializes_its_composite_under_a_filter(db: ScopedDatabase) -> Snapshot[Any]:
     """The SAME materialization rides a FILTERED owner read too
     (`m-value-object-024`, the SAME `nestedEq` as
     `customer_nested_eq_city_selects_matching_owners`): materialization is
@@ -1616,7 +1624,7 @@ def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Sn
 Corpus case: `m-value-object-025`
 
 ```python
-def customer_insert_carries_the_whole_address_document(db: Database) -> None:
+def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(
             Customer(
@@ -1642,7 +1650,7 @@ def customer_insert_carries_the_whole_address_document(db: Database) -> None:
 Corpus case: `m-value-object-026`
 
 ```python
-def customer_update_replaces_the_whole_address_document(db: Database) -> None:
+def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Customer(
@@ -1681,7 +1689,7 @@ def customer_update_replaces_the_whole_address_document(db: Database) -> None:
 Corpus case: `m-value-object-027`
 
 ```python
-def customer_update_nulls_the_address_document_out(db: Database) -> None:
+def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Customer(
@@ -1706,7 +1714,7 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
 Corpus case: `m-value-object-028`
 
 ```python
-def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
+def transaction_time_only_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
@@ -1718,7 +1726,7 @@ def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
 Corpus case: `m-value-object-029`
 
 ```python
-def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
+def transaction_time_only_vo_owner_as_of_a_past_instant(db: ScopedDatabase) -> Snapshot[Any]:
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
@@ -1732,7 +1740,7 @@ def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapsho
 Corpus case: `m-value-object-030`
 
 ```python
-def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
@@ -1744,7 +1752,7 @@ def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
 Corpus case: `m-value-object-031`
 
 ```python
-def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
+def bitemporal_vo_owner_as_of_a_past_audit_point(db: ScopedDatabase) -> Snapshot[Any]:
     """An audit read (both axes in the past, `m-value-object-031`)
     reconstructs the ORIGINALLY-believed document, distinct from what the
     system knows (`bitemporal_vo_owner_as_of_latest`)."""
@@ -1761,7 +1769,7 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
 Corpus case: `m-value-object-032`
 
 ```python
-def supplier_transaction_time_only_chain_update_carries_the_document(db: Database) -> None:
+def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Supplier(
@@ -1803,7 +1811,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: Databas
 Corpus case: `m-value-object-033`
 
 ```python
-def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None:
+def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Branch(
@@ -1966,7 +1974,7 @@ class OrderStatus(
     order_item: Rel[OrderItem | None] = rel(reverse_of="statuses")
 
 
-def read_to_one_relationship_states(db: Database) -> tuple[Snapshot[Any], Snapshot[Any]]:
+def read_to_one_relationship_states(db: ScopedDatabase) -> tuple[Snapshot[Any], Snapshot[Any]]:
     """The three runtime states a to-one relationship takes, over one Entity that
     declares both multiplicities. A to-one's multiplicity is its foreign key's
     nullability: ``order_id`` is non-nullable, so ``order`` is 1..1 and every
@@ -2011,7 +2019,7 @@ class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value=
     tendered: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
-def read_a_table_per_hierarchy_family(db: Database) -> Snapshot[Any]:
+def read_a_table_per_hierarchy_family(db: ScopedDatabase) -> Snapshot[Any]:
     """An abstract-root read of a table-per-hierarchy family: every row of the one
     shared table, each materialized as the concrete class its declared tag value
     names. ``type(node)`` is the observation (``python.md`` §4) — a ``CardPayment``
@@ -2048,7 +2056,7 @@ class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
     annotation: Attr[Annotation | None]
 
 
-def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
+def read_a_table_per_concrete_subtype_family(db: ScopedDatabase) -> Snapshot[Any]:
     """The same read over a table-per-concrete-subtype family, whose concretes own
     separate tables and no tag at all: the read unions them, and each row still
     materializes as its own declared concrete class — including one reached
@@ -2064,7 +2072,7 @@ Spec: `python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the s
 The two loops below are the whole difference between a bounded read and an unbounded one, and it is not the `with` block — it is what the body does with each root. Summing as you go keeps the working set at one page plus one root; appending each root to a list reproduces the whole-result retention the stream exists to remove, and `m-snapshot-read` excludes that case on purpose rather than preventing it. Nothing about the stream itself changes: a caller who needs the whole result should call `db.find`, which says so in one word.
 
 ```python
-def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, list[str]]:
+def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[int, list[str]]:
     """A read delivered one root at a time instead of all at once, in both
     namespaces over one query.
 
@@ -2107,7 +2115,7 @@ Spec: `python.md` §4 (a participating delivery) and `m-snapshot-read` *Stabilit
 A delivery is stable per page and no further, so a loop that is both the reader and the writer can move its own roots across the position its next page seeks from — seeing one twice, or never. The escape is in the query rather than in the loop: order by nothing, and the Continuation Order is the primary key, which no write moves. A loop that must order by a mutable member asks the database for the isolation it needs, through `db.transact(..., isolation=...)`.
 
 ```python
-def stream_and_write_inside_one_transaction(db: Database, page: int) -> list[Decimal]:
+def stream_and_write_inside_one_transaction(db: ScopedDatabase, page: int) -> list[Decimal]:
     """A streamed delivery inside a unit of work, writing every root it hands over.
 
     ``tx.stream`` is ``tx.find``'s peer the same way, and what participation adds
@@ -2141,7 +2149,7 @@ def stream_and_write_inside_one_transaction(db: Database, page: int) -> list[Dec
 Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and the concurrent-supersession refusal, each under both concurrency modes) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves (the observed-`in_z` gate a zero-row close raises through).
 
 ```python
-def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
+def render_balance_milestone(db: ScopedDatabase, *, id: int) -> tuple[Balance, Edge]:
     """RENDER time (Transaction-Time-Only): a plain, non-transactional find — the
     displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
@@ -2150,7 +2158,7 @@ def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
 
 
 def submit_balance_edit(
-    db: Database,
+    db: ScopedDatabase,
     *,
     id: int,
     edge: Edge,
@@ -2184,7 +2192,7 @@ def submit_balance_edit(
 Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and the concurrent-supersession refusal, each under both concurrency modes) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
 
 ```python
-def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
+def render_branch_milestone(db: ScopedDatabase, *, id: int) -> tuple[Branch, Edge]:
     """RENDER time (bitemporal): a non-transactional current-rectangle find —
     the displayed rectangle plus its edge on BOTH declared axes (Valid Time and
     Transaction Time)."""
@@ -2193,7 +2201,7 @@ def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
 
 
 def submit_branch_edit(
-    db: Database,
+    db: ScopedDatabase,
     *,
     id: int,
     edge: Edge,
@@ -2419,7 +2427,8 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     the pool that is serving traffic.
     """
     serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
-    db = connect(adapter, serving)
+    database = connect(adapter, serving)
+    db = database.using_database_login()
     before = db.transact(lambda tx: tx.edition)
 
     a = serving.current()
@@ -2456,7 +2465,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     after, nickname = db.transact(name_the_account)
     # The service outlives one update; this story does not, so it closes the
     # handle it opened. An application closes its own at shutdown instead.
-    db.close()
+    database.close()
     return PublishedUpdate(
         before_edition=before,
         statements=delta.statements,
@@ -2484,14 +2493,16 @@ def one_configuration_opens_independent_runtimes(
     each handle owns the one it was given — which is why closing the first below
     leaves the second serving.
     """
-    with connect(adapter, model) as first:
+    with connect(adapter, model) as first_root:
+        first = first_root.using_database_login()
         first_rows = len(account_balances(first))
-        second = connect(adapter, model)
-    with second:
+        second_root = connect(adapter, model)
+    with second_root:
+        second = second_root.using_database_login()
         return RetentionShape(first_rows, len(account_balances(second)))
 
 
-def account_balances(db: Database) -> list[Decimal]:
+def account_balances(db: ScopedDatabase) -> list[Decimal]:
     """One COMPLETE operation: read, materialize, and answer plain values.
 
     Completeness is the point wherever this is called from a worker thread. The
@@ -2509,7 +2520,7 @@ async def pooled_database(
     model: DomainModel,
     *,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
-) -> AsyncGenerator[Database]:
+) -> AsyncGenerator[ScopedDatabase]:
     """The application lifespan: one handle for the process, opened and closed.
 
     This is what an ASGI application passes as ``lifespan=``. Everything before
@@ -2530,14 +2541,14 @@ async def pooled_database(
     the module once and then forks, and a pool created before the fork would
     hand the same sockets to every worker.
     """
-    db = await asyncio.to_thread(connect, adapter, model, lifecycle_provider=lifecycle_provider)
+    root = await asyncio.to_thread(connect, adapter, model, lifecycle_provider=lifecycle_provider)
     try:
-        yield db
+        yield root.using_database_login()
     finally:
-        await asyncio.to_thread(db.close)
+        await asyncio.to_thread(root.close)
 
 
-async def serve_account_balances(db: Database) -> list[Decimal]:
+async def serve_account_balances(db: ScopedDatabase) -> list[Decimal]:
     """An async endpoint's body: offload the WHOLE operation, await the values.
 
     The boundary matters more than the offload. What crosses it is one complete
@@ -2650,7 +2661,8 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
     next page asks for one.
     """
     provider = PoolWatchingProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as db:
+    with connect(adapter, model, lifecycle_provider=provider) as root:
+        db = root.using_database_login()
         watch = provider.watch
         assert watch is not None
         at_rest = watch.read()

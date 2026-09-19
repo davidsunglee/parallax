@@ -131,6 +131,7 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
         "parallax/snapshot/handle/_connection_lifecycle.py",
         "parallax/snapshot/handle/_database.py",
         "parallax/snapshot/handle/_errors.py",
+        "parallax/snapshot/handle/_execution_authority.py",
         "parallax/snapshot/handle/_family.py",
         "parallax/snapshot/handle/_features.py",
         "parallax/snapshot/handle/_keyed_sql.py",

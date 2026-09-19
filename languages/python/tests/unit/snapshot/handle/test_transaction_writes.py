@@ -48,6 +48,7 @@ from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
     Database,
     KeyedWriteValueError,
+    ScopedDatabase,
     Transaction,
     TransactionTimePinReadOnlyError,
     WriteEvidenceError,
@@ -547,9 +548,9 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
         ).result()
         tx.update(fetched.edit(value=Decimal("200.00")), valid_from=valid_from)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head (old) + new tail
 
@@ -566,9 +567,9 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
         ).result()
         tx.terminate(fetched, valid_from=valid_from)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only
 
@@ -590,9 +591,9 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
             until=until,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
 
@@ -616,9 +617,9 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
         # net-zero touch
         tx.update_until(fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=until)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -641,9 +642,9 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
         )
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # never reached the no-op check
 
 
@@ -671,9 +672,9 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
     # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
     # would escape uncaught here rather than silently satisfy this block.
     with raises_contextualized(ValueError, match="naive datetime"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
 
 
 def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does() -> None:
@@ -701,9 +702,9 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
                 until=cast("dt.datetime", "2024-09-01"),
             )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -746,9 +747,9 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
             )
 
     account_db(account).transact(absent_valid_from)
-    Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        absent_until, concurrency="optimistic"
-    )
+    Database.connect(
+        position, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(absent_until, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in account.calls)
     assert not any(isinstance(op, WriteCall) for op in position.calls)
 
@@ -766,9 +767,9 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
         ).result()
         tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head + tail
 
@@ -783,9 +784,9 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
         tx.update(fetched.edit(value=Decimal("200.00")))
 
     with raises_contextualized(ValueError, match="requires valid_from"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
 
 
 def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
@@ -828,9 +829,9 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
         )
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
 
 
 def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
@@ -845,9 +846,9 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
         tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
 
 
 # --------------------------------------------------------------------------- #
@@ -956,7 +957,9 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
         )
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
 
@@ -1045,9 +1048,9 @@ def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
         node = _find_pinned_position(tx, tx_time=LATEST)
         tx.terminate(node, valid_from=_CORRECTION_FROM)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2  # close + head
 
 
@@ -1060,9 +1063,9 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
         node = _find_pinned_position(tx, valid_time=_VALID_PIN)
         tx.terminate(node, valid_from=_CORRECTION_FROM)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2  # close + head
 
 
@@ -1082,9 +1085,9 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
     ):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any buffering
 
 
@@ -1104,7 +1107,9 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
         tx.delete(_Elsewhere(id=1))
 
     with raises_contextualized(TypeError, match="_Elsewhere is not an Entity Class of this model"):
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
 
 
 # Two DISTINCT classes may legitimately declare the same Entity Identity in two
@@ -1196,7 +1201,9 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
         tx.update(new_account().edit(balance=Decimal("9.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert refusal.value.identity == mm.Account.identity
     assert "tx.insert(...)" in refusal.value.message
@@ -1463,7 +1470,9 @@ def test_an_insert_after_a_terminate_until_of_a_pending_insert_opens_the_row_aga
         tx.terminate_until(fresh, valid_from=valid_from, until=until)
         tx.insert(fresh, valid_from=opened_from)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
     assert writes[0].sql.startswith("insert into")
@@ -1487,7 +1496,9 @@ def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused(
         tx.insert(fresh, valid_from=opened_from)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
@@ -1525,7 +1536,9 @@ def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb
             tx.update(foreign.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-foreign-lifecycle"
 
 
@@ -1567,7 +1580,9 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
         tx.update(unkeyed)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
 
@@ -1582,7 +1597,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
 # --------------------------------------------------------------------------- #
 def _person_read_outside_the_writing_transaction(
     port: ScriptedAdapter, *, second_handle: bool
-) -> tuple[Database, Person]:
+) -> tuple[ScopedDatabase, Person]:
     """A `Person` a managed read produced, plus the `Database` that will write it.
 
     ``second_handle`` reads through a DIFFERENT `Database` over the same port;

@@ -33,6 +33,7 @@ __all__ = [
     "Omitted",
     "check_max_retries",
     "check_retry_optimistic_conflicts",
+    "patch_options",
 ]
 
 
@@ -112,3 +113,41 @@ class DatabaseOptions:
             check_retry_optimistic_conflicts(self.retry_optimistic_conflicts),
         )
         object.__setattr__(self, "isolation", isolation_level(self.isolation))
+
+
+def patch_options(
+    options: DatabaseOptions,
+    *,
+    max_retries: int | Omitted = OMITTED,
+    concurrency: Concurrency | Omitted = OMITTED,
+    retry_optimistic_conflicts: bool | Omitted = OMITTED,
+    isolation: IsolationLevel | Omitted = OMITTED,
+) -> DatabaseOptions:
+    """Apply one partial option patch, reusing ``options`` when unchanged."""
+    bound = (
+        options.max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
+    )
+    preference = (
+        options.concurrency
+        if isinstance(concurrency, Omitted)
+        else concurrency_preference(concurrency)
+    )
+    opt_in = (
+        options.retry_optimistic_conflicts
+        if isinstance(retry_optimistic_conflicts, Omitted)
+        else check_retry_optimistic_conflicts(retry_optimistic_conflicts)
+    )
+    level = options.isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
+    if (
+        bound == options.max_retries
+        and preference == options.concurrency
+        and opt_in == options.retry_optimistic_conflicts
+        and level == options.isolation
+    ):
+        return options
+    return DatabaseOptions(
+        max_retries=bound,
+        concurrency=preference,
+        retry_optimistic_conflicts=opt_in,
+        isolation=level,
+    )

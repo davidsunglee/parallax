@@ -507,10 +507,10 @@ def test_database_transactions_share_read_plans_across_connections(
     }
     adapter = ScriptedAdapter(Transact(Read(rows=[row])), Transact(Read(rows=[row])))
 
-    with db_for(ORDERS_MODEL, adapter) as database:
-        query = Order.where(Order.id == 1)
-        database.transact(lambda transaction: transaction.find(query).result())
-        database.transact(lambda transaction: transaction.find(query).result())
+    database = db_for(ORDERS_MODEL, adapter)
+    query = Order.where(Order.id == 1)
+    database.transact(lambda transaction: transaction.find(query).result())
+    database.transact(lambda transaction: transaction.find(query).result())
 
     assert adapter.acquisitions == 2
     assert compiled == 1
@@ -546,7 +546,8 @@ def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_pl
         adapter,
         ORDERS_MODEL,
         read_plan_cache_capacity=capacity,
-    ) as database:
+    ) as root:
+        database = root.using_database_login()
         database.find(Order.where(Order.id == 1)).result()
         database.find(Order.where(Order.id == 1)).result()
 

@@ -52,7 +52,9 @@ class _BlockingExecution:
         self.closed = False
 
     @property
-    def database(self) -> handle.Database:  # pragma: no cover - never reached; see the docstring
+    def database(
+        self,
+    ) -> handle.ScopedDatabase:  # pragma: no cover - never reached; see the docstring
         raise AssertionError("these pins never run a group through this execution")
 
     @property

@@ -47,7 +47,12 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import DatabaseOptions
-from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
+from parallax.snapshot.handle import (
+    Database,
+    ScopedDatabase,
+    Transaction,
+    TransactionOptionConflictError,
+)
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, body_outcome
 
@@ -226,8 +231,8 @@ def _faulted(
     return fault_injecting_adapter(adapter, fault=fault, persistent=persistent)
 
 
-def _db(adapter: DatabaseAdapter[Any]) -> Database:
-    return Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
+def _db(adapter: DatabaseAdapter[Any]) -> ScopedDatabase:
+    return Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED)).using_database_login()
 
 
 def _context(runtime: Any) -> Any:
@@ -312,6 +317,43 @@ def test_a_join_without_the_owning_database_is_refused() -> None:
 
     with raises_contextualized(AssertionError, match="needs the Database that opened the boundary"):
         _db(port).transact(fn)
+
+
+def test_a_qualified_join_without_an_authority_scope_selector_is_refused() -> None:
+    port = _FakePort(rows=[])
+    db = _db(port)
+    steps = [
+        boundary_runner.BoundaryStep("join", {}, case_format.DatabaseLoginSelection()),
+    ]
+
+    def fn(tx: Transaction) -> Any:
+        return boundary_runner.run_boundary_actions(tx, steps, database=db)
+
+    with raises_contextualized(AssertionError, match="needs an authority scope selector"):
+        db.transact(fn)
+
+
+def test_a_qualified_join_uses_the_independently_selected_scope() -> None:
+    port = _FakePort(rows=[])
+    db = _db(port)
+    selection = case_format.DatabaseLoginSelection()
+    steps = [
+        boundary_runner.BoundaryStep("join", {}, selection),
+        boundary_runner.BoundaryStep("create", {}),
+    ]
+    selected: list[case_format.ActorSelection] = []
+
+    def scope_for(actor: case_format.ActorSelection) -> ScopedDatabase:
+        selected.append(actor)
+        return db
+
+    def fn(tx: Transaction) -> Any:
+        return boundary_runner.run_boundary_actions(tx, steps, database=db, scope_for=scope_for)
+
+    result = db.transact(fn)
+    assert result is not None
+    assert result.id == 90
+    assert selected == [selection]
 
 
 def test_run_boundary_actions_create() -> None:
@@ -639,7 +681,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
         _ACCOUNT,
         options=case_format.database_options(case),
         clock=FixedClock(_FIXED),
-    )
+    ).using_database_login()
     steps = boundary_runner.boundary_steps(case)
     requests = case_format.transaction_keywords(case)
 

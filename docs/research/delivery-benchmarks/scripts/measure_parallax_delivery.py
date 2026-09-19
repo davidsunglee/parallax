@@ -41,7 +41,7 @@ from parallax.core.db_port import (  # noqa: E402
 from parallax.core.dialect import POSTGRES, Dialect  # noqa: E402
 from parallax.core.entity._model import model_of  # noqa: E402
 from parallax.snapshot import connect  # noqa: E402
-from parallax.snapshot.handle import Database  # noqa: E402
+from parallax.snapshot.handle import Database, ScopedDatabase  # noqa: E402
 from tests._support.db_port import projected_row  # noqa: E402
 from tests._support.mirrored_models import (  # noqa: E402
     DOCUMENT_LAYOUT_MODEL,
@@ -230,7 +230,7 @@ class GeneratingPort:
 @dataclass(frozen=True)
 class Workload:
     name: str
-    database: Database
+    database: ScopedDatabase
     query: Any
     reset: Callable[[], None]
     roots: int = ROOTS
@@ -464,7 +464,8 @@ def _measure_workloads(provider: str, workloads: Sequence[Workload], repeats: in
 @contextmanager
 def _provider_free() -> Any:
     port = GeneratingPort(ROOTS)
-    database = Database(_Runtime(port), ORDERS_MODEL)
+    root = Database(_Runtime(port), ORDERS_MODEL)
+    database = root.using_database_login()
     try:
         yield (
             Workload(
@@ -481,7 +482,7 @@ def _provider_free() -> Any:
             ),
         )
     finally:
-        database.close()
+        root.close()
 
 
 def _live_workloads(run: Any) -> tuple[list[Reading], list[Contributor]]:
@@ -489,7 +490,8 @@ def _live_workloads(run: Any) -> tuple[list[Reading], list[Contributor]]:
     contributors: list[Contributor] = []
 
     run.reset(model_of(ORDERS_MODEL), _orders_fixtures())
-    with connect(run.port, ORDERS_MODEL) as database:
+    with connect(run.port, ORDERS_MODEL) as root:
+        database = root.using_database_login()
         workloads = (
             Workload(
                 "conventional-fanout",
@@ -511,7 +513,8 @@ def _live_workloads(run: Any) -> tuple[list[Reading], list[Contributor]]:
         contributors.extend(new_contributors)
 
     run.reset(model_of(DOCUMENT_LAYOUT_MODEL), _document_fixtures())
-    with connect(run.port, DOCUMENT_LAYOUT_MODEL) as database:
+    with connect(run.port, DOCUMENT_LAYOUT_MODEL) as root:
+        database = root.using_database_login()
         workloads = (
             Workload(
                 "document-heavy",
@@ -533,7 +536,8 @@ def _live_workloads(run: Any) -> tuple[list[Reading], list[Contributor]]:
         contributors.extend(new_contributors)
 
     run.reset(model_of(POSITION_MODEL), _position_fixtures())
-    with connect(run.port, POSITION_MODEL) as database:
+    with connect(run.port, POSITION_MODEL) as root:
+        database = root.using_database_login()
         workload = Workload(
             "bitemporal-current",
             database,

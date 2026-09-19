@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
@@ -42,23 +43,28 @@ from parallax.core.db_port import (
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
+    DatabaseLoginActor,
     EscapedTransactionError,
     FixedClock,
     MissingTargetError,
     OptimisticLockConflictError,
     RollbackOnlyError,
     StaleWriteError,
+    SubjectActor,
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
     WriteBatchTrigger,
     WritePlan,
+    WritePlanner,
     run_unit_of_work,
 )
 from parallax.snapshot import DatabaseOptions, ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,
+    ScopedDatabase,
     Transaction,
+    TransactionAuthorityError,
     TransactionOptionConflictError,
     TransactionOwnershipError,
     TransactionRollbackError,
@@ -153,7 +159,140 @@ def _must_not_run(_tx: Transaction) -> None:  # pragma: no cover - conflict fore
     raise AssertionError("the joined closure must not run on an option conflict")
 
 
-_CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
+@dataclass(frozen=True, slots=True)
+class _Authorization:
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Principal:
+    subject: str
+    database_authorization: _Authorization
+
+
+def test_independently_captured_equal_principal_authority_joins_by_value() -> None:
+    port = ScriptedAdapter(Transact())
+    root = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    first = root.using_principal(_Principal("alice", _Authorization("role-a")))
+    second = root.using_principal(_Principal("alice", _Authorization("role-a")))
+
+    def outer(tx: Transaction) -> tuple[bool, str]:
+        return second.transact(lambda joined: (joined is tx, "joined"))
+
+    assert first.transact(outer) == (True, "joined")
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+@pytest.mark.parametrize(
+    "joining",
+    [
+        _Principal("bob", _Authorization("role-a")),
+        _Principal("alice", _Authorization("role-b")),
+        None,
+    ],
+)
+def test_authority_mismatch_refuses_before_the_joining_body_and_leaves_outer_usable(
+    joining: _Principal | None,
+) -> None:
+    port = ScriptedAdapter(Transact())
+    root = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    owner = root.using_principal(_Principal("alice", _Authorization("role-a")))
+    other = root.using_database_login() if joining is None else root.using_principal(joining)
+    ran: list[bool] = []
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionAuthorityError) as refused:
+            other.transact(lambda _joined: ran.append(True))
+        assert refused.value.code == "transaction-authority-mismatch"
+        return "survived"
+
+    assert owner.transact(outer) == "survived"
+    assert ran == []
+    assert port.calls == [BeginCall(), CommitCall()]
+
+
+def test_root_aliases_share_ownership_while_unrelated_roots_do_not() -> None:
+    port = ScriptedAdapter(Transact())
+    root = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    alias = root.with_options(max_retries=3)
+    owner = root.using_database_login()
+    joining_alias = alias.using_database_login()
+    foreign_root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    foreign = foreign_root.using_database_login()
+
+    def outer(tx: Transaction) -> str:
+        assert joining_alias.transact(lambda joined: joined is tx)
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run)
+        return "survived"
+
+    assert owner.transact(outer) == "survived"
+
+
+def test_join_refusal_precedence_is_ownership_then_rollback_authority_then_options() -> None:
+    port = ScriptedAdapter(Transact())
+    root = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    owner = root.using_principal(_Principal("alice", _Authorization("role-a")))
+    mismatched = root.using_principal(_Principal("bob", _Authorization("role-b")))
+    foreign_root = Database.connect(ScriptedAdapter(), ACCOUNT, clock=FixedClock(FIXED))
+    foreign = foreign_root.using_database_login()
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionAuthorityError):
+            mismatched.transact(_must_not_run, max_retries=3)
+        with pytest.raises(RuntimeError, match="inner failure"):
+            owner.transact(_raise_inner)
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run, max_retries=3)
+        with pytest.raises(RollbackOnlyError) as rollback_only:
+            mismatched.transact(_must_not_run, max_retries=3)
+        assert isinstance(rollback_only.value.__cause__, RuntimeError)
+        return "withheld"
+
+    with raises_contextualized(RollbackOnlyError) as refused_commit:
+        owner.transact(outer)
+    assert isinstance(refused_commit.value.__cause__, RuntimeError)
+    assert port.calls == [BeginCall(), RollbackCall()]
+
+
+@pytest.mark.parametrize(
+    ("mode", "actor_type", "value"),
+    [
+        ("principal", SubjectActor, "alice"),
+        ("login", DatabaseLoginActor, "test-login"),
+    ],
+)
+def test_write_planning_receives_the_original_captured_actor(
+    mode: str,
+    actor_type: type[SubjectActor] | type[DatabaseLoginActor],
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[SubjectActor | DatabaseLoginActor] = []
+    finalize = WritePlanner.finalize
+
+    def recording(self: WritePlanner, request: Any) -> Any:
+        seen.append(request.actor_identity)
+        return finalize(self, request)
+
+    monkeypatch.setattr(WritePlanner, "finalize", recording)
+    port = ScriptedAdapter(Transact(Write()))
+    root = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    scoped = (
+        root.using_principal(_Principal("alice", _Authorization("role-a")))
+        if mode == "principal"
+        else root.using_database_login()
+    )
+    captured_actor = cast("Any", scoped)._capture.actor
+
+    scoped.transact(lambda tx: tx.insert(new_account()))
+
+    assert seen == [captured_actor]
+    assert isinstance(seen[0], actor_type)
+    assert seen[0].value == value
+
+
+_CONFLICTING_JOINS: list[tuple[str, Callable[[ScopedDatabase], object]]] = [
     ("max_retries", lambda db: db.transact(_must_not_run, max_retries=3)),
     ("concurrency", lambda db: db.transact(_must_not_run, concurrency="locking")),
     (
@@ -168,7 +307,7 @@ _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
 
 @pytest.mark.parametrize(("option", "join"), _CONFLICTING_JOINS)
 def test_join_with_a_conflicting_explicit_option_raises(
-    option: str, join: Callable[[Database], object]
+    option: str, join: Callable[[ScopedDatabase], object]
 ) -> None:
     port = ScriptedAdapter(Transact())
     db = account_db(port)
@@ -415,8 +554,8 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
 
 def test_the_ownership_refusal_reaches_no_adapter() -> None:
     port = ScriptedAdapter(Transact())
-    owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
-    foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
+    foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
 
     def outer(_tx: Transaction) -> str:
         # The boundary's script holds no statement, so returning at all is the
@@ -644,7 +783,9 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     port = ScriptedAdapter(Transact(begin=never_began))
     serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
     with raises_contextualized(DatabaseError) as excinfo:
-        Database.connect(port, serving, clock=FixedClock(FIXED)).transact(_must_not_run_callback)
+        Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login().transact(
+            _must_not_run_callback
+        )
     assert excinfo.value is never_began
     assert excinfo.edition == "adopted-before-begin"
     assert port.calls.count(BeginCall()) == 1
@@ -712,8 +853,8 @@ _A = prepare_model(ACCOUNT, edition="a")
 _B = prepare_model(ACCOUNT, edition="b")
 
 
-def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> Database:
-    return Database.connect(port, serving, clock=FixedClock(FIXED))
+def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> ScopedDatabase:
+    return Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login()
 
 
 def test_a_static_connection_reports_one_edition_across_attempts_and_invocations() -> None:
@@ -1056,8 +1197,10 @@ _CONFIGURED = DatabaseOptions(
 )
 
 
-def _configured_db(port: DatabaseAdapter, options: DatabaseOptions = _CONFIGURED) -> Database:
-    return Database.connect(port, ACCOUNT, options=options, clock=FixedClock(FIXED))
+def _configured_db(port: DatabaseAdapter, options: DatabaseOptions = _CONFIGURED) -> ScopedDatabase:
+    return Database.connect(
+        port, ACCOUNT, options=options, clock=FixedClock(FIXED)
+    ).using_database_login()
 
 
 def test_an_unconfigured_root_resolves_the_built_in_record() -> None:

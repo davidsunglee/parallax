@@ -429,8 +429,10 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
 
 def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
     port = QueuePort([[{"id": 1}]])
-    result = handle.Database.connect(port, _PROFILE_OWNER_MODEL).read_rows(
-        object_query_node(ProfileOwner.where(ProfileOwner.id == 1))
+    result = (
+        handle.Database.connect(port, _PROFILE_OWNER_MODEL)
+        .using_database_login()
+        .read_rows(object_query_node(ProfileOwner.where(ProfileOwner.id == 1)))
     )
     assert result.rows == ({"id": 1},)
     assert len(port.executed) == 1
@@ -823,7 +825,7 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     # RuntimeError and why it names neither the query nor the model. Preflight
     # resolves the target before anything else, so the port is never touched:
     # A refusing port raises on any read or write.
-    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT).using_database_login()
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
@@ -834,7 +836,7 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     # not built yet, so the refusal names the Feature rather than calling the
     # query wrong. A refusing port raises on any read or write: classification runs
     # before SQL generation, connection acquisition, and adapter access alike.
-    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL).using_database_login()
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -850,7 +852,7 @@ def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
     # deep-fetch executor has always served. The root level comes back empty, so
     # the child level short-circuits and one statement is the whole execution.
     port = QueuePort([[]])
-    db = handle.Database.connect(port, POLICY_MODEL)
+    db = handle.Database.connect(port, POLICY_MODEL).using_database_login()
     query = (
         Policy.where(Policy.all).as_of(valid_time=LATEST, tx_time=LATEST).include(Policy.coverages)
     )
@@ -862,7 +864,7 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
     # Ordering and a cap are siblings of the two clauses the deferral is read
     # off, so neither can stand between them: a deferral is a property of the
     # read, never of how its rows are shaped afterwards.
-    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL).using_database_login()
     query = (
         Policy.where(Policy.all)
         .history(TX_TIME)
@@ -881,7 +883,7 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     # step 3, so the connected model's inability to answer at all is what
     # surfaces — a deferral result is never exposed for a query the model does
     # not even declare a target for.
-    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT).using_database_login()
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -926,7 +928,7 @@ def test_every_execution_reads_the_querys_own_canonical_node(
 
     monkeypatch.setattr(_read_scope, "object_query_node", recording)
     query = mm.Person.where(mm.Person.id == 1)
-    db = handle.Database.connect(QueuePort([[], []]), PERSON)
+    db = handle.Database.connect(QueuePort([[], []]), PERSON).using_database_login()
     db.find(query)
     db.find(query)
     first, second = nodes
@@ -943,7 +945,7 @@ def test_a_native_columns_leaf_is_preserved_without_host_reclassification() -> N
     # the cell. The fake can bypass that boundary, but materialization does not
     # reinterpret the value as fresh Wire or Pydantic input.
     port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
-    db = handle.Database.connect(port, ACCOUNT)
+    db = handle.Database.connect(port, ACCOUNT).using_database_login()
     root = db.find(mm.Account.where(mm.Account.id == 1)).checked().result()
     assert isinstance(root, mm.Account)
     assert root.balance == "not-a-decimal"
@@ -954,7 +956,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     # The counterpart the single translation exists to keep separate: a refusal
     # raised before any graph was being built is never re-classified as a
     # materialization failure.
-    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT).using_database_login()
     with pytest.raises(QueryTargetError):
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
@@ -964,7 +966,7 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
     # classification answers it in band. A default accessor still refuses — with
     # the invalid-data report, never with a materialization failure.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])
-    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL).using_database_login()
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     with pytest.raises(InvalidDataError) as refusal:
         snapshot.result()
@@ -982,14 +984,14 @@ def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization()
 
 def test_the_values_lane_preserves_a_provider_normalized_native_key() -> None:
     port = QueuePort([[{"id": None, "name": "Ada"}]])
-    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL).using_database_login()
     (row,) = db.read_rows(deserialize_query({"target": "Customer", "predicate": {"all": {}}})).rows
     assert row == {"id": None, "name": "Ada"}
 
 
 def test_the_values_lane_trusts_each_native_scalar_row() -> None:
     port = QueuePort([[{"id": 1, "name": "Ada"}, {"id": 2, "name": None}]])
-    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL).using_database_login()
     first, second = db.read_rows(
         deserialize_query({"target": "Customer", "predicate": {"all": {}}})
     ).rows
@@ -1022,7 +1024,7 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
             ]
         ]
     )
-    db = handle.Database.connect(port, read_models.BALANCE_MODEL)
+    db = handle.Database.connect(port, read_models.BALANCE_MODEL).using_database_login()
     with raises_contextualized(SnapshotMaterializationError) as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
     assert refusal.value.code == "snapshot-materialization-failed"
@@ -1526,7 +1528,7 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
         Read(rows=[NEW_ROW]),
         Transact(Read(rows=[NEW_ROW])),
     )
-    db = handle.Database.connect(port, serving)
+    db = handle.Database.connect(port, serving).using_database_login()
 
     found = db.find(_account_query())
     wired = db.wire.find(_account_node())
@@ -1558,7 +1560,7 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     port = ScriptedAdapter(
         Read(rows=[{"id": 1, "name": "Ada", "address": {"city": 7}}]), Transact()
     )
-    db = handle.Database.connect(port, serving)
+    db = handle.Database.connect(port, serving).using_database_login()
 
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
     serving.publish(b, expected=a)

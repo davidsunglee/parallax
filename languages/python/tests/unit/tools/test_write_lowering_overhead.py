@@ -305,15 +305,12 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
         buffered.clear()
         marks: list[str] = []
         handle = acquisition_support.database(case)
-        try:
-            acquisition_support.acquire(
-                handle,
-                case,
-                opened=lambda marks=marks: marks.append("opened"),
-                closed=lambda marks=marks: marks.append("closed"),
-            )
-        finally:
-            handle.close()
+        acquisition_support.acquire(
+            handle,
+            case,
+            opened=lambda marks=marks: marks.append("opened"),
+            closed=lambda marks=marks: marks.append("closed"),
+        )
         assert marks == ["opened", "closed"]
         assert _CountingPort.reads == 1
         assert _CountingPort.delivered == case.rows

@@ -341,7 +341,8 @@ def run_scenario(
     observation = lifecycle.observation()
     with handle.Database.connect(
         port, serving, options=context.options, lifecycle_provider=observation.provider
-    ) as db:
+    ) as _root_db:
+        db = _root_db.using_database_login()
         emissions: list[Emission] = []
         round_trips = 0
         results: list[_ScenarioStepResult] = []

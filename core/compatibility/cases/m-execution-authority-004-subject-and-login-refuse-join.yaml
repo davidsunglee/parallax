@@ -5,7 +5,7 @@
 # observable: pre-body refusal leaves the earlier read as the only database call,
 # while a late authority check would execute a second call and fail the oracle.
 model: models/account.yaml
-tags: [m-execution-authority, m-unit-work, m-db-port, m-api-conformance, authority, join]
+tags: [slice-snapshot-1, m-execution-authority, m-unit-work, m-db-port, m-api-conformance, authority, join]
 lane: api-conformance
 shape: boundary
 compileEligibility:

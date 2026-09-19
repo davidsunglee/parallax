@@ -417,7 +417,7 @@ def test_closing_the_composed_handle_retires_the_dedicated_session() -> None:
     connection = _FakeConnection()
     execution = _execution(connection)
 
-    execution.database.close()
+    execution.close()
 
     assert connection.closes == 1
 

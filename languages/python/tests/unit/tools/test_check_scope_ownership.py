@@ -658,6 +658,42 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
     ]
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "from parallax.snapshot.handle import _database",
+        "from parallax.snapshot.handle._read_scope import ReadScope",
+    ],
+)
+def test_execution_authority_seal_refuses_parent_and_sibling_imports(
+    statement: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relative = "parallax-snapshot/src/parallax/snapshot/handle/_execution_authority.py"
+    source = tmp_path / relative
+    source.parent.mkdir(parents=True)
+    source.write_text(f"{statement}\n")
+    monkeypatch.setattr(own, "PACKAGES", tmp_path)
+
+    findings = own.imports_escaping_a_sealed_child_row([relative])
+    assert len(findings) == 1
+    assert "_execution_authority.py" in findings[0]
+
+
+def test_execution_authority_seal_allows_its_declared_core_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    relative = "parallax-snapshot/src/parallax/snapshot/handle/_execution_authority.py"
+    source = tmp_path / relative
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "from parallax.core.db_port import DatabaseRuntime\n"
+        "from parallax.core.unit_work import SubjectActor\n"
+    )
+    monkeypatch.setattr(own, "PACKAGES", tmp_path)
+
+    assert own.imports_escaping_a_sealed_child_row([relative]) == []
+
+
 # --------------------------------------------------------------------------
 # Canary 6: an exemption that no longer describes the tree.
 # --------------------------------------------------------------------------

@@ -751,9 +751,10 @@ class PostgresInterleavedExecution:
         # configuration is opened, and one that fails after opening closes the
         # runtime it was handed — which is what retires this session, since the
         # runtime owns it.
-        self._database = handle.Database.connect(
+        self._root = handle.Database.connect(
             adapter, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
         )
+        self._database = self._root.using_database_login()
         runtime = adapter.opened
         if runtime is None:  # pragma: no cover - a composed Database opened its runtime
             raise RuntimeError("a controlled Database composed no runtime")
@@ -787,7 +788,7 @@ class PostgresInterleavedExecution:
         return True
 
     @property
-    def database(self) -> handle.Database:
+    def database(self) -> handle.ScopedDatabase:
         return self._database
 
     @property
@@ -886,7 +887,7 @@ class PostgresInterleavedExecution:
         teardown backstop rather than being forgotten while alive.
         """
         with contextlib.suppress(Exception):
-            self._database.close()
+            self._root.close()
         with contextlib.suppress(Exception):
             self._runtime.close()
         self._runtime.report_retirement_to(self._report_release)

@@ -59,7 +59,7 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
+from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, SnapshotMaterializationError
 from parallax.snapshot.handle import _read as read_module
 from parallax.snapshot.handle import _read_plan as read_plan_module
 from parallax.snapshot.handle import _read_scope as read_scope_module
@@ -99,8 +99,10 @@ class _StaticTarget:
 ACCOUNT_TARGET: Final = _StaticTarget()
 
 
-def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> Database:
-    return connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
+    return connect(
+        adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
@@ -509,7 +511,7 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
         monkeypatch.setattr(activity_module, name, counting)
 
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
+    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
     assert constructed == []
@@ -708,7 +710,7 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     compilations = _recorded_compilations(monkeypatch)
 
     port = _ReturningPort(Read(rows=[NEW_ROW]))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
+    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
 
@@ -735,8 +737,10 @@ def test_a_standalone_reads_started_event_carries_the_edition_it_adopted() -> No
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    snapshot = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder).find(
-        mm.Account.where(mm.Account.id == 7)
+    snapshot = (
+        connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+        .using_database_login()
+        .find(mm.Account.where(mm.Account.id == 7))
     )
 
     (root,) = recorder.roots
@@ -751,7 +755,9 @@ def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> 
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
-    db = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+    db = connect(
+        port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder
+    ).using_database_login()
 
     db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result())
 

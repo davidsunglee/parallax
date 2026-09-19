@@ -79,13 +79,15 @@ def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
     explicit ``close`` are the same call, and a handle that gets neither holds a
     pool and its maintenance threads for the life of the process.
     """
-    with connect(adapter, model) as scoped:
+    with connect(adapter, model) as scoped_root:
+        scoped = scoped_root.using_database_login()
         scoped_rows = len(account_balances(scoped))
-    explicit = connect(adapter, serving)
+    explicit_root = connect(adapter, serving)
+    explicit = explicit_root.using_database_login()
     try:
         explicit_rows = len(account_balances(explicit))
     finally:
-        explicit.close()
+        explicit_root.close()
     return ClosedBothWays(scoped_rows, explicit_rows)
 ```
 
@@ -106,14 +108,16 @@ def one_configuration_opens_independent_runtimes(
     each handle owns the one it was given — which is why closing the first below
     leaves the second serving.
     """
-    with connect(adapter, model) as first:
+    with connect(adapter, model) as first_root:
+        first = first_root.using_database_login()
         first_rows = len(account_balances(first))
-        second = connect(adapter, model)
-    with second:
+        second_root = connect(adapter, model)
+    with second_root:
+        second = second_root.using_database_login()
         return RetentionShape(first_rows, len(account_balances(second)))
 
 
-def account_balances(db: Database) -> list[Decimal]:
+def account_balances(db: ScopedDatabase) -> list[Decimal]:
     """One COMPLETE operation: read, materialize, and answer plain values.
 
     Completeness is the point wherever this is called from a worker thread. The
@@ -243,7 +247,7 @@ async def pooled_database(
     model: DomainModel,
     *,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
-) -> AsyncGenerator[Database]:
+) -> AsyncGenerator[ScopedDatabase]:
     """The application lifespan: one handle for the process, opened and closed.
 
     This is what an ASGI application passes as ``lifespan=``. Everything before
@@ -264,14 +268,14 @@ async def pooled_database(
     the module once and then forks, and a pool created before the fork would
     hand the same sockets to every worker.
     """
-    db = await asyncio.to_thread(connect, adapter, model, lifecycle_provider=lifecycle_provider)
+    root = await asyncio.to_thread(connect, adapter, model, lifecycle_provider=lifecycle_provider)
     try:
-        yield db
+        yield root.using_database_login()
     finally:
-        await asyncio.to_thread(db.close)
+        await asyncio.to_thread(root.close)
 
 
-async def serve_account_balances(db: Database) -> list[Decimal]:
+async def serve_account_balances(db: ScopedDatabase) -> list[Decimal]:
     """An async endpoint's body: offload the WHOLE operation, await the values.
 
     The boundary matters more than the offload. What crosses it is one complete
@@ -435,7 +439,8 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
     next page asks for one.
     """
     provider = PoolWatchingProvider()
-    with connect(adapter, model, lifecycle_provider=provider) as db:
+    with connect(adapter, model, lifecycle_provider=provider) as root:
+        db = root.using_database_login()
         watch = provider.watch
         assert watch is not None
         at_rest = watch.read()

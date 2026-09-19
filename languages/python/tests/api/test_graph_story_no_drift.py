@@ -59,6 +59,7 @@ from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import is_view_loaded
 from parallax.snapshot.handle import (
     Database,
+    ScopedDatabase,
     Snapshot,
     Transaction,
     TransactionTimePinReadOnlyError,
@@ -304,22 +305,26 @@ def _assert_wire_binds(case_id: str, port: _CannedPort) -> None:
         compare_binds(emitted, golden)
 
 
-def _port_for(run: Callable[[Database], Any], responses: Sequence[list[MappingRow]]) -> _CannedPort:
+def _port_for(
+    run: Callable[[ScopedDatabase], Any], responses: Sequence[list[MappingRow]]
+) -> _CannedPort:
     return (_WritingCannedPort if run in _WRITING_STORIES else _CannedPort)(responses)
 
 
-def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> Database:
+def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> ScopedDatabase:
     # A story's clock is a FACTORY precisely so this consumer drives its own
     # script rather than one `test_story_run.py` already advanced.
     clock = story.clock() if story.clock is not None else None
-    return Database.connect(port, MODELS[story.model], clock=clock)
+    return Database.connect(port, MODELS[story.model], clock=clock).using_database_login()
 
 
-def _db(story: graph_stories.GraphStory, responses: Sequence[list[MappingRow]] = ()) -> Database:
+def _db(
+    story: graph_stories.GraphStory, responses: Sequence[list[MappingRow]] = ()
+) -> ScopedDatabase:
     return _connect(story, _port_for(story.run, responses))
 
 
-def _responses_for(run: Callable[[Database], Any]) -> list[list[MappingRow]]:
+def _responses_for(run: Callable[[ScopedDatabase], Any]) -> list[list[MappingRow]]:
     """Canned reads for the stories whose bodies dereference a result — every
     other story's empty root level legally short-circuits the rest.
 
@@ -401,7 +406,9 @@ def test_the_to_one_composition_story_keeps_the_view_across_the_committed_write(
     # produced, never the one the write buffered.
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_to_one_view]
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot, loaded_order, _reread = story.run(Database.connect(port, MODELS[story.model]))
+    snapshot, loaded_order, _reread = story.run(
+        Database.connect(port, MODELS[story.model]).using_database_login()
+    )
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
     assert snapshot.result().order is loaded_order
     assert loaded_order.name == "Ada"
@@ -415,7 +422,7 @@ def test_the_loaded_empty_composition_story_keeps_an_empty_view_across_its_inser
     # absent.
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_a_loaded_empty_relationship_view]
     port = _WritingCannedPort(_responses_for(story.run))
-    snapshot = story.run(Database.connect(port, MODELS[story.model]))
+    snapshot = story.run(Database.connect(port, MODELS[story.model]).using_database_login())
     order = snapshot.result()
     assert [(sql, binds) for sql, binds in port.writes] == [
         (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
@@ -431,7 +438,7 @@ def test_the_unloaded_composition_story_keeps_an_absent_view_across_its_insert()
     # halves of the distinction, differing only in the include the read declared.
     story = _STORIES_BY_RUN[graph_stories.a_write_keeps_an_unloaded_relationship_absent]
     port = _WritingCannedPort(_responses_for(story.run))
-    order = story.run(Database.connect(port, MODELS[story.model])).result()
+    order = story.run(Database.connect(port, MODELS[story.model]).using_database_login()).result()
     assert [(sql, binds) for sql, binds in port.writes] == [
         (_ORDER_ITEM_INSERT, [31, 3, "C-300", 7])
     ]
@@ -562,7 +569,7 @@ class _RecordingTransaction:
         return getattr(self._tx, name)
 
 
-class _RecordingDatabase(Database):
+class _RecordingDatabase(ScopedDatabase):
     """The shipped handle, recording the Object Query each ``find`` receives.
 
     A scenario step's query is a local inside the story's own body, so reading it
@@ -575,7 +582,7 @@ class _RecordingDatabase(Database):
     authored step.
     """
 
-    __slots__ = ("_group_finds", "queries")
+    __slots__ = ("_group_finds", "_root", "queries")
 
     def __init__(
         self,
@@ -585,9 +592,15 @@ class _RecordingDatabase(Database):
         clock: Clock | None = None,
         group_finds: bool = False,
     ) -> None:
-        super().__init__(adapter.open(), model, clock=clock)
-        self.queries: list[ObjectQuery[Any, Any]] = []
-        self._group_finds = group_finds
+        root = Database(adapter.open(), model, clock=clock)
+        scoped = cast("Any", root.using_database_login())
+        object.__setattr__(self, "_transaction_runner", scoped._transaction_runner)
+        object.__setattr__(self, "_capture", scoped._capture)
+        object.__setattr__(self, "_options", scoped._options)
+        object.__setattr__(self, "_reads", scoped._reads)
+        object.__setattr__(self, "_root", root)
+        object.__setattr__(self, "queries", [])
+        object.__setattr__(self, "_group_finds", group_finds)
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         self.queries.append(query)
@@ -719,7 +732,9 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     # this Docker-free driver exactly like a registered story does. The canned
     # port's `execute_write` refuses outright, so reaching the raise at all is
     # also the proof that the verb rejects the value before buffering any DML.
-    db = Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
+    db = Database.connect(
+        _TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"]
+    ).using_database_login()
     with raises_contextualized(
         TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
     ):
@@ -732,5 +747,5 @@ def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> No
     # counted toward any case's exercised status — see `graph_stories`'s own
     # module docstring), but its body still needs a Docker-free driver exactly
     # like every registered story.
-    db = Database.connect(_CannedPort(), MODELS["rate"])
+    db = Database.connect(_CannedPort(), MODELS["rate"]).using_database_login()
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)
