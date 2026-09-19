@@ -22,7 +22,7 @@ and its immutable strategy adapters. Its sole external operation is
 flush's boundary-captured Subject Identity, attempt-owned lazy Transaction
 Instant, Concurrency Preference, buffered writes, and observations. Subject Identity
 is the first required field of the keyword-only request, emphasizing that
-planning occurs inside an established Principal boundary without making field
+planning occurs under already-captured Execution Authority without making field
 order a positional API. The planner is stateless across calls and retains
 neither the request nor result. Forced flushes in one attempt pass the same
 Subject Identity and Transaction Instant; a retry retains the boundary's

@@ -258,8 +258,8 @@ _Avoid_: version column cache, per-subtype version, copied attribute metadata
 
 **Concurrency Preference**:
 The Unit Work's resolved `locking` or `optimistic` workflow policy. An omitted
-preference resolves to the Database Root's configured default, whose built-in
-value is `optimistic`; Locking forces shared-lock participation, while
+preference resolves to the invoking Execution Scope's effective value, whose
+root-built-in value is `optimistic`; Locking forces shared-lock participation, while
 Optimistic asks each Entity to use its optimistic key when it has one and the
 Locking fallback otherwise.
 _Avoid_: transaction-wide concurrency strategy, global lock mode, participation mode
@@ -275,8 +275,8 @@ _Avoid_: Concurrency Preference, entity override, mutation-specific mode
 The portable Read Committed, Repeatable Read, or Serializable guarantee a
 Transaction Invocation requests for every Transaction Attempt it owns, each
 defined by the anomalies it forbids and mapped by the adapter to the concrete
-database. An omitted level resolves to the Database Root's configured default,
-whose built-in value is Read Committed, requested concretely rather than left
+database. An omitted level resolves to the invoking Execution Scope's effective
+value, whose root-built-in value is Read Committed, requested concretely rather than left
 to the adapter's own default; a joined invocation may omit or repeat the
 resolved level but never name a different one.
 _Avoid_: isolation string, session isolation, vendor level, transaction mode
@@ -802,7 +802,8 @@ _Avoid_: relationship path, join path, dotted JSON string
 ### Execution Lifecycle
 
 **Root Execution**:
-One outermost Parallax Handle operation and everything it causally contains,
+One outermost modeled operation through an Execution Scope or Transaction and
+everything it causally contains,
 identified by an opaque Root Execution ID and a Read, Transaction Invocation,
 or Snapshot Stream kind.
 _Avoid_: request, handler instance, Transaction Invocation, Transaction Attempt
@@ -859,7 +860,7 @@ _Avoid_: Execution Observer, callback hook, audit sink, handler singleton
 
 **Execution Lifecycle Re-entry**:
 An attempt from lifecycle handling to invoke an operation through the
-originating Handle or Transaction, which is refused before execution work.
+originating Execution Scope or Transaction, which is refused before execution work.
 _Avoid_: nested execution, recursive handling, joined invocation
 
 **Execution Lifecycle Re-entry Error**:
@@ -1071,7 +1072,7 @@ through Parallax. Under the effective Locking strategy it must have participated
 Work, proving that the read acquired the shared row lock that makes the otherwise
 ungated write safe. Under the effective Optimistic strategy, an authentic versioned or temporal
 source may instead contribute its retained version or milestone evidence even
-when `db.find` produced it outside the transaction; the database gate remains
+when `scope.find` produced it outside the transaction; the database gate remains
 the concurrency authority. The Read Origin selects that privately retained
 evidence but is not itself evidence. An unversioned Non-Temporal source has no
 optimistic gate and therefore must participate in a read in the current Unit

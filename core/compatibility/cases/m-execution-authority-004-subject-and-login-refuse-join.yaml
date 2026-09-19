@@ -1,8 +1,9 @@
 # Subject and database-login modes refuse a join (m-execution-authority): the
 # outer scope carries subject `alice` under `role-a`, while the joining call
 # explicitly selects the opened runtime's database-login authority. Distinct
-# actor modes are never equal. Refusal precedes joining-body execution; the
-# earlier observing read is the only database call.
+# actor modes are never equal. The read following the join is the joining body's
+# observable: pre-body refusal leaves the earlier read as the only database call,
+# while a late authority check would execute a second call and fail the oracle.
 model: models/account.yaml
 tags: [m-execution-authority, m-unit-work, m-db-port, m-api-conformance, authority, join]
 lane: api-conformance
@@ -20,6 +21,8 @@ when:
     - action: join
       actorIdentity: {kind: database-login}
       note: the independently selected actor uses another mode
+    - action: read
+      note: the refused joining body must not reach this database call
 then:
   outcome: authority-mismatch
   roundTrips: 1

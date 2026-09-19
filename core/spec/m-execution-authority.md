@@ -1,7 +1,5 @@
 # Execution Authority Contract (`m-execution-authority`)
 
-Status: normative.
-
 This module defines which actor a database operation executes as, how that authority is scoped, and how a joining call proves that it belongs to the active transaction. It does not define provider role syntax, session-reset SQL, authorization policy, or application authentication.
 
 The keywords MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, and MAY are normative.

@@ -260,7 +260,7 @@ LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
 INERT_CLOCK_INSTANT: Final[str] = "1970-01-01T00:00:00+00:00"
 
 # The compile lane's own audit-neutral Subject Identity: this lane never opens
-# a real Principal boundary, and a Planning Request requires one regardless
+# a real Execution Scope, and a Planning Request requires one regardless
 # (`m-unit-work`) — the harness proves the value is never inspected, so any
 # nonempty constant serves every pure re-lowering call below identically.
 _PLANNING_SUBJECT: Final[SubjectIdentity] = SubjectIdentity("conformance-compile-lane")

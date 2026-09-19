@@ -384,3 +384,41 @@ def test_reference_reader_rejects_malformed_authority_combinations(
     malformed = Case(path=canonical.path, raw=raw, model=canonical.model)
     with pytest.raises(ValueError, match=r"actorIdentity|databaseAuthorization"):
         _ = malformed.actor_selection
+
+
+def test_reference_reader_rejects_outer_selection_on_an_unrelated_shape(tmp_path: Path) -> None:
+    compatibility = _SCHEMA_PATH.parents[1] / "compatibility"
+    case_path = tmp_path / "misplaced-outer-authority.yaml"
+    case_path.write_text(
+        """model: models/account.yaml
+tags: [m-core]
+shape: read
+when:
+  actorIdentity: {kind: database-login}
+""",
+        encoding="utf-8",
+    )
+    case = load_case(compatibility, case_path)
+
+    with pytest.raises(ValueError, match="only for boundary cases"):
+        _ = case.actor_selection
+
+
+def test_reference_reader_rejects_step_selection_on_a_non_join_action(tmp_path: Path) -> None:
+    compatibility = _SCHEMA_PATH.parents[1] / "compatibility"
+    case_path = tmp_path / "misplaced-step-authority.yaml"
+    case_path.write_text(
+        """model: models/account.yaml
+tags: [m-execution-authority]
+shape: boundary
+when:
+  boundary:
+    - action: read
+      actorIdentity: {kind: database-login}
+""",
+        encoding="utf-8",
+    )
+    case = load_case(compatibility, case_path)
+
+    with pytest.raises(ValueError, match="only on a join action"):
+        case.boundary_action_actor_selection(0)

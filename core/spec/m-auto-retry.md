@@ -16,7 +16,7 @@ The unit-of-work boundary **MUST** offer **bounded automatic retry**. On a
 3. **re-execute the closure** against that fresh state, inside a new atomic scope.
 
 The bound is **configurable** per boundary; an omitted bound resolves to the
-Database Root's configured default, which itself defaults to **10**
+invoking Execution Scope's effective value, whose root-built-in value is **10**
 re-executions (ADR 0065). A bound of **`0` disables** the loop, so even a
 retriable failure surfaces to the caller after the first attempt. A retry that
 **exhausts** the bound surfaces the failure to the caller (diagnosably — the
@@ -32,8 +32,8 @@ Which failures are retriable:
 - An **Optimistic Lock Conflict Error** is **not** retriable by default: a
   conflict surfaces to the caller after one attempt, and joins the retriable set
   **only** when the unit of work opts in (`retryOptimisticConflicts`, Reladomo's
-  `setRetryOnOptimisticLockFailure`; an omitted opt-in resolves to the Database
-  Root's configured default, which itself defaults to off).
+  `setRetryOnOptimisticLockFailure`; an omitted opt-in resolves to the invoking
+  Execution Scope's effective value, whose root-built-in value is off).
 - A **lock-wait timeout** (the `m-db-error` `lockWaitTimeout` category) is **not**
   retriable.
 - The remaining Write Effect Errors — **Missing Target Error**, **Stale Write

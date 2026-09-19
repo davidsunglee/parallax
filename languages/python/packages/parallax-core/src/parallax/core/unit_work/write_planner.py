@@ -111,8 +111,8 @@ type BufferedWrites = Sequence[BufferItem]
 class PlanningRequest:
     """One flush's complete planning input.
 
-    Keyword-only and Subject Identity first: planning occurs inside an already
-    established Principal boundary, and field order emphasizes that without
+    Keyword-only and Subject Identity first: planning occurs under already
+    captured Execution Authority, and field order emphasizes that without
     making it a positional API.
     """
 

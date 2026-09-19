@@ -112,7 +112,7 @@ and query caches remain the separately deferred `m-process-cache`.
 
 Concurrency follows scope: the map is a **single-owner** structure. Sharing one
 unit of work — and therefore one identity map — across concurrent tasks is not a
-supported access pattern; a process-wide handle or pool may be shared, the map
+supported access pattern; a process-wide Database Root or pool may be shared, the map
 may not be shared implicitly.
 
 ## What the suite pins down

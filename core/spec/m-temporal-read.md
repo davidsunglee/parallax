@@ -34,7 +34,7 @@ writes, and physical storage:
 | Python framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
 | Compatibility Pin key | `valid-time` | `transaction-time` |
 | Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
-| Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the handle |
+| Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the Database Root |
 | Bitemporal bounded-write upper bound | `until` (a Valid-Time bound) | not caller-authored |
 | Optimistic temporal observation | not an optimistic key | observed `txStart` / physical `in_z` |
 | Finite-pin mutation error | writable retroactive correction | `transaction-time-pin-read-only` |
@@ -186,14 +186,14 @@ that unmatched dimension.
 
 ## Writes
 
-The handle supplies the finite Transaction-Time clock instant used to close and
+The Database Root's Clock Strategy supplies the finite Transaction-Time instant used to close and
 open Transaction-Time intervals. Callers do not author it as Latest or Now.
 Transaction-Time-Only writes use that clock and no Valid-Time argument.
 
 Bitemporal writes receive `valid_from`; bounded `insertUntil`, `updateUntil`,
 and `terminateUntil` additionally receive `until`, with
 `valid_from < until`. These are Valid-Time coordinates. Transaction-Time
-coordinates still come exclusively from the handle clock. The physical DML
+coordinates still come exclusively from the Database Root's clock. The physical DML
 continues to use `from_z`/`thru_z` and `in_z`/`out_z`.
 
 ## Verification

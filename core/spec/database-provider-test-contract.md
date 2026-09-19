@@ -211,7 +211,7 @@ A provider contract suite must exercise these operations:
   style checks when the language's composition root needs one. Where the target
   owns connection lifetimes, this is a **separately owned** session the caller
   closes — never a connection borrowed from what serves application work, and
-  never a raw accessor on a connected handle
+  never a raw accessor on a Database Root
 - `catalog`: report what the database itself holds for a named set of tables —
   each table's columns with their types and nullability, and each index with its
   ordered columns and its uniqueness. Column ordinal position is deliberately

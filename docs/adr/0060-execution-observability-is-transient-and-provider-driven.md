@@ -3,7 +3,8 @@
 Parallax exposes execution observability as a synchronous stream of immutable
 Started and Finished events, not as provenance retained by results or active
 transactions. A composition root accepts one Execution Lifecycle Provider. For
-each outermost Handle operation, that Provider may open one fresh Handler whose
+each outermost modeled operation through an Execution Scope or Transaction, that
+Provider may open one fresh Handler whose
 lifetime and serial event stream are confined to the resulting Root Execution.
 Transactions, snapshots, streams, and return values retain no lifecycle record.
 
@@ -38,7 +39,7 @@ rest of the root, reports a detached Handler Error through its Provider, and
 does not change query semantics. Fan-out opens Providers in declaration order,
 shares each event object across active children, and quarantines a failing child
 without hiding the event from later children. Re-entry through the originating
-Handle or Transaction during lifecycle callbacks is refused.
+Execution Scope or Transaction during lifecycle callbacks is refused.
 
 The built-in logging integration writes detached structured records to an
 application-configured Python logger and leaves queueing, sinks, flushing, and

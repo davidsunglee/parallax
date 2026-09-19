@@ -57,7 +57,7 @@ _SUBJECT_B = SubjectIdentity("subject-beta-differs")
 
 
 def test_capturing_a_subject_identity_requires_a_nonempty_value() -> None:
-    # Nonemptiness is enforced at capture (the Principal boundary), not by
+    # Nonemptiness is enforced at Execution Scope capture, not by
     # the value type itself, which an audit-neutral plan must never inspect.
     with pytest.raises(ValueError, match="nonempty"):
         capture_subject_identity("")

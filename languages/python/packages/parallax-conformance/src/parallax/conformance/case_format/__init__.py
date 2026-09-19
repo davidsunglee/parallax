@@ -239,13 +239,23 @@ def actor_selection(case: Case) -> ActorSelection | None:
     mapping: Mapping[str, object] = (
         cast("Mapping[str, object]", when) if isinstance(when, Mapping) else {}
     )
+    if case.shape != "boundary" and _authors_actor_selection(mapping):
+        raise ValueError(
+            f"{case.path.name}: when authority selection is legal only for boundary cases"
+        )
     return _actor_selection(mapping, where=f"{case.path.name}: when")
 
 
 def step_actor_selection(step: Mapping[str, object], *, where: str) -> ActorSelection | None:
     """The independently authored authority on one joining step, or ``None``
     when that join reuses its enclosing scope."""
+    if step.get("action") != "join" and _authors_actor_selection(step):
+        raise ValueError(f"{where} authority selection is legal only on a join action")
     return _actor_selection(step, where=where)
+
+
+def _authors_actor_selection(container: Mapping[str, object]) -> bool:
+    return "actorIdentity" in container or "databaseAuthorization" in container
 
 
 def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSelection | None:

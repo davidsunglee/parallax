@@ -109,8 +109,8 @@ def concurrency_preference(value: object) -> Concurrency:
 
 @dataclass(frozen=True, slots=True)
 class SubjectIdentity:
-    """The stable, opaque planning-input identifying the Principal captured at
-    the outer database operation boundary (ADR 0034).
+    """The stable, opaque planning input identifying the subject actor captured
+    by the invoking Execution Scope (``m-execution-authority``).
 
     Unit Work owns this value type exactly as it already owns the Write
     Observation vocabulary, so a Planning Request is well-typed before any
@@ -129,10 +129,10 @@ class SubjectIdentity:
 def capture_subject_identity(value: str) -> SubjectIdentity:
     """Construct a Subject Identity from a freshly captured value.
 
-    Capture belongs to the Principal boundary, not to Write Planning
-    (`m-unit-work.md` "Subject Identity") — this is where the boundary's
-    nonempty check runs, once, at the moment a raw value becomes a Subject
-    Identity, so the value type itself stays inert.
+    Capture belongs to Execution Authority, not to Write Planning
+    (``m-unit-work.md`` "Subject Identity") — this is where the scope's nonempty
+    check runs, once, at the moment a raw value becomes a Subject Identity, so
+    the value type itself stays inert.
     """
     if not value:
         raise ValueError("a Subject Identity is nonempty")

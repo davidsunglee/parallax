@@ -158,7 +158,7 @@ Attributes, Timestamp types, flags, interval semantics, or columns.
 | Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |
 | Canonical Attribute names | `validStart`, `validEnd` | `txStart`, `txEnd` |
 | Physical columns | `from_z`, `thru_z` | `in_z`, `out_z` |
-| Bitemporal mutation input | `valid_from`; bounded verbs also use `until` | finite clock instant supplied by the Database handle |
+| Bitemporal mutation input | `valid_from`; bounded verbs also use `until` | finite clock instant supplied by the Database Root's Clock Strategy |
 | Optimistic temporal observation | not used as a gate | observed `tx_start` (`in_z`) |
 
 Relationship traversal propagates Pin and Edge coordinates by Temporal
@@ -594,10 +594,10 @@ actual binary32 value.
   raises `QueryDefinitionError(query-path-invalid)` during authoring. Whether
   distinct alternatives overlap after inheritance expansion is model-dependent
   and is rejected by model-aware preflight.
-  Only `Database.find(query)` and `Transaction.find(query)` execute it.
+  Only `ScopedDatabase.find(query)` and `Transaction.find(query)` execute it.
 - **Finder/query entry point.** A free-standing, side-effect-free Object Query is
   built from classmethods on the Entity Class and executed by the Parallax
-  Handle. Nonempty variadic `where(*predicates)` conjoins its arguments (the
+  Execution Scope or Transaction. Nonempty variadic `where(*predicates)` conjoins its arguments (the
   natural big-AND of filter criteria), while `where(Entity.all)` is the
   explicit unfiltered spelling. An Object Query has no further `.where()` method.
 
@@ -606,7 +606,7 @@ actual binary32 value.
       Order.order_id == 42,
       Order.items.exists(OrderItem.sku.in_(["A", "B"])),
   )
-  snapshot = db.find(query)
+  snapshot = scope.find(query)
   ```
 
   Canonical `m-object-query` serialization of that Object Query:
@@ -1686,13 +1686,13 @@ with the same `SnapshotConnectionError(snapshot-class-backed-model-required)`,
 so every connection reaches its accepted Metamodel through a prepared
 selection and every product derived from it is prepared whole before the
 connection serves. A descriptor-backed model composes no Entity Class and can
-never materialize a Snapshot, so `Database.find` and `Transaction.find` refuse
+never materialize a Snapshot, so `ScopedDatabase.find` and `Transaction.find` refuse
 it with that same error — on both entry points before target resolution, and on
 the participating one before the unit of work's force-flush, so a refused read
 flushes no pending write. The write lanes and the Wire read that connection does
 serve are unaffected: they name Entities rather than classes.
 
-**Transactions adopt per attempt.** Each outer `db.transact` attempt obtains
+**Transactions adopt per attempt.** Each outer `scope.transact` attempt obtains
 and adopts the Serving Model's current selection before the physical database
 transaction is asked to begin, and retains it through commit or rollback: the
 `Transaction` handed to the callback is built over that selection's two
@@ -1721,7 +1721,7 @@ the selection the attempt adopted before its boundary was asked to open. A
 rollback failure keeps both live errors inside the cause as
 `TransactionRollbackError`. Control-flow and fatal exceptions keep their
 existing propagation rules and are never contextualized, and neither are the
-deterministic refusals `db.transact` makes before adopting — the isolation
+deterministic refusals `scope.transact` makes before adopting — the isolation
 vocabulary, the retry bound, ownership, option conflict, and re-entry — nor a
 lifecycle Provider that fails to open: there is no `edition=None` variant.
 
@@ -1762,13 +1762,13 @@ query does not carry, because graph versus rows is a property of the call. It
 performs no SQL, Database
 Port access, connection acquisition, materialization, or transaction work.
 Every read entry calls this seam rather than reimplementing any step:
-`Database.find` and `Transaction.find`, the `db.wire.find` / `tx.wire.find`
-peers beside them — each handle runs one read seam for both interfaces, so the
+`ScopedDatabase.find` and `Transaction.find`, the `scope.wire.find` / `tx.wire.find`
+peers beside them — each execution surface runs one read seam for both interfaces, so the
 two cannot gate differently — the values lane's `read_rows`, and the
 conformance compile lane.
 
 Deferred Execution Features apply only to modeled read execution through
-`Database.find`, `Transaction.find`, and their Wire peers.
+`ScopedDatabase.find`, `Transaction.find`, and their Wire peers.
 Predicate-selected write methods never invoke this classifier. They first
 require a mutation-compatible Object Query, so a read-shaped query matching a
 deferral still raises `QueryDefinitionError(query-not-mutation-compatible)`
@@ -1801,7 +1801,7 @@ derived from it — and never consults the Entity Identity/Entity Class index
 (§5), so a descriptor-backed model prepares a fully functional codec; the
 graph construction takes the class index, which a descriptor-backed model
 lacks, so preparation builds none for it, and refusing such a model is the job
-of the caller that needs classes — `Database.find` and `Transaction.find`, by
+of the caller that needs classes — `ScopedDatabase.find` and `Transaction.find`, by
 name and before any I/O — never of a collaborator answering absence. Both
 classes are reached from `parallax.core.entity`, neither is re-exported from
 top-level `parallax.core`, and `prepare_model` (§2 *Model preparation and the
@@ -2298,9 +2298,10 @@ closing one root leaves another working. `db.close()` and using the root as a
 context manager are equivalent, both idempotent, and one of them is required:
 what a root holds is connections, and nothing above it can release them.
 
-**A connected handle is the Database Root** (ADR 0065): the configured owner
-of one runtime, carrying the transaction option defaults every outer
-an outer scoped `transact` resolves its omitted keywords against. `options` is that record,
+**A connected `Database` is the Database Root** (ADR 0065): the configured owner
+of one runtime and the initial transaction-option record. A derived
+`ScopedDatabase` carries its own complete effective record, and an outer scoped
+`transact` resolves omitted keywords against that record. `options` is the root record,
 a `DatabaseOptions` exported from `parallax.snapshot` beside `connect`, and it
 is the first keyword: `connect(adapter, model, *, options=DatabaseOptions(...))`
 reads as where, then what, then how. Omitting it and passing `options=None`
@@ -2423,7 +2424,7 @@ page to its settlement, a transaction attempt for the attempt including every
 participating read, write batch and delivery inside it. A retry acquires afresh.
 DDL, migrations, fixtures and any statement an application authors verbatim run
 on a connection that application opened itself, exactly as they did before, and
-never on one borrowed from the handle. Acquisition failures reach a caller as
+never on one borrowed from the Database Root's runtime. Acquisition failures reach a caller as
 `ConnectionAcquisitionError` under the failing execution's edition envelope, and
 a runtime that never became ready raises `DatabaseStartupError` instead of
 publishing a root.
@@ -2437,11 +2438,11 @@ then closes the registration; what it never closes is the exporter behind the
 registration, which is the application's and outlives the root. Closing is
 serialized, so a close concurrent with one already running waits for it rather
 than giving the registration up beside a runtime still being torn down, and the
-registration is closed exactly once however many callers close the handle.
+registration is closed exactly once however many callers close the root.
 
 **Read planning and bounded reuse.** Every eager, row, and streamed read crosses
 one private `ReadPlanner.plan(...) -> ReadPlan` seam. A `Database` owns that
-planner for the handle's lifetime and shares it with standalone reads and every
+planner for the root's lifetime and shares it with standalone reads and every
 Transaction Attempt, independently of which physical connection executes the
 resulting statements. A Read Plan contains only immutable model/query planning,
 compiled statement templates, row conversion preparation, correlations, include
@@ -2472,7 +2473,7 @@ templating, not general query-shape reuse.
 
 The cache has the `Database` object's lifetime. `Database.close()` settles the
 owned runtime and pool observation but does not promise to clear immutable Read
-Plans while the closed handle remains referenced; this preserves already-running
+Plans while the closed root remains referenced; this preserves already-running
 operation semantics and keeps resource closure independent of planning
 retention. Eviction and release of the `Database` make unreferenced plans and the
 query values they retain collectible.
@@ -2496,7 +2497,7 @@ of shared edition identity.
 
 ### Snapshot lifecycle
 
-- **Public result and node types.** `db.find(query)` executes exactly once,
+- **Public result and node types.** `scope.find(query)` executes exactly once,
   materializes fully, and returns `Snapshot[T]` — the Python reification of a
   core Snapshot Graph. Nodes are **frozen instances of the user's own entity
   classes** — plain values, shareable and serializable. Pydantic
@@ -3126,7 +3127,7 @@ of shared edition identity.
   relationship name and effective concrete-subtype set; the `1 + L` round-trip
   ceiling is pinned by the authored statements and `then.roundTrips` oracle.
 - **Explicit writes.** All writes go through the Parallax Transaction
-  (§5) — the handle has no write methods. Graph edits are impossible (nodes
+  (§5) — the Execution Scope has no write methods. Graph edits are impossible (nodes
   are frozen); the only mutation idiom is deriving an **Edited Copy** through
   `value.edit(**changes)`, which returns the same frozen Entity Class carrying
   a **Change Record** mapping each touched field to its **original** value —
@@ -3554,7 +3555,7 @@ of shared edition identity.
 ### Snapshot results
 
 - **Eager materialized collections.** Query construction is side-effect-free;
-  execution happens exactly at `db.find(query)` and returns a value. Roots are
+  execution happens exactly at `scope.find(query)` and returns a value. Roots are
   reached only through `Snapshot[T]`'s three accessors; `results()` returns a
   real built-in `list[T]` the caller owns (fresh copy per call — the container
   accessor is unaffected by node immutability). Included to-many
@@ -3573,8 +3574,8 @@ of shared edition identity.
   that same prepared tuple. Stream publication deliberately does not use this mode
   and keeps its already-published prefix when a later root fails.
 - **Every result retains the edition it was read under.** A standalone
-  `db.find` adopts the Serving Model's current selection once, for its whole
-  execution, and `db.read_rows` and the Wire reads do the same; a
+  `scope.find` adopts the Serving Model's current selection once, for its whole
+  execution, and `scope.read_rows` and the Wire reads do the same; a
   transactional read is served under its transaction's. The result envelope is
   stamped where it is built and exposes read-only `edition`: `Snapshot`,
   `CheckedSnapshot` (forwarded unchanged, as `pin` is), `RowsResult`, and Wire
@@ -3611,8 +3612,8 @@ of shared edition identity.
 ### Streamed results
 
 - **`stream` is the delivery peer of `find`, in every namespace `find` has
-  one.** The public streaming surface is `db.stream` / `tx.stream`
-  (`SnapshotStream[T]`) beside `db.wire.stream` / `tx.wire.stream`
+  one.** The public streaming surface is `scope.stream` / `tx.stream`
+  (`SnapshotStream[T]`) beside `scope.wire.stream` / `tx.wire.stream`
   (`SnapshotStream[WireEntity]`), exported from `parallax.snapshot`. Delivery is
   the verb and representation stays the namespace, so there is no `format=`
   argument, no public format enum, and no `findInBatches`-shaped call. Each
@@ -3684,7 +3685,7 @@ of shared edition identity.
   `limit` is: `type(batch_size) is not int` is an identity check, so nothing is
   coerced and `True` is not the page size 1, and a non-positive or non-`int`
   value raises `ValueError` at the call, before any plan or page exists. There
-  is no handle-level default, no connection setting, and no environment
+  is no scope-level default, no connection setting, and no environment
   variable — the only page size is the one a call names. It counts the roots a
   page DELIVERS: the statement asks for one more, which is the lookahead root
   `m-snapshot-read` prices, so `limit ?` binds `batch_size + 1` on every page a
@@ -3722,7 +3723,7 @@ of shared edition identity.
           tx.update(order.edit(status="done"))
   ```
 
-  Delivery is also per ATTEMPT: `db.transact` may re-execute its callback, a
+  Delivery is also per ATTEMPT: `scope.transact` may re-execute its callback, a
   root already consumed cannot be recalled, and the re-execution opens a fresh
   stream that delivers from the beginning — so a per-root effect owes the same
   retry-safety every other effect inside that callback owes.
@@ -3893,10 +3894,10 @@ of shared edition identity.
 ### Wire results
 
 - **Two read interfaces, not a format argument.** The public read surface is
-  `db.find` / `tx.find` (`Snapshot[T]`) beside `db.wire.find` / `tx.wire.find`
-  (`Snapshot[WireEntity]`), and their streamed peers `db.stream` / `tx.stream`
-  beside `db.wire.stream` / `tx.wire.stream` (§4). There is no `format=`
-  argument, no public format enum, and no `db.typed` or `tx.typed` namespace. `db.wire` and `tx.wire` are
+  `scope.find` / `tx.find` (`Snapshot[T]`) beside `scope.wire.find` / `tx.wire.find`
+  (`Snapshot[WireEntity]`), and their streamed peers `scope.stream` / `tx.stream`
+  beside `scope.wire.stream` / `tx.wire.stream` (§4). There is no `format=`
+  argument, no public format enum, and no `scope.typed` or `tx.typed` namespace. `scope.wire` and `tx.wire` are
   lightweight views over the same connected model and adapter; `tx.wire`
   additionally shares the Unit of Work, observation ledger, locking, and
   Execution Lifecycle with the Typed transaction interface, so the two are not
@@ -3967,16 +3968,16 @@ of shared edition identity.
 - **Demarcation construct.** Callback-only:
   `scope.transact(fn, *, max_retries=..., concurrency=..., retry_optimistic_conflicts=..., isolation=...)`,
   each keyword typed as its `DatabaseOptions` field. **Only omission
-  inherits**: an omitted keyword takes the Database Root's default for that
-  field when this call opens the transaction, and the active transaction's
+  inherits**: an omitted keyword takes the invoking scope's effective value for
+  that field when this call opens the transaction, and the active transaction's
   resolved value when this call joins one. Omission is carried by a private
   typed marker each keyword defaults to, never by `None`: an explicit value is
   held to its field's contract — the same rule `DatabaseOptions` enforces at
   construction — and `None` is an invalid value for every field, refused with
   a plain `ValueError` before any transaction is opened or observed and before
   this call is compared against an active transaction. The resolved record —
-  each explicit value, else the root's default — is what `tx.options` answers:
-  one `DatabaseOptions`, the type the root was configured with, shared by
+  each explicit value, else the invoking scope's effective value — is what
+  `tx.options` answers: one `DatabaseOptions`, the type roots and scopes carry, shared by
   every attempt of the invocation and read by every joining call, and reused
   from the root's own record whenever the resolved values are its own. The
   former `retries` keyword is gone without an alias; the public spelling is
@@ -4079,7 +4080,7 @@ of shared edition identity.
   a `Transaction` each construct exactly one private Read Scope. Their Typed
   `find`, `stream`, and `read_rows` entries, and the same scope's Wire `find` and `stream` entries,
   delegate to that scope. A Wire view retains the scope itself rather than bound
-  Handle methods. The Read Scope is an implementation boundary, not a public
+  execution-surface methods. The Read Scope is an implementation boundary, not a public
   extension point.
 - **The selected read model enters through execution policy.** The Read Scope
   obtains the operation's selected read model from its private execution
@@ -4090,7 +4091,7 @@ of shared edition identity.
   operation; participating execution returns the Transaction's fixed selection.
   The adapter may reuse an unchanged value, but the Read Scope assumes no
   Database-lifetime model. One stream retains one selection through all of its
-  pages. Because that selection rather than the Handle decides whether a
+  pages. Because that selection rather than the modeled execution surface decides whether a
   Snapshot can be materialized at all, the classless read refusal states one
   message at every door, under the unchanged stable code
   `snapshot-class-backed-model-required`.
@@ -4159,7 +4160,7 @@ by member. Neither vocabulary is derived from the other.
 
 `RootExecution` is a frozen, slotted value carrying only `id: UUID` and
 `kind: RootExecutionKind`. Deterministic public preflight runs first. With no installed
-Provider the Handle branches before allocating UUIDs, descriptors, events,
+Provider the modeled execution surface branches before allocating UUIDs, descriptors, events,
 publishers, counters, diagnostics, or lifecycle clock reads, and performs no
 allocation, clock read, or I/O; a shared immutable inert activity may stand in
 for the activity seam. An
@@ -4183,11 +4184,11 @@ ordinary reporting failure writes one sanitized correlation-only line to
 for the root, aborts and cleans up without further events, and propagates
 unchanged; it produces no Handler Error.
 
-Calls through the originating `Database` or `Transaction` from `open`,
+Calls through the originating `ScopedDatabase` or `Transaction` from `open`,
 `handle`, or `report_handler_error` raise `ExecutionLifecycleReentryError`
 before execution state or database work. During opening it becomes the
 Provider Error's cause; from a Handler it is an ordinary delivery failure if it
-escapes. Unrelated Handles remain usable.
+escapes. Unrelated Execution Scopes remain usable.
 
 `ExecutionEvent` is a closed union of frozen, slotted concrete classes:
 `ReadStarted`/`ReadFinished`, `WriteBatchStarted`/`WriteBatchFinished`,
@@ -4352,10 +4353,10 @@ These feature tests do not claim the deferred `benchmark` command or general
 `m-perf-bench` module.
 
 - **The first-party seam beside the developer surface.** One capability lives on
-  the handles without being developer surface, and it has no `Neutral*`
-  vocabulary: the public read interfaces are `db.find` / `tx.find` and
-  `db.wire.find` / `tx.wire.find`, and nothing else answers a result.
-  `db.read_rows(query)` / `tx.read_rows(query)` are the **values lane** — one
+  the modeled execution surfaces without being developer surface, and it has no `Neutral*`
+  vocabulary: the public read interfaces are `scope.find` / `tx.find` and
+  `scope.wire.find` / `tx.wire.find`, and nothing else answers a result.
+  `scope.read_rows(query)` / `tx.read_rows(query)` are the **values lane** — one
   canonical Object Query into `RowsResult`, whose `rows` is the transformed rows
   in result order as `Mapping | InvalidData[Mapping]`, keyed as the read projected
   them. It shares the root canonicalization, the same compilation with the values
@@ -4396,7 +4397,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   `transaction-owner-mismatch`, before rollback-only state, authority comparison,
   option comparison, closure execution, Unit of Work mutation, SQL,
   connection acquisition, or any adapter activity, and it retains neither
-  handle. It is a `RuntimeError` rather than a `ValueError` because nothing
+  scope. It is a `RuntimeError` rather than a `ValueError` because nothing
   about the call's arguments is wrong — the identical call succeeds from the
   owner — which is also what distinguishes it from
   `TransactionOptionConflictError`, a rejected argument value. A non-Parallax
@@ -4427,9 +4428,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   boundary: an explicit option whose value differs from the active
   transaction's resolved `tx.options` raises
   `TransactionOptionConflictError`, an explicit value equal to the resolved
-  value is accepted, and an omitted option inherits it. The root's default
-  never enters that comparison on its own: a join naming the root's value
-  under an outer call that overrode it is a conflict. The refusals run in one
+  value is accepted, and an omitted option inherits it. The joining scope's
+  effective defaults never enter that comparison on their own: a join naming a
+  scope default under an outer call that overrode it is a conflict. The refusals run in one
   order — the lifecycle re-entry guard, then every explicit keyword's own
   validation, then the bare-unit-of-work check, root ownership, rollback-only
   foreclosure, actor equality, and explicit option equality — so a malformed keyword on the wrong
@@ -4462,8 +4463,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   Isolation Levels — `parallax.core.db_port.IsolationLevel`, a `Literal` of
   `"read_committed"`, `"repeatable_read"`, `"serializable"` — each defined by
   the anomalies it forbids (`m-unit-work`, `m-db-port`) rather than by any
-  database's own spelling; omitting it resolves to the Database Root's
-  `isolation` default, whose built-in value is `"read_committed"`, requested
+  database's own spelling; omitting it resolves to the invoking scope's
+  effective `isolation`, whose root-built-in value is `"read_committed"`, requested
   concretely on every attempt rather than left to whatever the connection
   defaults to — a connection configured to default to Repeatable Read still
   runs an unconfigured root's transactions at Read Committed. The resolved value reaches `DatabaseConnection.transaction` unchanged and
@@ -4491,12 +4492,12 @@ These feature tests do not claim the deferred `benchmark` command or general
   physical attempt of one invocation opens at the same resolved level, so a
   retried callback never silently runs at a weaker one; a serialization failure
   or deadlock still retries under `m-auto-retry`'s own bound, and no new error
-  class or retry policy comes with the vocabulary. The Database Root's default
-  is the only default: there is no connection-level or environment default,
+  class or retry policy comes with the vocabulary. The invoking scope's complete
+  effective value is the only modeled default: there is no connection-level or environment default,
   because a connection setting is only a default for later transactions and a
   long read is exactly the case wanting a different level from the rest of an
-  application, and the setting stays transaction-scoped — the root supplies
-  the value a transaction resolves, and the transaction is what requests it.
+  application, and the setting stays transaction-scoped — the invoking scope
+  supplies the value a transaction resolves, and the transaction is what requests it.
   `tx.stream` therefore inherits its transaction's level and `scope.stream`
   carries no isolation option at all — a caller wanting one database snapshot
   across a whole delivery streams inside `scope.transact`. Neither the root's
@@ -4507,8 +4508,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   Read gives the transaction one stable snapshot and still permits
   serialization anomalies such as write skew, and Serializable guarantees
   serial equivalence only among the transactions that all requested it, never
-  across a workload mixing weaker levels. A root default configures this
-  application's transactions and cannot govern other users of the database.
+  across a workload mixing weaker levels. An Execution Scope's effective default
+  configures transactions invoked through that scope and cannot govern other
+  users of the database.
   Resolving options costs constant space for the fixed field set; what a
   stronger level costs in retained row versions or Serializable tracking is the
   database's own and grows with the workload, not with the record.
@@ -4613,7 +4615,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   carry one: a nested Value Object mapping has no slot. `Entity.edit(...)`
   preserves lifecycle state and therefore transfers the claim to the derived
   value; a Wire copy answers the same object and therefore the same claim. A
-  standalone `db.find` / `db.wire.find` produces sources exactly as a
+  standalone `scope.find` / `scope.wire.find` produces sources exactly as a
   participating read does and differs only in stamping no participation. A
   transaction keeps a `WeakValueDictionary` of the states its own reads saw
   plus the participation token an effective-Locking write tests against, so
@@ -4732,7 +4734,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   requires `until`, with `valid_from < until`, both aware-UTC-microsecond
   datetimes, all validated at build. `delete` on a temporal Entity and
   `terminate` on a non-temporal Entity are rejected. Transaction-Time instants
-  come from the handle-configured
+  come from the Database Root-configured
   **Clock Strategy** (default system UTC; tests inject a fixed clock) — never
   from callers, with no per-operation overrides. Temporal `update`/`terminate`
   follow the same authentic-evidence rule as versioned writes (below). The
@@ -4940,8 +4942,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   Entity's Effective Concurrency Strategy decides what evidence that authentic
   source must supply. Under **Locking**, the source must have been read by this
   transaction through `tx.find` or `tx.wire.find`, proving that the current
-  attempt acquired and still holds the shared row lock. A value from `db.find` or
-  `db.wire.find` cannot prove that participation. Under **Optimistic**, an
+  attempt acquired and still holds the shared row lock. A value from `scope.find` or
+  `scope.wire.find` cannot prove that participation. Under **Optimistic**, an
   authentic versioned or temporal source may instead carry the version or exact
   milestone observed by a standalone read; the emitted database gate detects an
   intervening writer. An unversioned Non-Temporal Entity has no gate and therefore
@@ -5044,10 +5046,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   one was, since a caller reaches for the verb in the interface they called; and
   both families refuse a value **another** framework-managed source published with
   `write-value-foreign-lifecycle`. The classifier's axis is which managed
-  **lifecycle** attached the value's state, never which `Database` issued the
-  read: every `Database` over one store shares this one lifecycle, so a value a
-  second handle read is this source's value, and a non-transactional
-  `db.find(...)` produces one exactly as `tx.find(...)` does (ADR 0010). What such
+  **lifecycle** attached the value's state, never which Execution Scope issued the
+  read: every scope over one store shares this one lifecycle, so a value a
+  second scope read is this source's value, and a non-transactional
+  `scope.find(...)` produces one exactly as `tx.find(...)` does (ADR 0010). What such
   a value may then be written into is the write-evidence rule's answer rather
   than provenance's: an effective Locking strategy requires this transaction's
   participating read, while an effective Optimistic strategy may accept the
@@ -5175,7 +5177,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   copy of one name no milestone, so no observation can match and the verb raises
   its write-evidence error before any DML. A source returned by `tx.find` names
   the milestone and, under effective Locking, proves the lock is held. An
-  authentic source returned by `db.find` also names the milestone and may be
+  authentic source returned by `scope.find` also names the milestone and may be
   closed directly under effective Optimistic because its retained `in_z`
   supplies the database gate; it is insufficient under Locking. Thus
   `tx.terminate(Position(id=1, ...))` is unsupported, while closing an authentic
@@ -5561,8 +5563,8 @@ remains observable rather than making Python its own oracle.
   own transaction, and the dedicated session an interleaved choreography may
   destroy — runs on a session the harness itself opened and owns.
   `ProvisionedRun.control(autocommit=…)` opens one; `ProvisionedRun
-  .interleaved_execution(model, …)` opens one and composes the `Database` over
-  it, so no caller can pair a handle with a session it does not own. Both are
+  .interleaved_execution(model, …)` opens one and composes the Database Root over
+  it, so no caller can pair a root with a session it does not own. Both are
   **scoped**: whoever opens one closes it, on success, on failure, and on a
   refusal to start, and provisioning teardown is only the backstop for one a
   caller never released. The engine consumes these as declared capabilities
@@ -5573,8 +5575,8 @@ remains observable rather than making Python its own oracle.
   I/O — lives in one native module the provisioner reaches through a deferred
   import, so naming a control costs no driver load. Cancellation and transport
   escalation target only these dedicated support-owned sessions, never one an
-  application composed a `Database` over; modeled scenario work still runs
-  through the shipped `Database` such a session stands under.
+  application composed a Database Root over; modeled scenario work still runs
+  through an Execution Scope derived from the shipped root such a session stands under.
 - **Golden SQL selection.** The `postgres` key of each statement entry; every
   claimed case carries it (guaranteed by the claim's dialect filter). A
   missing key is a hard error, never a silent skip.
@@ -5751,8 +5753,8 @@ remains observable rather than making Python its own oracle.
   holds, process and application-server lifetime, connection budgeting, pool
   observation, the disclosure policies of the three reporting paths, and the
   migration table from the pre-pooling surface. It is hand-written rather than
-  generated, and every Python block in it that shows an application configuring,
-  composing or serving through a handle is the exact source of an executable
+  generated, and every Python block in it that shows an application configuring
+  a Database Root or serving through an Execution Scope is the exact source of an executable
   story in `parallax.conformance.database_pooling_stories`, guarded against
   drift by `tests/unit/test_postgresql_lifecycle_guide.py` and executed against
   real Postgres by `tests/api/test_database_pooling.py`. The same guard holds
@@ -5877,7 +5879,7 @@ never pulls the typed surface in, and one that wants the typed surface names thi
 module. That is what keeps the widening contained rather than leaking through the
 package.
 
-`parallax.snapshot.handle._read_scope` is the read composition both Handles
+`parallax.snapshot.handle._read_scope` is the read composition both modeled execution surfaces
 delegate to, scoped apart from its package so its row states what a read ladder
 reaches and what it does not: the query and temporal vocabulary it lowers
 through, the page plan a stream is delivered against, the read result it
@@ -5921,7 +5923,7 @@ way.
 
 A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while
-the Snapshot handle is the composition scope that publishes snapshot reads and
+the Snapshot handle package is the composition scope that publishes snapshot reads and
 streams through the injected internal publisher. Snapshot results and Page /
 Root View representation scopes neither import the lifecycle module nor retain
 events. The delivery-materialization seam imports lifecycle activities because
@@ -6029,7 +6031,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire`, `m-edit` | generated forbidden contracts + cross-package contract |
 | Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` | generated forbidden contracts |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Snapshot root/scope composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot delivery materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materialization` | `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-db-port`, `m-sql`, `m-read-lock`, `m-execution-lifecycle` | generated forbidden contracts |
@@ -6038,8 +6040,8 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot keyed write ingress (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` | generated forbidden contracts |
-| Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot execution-surface refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
+| Snapshot transaction write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot model publication (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._publication` | `parallax.snapshot.handle._publication` | `parallax.core.entity`, `m-unit-work` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
@@ -6265,12 +6267,12 @@ parallax.postgres --> parallax.core.dialect
   transitive closure over the table above (core edges plus the declared
   support-scope edges), and emits the **forbidden-edge complement**
   as import-linter `forbidden` contracts — one forbidden import per
-  production scope pair the closure does not permit. The handle scope's
+  production scope pair the closure does not permit. The composition scope's
   `m-sql` edge is deliberate: `m-unit-work` takes no edge to SQL generation
   (core routes dialect SQL through the `m-db-port` execution seam at the
   composition surface), so `parallax.snapshot.handle` is where claimed finds
   are compiled and buffered DML is lowered, and the generated complement
-  permits that edge rather than forbidding it. The handle scope's `m-navigate`
+  permits that edge rather than forbidding it. The composition scope's `m-navigate`
   edge follows the identical reasoning: `Transaction.find`
   is a claimed find, so it composes `parallax.core.navigate.canonicalize`
   immediately after `m-temporal-read`'s root injection, mirroring the
@@ -6325,7 +6327,7 @@ parallax.postgres --> parallax.core.dialect
   `model_of` and the two typed-query names are already accepted private seams of
   production's own composition root and read preflight, and the typed surface is
   reached by naming the module that owns it — which is what a consumer wanting it
-  does above, the Snapshot handle included. `ObjectQuery` appears in both exact
+  does above, the Snapshot composition scope included. `ObjectQuery` appears in both exact
   imports although §8 re-exports it because each importer also requires the
   module-owned `object_query_node`. `model_of` exists precisely so a separately
   distributed frontend can read the accepted model out of a Domain Model
@@ -6434,7 +6436,7 @@ parallax.postgres --> parallax.core.dialect
   reported from the sibling itself. Ignoring that first hop also
   withdraws import-linter's indirect chains through it; no transitive grant
   receives a second exception. `unmatched_ignore_imports_alerting="error"`
-  ensures an exception cannot outlive the import it describes. The handle
+  ensures an exception cannot outlive the import it describes. The composition
   scope declares no `m-pk-gen` grant: nothing
   under `parallax.snapshot.handle` imports primary-key generation, so the
   generated complement forbids it. The unused direct `m-navigate` grant is

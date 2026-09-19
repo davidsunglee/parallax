@@ -88,7 +88,8 @@ than from the call (ADR 0065), and the suffix follows the resolved preference
 either way: a locking root's `uow` group renders the shared-lock pages while the
 invocation names no preference (`m-read-lock-017`), an explicit `optimistic`
 request under that root renders them lock-free (`m-read-lock-018`), a
-standalone read under a locking root takes no lock at all, because it opens no
-transaction for the root's defaults to govern (`m-read-lock-019`), and the same
-read inside a unit of work that requests nothing inherits the root's preference
-and renders the suffix (`m-read-lock-020`).
+standalone read through a scope derived from a locking root takes no lock at all,
+because it opens no transaction for the scope's effective options to govern
+(`m-read-lock-019`), and the same read inside a unit of work that requests
+nothing inherits that scope's root-derived preference and renders the suffix
+(`m-read-lock-020`).
