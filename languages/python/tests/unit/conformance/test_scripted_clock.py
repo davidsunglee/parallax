@@ -1,4 +1,4 @@
-"""Per-story clock-control tests for ``ScriptedClock`` and ``Database.transact``.
+"""Per-story clock-control tests for ``ScriptedClock`` and ``ScopedDatabase.transact``.
 
 The Transaction Instant a unit of work owns is lazy (ADR 0010), so a transaction
 consumes a scripted instant only when its surviving writes actually need a
@@ -32,6 +32,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.root_ownership import own_root
 
 _ACCOUNT = MODELS["account"]
 _BALANCE = MODELS["balance"]
@@ -84,11 +85,13 @@ def test_scripted_clock_requires_at_least_one_instant() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The consumption contract through `Database.transact`.                        #
+# The consumption contract through `ScopedDatabase.transact`.                        #
 # --------------------------------------------------------------------------- #
 def test_each_flushing_temporal_transact_consumes_one_scripted_instant() -> None:
     port = ScriptedAdapter(Transact(Write()), Transact(Write()), Transact(Write()))
-    db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
 
     db.transact(lambda tx: tx.insert(_balance(1)))
     db.transact(lambda tx: tx.insert(_balance(2)))
@@ -102,7 +105,9 @@ def test_each_flushing_temporal_transact_consumes_one_scripted_instant() -> None
 
 def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> None:
     port = ScriptedAdapter(Transact(Write(), Read(), Write()), Transact(Write()), Transact())
-    db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
 
     def fn(tx: Transaction) -> None:
         tx.insert(_balance(7))
@@ -125,7 +130,7 @@ def test_an_empty_or_read_only_transact_consumes_no_scripted_instant() -> None:
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}])
         ),
     )
-    account_db = Database.connect(port, _ACCOUNT, clock=clock).using_database_login()
+    account_db = own_root(Database.connect(port, _ACCOUNT, clock=clock)).using_database_login()
 
     account_db.transact(lambda tx: None)
     account_db.transact(lambda tx: tx.find(Account.where(Account.id == 1)).result())
@@ -147,7 +152,7 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
             Read(rows=[{"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}]),
         )
     )
-    account_db = Database.connect(port, _ACCOUNT, clock=clock).using_database_login()
+    account_db = own_root(Database.connect(port, _ACCOUNT, clock=clock)).using_database_login()
 
     def fn(tx: Transaction) -> None:
         tx.insert(_account(7))
@@ -167,7 +172,9 @@ def test_a_coalesced_away_buffer_consumes_no_scripted_instant() -> None:
     # the pair before any surviving write could need a Transaction-Time
     # boundary — so no DML runs and no instant is captured.
     port = ScriptedAdapter(Transact(), Transact(Write()), Transact(Write()))
-    db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1])).using_database_login()
+    db = own_root(
+        Database.connect(port, _BALANCE, clock=ScriptedClock([_I1]))
+    ).using_database_login()
 
     def fn(tx: Transaction) -> None:
         fresh = _balance(1)
@@ -189,7 +196,9 @@ def test_a_retry_attempt_captures_a_fresh_instant() -> None:
     port = ScriptedAdapter(
         Transact(Write(raises=_deadlock())), Transact(Write()), Transact(Write())
     )
-    db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2])).using_database_login()
+    db = own_root(
+        Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
+    ).using_database_login()
 
     db.transact(lambda tx: tx.insert(_balance(1)))
     assert _writes(port) == 2  # attempt 0's write failed, the retry's succeeded
@@ -202,7 +211,7 @@ def test_a_retry_attempt_captures_a_fresh_instant() -> None:
 def test_a_retry_that_reaches_no_timestamp_requiring_work_captures_no_instant() -> None:
     clock = ScriptedClock([_I1])
     port = ScriptedAdapter(Transact(Write(raises=_deadlock())), Transact(Write()))
-    account_db = Database.connect(port, _ACCOUNT, clock=clock).using_database_login()
+    account_db = own_root(Database.connect(port, _ACCOUNT, clock=clock)).using_database_login()
 
     account_db.transact(lambda tx: tx.insert(_account(1)))
     assert _writes(port) == 2  # attempt 0's write failed, the retry's succeeded
@@ -219,7 +228,7 @@ def test_a_fixed_clock_factory_story_still_works_single_instant() -> None:
     # (`Callable[[], Clock]`) admits any `Clock`, not only `ScriptedClock`, and
     # a `FixedClock` never exhausts across successive flushes.
     port = ScriptedAdapter(Transact(Write()), Transact(Write()))
-    db = Database.connect(port, _BALANCE, clock=FixedClock(_I1)).using_database_login()
+    db = own_root(Database.connect(port, _BALANCE, clock=FixedClock(_I1))).using_database_login()
     db.transact(lambda tx: tx.insert(_balance(1)))
     db.transact(lambda tx: tx.insert(_balance(2)))
     assert _writes(port) == 2

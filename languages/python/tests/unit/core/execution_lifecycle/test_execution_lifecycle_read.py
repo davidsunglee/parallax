@@ -73,6 +73,7 @@ from tests._support.db_port import (
     Transact,
     Write,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
 _ORDER_ROW: MappingRow = {
@@ -100,8 +101,8 @@ ACCOUNT_TARGET: Final = _StaticTarget()
 
 
 def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
-    return connect(
-        adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider
+    return own_root(
+        connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
     ).using_database_login()
 
 
@@ -511,7 +512,7 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
         monkeypatch.setattr(activity_module, name, counting)
 
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().find(
+    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
     assert constructed == []
@@ -710,7 +711,7 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     compilations = _recorded_compilations(monkeypatch)
 
     port = _ReturningPort(Read(rows=[NEW_ROW]))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().find(
+    own_root(connect(port, ACCOUNT, clock=FixedClock(FIXED))).using_database_login().find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
 
@@ -755,8 +756,8 @@ def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> 
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
-    db = connect(
-        port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder
+    db = own_root(
+        connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
     ).using_database_login()
 
     db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result())

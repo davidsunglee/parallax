@@ -68,7 +68,7 @@ def mode_for(strategy: Concurrency | None) -> LockMode | None:
     not by this function returning ``None`` for it (`m-read-lock-005`'s own
     compile-sweep witness proves the composed result). ``None`` (no owning
     unit of work — a non-transactional
-    :meth:`~parallax.snapshot.handle.Database.find`, or an adapter's own
+    :meth:`~parallax.snapshot.handle.ScopedDatabase.find`, or an adapter's own
     non-participating verification read) passes through
     unchanged: there is no participation to derive a strategy from either
     way, and ``None`` also never triggers the append site.

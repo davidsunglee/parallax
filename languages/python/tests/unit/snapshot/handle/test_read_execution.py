@@ -186,7 +186,7 @@ def _participating[T](
     concurrency: Concurrency = "optimistic",
     flushes: _Flushes | None = None,
 ) -> T:
-    """One physical attempt's collaborators, wired as ``Database.transact`` wires
+    """One physical attempt's collaborators, wired as ``ScopedDatabase.transact`` wires
     them, with ``run`` standing in for the transaction the closure would receive.
 
     The flush executor records rather than lowers: what these cases grade is

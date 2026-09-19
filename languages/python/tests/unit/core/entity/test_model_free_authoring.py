@@ -46,6 +46,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import FIXED
 
 _NS = "parallax.compatibility"
@@ -89,7 +90,9 @@ CLASSLESS = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateU
 
 
 def _db(model: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
-    return Database.connect(adapter, model, clock=FixedClock(FIXED)).using_database_login()
+    return own_root(
+        Database.connect(adapter, model, clock=FixedClock(FIXED))
+    ).using_database_login()
 
 
 # --------------------------------------------------------------------------- #
@@ -131,8 +134,8 @@ def test_a_query_whose_target_the_connected_model_does_not_declare_is_refused() 
     # Authoring reaches no model, so the query builds; the connected model is
     # what answers, and it answers before any adapter activity.
     port = RefusingAdapter()
-    database = Database.connect(
-        port, DomainModel(Gizmo), clock=FixedClock(FIXED)
+    database = own_root(
+        Database.connect(port, DomainModel(Gizmo), clock=FixedClock(FIXED))
     ).using_database_login()
     with pytest.raises(QueryTargetError) as caught:
         database.find(Widget.where(Widget.id == 1))
@@ -148,8 +151,8 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     # and only the Typed read it cannot materialize is refused — at the read
     # call, before any I/O, which the raising port proves.
     descriptor_backed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
-    database = Database.connect(
-        RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED)
+    database = own_root(
+        Database.connect(RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED))
     ).using_database_login()
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Gizmo.where(Gizmo.id == 1))
@@ -157,8 +160,10 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
 
     # And the Wire read the same connection DOES serve runs end to end: the
     # capability is an executed read rather than a reachable namespace.
-    served = Database.connect(
-        ScriptedAdapter(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
+    served = own_root(
+        Database.connect(
+            ScriptedAdapter(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
+        )
     ).using_database_login()
     published = served.wire.find({"target": "Gizmo", "predicate": {"all": {}}}).result()
     assert published == {"id": 1}
@@ -171,18 +176,22 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
     # and the constructor beneath it refuses the same shape rather than failing
     # on an attribute a Metamodel does not carry.
     with pytest.raises(SnapshotConnectionError) as caught:
-        Database.connect(
-            RefusingAdapter(),
-            model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
-            clock=FixedClock(FIXED),
+        own_root(
+            Database.connect(
+                RefusingAdapter(),
+                model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+                clock=FixedClock(FIXED),
+            )
         ).using_database_login()
     assert caught.value.code == "snapshot-class-backed-model-required"
 
     with pytest.raises(SnapshotConnectionError) as constructed:
-        Database(
-            RefusingAdapter(),
-            model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
-            clock=FixedClock(FIXED),
+        own_root(
+            Database(
+                RefusingAdapter(),
+                model_of(WIDGETS),  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+                clock=FixedClock(FIXED),
+            )
         ).using_database_login()
     assert constructed.value.code == "snapshot-class-backed-model-required"
 
@@ -193,7 +202,9 @@ def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> 
     # model also does not declare still reports the connection rather than the
     # target.
     port = ScriptedAdapter()
-    database = Database.connect(port, CLASSLESS, clock=FixedClock(FIXED)).using_database_login()
+    database = own_root(
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+    ).using_database_login()
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Widget.where(Widget.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
@@ -206,7 +217,9 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
     # refused before the force-flush its gate stands in front of, so the write
     # buffered beside it is still only buffered when the refusal lands.
     port = ScriptedAdapter(Transact(Write()))
-    database = Database.connect(port, CLASSLESS, clock=FixedClock(FIXED)).using_database_login()
+    database = own_root(
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+    ).using_database_login()
 
     def body(tx: Transaction) -> None:
         tx.insert(Gizmo(id=1))
@@ -232,8 +245,8 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
     query = Gizmo.where(Gizmo.id == 1)
     doors: list[SnapshotConnectionError] = []
 
-    standalone = Database(
-        RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED)
+    standalone = own_root(
+        Database(RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED))
     ).using_database_login()
     with pytest.raises(SnapshotConnectionError) as eager:
         standalone.find(query)
@@ -251,9 +264,9 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
         doors.append(participating_stream.value)
 
     port = ScriptedAdapter(Transact())
-    Database.connect(port, CLASSLESS, clock=FixedClock(FIXED)).using_database_login().transact(
-        read_inside
-    )
+    own_root(
+        Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
+    ).using_database_login().transact(read_inside)
 
     assert [str(door) for door in doors] == [refusal] * 4
     assert [door.code for door in doors] == ["snapshot-class-backed-model-required"] * 4

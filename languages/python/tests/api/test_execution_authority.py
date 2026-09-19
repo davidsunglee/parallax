@@ -8,14 +8,14 @@ from typing import Any, Literal
 
 import pytest
 
-from parallax.conformance import case_format, engine
+from parallax.conformance import case_format, engine, execution_authority_stories
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.object_query import deserialize
-from parallax.snapshot import connect
+from parallax.snapshot import DatabaseOptions, connect
 from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.corpus import case_fixtures
 
@@ -46,6 +46,24 @@ def _scope(root: Any, profile_run: Any, mode: _AuthorityMode) -> ScopedDatabase:
     if mode == "database-login":
         return root.using_database_login()
     return root.using_principal(_Principal("authority-api", profile_run.authorization("role-a")))
+
+
+def test_the_scoped_authority_usage_guide_story_runs_against_a_real_database(
+    profile_run: Any,
+) -> None:
+    case = _authority_case()
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+
+    shape = execution_authority_stories.scopes_capture_authority_and_share_the_root_lifetime(
+        profile_run.port,
+        MODELS["account"],
+        profile_run.authorization("role-a"),
+    )
+
+    assert shape.login_balance == Decimal("250.00")
+    assert shape.principal_balance == Decimal("250.00")
+    assert shape.joined_same_transaction
+    assert shape.options == DatabaseOptions(max_retries=1, isolation="serializable")
 
 
 @pytest.mark.parametrize("mode", ["database-login", "principal"])

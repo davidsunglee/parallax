@@ -51,6 +51,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import ACCOUNT, FIXED, account_db, db_for, deadlock, new_account
 from tests.unit.snapshot.handle import _mixed_strategy_model as mx
@@ -465,7 +466,7 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
     port = ScriptedAdapter(
         Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(raises=failure))
     )
-    db = Database.connect(port, serving, clock=FixedClock(FIXED)).using_database_login()
+    db = own_root(Database.connect(port, serving, clock=FixedClock(FIXED))).using_database_login()
     seen: list[int] = []
 
     def body(tx: Transaction) -> None:

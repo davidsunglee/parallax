@@ -43,6 +43,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.snapshot import connect
 from tests._support.corpus import case_fixtures
+from tests._support.root_ownership import own_root
 
 _CASE_ID = "m-execution-lifecycle-001"
 
@@ -70,8 +71,8 @@ class _Declining:
 
 def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
-    db = connect(
-        _seeded(profile_run), MODELS["account"], lifecycle_provider=recorder
+    db = own_root(
+        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
     ).using_database_login()
 
     account = db.find(Account.where(Account.id == 2)).result()
@@ -119,8 +120,8 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
 
 def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any) -> None:
     recorder = RecordingLifecycleProvider()
-    db = connect(
-        _seeded(profile_run), MODELS["account"], lifecycle_provider=recorder
+    db = own_root(
+        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=recorder)
     ).using_database_login()
     db.find(Account.where(Account.id == 2)).result()
     db.find(Account.where(Account.id == 2)).result()
@@ -135,8 +136,8 @@ def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any
 
 def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) -> None:
     provider = _Declining()
-    db = connect(
-        _seeded(profile_run), MODELS["account"], lifecycle_provider=provider
+    db = own_root(
+        connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=provider)
     ).using_database_login()
 
     assert db.find(Account.where(Account.id == 2)).result().balance == Decimal("250.00")

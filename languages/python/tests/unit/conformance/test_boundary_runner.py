@@ -55,6 +55,7 @@ from parallax.snapshot.handle import (
 )
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import ConnectsAsItself, body_outcome
+from tests._support.root_ownership import own_root
 
 _ACCOUNT = MODELS["account"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -232,7 +233,9 @@ def _faulted(
 
 
 def _db(adapter: DatabaseAdapter[Any]) -> ScopedDatabase:
-    return Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED)).using_database_login()
+    return own_root(
+        Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
+    ).using_database_login()
 
 
 def _context(runtime: Any) -> Any:
@@ -315,7 +318,9 @@ def test_a_join_without_the_owning_database_is_refused() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("join"))
 
-    with raises_contextualized(AssertionError, match="needs the Database that opened the boundary"):
+    with raises_contextualized(
+        AssertionError, match="needs the ScopedDatabase running the boundary"
+    ):
         _db(port).transact(fn)
 
 
@@ -676,11 +681,13 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
     outcome = boundary_runner.outcome(case, POSTGRES)
     assert outcome is not None
     port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
-    db = Database.connect(
-        _faulted(port, fault=fault, persistent=outcome != "committed"),
-        _ACCOUNT,
-        options=case_format.database_options(case),
-        clock=FixedClock(_FIXED),
+    db = own_root(
+        Database.connect(
+            _faulted(port, fault=fault, persistent=outcome != "committed"),
+            _ACCOUNT,
+            options=case_format.database_options(case),
+            clock=FixedClock(_FIXED),
+        )
     ).using_database_login()
     steps = boundary_runner.boundary_steps(case)
     requests = case_format.transaction_keywords(case)

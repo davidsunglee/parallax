@@ -218,14 +218,14 @@ def run_boundary_actions(
       range 1-3) — no reachable corpus witness authors this action, but the
       mapping is total, not partial.
     - ``delete`` removes the last-read row.
-    - ``join`` opens a joined unit of work through ``database``, naming exactly
+    - ``join`` opens a joined unit of work through the enclosing scope, naming exactly
       the options the step authors, and runs every REMAINING action inside it,
       carrying the row already observed. A joined call shares the outer transaction
       (`m-unit-work`), so its closure receives the same :class:`Transaction` and
       its buffered writes reach the database in the OUTER boundary's own
       pre-commit batch — which is exactly what `m-execution-lifecycle-006`
-      asserts. It needs the ``Database`` that opened the boundary, since only
-      that object joins. An option the transaction was not opened with is
+      asserts. An unqualified join reuses that scope; a qualified join derives
+      an independent scope from the same root. An option the transaction was not opened with is
       refused there rather than here: the refusal under test is production's
       own.
     - ``terminate`` has no legal target on this NON-temporal model — a loud
@@ -265,8 +265,7 @@ def _run_actions(
         elif action == "join":
             if database is None:
                 raise AssertionError(
-                    "a `join` action needs the Database that opened the boundary — only that "
-                    "object joins it (`python.md` §5)"
+                    "a `join` action needs the ScopedDatabase running the boundary (`python.md` §5)"
                 )
             joining_database = database
             if step.actor_selection is not None:

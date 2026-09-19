@@ -226,6 +226,67 @@ Corpus case: `m-edit-012`
 note.tag.edit()
 ```
 
+## Scopes capture login or principal authority under one owned Database Root
+
+Corpus case: `m-execution-authority-001`
+
+```python
+@dataclass(frozen=True, slots=True)
+class AuthorityPrincipal[Authorization]:
+    """An application Principal paired with the provider's authorization type."""
+
+    subject: str
+    database_authorization: Authorization
+
+
+@dataclass(frozen=True, slots=True)
+class ScopedAuthorityShape:
+    """What the two authority modes and an independently captured join observed."""
+
+    login_balance: Decimal
+    principal_balance: Decimal
+    joined_same_transaction: bool
+    options: DatabaseOptions
+
+
+def scopes_capture_authority_and_share_the_root_lifetime[Authorization](
+    adapter: DatabaseAdapter[Authorization],
+    model: DomainModel,
+    authorization: Authorization,
+) -> ScopedAuthorityShape:
+    """Select both authority modes from one explicitly owned Database Root.
+
+    The root context owns and closes the runtime. Its scopes are immutable,
+    connectionless views: the login scope captures the runtime's authenticated
+    identity, while each principal scope captures the application's subject and
+    provider authorization once. Options derive a new scope without changing
+    that capture. Two independently selected equal principal scopes can join
+    because execution authority compares by value within the same root.
+    """
+    defaults = DatabaseOptions(max_retries=1)
+    with connect(adapter, model, options=defaults) as root:
+        login = root.using_database_login()
+        principal_value = AuthorityPrincipal("authority-guide", authorization)
+        principal = root.using_principal(principal_value).with_options(isolation="serializable")
+        independently_captured = root.using_principal(principal_value)
+
+        login_balance = login.find(Account.where(Account.id == _TARGET_ID)).result().balance
+
+        def outer(tx: Transaction) -> tuple[Decimal, bool, DatabaseOptions]:
+            account = tx.find(Account.where(Account.id == _TARGET_ID)).result()
+            joined = independently_captured.transact(lambda joined_tx: joined_tx is tx)
+            return account.balance, joined, tx.options
+
+        principal_balance, joined_same_transaction, options = principal.transact(outer)
+
+    return ScopedAuthorityShape(
+        login_balance=login_balance,
+        principal_balance=principal_balance,
+        joined_same_transaction=joined_same_transaction,
+        options=options,
+    )
+```
+
 ## A joined unit of work is observed inside the OUTER transaction attempt
 
 Corpus case: `m-execution-lifecycle-006`

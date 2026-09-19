@@ -32,6 +32,7 @@ from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import ScopedDatabase, Snapshot
 from parallax.snapshot.materialize import WireEntity, read_origin_of
 from tests._support import mirrored_models as mm
+from tests._support.root_ownership import own_root
 
 __all__ = [
     "ACCOUNT",
@@ -138,11 +139,11 @@ def deadlock() -> DatabaseError:
 def account_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     # The spec §8 module-level `connect` is the classmethod's alias, so this
     # covers both spellings.
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
+    return own_root(connect(adapter, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
 
 
 def db_for(meta: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
-    return connect(adapter, meta, clock=FixedClock(FIXED)).using_database_login()
+    return own_root(connect(adapter, meta, clock=FixedClock(FIXED))).using_database_login()
 
 
 def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservation, ...]:

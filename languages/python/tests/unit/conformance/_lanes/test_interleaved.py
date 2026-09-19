@@ -26,6 +26,7 @@ from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import Dialect
 from parallax.snapshot import DatabaseOptions, handle
+from tests._support.root_ownership import own_root
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._wire_value_support import wire_value
@@ -86,8 +87,10 @@ class _ScriptedExecution:
         self.closed = False
         self.cancel_calls = 0
         self.terminate_calls = 0
-        self._database = handle.Database.connect(
-            port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
+        self._database = own_root(
+            handle.Database.connect(
+                port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
+            )
         ).using_database_login()
 
     @property

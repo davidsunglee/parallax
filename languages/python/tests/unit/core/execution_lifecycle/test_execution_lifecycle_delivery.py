@@ -8,7 +8,7 @@ may refuse the operation because nothing has begun, an ordinary Handler failure
 may cost only that Handler, and a control-flow or fatal exception may abort the
 root while propagating unchanged.
 
-Driven through :meth:`Database.find` over a fake port rather than against the
+Driven through :meth:`ScopedDatabase.find` over a fake port rather than against the
 publisher directly: the seam an application installs is ``connect``'s own
 argument, so what is graded here is what an application would actually see.
 """
@@ -55,12 +55,13 @@ from tests._support.db_port import (
     ReadCall,
     ScriptedAdapter,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
 
 def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
-    return connect(
-        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    return own_root(
+        connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
     ).using_database_login()
 
 

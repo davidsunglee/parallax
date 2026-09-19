@@ -1,7 +1,7 @@
 """``parallax.snapshot.handle._preflight`` — the shared read-preflight seam.
 
 Every modeled read passes through :func:`preflight` before any I/O:
-:meth:`Database.find`, :meth:`Transaction.find`, both Wire views' ``find``, both
+:meth:`ScopedDatabase.find`, :meth:`Transaction.find`, both Wire views' ``find``, both
 values-lane entry points, and the conformance compile lane call it rather than
 reimplementing a step of it. The
 seam resolves the query's own target in the connected model, validates the

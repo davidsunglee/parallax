@@ -13,6 +13,7 @@ from parallax.conformance import case_format, edit_runner, engine
 from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
 from parallax.snapshot import SnapshotInspectionError, connect, pin_of
 from tests._support.corpus import case_fixtures
+from tests._support.root_ownership import own_root
 
 
 def _origin(case: case_format.Case) -> object:
@@ -74,7 +75,7 @@ def _pin_refusal(value: object) -> SnapshotInspectionError:
 @pytest.mark.parametrize("case", _READ_CASES, ids=lambda case: case.case_id)
 def test_read_edit_case(case: case_format.Case, profile_run: Any) -> None:
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
-    db = connect(profile_run.port, NOTE_MODEL).using_database_login()
+    db = own_root(connect(profile_run.port, NOTE_MODEL)).using_database_login()
     root = db.find(Note.where(Note.id == _read_id(case))).result()
     source = edit_runner.follow_path(root, case)
     target = source.target

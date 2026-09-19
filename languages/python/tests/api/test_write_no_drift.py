@@ -66,6 +66,7 @@ from tests._support.db_port import (
     body_outcome,
 )
 from tests._support.document_reads import fold_mapping_rows
+from tests._support.root_ownership import own_root
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
@@ -400,7 +401,7 @@ def _db(port: _KeyedSeedPort, story: WriteStory) -> ScopedDatabase:
     # A story's own scripted-clock FACTORY (never a shared instance) —
     # this consumer's fresh clock, independent of `test_story_run.py`'s own.
     clock = story.clock() if story.clock is not None else None
-    return Database.connect(port, MODELS[story.model], clock=clock).using_database_login()
+    return own_root(Database.connect(port, MODELS[story.model], clock=clock)).using_database_login()
 
 
 # The no-drift guard grades every EXERCISED story (`m-api-conformance.md`);
@@ -616,7 +617,9 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _KeyedSeedPort()
-    db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]]).using_database_login()
+    db = own_root(
+        Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
+    ).using_database_login()
     with raises_contextualized(WriteRejectedError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule

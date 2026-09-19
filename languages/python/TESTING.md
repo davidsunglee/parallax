@@ -64,6 +64,7 @@ no test command of its own.
 | `_support/frontend_probes.py`, `_support/frontend_probes_stringized.py` | Declaration probes on the live-annotation and stringized-annotation paths |
 | `_support/inheritance_models.py`, `_support/mirrored_models.py`, `_support/snapshot_models.py`, `_support/value_object_models.py` | Idiomatic Entity and Value Object classes mirroring the corpus models |
 | `_support/write_values.py` | The invalid-Customer read shared by the API and unit keyed-write provenance lanes |
+| `_support/root_ownership.py` | The Database Root owner used by execution helpers: `own_root` retains roots explicitly; the autouse finalizer closes them after each test, and standalone reading tools close theirs at process exit |
 
 A symbol reads `from tests._support.corpus import case_document` and a model
 module reads `from tests._support import mirrored_models as mm`, regardless of
@@ -152,7 +153,9 @@ is what `profile_run` is opened by, and what a database-backed test names
 when it needs the dialect its run executed in. Requesting it alone leaves an item
 `dbfree`.
 
-`release_case_runtimes` classifies no item either, and that is why it reads
+`release_case_runtimes` first closes every Database Root explicitly registered
+through `own_root`, then closes any profile runtime left open as a backstop. It
+classifies no item, and that is why it reads
 `request.fixturenames` instead of requesting `profile_run`: requesting it would
 put the live database in every item's fixture closure and reclassify the whole
 suite as database-backed. A connected handle owns a pool, so a handle a test

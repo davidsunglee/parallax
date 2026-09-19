@@ -35,6 +35,7 @@ from tests._support.db_port import (
     Transact,
     WriteCall,
 )
+from tests._support.root_ownership import own_root
 from tests._support.write_values import invalid_customer_root
 from tests.unit._transact_support import FIXED
 
@@ -50,7 +51,7 @@ _TARGET_ROW: MappingRow = {
 
 
 def _db(adapter: DatabaseAdapter, domain_model: DomainModel = ACCOUNT_MODEL) -> ScopedDatabase:
-    return connect(adapter, domain_model, clock=FixedClock(FIXED)).using_database_login()
+    return own_root(connect(adapter, domain_model, clock=FixedClock(FIXED))).using_database_login()
 
 
 # The second source takes a prepared selection, as the source under test does;

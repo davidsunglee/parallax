@@ -88,7 +88,7 @@ _Avoid_: PublishedModelProvider, provider, provider protocol, model registry, mo
 
 **Model Selection**:
 The opaque, immutable preparation of one Domain Model and its Model Edition,
-ready for adoption by a Database's reads and transactions. Its Selected Read
+ready for adoption by a Database Root's authority-selected reads and transactions. Its Selected Read
 Model and Selected Write Model share one cataloged model and contain the
 model-dependent execution facts fixed before publication.
 _Avoid_: PreparedModel, connected model, runtime model, model cache entry

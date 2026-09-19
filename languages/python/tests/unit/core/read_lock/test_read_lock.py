@@ -28,6 +28,6 @@ def test_the_optimistic_strategy_selects_the_optimistic_lock_mode() -> None:
 
 
 def test_no_participation_selects_no_lock() -> None:
-    # A non-transactional `Database.find`: there is no participation to derive
+    # A non-transactional `ScopedDatabase.find`: there is no participation to derive
     # an Effective Concurrency Strategy from, so there is no lock to render.
     assert read_lock.mode_for(None) is None

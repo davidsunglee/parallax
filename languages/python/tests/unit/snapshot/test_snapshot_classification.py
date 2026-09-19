@@ -58,6 +58,7 @@ from tests._support.db_port import (
     Read,
     ScriptedAdapter,
 )
+from tests._support.root_ownership import own_root
 from tests.unit._transact_support import ACCOUNT
 from tests.unit.snapshot._layout_twin_columns import COLUMNS_TWIN
 from tests.unit.snapshot._layout_twin_columns import LayoutTwinItem as ColumnsItem
@@ -232,7 +233,7 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
 def _customer(row: dict[str, object]) -> InvalidData[object]:
     document = PresentDocument(cast("Any", row["address"]))
     port = ScriptedAdapter(Read(rows=[{**row, "address": document}]))
-    database = connect(port, vo.CUSTOMER_MODEL).using_database_login()
+    database = own_root(connect(port, vo.CUSTOMER_MODEL)).using_database_login()
     return invalid_record(database.find(vo.Customer.where(vo.Customer.id == 1)).checked().result())
 
 

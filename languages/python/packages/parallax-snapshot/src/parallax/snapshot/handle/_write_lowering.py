@@ -1,7 +1,7 @@
 """``parallax.snapshot.handle._write_lowering`` — a Write Plan as its statements.
 
 :func:`stream_lowered` is the single write-lowering seam: both the developer
-transaction path (the ``FlushExecutor`` :meth:`Database.transact` injects) and
+transaction path (the ``FlushExecutor`` :meth:`ScopedDatabase.transact` injects) and
 the conformance engine drive THIS function, so there is exactly one place a
 Write Plan becomes DML.
 

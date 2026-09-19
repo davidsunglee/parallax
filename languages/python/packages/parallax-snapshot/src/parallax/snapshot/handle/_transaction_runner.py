@@ -1,15 +1,16 @@
 """``parallax.snapshot.handle._transaction_runner`` — the outermost transaction
 runner and the flush edge.
 
-:class:`TransactionRunner` is what ``Database.transact`` delegates to once
+:class:`TransactionRunner` is what ``ScopedDatabase.transact`` delegates to once
 re-entry has been refused: the validation of every explicit option, the
 resolution of an outer invocation's omitted options against the root's
 :class:`~parallax.snapshot.handle._options.DatabaseOptions`, the join through
-the exact originating handle with the option-conflict check, the
+the originating resource root with authority and option-conflict checks, the
 ``m-auto-retry`` bounded retry loop, the per-attempt adoption of the Serving
 Model's current selection, and the flush executor it injects into the unit of
-work. A ``Database`` builds exactly one at connect, over its port, clock,
-installed lifecycle, Serving Model, and defaults; it has one adapter and is an
+work. A Database Root builds exactly one at connect, over its runtime, clock,
+installed lifecycle, Serving Model, and read planner; scopes supply their own
+capture and defaults per invocation. The runner has one adapter and is an
 internal seam rather than a Protocol.
 
 Each outer attempt adopts one complete selection before the boundary is asked
@@ -32,8 +33,9 @@ force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
 import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
 classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
-The three public refusals declared here — :class:`TransactionOptionConflictError`,
-:class:`TransactionOwnershipError`, :class:`TransactionRollbackError` — are the
+The four public refusals declared here — :class:`TransactionAuthorityError`,
+:class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
+and :class:`TransactionRollbackError` — are the
 runner's own and are re-exported through ``handle/__init__.py``'s frozen
 ``__all__``; every other name keeps its leading underscore because nothing
 outside this module reaches it.
@@ -124,18 +126,17 @@ class TransactionOptionConflictError(ValueError):
 
 
 class TransactionOwnershipError(RuntimeError):
-    """A nested ``db.transact`` call was made through a foreign ``Database``.
+    """A nested ``db.transact`` call was made through a foreign resource root.
 
-    The active transaction records the exact ``Database`` object that opened it,
-    and a nested call joins only through that same object. An alias of the owner
-    joins and receives the identical :class:`Transaction`; every different handle
-    is refused even when it carries the same model, adapter, clock, or
-    otherwise equivalent configuration, because the owner is scoped state rather
-    than a registry keyed by any of those.
+    The active transaction records the shared resource identity behind the
+    Database Root that opened it. Scopes derived from that root or any root alias
+    join and receive the identical :class:`Transaction`; a scope from every other
+    root is refused even when it carries the same model, adapter, clock, or
+    otherwise equivalent configuration.
 
     The refusal precedes rollback-only joining, the option-conflict check,
     closure execution, Unit of Work mutation, SQL, and adapter access, and
-    retains neither handle — :data:`code` and the message are its whole public
+    retains neither scope — :data:`code` and the message are its whole public
     state.
     """
 
@@ -198,14 +199,15 @@ class _ActiveTransaction:
 
     A joining ``db.transact`` call needs the same :class:`Transaction` to hand
     its closure — which also carries the resolved options the join is compared
-    against — the exact ``Database`` that opened the transaction so ownership
-    can be settled before that comparison, the physical attempt currently
+    against — the shared resource root that opened the transaction so ownership
+    can be settled before that comparison, the capture that fixes execution
+    authority, the physical attempt currently
     running — which is what a joined invocation is a child activity OF — and the
     Write Planner of the selection that attempt adopted, so a join plans through
-    what it inherited rather than adopting anything. All four ride core's single
+    what it inherited rather than adopting anything. All five ride core's single
     per-thread active binding, so their visibility ends exactly when it does (no
-    handle-owned thread-local, nothing to clean up). ``owner`` is a strong
-    reference deliberately: it is scoped state whose lifetime is the
+    handle-owned thread-local, nothing to clean up). ``root`` is a strong
+    reference deliberately: it is resource-scoped state whose lifetime is the
     transaction's, not a registry entry.
     """
 
@@ -217,14 +219,14 @@ class _ActiveTransaction:
 
 
 class TransactionRunner:
-    """One handle's transaction runner, built once at connect.
+    """One resource root's transaction runner, built once at connect.
 
-    Holds what every invocation needs and nothing an invocation retains: the
-    bound context source every attempt creates its acquisition from, the Clock
-    the unit of work reads, the installed lifecycle every root and attempt
-    reports through, the Serving Model each attempt adopts from, and the root's
-    defaults every outer invocation resolves its omitted options against. Neither the
-    selection, a connection, nor the active transaction is held here — that is
+    Holds what every invocation shares and nothing scope-specific: the resource
+    identity used for ownership, the Clock the unit of work reads, the installed
+    lifecycle every root and attempt reports through, the Serving Model each
+    attempt adopts from, and the read planner transactions participate through.
+    The calling scope supplies its capture and defaults. Neither the selection,
+    a connection, nor the active transaction is held here — that is
     what makes the first two per attempt, so a retry adopts afresh and acquires
     afresh rather than replaying over what its predecessor left, and what keeps
     the active transaction on core's per-thread binding alone.
@@ -257,10 +259,9 @@ class TransactionRunner:
         retry_optimistic_conflicts: bool | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
-        """Run ``fn(tx)`` in a transaction owned by ``owner``, returning its
-        value only after commit.
+        """Run ``fn(tx)`` under ``capture``, returning its value after commit.
 
-        The public contract is ``Database.transact``'s. What is decided here:
+        The public contract is ``ScopedDatabase.transact``'s. What is decided here:
         the deterministic refusals run first and keep their own types, the join
         path returns inside the active attempt without adopting or wrapping,
         and an outer invocation resolves its options once, opens its root, runs

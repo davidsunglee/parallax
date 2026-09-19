@@ -143,6 +143,7 @@ from parallax.snapshot import SnapshotStream
 from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 from parallax.snapshot.materialize import Page, PageRows, RootView
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
+from tests._support.root_ownership import own_root
 from tests.unit.memory_instruments import (
     Seam,
     Span,
@@ -446,7 +447,9 @@ def _draining(namespace: _Namespace, total: int, *, retaining: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database.connect(_GeneratingPort(total), ORDERS_MODEL).using_database_login()
+        database = own_root(
+            Database.connect(_GeneratingPort(total), ORDERS_MODEL)
+        ).using_database_login()
         held: list[Any] = []
         with namespace.opener(database, _BATCH) as stream:
             for root in stream:
@@ -470,8 +473,8 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database.connect(
-            _GeneratingPort(total, fanout), ORDERS_MODEL
+        database = own_root(
+            Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         ).using_database_login()
         with namespace.opener(database, batch_size) as stream:
             for position, _root in enumerate(stream):
@@ -487,8 +490,8 @@ def _paused_over(terms: int, total: int, *, batch_size: int, fanout: int, at: in
     authored keys, so the term count varies while everything else holds."""
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database.connect(
-            _GeneratingPort(total, fanout), ORDERS_MODEL
+        database = own_root(
+            Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         ).using_database_login()
         with database.stream(_ordered(terms), batch_size=batch_size) as stream:
             for position, _root in enumerate(stream):
@@ -512,8 +515,8 @@ def _advancing(namespace: _Namespace, total: int, *, batch_size: int, fanout: in
     """
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        database = Database.connect(
-            _GeneratingPort(total, fanout), ORDERS_MODEL
+        database = own_root(
+            Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         ).using_database_login()
         with namespace.opener(database, batch_size) as stream:
             roots = iter(stream)
@@ -536,7 +539,9 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database.connect(_WritingPort(total), ACCOUNT_MODEL).using_database_login()
+        database = own_root(
+            Database.connect(_WritingPort(total), ACCOUNT_MODEL)
+        ).using_database_login()
 
         def body(tx: Transaction) -> None:
             with tx.stream(Account.where(Account.id >= 1), batch_size=batch_size) as stream:
@@ -671,7 +676,9 @@ def _published_kinds(namespace: _Namespace) -> frozenset[str]:
     both answer is how many published nodes are alive, which is what the census
     counts over whichever names this returns.
     """
-    database = Database.connect(_GeneratingPort(_BATCH), ORDERS_MODEL).using_database_login()
+    database = own_root(
+        Database.connect(_GeneratingPort(_BATCH), ORDERS_MODEL)
+    ).using_database_login()
     with namespace.opener(database, _BATCH) as stream:
         for root in stream:
             child = _first_child(root)
