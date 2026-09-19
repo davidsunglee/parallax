@@ -26,9 +26,13 @@ from parallax.snapshot import DatabaseOptions
 
 __all__ = [
     "CASE_SHAPES",
+    "ActorSelection",
     "Case",
+    "DatabaseLoginSelection",
     "SelectionFilter",
+    "SubjectSelection",
     "TransactionKeywords",
+    "actor_selection",
     "database_options",
     "default_cases_dir",
     "effective_options",
@@ -42,6 +46,7 @@ __all__ = [
     "safe_load_yaml",
     "select",
     "serialized_isolation",
+    "step_actor_selection",
     "transaction_keywords",
 ]
 
@@ -205,6 +210,84 @@ class Case:
             if is_module_tag(tag):
                 return tag
         raise ValueError(f"{self.path.name}: no module tag in {self.tags!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectSelection:
+    """One case-authored principal selection, decoded at case ingress."""
+
+    subject: str
+    database_authorization: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseLoginSelection:
+    """The explicit database-login mode, whose identity comes from the runtime."""
+
+
+type ActorSelection = SubjectSelection | DatabaseLoginSelection
+
+
+def actor_selection(case: Case) -> ActorSelection | None:
+    """The outer boundary's authored authority, or ``None`` for the runner's
+    explicit login-scope default.
+
+    The absence is case-language interpretation only. Production still requires
+    an explicit scope selection.
+    """
+    when = case.document.get("when")
+    mapping: Mapping[str, object] = (
+        cast("Mapping[str, object]", when) if isinstance(when, Mapping) else {}
+    )
+    return _actor_selection(mapping, where=f"{case.path.name}: when")
+
+
+def step_actor_selection(step: Mapping[str, object], *, where: str) -> ActorSelection | None:
+    """The independently authored authority on one joining step, or ``None``
+    when that join reuses its enclosing scope."""
+    return _actor_selection(step, where=where)
+
+
+def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSelection | None:
+    if "actorIdentity" not in container:
+        if "databaseAuthorization" in container:
+            raise ValueError(f"{where}.databaseAuthorization requires {where}.actorIdentity")
+        return None
+    actor = container["actorIdentity"]
+    authorization = container.get("databaseAuthorization")
+    if not isinstance(actor, Mapping):
+        raise ValueError(f"{where}.actorIdentity must be a mapping, got {actor!r}")
+    authored = cast("Mapping[str, object]", actor)
+    unknown = sorted(set(authored) - {"kind", "value"})
+    if unknown:
+        raise ValueError(f"{where}.actorIdentity names unknown keys {unknown}")
+    kind = authored.get("kind")
+    if kind == "subject":
+        if set(authored) != {"kind", "value"}:
+            raise ValueError(
+                f"{where}.actorIdentity subject selection requires exactly kind and value"
+            )
+        subject = authored["value"]
+        if not isinstance(subject, str) or not subject or subject.startswith("db-login:"):
+            raise ValueError(
+                f"{where}.actorIdentity.value must be a nonempty, nonreserved subject string"
+            )
+        if not isinstance(authorization, str) or not authorization:
+            raise ValueError(
+                f"{where}.databaseAuthorization must be a nonempty fixture selector for a subject"
+            )
+        return SubjectSelection(subject, authorization)
+    if kind == "database-login":
+        if set(authored) != {"kind"}:
+            raise ValueError(f"{where}.actorIdentity database-login selection carries no value")
+        if "databaseAuthorization" in container:
+            raise ValueError(
+                f"{where}.databaseAuthorization is forbidden for database-login selection"
+            )
+        return DatabaseLoginSelection()
+    raise ValueError(
+        f"{where}.actorIdentity.kind must be one of ['database-login', 'subject'], got {kind!r}"
+    )
 
 
 _SERIALIZED_ISOLATION: Final[Mapping[IsolationLevel, str]] = {

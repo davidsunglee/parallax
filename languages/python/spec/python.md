@@ -2286,21 +2286,21 @@ the database error already carries (§6). The executable form of this order ship
 as the API Conformance Suite's publication story, rendered into the Usage Guide
 (§6) — not as a generic updater callback interface.
 
-**A connected handle owns its runtime.**
+**A connected Database Root owns its runtime.**
 `Database.connect(adapter, model, *, options=None, read_plan_cache_capacity=16, clock=None, lifecycle_provider=None)`
 takes **configuration**, not a live resource. `PostgresAdapter(connection_string,
 pool=PoolOptions(...) | OnDemandOptions(...), prepare_threshold=...)` is a frozen
 value that opens no connection, pool, or thread, so it is safe to build at import
 time, share between threads, and build before a fork; `connect` is what opens a
-ready runtime from it and the returned handle is what owns that runtime until it
+ready runtime from it and the returned root is what owns that runtime until it
 closes. Every `connect` over one configuration opens an INDEPENDENT runtime, so
-closing one handle leaves another working. `db.close()` and using the handle as a
+closing one root leaves another working. `db.close()` and using the root as a
 context manager are equivalent, both idempotent, and one of them is required:
-what a handle holds is connections, and nothing above it can release them.
+what a root holds is connections, and nothing above it can release them.
 
 **A connected handle is the Database Root** (ADR 0065): the configured owner
 of one runtime, carrying the transaction option defaults every outer
-`db.transact` resolves its omitted keywords against. `options` is that record,
+an outer scoped `transact` resolves its omitted keywords against. `options` is that record,
 a `DatabaseOptions` exported from `parallax.snapshot` beside `connect`, and it
 is the first keyword: `connect(adapter, model, *, options=DatabaseOptions(...))`
 reads as where, then what, then how. Omitting it and passing `options=None`
@@ -2311,7 +2311,7 @@ the same object is what the direct `Database(runtime, model, *, options=...)`
 constructor takes over an already-open runtime. Cache capacity, clock, and
 lifecycle provider stay separate root-lifetime configuration rather than
 fields of the record: the plan cache and the installed lifecycle are resources
-the handle owns for its life, as the pool is.
+the root owns for its life, as the pool is.
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -2323,7 +2323,7 @@ class DatabaseOptions:
 ```
 
 Every field is validated at construction under the rule an explicit
-`db.transact` keyword meets — `max_retries` a nonnegative built-in `int` that
+`ScopedDatabase.transact` keyword meets — `max_retries` a nonnegative built-in `int` that
 is not a `bool`, `retry_optimistic_conflicts` a `bool`, `concurrency` and
 `isolation` members of their closed core vocabularies, each refused with a
 plain `ValueError` — and every field holds a concrete value: the record never
@@ -2332,7 +2332,91 @@ Read Committed as a concrete request rather than to no request, so an
 unconfigured root asks the port for that level on every attempt even where the
 connection's own configured default is stronger (§5).
 
-There is no permanent connection on a handle and no raw accessor to one. Each
+**Modeled execution requires an explicitly selected scope** (`m-execution-authority`,
+ADR 0066). `Database[Authorization]` is the generic resource-owning root. It has
+`with_options`, `using_principal`, `using_database_login`, `close`, and context
+management, but no `find`, `wire`, `stream`, `read_rows`, or `transact` verb.
+Those verbs belong to the frozen, slotted, non-generic `ScopedDatabase`, which
+owns no resource lifecycle and exposes no authority-reselection operation.
+
+```python
+Authorization = TypeVar("Authorization")
+
+class Principal(Protocol[Authorization]):
+    @property
+    def subject(self) -> str: ...
+
+    @property
+    def database_authorization(self) -> Authorization: ...
+
+class Database(Generic[Authorization]):
+    def with_options(
+        self,
+        *,
+        max_retries: int = ...,
+        concurrency: Concurrency = ...,
+        retry_optimistic_conflicts: bool = ...,
+        isolation: IsolationLevel = ...,
+    ) -> Database[Authorization]: ...
+
+    def using_principal(self, principal: Principal[Authorization], /) -> ScopedDatabase: ...
+    def using_database_login(self) -> ScopedDatabase: ...
+    def close(self) -> None: ...
+
+class ScopedDatabase:
+    def with_options(
+        self,
+        *,
+        max_retries: int = ...,
+        concurrency: Concurrency = ...,
+        retry_optimistic_conflicts: bool = ...,
+        isolation: IsolationLevel = ...,
+    ) -> ScopedDatabase: ...
+
+    def transact(self, fn: Callable[[Transaction], T], /, *, ...) -> T: ...
+```
+
+The ellipses above represent private typed omission markers, not `None` and not
+public sentinel values. Both `with_options` methods apply one field-wise partial
+patch to a complete immutable `DatabaseOptions`: an omitted field stays as it
+was, an explicit value is validated, and a later patch wins. An unchanged patch
+may reuse the record. Authority selection preserves the root's current options;
+option derivation preserves the scope's capture and may reuse its read
+composition. Neither operation stores an ancestor, patch list, or derivation
+history.
+
+`using_principal` reads `principal.subject` exactly once, constructs the closed
+core subject actor, then reads `principal.database_authorization` exactly once
+and asks the typed runtime for its bound source. It retains the resulting
+immutable actor, authorization, and source, never the Principal. A non-string,
+empty, or exact-`db-login:`-prefixed subject, and the provider's
+`InvalidAuthorizationError`, become exported `InvalidPrincipalError(ValueError)`
+with the original cause. An exception raised by either application property,
+including an `InvalidPrincipalError` instance, propagates unchanged because
+property reads are outside those translation blocks. Unexpected provider errors
+also propagate unchanged.
+
+`using_database_login` is an explicit alternate mode, not an omitted Principal.
+It captures the ready runtime's actual nonempty authenticated login identity and
+its login-bound source without scope-time I/O. The sole audit projection is
+`db-login:` plus that login verbatim. A successful scope captures no generic
+authorization slot and `None` is not a login sentinel.
+
+One root constructs one shared transaction runner. Every scope derived from
+that root stores the runner directly together with its immutable capture and
+complete options. It is connectionless: each eager read, standalone stream
+page, and transaction attempt asks the captured bound source for a fresh
+single-use context. Closing the root invalidates its scopes under the ordinary
+Database lifecycle; a scope has no `close`, context-manager, `using_principal`,
+or `using_database_login` member and does not prolong root lifetime.
+
+Python exports `Principal`, `ScopedDatabase`, `InvalidPrincipalError`, and
+`TransactionAuthorityError` from `parallax.snapshot`. The authority error is a
+`RuntimeError` with stable code `transaction-authority-mismatch`; there is no
+`PrincipalMismatchError`, optional-principal overload, default Principal, raw
+subject shortcut, or ambient thread/task/request Principal.
+
+There is no permanent connection on a root or scope and no raw accessor to one. Each
 operation acquires its own connection and gives it back — an eager read for its
 whole execution including materialization, a standalone delivery from its first
 page to its settlement, a transaction attempt for the attempt including every
@@ -2342,15 +2426,15 @@ on a connection that application opened itself, exactly as they did before, and
 never on one borrowed from the handle. Acquisition failures reach a caller as
 `ConnectionAcquisitionError` under the failing execution's edition envelope, and
 a runtime that never became ready raises `DatabaseStartupError` instead of
-publishing a handle.
+publishing a root.
 
 A `PostgresAdapter` runtime also publishes one stable `pool_metrics` source, and
 `connect` offers it to a `lifecycle_provider` that implements
-`PoolMetricsObserver` — before the handle is published, so a registration that
-raises fails composition and closes the runtime rather than leaving a handle to
+`PoolMetricsObserver` — before the root is published, so a registration that
+raises fails composition and closes the runtime rather than leaving a root to
 explain itself. `db.close()` closes the runtime, which detaches that source, and
 then closes the registration; what it never closes is the exporter behind the
-registration, which is the application's and outlives the handle. Closing is
+registration, which is the application's and outlives the root. Closing is
 serialized, so a close concurrent with one already running waits for it rather
 than giving the registration up beside a runtime still being torn down, and the
 registration is closed exactly once however many callers close the handle.
@@ -3881,7 +3965,7 @@ of shared edition identity.
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
-  `db.transact(fn, *, max_retries=..., concurrency=..., retry_optimistic_conflicts=..., isolation=...)`,
+  `scope.transact(fn, *, max_retries=..., concurrency=..., retry_optimistic_conflicts=..., isolation=...)`,
   each keyword typed as its `DatabaseOptions` field. **Only omission
   inherits**: an omitted keyword takes the Database Root's default for that
   field when this call opens the transaction, and the active transaction's
@@ -3955,7 +4039,7 @@ of shared edition identity.
   exact immutable outputs; they do not admit arbitrary mapping implementations.
 - **Restricted ownership transfer.** Core owns one private adoption operation
   for a trusted producer's final dictionary of already-safe values. The producer
-  relinquishes every mutation-capable alias after adoption. The operation is not
+  drops every mutation-capable alias after adoption. The operation is not
   exported, carries no public trust flag, and performs no leaf validation.
   `FrozenMap` exposes no supported backing accessor and cannot be subclassed.
   The only backing reader is the Postgres adapter's private standard-JSON hook,
@@ -3991,16 +4075,16 @@ of shared edition identity.
 
 ### Private read composition
 
-- **Each Handle owns one Read Scope.** A `Database` and a `Transaction` each
-  construct exactly one private Read Scope. Their Typed `find`, `stream`, and
-  `read_rows` entries, and the same Handle's Wire `find` and `stream` entries,
+- **Each modeled execution surface owns one Read Scope.** A `ScopedDatabase` and
+  a `Transaction` each construct exactly one private Read Scope. Their Typed
+  `find`, `stream`, and `read_rows` entries, and the same scope's Wire `find` and `stream` entries,
   delegate to that scope. A Wire view retains the scope itself rather than bound
   Handle methods. The Read Scope is an implementation boundary, not a public
   extension point.
 - **The selected read model enters through execution policy.** The Read Scope
   obtains the operation's selected read model from its private execution
   adapter, inside the read boundary and after re-entry has been refused; the
-  `Database` or `Transaction` does not select it before delegating. That
+  `ScopedDatabase` or `Transaction` does not select it before delegating. That
   immutable value carries the cataloged model and, when available, graph
   construction — never the write codec. Standalone execution may select per
   operation; participating execution returns the Transaction's fixed selection.
@@ -4301,18 +4385,16 @@ These feature tests do not claim the deferred `benchmark` command or general
   `compile_neutral`, neutral write on `Database`, or public flush: runtime returns
   and retains no `WritePlan`, and a buffered write executes only when a dependency
   batch or the outer boundary's pre-commit batch requires it.
-- **Nesting, ownership, and concurrency preference.** A `db.transact` call while
+- **Nesting, ownership, authority, and concurrency preference.** A
+  `scope.transact` call while
   a transaction is already active on the current thread **joins** it, but only
-  through the exact `Database` object that opened the boundary. The outermost
-  demarcation retains a strong reference to that object, and a nested call joins
-  only when the invoked handle **is** it; an alias of the same object joins and
-  receives the identical Transaction, while any other handle is refused even
-  when it carries the same Domain Model, adapter, dialect, clock, or otherwise
-  equivalent configuration, because the demarcation owner is scoped state rather
-  than a property of any of those. A mismatch raises exported
+  through a scope derived from the same resource-owning Database Root. Database
+  aliases and independently derived scopes sharing that root may join; a scope
+  from another root is refused even when it carries equal actor, model, adapter,
+  dialect, options, or otherwise equivalent configuration. A mismatch raises exported
   `TransactionOwnershipError(RuntimeError)` with sole stable code
-  `transaction-owner-mismatch`, before rollback-only state, Principal
-  resolution, option comparison, closure execution, Unit of Work mutation, SQL,
+  `transaction-owner-mismatch`, before rollback-only state, authority comparison,
+  option comparison, closure execution, Unit of Work mutation, SQL,
   connection acquisition, or any adapter activity, and it retains neither
   handle. It is a `RuntimeError` rather than a `ValueError` because nothing
   about the call's arguments is wrong — the identical call succeeds from the
@@ -4334,7 +4416,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   loop still applies per the original failure's category), and the callback's
   return value is withheld exactly as on any abort (Reladomo's root
   `setExpectRollback` behavior). Rollback-only also forecloses re-entry: a
-  `db.transact` call that would join a transaction already marked
+  `scope.transact` call that would join a transaction already marked
   rollback-only raises `RollbackOnlyError` **immediately, before executing
   its closure** — a distinct error naming the rollback-only state and
   carrying the original failure as its cause (`__cause__`) — because no new
@@ -4349,13 +4431,22 @@ These feature tests do not claim the deferred `benchmark` command or general
   never enters that comparison on its own: a join naming the root's value
   under an outer call that overrode it is a conflict. The refusals run in one
   order — the lifecycle re-entry guard, then every explicit keyword's own
-  validation, then the bare-unit-of-work check, ownership, option equality,
-  and last rollback-only foreclosure — so a malformed keyword on the wrong
+  validation, then the bare-unit-of-work check, root ownership, rollback-only
+  foreclosure, actor equality, and explicit option equality — so a malformed keyword on the wrong
   root is a `ValueError`, a valid differing keyword on the wrong root is
   `TransactionOwnershipError`, and only a validated, owned, differing keyword
-  is an option conflict; none of those refusals runs the callback or opens
-  invocation activity, while rollback-only foreclosure keeps its joined
-  activity. The active transaction
+  reaches the later checks. Once ownership and rollback-only eligibility hold,
+  an independently selected joining scope must carry an actor equal by value to
+  the transaction's capture: equal subject and authorization values join, as do
+  independently selected login scopes from one root; a different subject,
+  different authorization, or mixed subject/login mode raises
+  `TransactionAuthorityError` before option comparison, callback entry, or
+  joined lifecycle activity. An unqualified nested use of the same scope reuses
+  its capture by construction. No join reevaluates a Principal or switches the
+  active actor. Only an authority-equal, explicitly option-different call raises
+  `TransactionOptionConflictError`. A caught authority or option preflight
+  refusal leaves a healthy outer transaction usable; allowing it to escape still
+  triggers the outer boundary's ordinary rollback. The active transaction
   is tracked per thread; a transaction object is owned by its outermost
   closure invocation and is not thread-safe; escaping references raise on use
   after the scope ends. The per-transaction `concurrency` option is a
@@ -4367,7 +4458,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   ungated strategy for every lockable Entity. One transaction may therefore use
   optimistic concurrency for one Entity and Locking for another.
 - **`isolation` is a closed vocabulary, refused here and mapped by the
-  adapter.** `db.transact(..., isolation=...)` names one of the three portable
+  adapter.** `scope.transact(..., isolation=...)` names one of the three portable
   Isolation Levels — `parallax.core.db_port.IsolationLevel`, a `Literal` of
   `"read_committed"`, `"repeatable_read"`, `"serializable"` — each defined by
   the anomalies it forbids (`m-unit-work`, `m-db-port`) rather than by any
@@ -4406,9 +4497,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   long read is exactly the case wanting a different level from the rest of an
   application, and the setting stays transaction-scoped — the root supplies
   the value a transaction resolves, and the transaction is what requests it.
-  `tx.stream` therefore inherits its transaction's level and `db.stream`
+  `tx.stream` therefore inherits its transaction's level and `scope.stream`
   carries no isolation option at all — a caller wanting one database snapshot
-  across a whole delivery streams inside `db.transact`. Neither the root's
+  across a whole delivery streams inside `scope.transact`. Neither the root's
   defaults nor a call's overrides govern standalone reads or standalone
   streams, which open no transaction. What Read Committed, Repeatable Read, and
   Serializable each promise is the anomalies they forbid (`m-db-port`); on
@@ -6431,10 +6522,10 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `Unrelinquished`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `ReleaseUnconfirmed`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `Principal`, `ScopedDatabase`, `InvalidPrincipalError`, `TransactionAuthorityError`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

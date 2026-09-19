@@ -555,6 +555,63 @@ class Model:
         return self.root_entity.rows
 
 
+@dataclass(frozen=True, slots=True)
+class SubjectSelection:
+    """One case-authored subject and its provider-owned authorization fixture."""
+
+    subject: str
+    database_authorization: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseLoginSelection:
+    """The explicit database-login mode, with identity supplied by the runtime."""
+
+
+type ActorSelection = SubjectSelection | DatabaseLoginSelection
+
+
+def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSelection | None:
+    if "actorIdentity" not in container:
+        if "databaseAuthorization" in container:
+            raise ValueError(f"{where}.databaseAuthorization requires {where}.actorIdentity")
+        return None
+    actor = container["actorIdentity"]
+    authorization = container.get("databaseAuthorization")
+    if not isinstance(actor, Mapping):
+        raise ValueError(f"{where}.actorIdentity must be a mapping, got {actor!r}")
+    unknown = sorted(set(actor) - {"kind", "value"})
+    if unknown:
+        raise ValueError(f"{where}.actorIdentity names unknown keys {unknown}")
+    kind = actor.get("kind")
+    if kind == "subject":
+        if set(actor) != {"kind", "value"}:
+            raise ValueError(
+                f"{where}.actorIdentity subject selection requires exactly kind and value"
+            )
+        subject = actor["value"]
+        if not isinstance(subject, str) or not subject or subject.startswith("db-login:"):
+            raise ValueError(
+                f"{where}.actorIdentity.value must be a nonempty, nonreserved subject string"
+            )
+        if not isinstance(authorization, str) or not authorization:
+            raise ValueError(
+                f"{where}.databaseAuthorization must be a nonempty fixture selector for a subject"
+            )
+        return SubjectSelection(subject, authorization)
+    if kind == "database-login":
+        if set(actor) != {"kind"}:
+            raise ValueError(f"{where}.actorIdentity database-login selection carries no value")
+        if "databaseAuthorization" in container:
+            raise ValueError(
+                f"{where}.databaseAuthorization is forbidden for database-login selection"
+            )
+        return DatabaseLoginSelection()
+    raise ValueError(
+        f"{where}.actorIdentity.kind must be one of ['database-login', 'subject'], got {kind!r}"
+    )
+
+
 def conflict_write_rows(attempt: dict[str, Any]) -> list[dict[str, Any]]:
     """The ordered neutral write rows one conflict attempt authors (``write``).
 
@@ -989,6 +1046,20 @@ class Case:
     @property
     def boundary(self) -> list[dict[str, Any]]:
         return self.when.get("boundary", [])
+
+    @property
+    def actor_selection(self) -> ActorSelection | None:
+        """The outer boundary's authored authority, or ``None`` for the runner's
+        explicit login-scope default."""
+        return _actor_selection(self.when, where=f"{self.path.name}: when")
+
+    def boundary_action_actor_selection(self, index: int) -> ActorSelection | None:
+        """The authority selected independently by one joining action, or ``None``
+        when that action reuses its enclosing scope."""
+        return _actor_selection(
+            self.boundary[index],
+            where=f"{self.path.name}: when.boundary[{index}]",
+        )
 
     @property
     def is_edit(self) -> bool:

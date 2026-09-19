@@ -1,11 +1,11 @@
 # Boundary case (m-execution-lifecycle x m-db-port): a connection that could not
-# be relinquished after a COMMITTED attempt is a fact about the resource, not an
+# have its release confirmed after a COMMITTED attempt is a fact about the resource, not an
 # outcome — the attempt still commits and so does the invocation —
 # `api-conformance` lane.
 #
 # The closure reads the versioned row and updates it, the boundary commits, and
 # the Release that follows cannot hand the connection back. `cleanup:
-# unrelinquished` with one `return`/`handoff-failed` issue is the honest report
+# release-unconfirmed` with one `return`/`handoff-failed` issue is the honest report
 # of a resource whose fate is unknown: the handoff raised, so it is neither
 # retried nor followed by a close — a native return that failed may still have
 # given the connection to another borrower (m-db-port). The issue is required
@@ -121,7 +121,7 @@ then:
             activity: 8
             parent: 2
             releaseFinished:
-              cleanup: unrelinquished
+              cleanup: release-unconfirmed
               issues:
                 - { phase: return, code: handoff-failed }
           - sequence: 15

@@ -1582,7 +1582,7 @@ _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON: Final[str] = (
 
 _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON: Final[str] = (
     "an m-execution-lifecycle spine case whose stream needs an injected RESOURCE fault — an "
-    "acquisition that grants no connection, or a release that cannot relinquish one — which "
+    "acquisition that grants no connection, or a release that cannot be confirmed — which "
     "no application call can ask a healthy database for and no single-connection harness can "
     "provoke, graded end-to-end by the case-driven boundary runner "
     "(`tests/api/test_boundary_run.py`) against the REAL `db.transact` and the provisioned "

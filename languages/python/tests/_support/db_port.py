@@ -88,14 +88,14 @@ __all__ = [
 _REVOKED = "this scripted connection's scope has ended"
 
 _RETURNED: Final[CleanupResult] = Returned()
-"""What a completed relinquishment establishes where nothing had to be reclaimed."""
+"""What a completed release establishes where nothing had to be reclaimed."""
 
 
 class SoleConnectionScope:
     """One acquisition of a double that IS its own connection.
 
     There is nothing to check out and nothing to give back, but "nothing to give
-    back" is still a completed relinquishment rather than an absent one: the
+    back" is still a completed release rather than an absent one: the
     contract is that an acquisition which was entered reports what its exit
     ESTABLISHED, and ``None`` is reserved for a context nobody entered or one
     whose entry never reached ownership. So this reports :class:`Returned` from

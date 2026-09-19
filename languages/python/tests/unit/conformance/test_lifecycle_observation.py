@@ -26,7 +26,14 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
     lifecycle_run,
 )
-from parallax.core.db_port import CleanupIssue, Invalidated, Returned, Unrelinquished
+from parallax.core.db_port import (
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
+    Invalidated,
+    ReleaseUnconfirmed,
+    Returned,
+)
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
@@ -434,11 +441,11 @@ def test_a_release_states_what_letting_go_established() -> None:
     for result, expected in (
         (Returned(), {"cleanup": "returned"}),
         (
-            Unrelinquished(
+            ReleaseUnconfirmed(
                 (CleanupIssue(phase="return", code="handoff-failed", diagnostic=_diagnostic()),)
             ),
             {
-                "cleanup": "unrelinquished",
+                "cleanup": "release-unconfirmed",
                 "issues": [{"phase": "return", "code": "handoff-failed"}],
             },
         ),
@@ -471,7 +478,12 @@ def test_every_cleanup_condition_is_projected_member_by_member() -> None:
         ("dispose", "close-failed"),
         ("return", "handoff-failed"),
     ):
-        result = Unrelinquished((CleanupIssue(phase=phase, code=code, diagnostic=_diagnostic()),))  # pyright: ignore[reportArgumentType] - the loop parametrizes over the members each literal spells one at a time
+        issue = CleanupIssue(
+            phase=cast("CleanupPhase", phase),
+            code=cast("CleanupCode", code),
+            diagnostic=_diagnostic(),
+        )
+        result = ReleaseUnconfirmed((issue,))
         finished = ReleaseFinished(_EXECUTION, 1, 1, None, 3, 4, result)
         assert _transition(finished)["releaseFinished"]["issues"] == [
             {"phase": phase, "code": code}

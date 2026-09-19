@@ -1,0 +1,29 @@
+# Equal subject authority joins (m-execution-authority): the outer scope captures
+# subject `alice` under authorization fixture `role-a`. The first join is
+# unqualified and therefore reuses that enclosing scope. The second join makes
+# an independent scope selection with equal values; value equality admits it,
+# proving that scope or object identity is not execution identity. Both joining
+# bodies run and the boundary commits after the one observing read.
+model: models/account.yaml
+tags: [m-execution-authority, m-unit-work, m-api-conformance, authority, join]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection authority join intent (shape:boundary)"
+when:
+  actorIdentity: {kind: subject, value: alice}
+  databaseAuthorization: role-a
+  boundary:
+    - action: read
+      note: the outer body proves it reached modeled work
+    - action: join
+      note: an unqualified join reuses the enclosing scope
+    - action: join
+      actorIdentity: {kind: subject, value: alice}
+      databaseAuthorization: role-a
+      note: an independently selected equal actor joins by value
+then:
+  outcome: committed
+  roundTrips: 1

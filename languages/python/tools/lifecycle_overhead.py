@@ -180,8 +180,8 @@ class _SoleRuntime:
         return
 
 
-_RELINQUISHED: Final[CleanupResult] = Returned()
-"""What a completed relinquishment establishes where nothing had to be reclaimed.
+_RELEASED: Final[CleanupResult] = Returned()
+"""What a completed release establishes where nothing had to be reclaimed.
 
 One shared immutable value rather than one per release: an instrument that
 allocated a result per acquisition would be measuring itself.
@@ -202,11 +202,11 @@ class _SoleScope:
         """What letting go established, once it has happened.
 
         A double that IS its own connection reclaims nothing, but reclaiming
-        nothing is a completed relinquishment rather than an absent one — and it
+        nothing is a completed release rather than an absent one — and it
         is a shared immutable value, so an instrument reporting it still records
         nothing per acquisition.
         """
-        return _RELINQUISHED if self._left else None
+        return _RELEASED if self._left else None
 
     def __enter__(self) -> DatabaseConnection:
         return self._connection

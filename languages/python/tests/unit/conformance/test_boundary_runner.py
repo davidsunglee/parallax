@@ -39,10 +39,10 @@ from parallax.core.db_port import (
     Invalidated,
     MappingRow,
     PipelineStatement,
+    ReleaseUnconfirmed,
     Returned,
     Row,
     TransactionOutcome,
-    Unrelinquished,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
@@ -522,7 +522,7 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 1),
     # m-execution-lifecycle-009: an acquisition that granted nothing is the same
     # terminal begin failure reached one step earlier, and m-execution-lifecycle-010:
-    # a release that could not relinquish changes no outcome at all, so the
+    # an unconfirmed release changes no outcome at all, so the
     # attempt it followed commits and there is nothing to retry.
     _AttemptsCase("connection-acquisition-failure", "boundary-failed", 10, False, 1),
     _AttemptsCase("connection-acquisition-failure", "boundary-failed", 5, True, 1),
@@ -658,7 +658,7 @@ def test_every_attempt_of_a_root_configured_case_opens_at_the_resolved_level(
 
 # --------------------------------------------------------------------------- #
 # The two RESOURCE seams: an acquisition that grants nothing, and a release    #
-# that cannot relinquish.                                                     #
+# whose transfer cannot be confirmed.                                         #
 # --------------------------------------------------------------------------- #
 def test_an_acquisition_fault_refuses_before_it_takes_anything() -> None:
     # It never enters the inner context, so no real connection is taken and none
@@ -713,7 +713,7 @@ def test_a_cleanup_fault_lets_the_connection_go_back_and_reports_that_it_did_not
     with context as scoped:
         assert scoped is inner
     established = context.cleanup_result
-    assert isinstance(established, Unrelinquished)
+    assert isinstance(established, ReleaseUnconfirmed)
     assert [(issue.phase, issue.code) for issue in established.issues] == [
         ("return", "handoff-failed")
     ]
@@ -730,7 +730,7 @@ def test_a_spent_cleanup_fault_reports_what_the_inner_context_established() -> N
     with second:
         pass
 
-    assert isinstance(first.cleanup_result, Unrelinquished)
+    assert isinstance(first.cleanup_result, ReleaseUnconfirmed)
     # The inner double reclaims nothing and says so as a completed return, which
     # is what a spent one-shot injection then passes straight through.
     assert second.cleanup_result == Returned()

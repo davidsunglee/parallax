@@ -162,6 +162,7 @@
     "PoolSample",
     "PoolUnavailable",
     "RESOURCE_LOGGER_NAME",
+    "ReleaseUnconfirmed",
     "ResourceCondition",
     "Returned",
     "RollbackFailed",
@@ -170,7 +171,6 @@
     "Row",
     "StartupPhase",
     "TransactionOutcome",
-    "Unrelinquished",
     "isolation_level",
     "report_resource_issues",
     "report_unregistration_failure"

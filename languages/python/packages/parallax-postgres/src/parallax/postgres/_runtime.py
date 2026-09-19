@@ -49,9 +49,9 @@ from parallax.core.db_port import (
     ConnectionContext,
     DatabaseStartupError,
     PoolMetricsSource,
+    ReleaseUnconfirmed,
     Row,
     StartupPhase,
-    Unrelinquished,
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
@@ -188,7 +188,7 @@ def open_runtime(
     """Open one ready runtime over ``conninfo``, or raise having released what it took.
 
     Every failure below publishes no runtime: the native pool is closed on the
-    way out, and a startup connection that was already acquired is relinquished
+    way out, and a startup connection that was already acquired is released
     through the same cleanup path an ordinary operation uses — which reports
     what it established, so a disposal or handoff that itself failed is stated
     rather than assumed away.
@@ -345,9 +345,9 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> None:
     resource.__exit__(None, None, None)
     result = resource.cleanup_result
     report_resource_issues("startup", result)
-    if isinstance(result, Unrelinquished):
+    if isinstance(result, ReleaseUnconfirmed):
         raise DatabaseStartupError(
-            "the database runtime's startup connection could not be relinquished",
+            "the database runtime's startup connection release could not be confirmed",
             phase="release",
             cleanup_result=result,
         )
@@ -381,7 +381,7 @@ def _remaining(deadline: float, phase: StartupPhase) -> float:
     return remaining
 
 
-def _shutdown_issue(exc: Exception) -> Unrelinquished:
-    return Unrelinquished(
+def _shutdown_issue(exc: Exception) -> ReleaseUnconfirmed:
+    return ReleaseUnconfirmed(
         (CleanupIssue(phase="return", code="handoff-failed", diagnostic=diagnostic_for(exc)),)
     )

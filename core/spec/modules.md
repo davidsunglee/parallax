@@ -97,6 +97,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-wire` | Strict JSON loading and the sole serialized typed-literal codec per Neutral Type | active | cases |
 | `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
 | `m-edit` | Edited-value derivation and state preservation by complement | active | cases |
+| `m-execution-authority` | Explicit actor selection, scoped authority capture, and join identity | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
@@ -208,6 +209,8 @@ m-unit-work --> m-db-port
 m-unit-work --> m-temporal-read
 m-unit-work --> m-edit
 m-unit-work --> m-document-codec
+m-execution-authority --> m-unit-work
+m-execution-authority --> m-db-port
 m-read-lock --> m-unit-work
 m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
@@ -454,6 +457,12 @@ construction it may reference any behavioral module it harnesses.
   the Isolation Level a boundary was asked to open at, and classifier verdict. A
   composition root threads one publisher down as an ordinary parameter; observed
   modules discover no Provider and retain no lifecycle history.
+- **`m-execution-authority --> m-unit-work`, `--> m-db-port`.** Execution authority
+  is orchestration over the transaction and acquisition contracts: it captures
+  the actor admitted to a unit of work, compares that actor before a join, and
+  requires provider-owned authorization to bracket one acquisition. Neutral
+  planning, query, and materialization modules do not depend on authority, and
+  the authority contract introduces no concrete provider dependency.
 - **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read

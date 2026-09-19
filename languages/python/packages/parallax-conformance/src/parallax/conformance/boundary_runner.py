@@ -30,7 +30,7 @@ function (the hand-mirroring this runner exists to end):
   lifecycle events rather than counted here.
 - :class:`ResourceFaultingContext` is its counterpart one layer down, for the
   two kinds that are about the CONNECTION rather than about what runs on it: an
-  acquisition that grants none, and a release that cannot relinquish. Those
+  acquisition that grants none, and a release that cannot be confirmed. Those
   decorate the acquisition itself, because a connection decorator has no
   lifetime to fail.
 - :func:`expected_attempts` derives the authored attempt count from the
@@ -72,9 +72,9 @@ from parallax.core.db_port import (
     IsolationLevel,
     PipelineStatement,
     PoolMetricsSource,
+    ReleaseUnconfirmed,
     Row,
     TransactionOutcome,
-    Unrelinquished,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
@@ -286,7 +286,7 @@ class _Fault:
     begin-failed before any callback; an ``acquisition`` fault grants the
     attempt no connection at all, which is the same terminal begin failure
     reached one step earlier; and a ``release`` fault is a connection that
-    cannot be relinquished after the attempt settled, which changes no outcome
+    cannot be confirmed after the attempt settled, which changes no outcome
     at all. ``retriable`` is `m-auto-retry` / `m-opt-lock`'s verdict on the kind,
     ``opt_in`` where `retryOptimisticConflicts` decides it. ``error`` builds the
     translated :class:`DatabaseError` the real adapter's own classification would
@@ -497,7 +497,7 @@ class ResourceFaultingContext:
     error the real path raises.
 
     A ``release`` fault lets the inner context do its whole job first, so the
-    real connection genuinely goes back, and then reports ``Unrelinquished``
+    real connection genuinely goes back, and then reports ``ReleaseUnconfirmed``
     over the handoff instead of what the inner context established. Simulating
     the REPORT rather than the reclamation is deliberate: a suite that actually
     stranded a connection per case would exhaust the server long before the
@@ -554,7 +554,7 @@ class ResourceFaultingContext:
         self._inner.__exit__(exc_type, exc, traceback)
         if self._seam == "release" and self._armed():
             self._state.fired = True
-            self._injected = Unrelinquished(
+            self._injected = ReleaseUnconfirmed(
                 (
                     CleanupIssue(
                         phase="return",
@@ -690,7 +690,7 @@ def expected_attempts(
     terminal however the loop is configured, and distinguished from an attempt
     that ran and was undone by its outcome rather than by its absence. An
     acquisition that granted nothing is the same terminal begin failure reached
-    one step earlier. And a release that could not relinquish changes no outcome
+    one step earlier. And an unconfirmed release changes no outcome
     at all, so the attempt it followed commits and there is nothing to retry.
 
     Which seam a kind belongs to and whether it is retriable are read off

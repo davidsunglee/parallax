@@ -122,7 +122,7 @@ def exit_connection(
                 _leave(resource, failure)
             finally:
                 release.call_returned()
-                release.relinquished(resource.cleanup_result)
+                release.released(resource.cleanup_result)
     except BaseException:
         if not attempted:
             _leave(resource, failure)

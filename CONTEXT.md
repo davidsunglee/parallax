@@ -299,18 +299,23 @@ amortized constant time; language-level conveniences may translate a miss into
 a coded public error.
 _Avoid_: reflection search, stringly lookup, linear scan, exception control flow
 
-**Parallax Handle**:
-The configured application-side entry point for Parallax reads and for opening transactions.
-_Avoid_: client, database connection, global session, ambient context
-
 **Database Root**:
 The configured owner of one runtime: connected from adapter configuration with
 one immutable record of transaction option defaults — the retry bound, the
 Concurrency Preference, the optimistic-conflict retry opt-in, and the Isolation
-Level — that every outer Transaction Invocation resolves its omitted options
-against, and the source from which execution scopes are derived. Its defaults
+Level — and the source from which immutable Execution Scopes are derived. It
+owns lifecycle and close but exposes no modeled execution verbs. Its defaults
 are per-call overridable and compared on a join only when explicit.
-_Avoid_: options manager, ambient default, session default, connection setting
+_Avoid_: Parallax Handle, client, database connection, global session, ambient context
+
+**Execution Scope**:
+An immutable, connectionless view derived from one Database Root by explicitly
+selecting either a Principal and its Database Authorization or the root's
+database-login actor. It captures one Execution Actor and complete Database
+Options, exposes modeled reads, streams, and transaction entry, and owns no
+runtime lifecycle. Option-derived scopes reuse the actor and resources without
+retaining ancestor scopes.
+_Avoid_: Parallax Handle, session, current user, ambient context, connection scope
 
 **Parallax Transaction**:
 The explicit entry point for reads, writes, and managed object graph mutation inside a transaction; it is also the scope that owns managed objects and the Identity Map.
@@ -1369,24 +1374,41 @@ creation provenance.
 _Avoid_: first-ever primary-key creation, entity lifetime, row lineage
 
 **Subject Identity**:
-The stable, nonempty, opaque string by which a Principal is identified across
-Parallax operations and Audit Provenance. It is captured once at an outer
-database operation boundary and stored and compared verbatim: Parallax does
-not trim, case-fold, parse, or impose provider syntax. Joined scopes and
+The stable, nonempty, opaque string read once from a Principal when a subject
+Execution Scope is created. It is captured and compared verbatim: Parallax does
+not trim, case-fold, parse, or impose provider syntax, except that the exact
+`db-login:` prefix is reserved for Database Login Identity. Joined calls and
 automatic retries reuse the captured value.
-_Avoid_: username, display name, credentials
+_Avoid_: username, display name, credentials, current user
 
 **Principal**:
-The caller-supplied identity carrier required by every outer database read and
-unit of work, from which Parallax obtains and validates one Subject Identity
-before database interaction and outside any retry loop. Operations inside a
-unit of work inherit the captured identity rather than accepting or
-reevaluating a Principal. An explicit joining unit-of-work boundary evaluates
-its own required Principal once and joins only when its Subject Identity
-matches the root boundary's verbatim. The operation context retains the opaque
-Principal alongside that string for future provider-specific consumers; Audit
-Provenance consumes only the string.
-_Avoid_: Write Principal, current user, ambient principal, authorization claims
+The application-supplied structural pairing of a read-only Subject Identity and
+a provider-owned Database Authorization. A Database Root reads both properties
+once to derive a subject Execution Scope and retains only immutable captured
+values, never the Principal. Principal is not an operation argument and is not
+reevaluated by reads, retries, transactions, streams, or joins.
+_Avoid_: Write Principal, current user, ambient principal, framework user model
+
+**Database Authorization**:
+The immutable, provider-owned value paired with a subject Principal. Core treats
+it as opaque; the provider binds it to each acquisition as a replacement or
+containment of login privilege and restores safe reusable state before release.
+It is not a credential, policy document, role string mandated by core, or field
+of Database Options.
+_Avoid_: authorization claims, permissions list, credential, transaction option
+
+**Database Login Identity**:
+The actual provider-authenticated login captured while an opened Database
+runtime proves readiness. Callers cannot supply it. Its sole audit projection is
+the reserved `db-login:` prefix followed by the captured login verbatim.
+_Avoid_: default Principal, system user, configured role, caller-supplied login
+
+**Execution Actor**:
+The closed immutable identity captured by an Execution Scope: either one Subject
+Identity paired with its Database Authorization, or one Database Login Identity.
+Joining compares actor values after root ownership and rollback-only eligibility
+and before explicit transaction options; mixed modes are never equal.
+_Avoid_: Principal object identity, source identity, ambient actor, audit string
 
 **Transaction Instant**:
 The finite instant lazily captured for a unit-of-work attempt when its first

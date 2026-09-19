@@ -1,7 +1,7 @@
 """One acquisition: checkout, admission, revocation, and the single cleanup path.
 
 Everything a connection's exclusive-use lifetime needs is here and nowhere else,
-because every way an acquisition can end has to reach the same relinquishment.
+because every way an acquisition can end has to reach the same release.
 A statement that failed, a conversion that failed, a transaction that could not
 be rolled back, a stream a caller abandoned, an observer that raised, a
 ``KeyboardInterrupt`` — all of them leave through :meth:`PostgresConnectionContext.__exit__`,
@@ -36,13 +36,13 @@ from parallax.core.db_port import (
     ConnectionAcquisitionError,
     DatabaseConnection,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.postgres._connection import ConnectionPreparation, PostgresConnection
 
-__all__ = ["Admit", "NativePool", "PostgresConnectionContext", "checkout", "relinquish"]
+__all__ = ["Admit", "NativePool", "PostgresConnectionContext", "checkout", "release"]
 
 type NativePool = psycopg_pool.ConnectionPool[psycopg.Connection[TupleRow]]
 """Either native pool this adapter builds; the null pool is a subclass of it."""
@@ -151,7 +151,7 @@ def _status(connection: psycopg.Connection[TupleRow]) -> TransactionStatus | Non
         return None
 
 
-def relinquish(
+def release(
     pool: NativePool, connection: psycopg.Connection[TupleRow], *, suspect: bool
 ) -> CleanupResult:
     """End this connection's exclusive use, and report what that established.
@@ -188,12 +188,12 @@ def relinquish(
             connection.close()
         except Exception as exc:
             issues.append(_issue("dispose", "close-failed", exc))
-            return Unrelinquished(tuple(issues))
+            return ReleaseUnconfirmed(tuple(issues))
     try:
         pool.putconn(connection)
     except Exception as exc:
         issues.append(_issue("return", "handoff-failed", exc))
-        return Unrelinquished(tuple(issues))
+        return ReleaseUnconfirmed(tuple(issues))
     return Invalidated(tuple(issues)) if dispose else Returned(tuple(issues))
 
 
@@ -202,7 +202,7 @@ class PostgresConnectionContext:
 
     Creating it takes nothing. Entering it checks out, verifies the connection
     is idle, checks admission against the deadline, and yields fresh execution
-    access. Leaving it revokes that access and relinquishes the connection once.
+    access. Leaving it revokes that access and releases the connection once.
 
     Entry is permitted once and once only, including after an entry that failed:
     a failed entry has already run cleanup over whatever it took and left what
@@ -254,7 +254,7 @@ class PostgresConnectionContext:
             # the same path a completed scope uses: an idle connection returns
             # and a non-idle one is disposed of, without either decision being
             # made twice.
-            self._cleanup_result = relinquish(self._pool, connection, suspect=False)
+            self._cleanup_result = release(self._pool, connection, suspect=False)
             raise
         self._native = connection
         execution = PostgresConnection(connection)
@@ -277,7 +277,7 @@ class PostgresConnectionContext:
         # reach a connection this is about to hand to somebody else — and so the
         # native reference cleanup needs is held here rather than through it.
         #
-        # Relinquishment is what the exit exists for, so it runs even if
+        # Release is what the exit exists for, so it runs even if
         # revocation does not complete: this is the only path back to the pool,
         # and clearing the references first would make a second exit a silent
         # no-op over a connection nothing ever gave back. A revocation that did
@@ -289,7 +289,7 @@ class PostgresConnectionContext:
         finally:
             self._native = None
             self._execution = None
-            self._cleanup_result = relinquish(self._pool, connection, suspect=suspect)
+            self._cleanup_result = release(self._pool, connection, suspect=suspect)
 
     def _require_idle(self, connection: psycopg.Connection[TupleRow]) -> None:
         """Refuse a checkout that did not hand over an idle connection.

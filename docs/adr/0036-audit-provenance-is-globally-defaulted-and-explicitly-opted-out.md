@@ -43,11 +43,11 @@ revision time remains the row's authored Transaction-Time start. Dedicated
 Audit Provenance cases use distinct identities to prove authorship transitions.
 Fixture loading itself remains Principal-free and Clock-Strategy-free.
 
-Principal propagation and Audit Provenance are lifecycle-neutral common-runtime
-behavior in every slice that claims them. Both `slice-snapshot-1` and
-`slice-managed-1` claim `m-principal` and `m-audit-provenance`; lifecycle
-extensions do not acquire incompatible database-boundary signatures or model
-defaults. A future slice may omit Audit Provenance while retaining Principal
-propagation, but every model in that slice must opt out explicitly.
+Execution Authority propagation and Audit Provenance are lifecycle-neutral
+common-runtime behavior. Lifecycle extensions do not acquire incompatible
+database-boundary signatures or model defaults. A conformance profile may omit
+Audit Provenance while retaining Execution Authority propagation, but every
+model in that profile must opt out explicitly. Slice membership is declared only
+by `core/spec/slices.md`.
 
 Adoption is a breaking mapped-schema and database-boundary API change. Repository-owned descriptors, provisioned test DDL, fixtures, expected table states, and golden SQL move together, but production `ALTER TABLE`, historical backfill, and application migration tooling are outside this decision. Existing applications migrate and backfill before enabling the audited mapping or opt out explicitly.

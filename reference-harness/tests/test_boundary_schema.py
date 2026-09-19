@@ -12,11 +12,19 @@ shaped for it (the reference harness would bypass its early skip).
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
+from reference_harness.case import (
+    Case,
+    DatabaseLoginSelection,
+    SubjectSelection,
+    load_case,
+)
 from reference_harness.corpus_yaml import read_corpus_yaml
 from reference_harness.schemas import build_registry, load_schemas
 
@@ -258,3 +266,121 @@ def test_schema_rejects_the_retired_retries_key_on_a_join() -> None:
     case = _valid_boundary_case()
     case["when"]["boundary"] = [{"action": "join", "retries": 2}]
     assert list(_case_validator().iter_errors(case))
+
+
+def test_schema_accepts_complete_authority_selectors_at_both_boundaries() -> None:
+    for actor, authorization in (
+        ({"kind": "subject", "value": " alice "}, "role-a"),
+        ({"kind": "subject", "value": "alice\nadmin"}, "role-a"),
+        ({"kind": "subject", "value": "DB-login:alice"}, "role-a"),
+        ({"kind": "database-login"}, None),
+    ):
+        case = _valid_boundary_case()
+        case["when"]["actorIdentity"] = actor
+        if authorization is not None:
+            case["when"]["databaseAuthorization"] = authorization
+        step = {"action": "join", "actorIdentity": actor}
+        if authorization is not None:
+            step["databaseAuthorization"] = authorization
+        case["when"]["boundary"] = [step]
+        assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_incomplete_or_malformed_authority_selectors() -> None:
+    invalid_pairs = (
+        ({"kind": "subject", "value": "alice"}, None),
+        (None, "role-a"),
+        ({"kind": "database-login", "value": "runner"}, None),
+        ({"kind": "database-login"}, "role-a"),
+        ({"kind": "subject", "value": ""}, "role-a"),
+        ({"kind": "subject", "value": "db-login:runner"}, "role-a"),
+        ({"kind": "service", "value": "alice"}, "role-a"),
+    )
+    for actor, authorization in invalid_pairs:
+        case = _valid_boundary_case()
+        if actor is not None:
+            case["when"]["actorIdentity"] = actor
+        if authorization is not None:
+            case["when"]["databaseAuthorization"] = authorization
+        assert list(_case_validator().iter_errors(case)), (actor, authorization)
+    for selection in (
+        {"actorIdentity": None},
+        {"databaseAuthorization": None},
+        {
+            "actorIdentity": {"kind": "database-login"},
+            "databaseAuthorization": None,
+        },
+    ):
+        case = _valid_boundary_case()
+        case["when"].update(selection)
+        assert list(_case_validator().iter_errors(case)), selection
+
+
+def test_schema_rejects_authority_selectors_on_non_join_actions() -> None:
+    for action in ("read", "create", "update", "terminate", "delete"):
+        case = _valid_boundary_case()
+        case["when"]["boundary"] = [
+            {
+                "action": action,
+                "actorIdentity": {"kind": "subject", "value": "alice"},
+                "databaseAuthorization": "role-a",
+            }
+        ]
+        assert list(_case_validator().iter_errors(case)), action
+
+
+def test_schema_rejects_outer_authority_selectors_on_an_unrelated_shape() -> None:
+    case = read_corpus_yaml(
+        _SCHEMA_PATH.parents[1]
+        / "compatibility"
+        / "cases"
+        / "m-core-001-scalar-types-roundtrip.yaml"
+    )
+    case["when"]["actorIdentity"] = {"kind": "database-login"}
+    assert list(_case_validator().iter_errors(case))
+
+
+def test_authority_cases_decode_to_closed_reader_values() -> None:
+    compatibility = _SCHEMA_PATH.parents[1] / "compatibility"
+    cases = compatibility / "cases"
+    subject_case = load_case(
+        compatibility,
+        cases / "m-execution-authority-001-equal-subject-authority-joins.yaml",
+    )
+    assert subject_case.actor_selection == SubjectSelection("alice", "role-a")
+    assert subject_case.boundary_action_actor_selection(1) is None
+    assert subject_case.boundary_action_actor_selection(2) == SubjectSelection("alice", "role-a")
+
+    login_case = load_case(
+        compatibility,
+        cases / "m-execution-authority-005-equal-login-authority-joins.yaml",
+    )
+    assert login_case.actor_selection == DatabaseLoginSelection()
+    assert login_case.boundary_action_actor_selection(1) == DatabaseLoginSelection()
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"actorIdentity": None},
+        {"databaseAuthorization": None},
+        {"actorIdentity": {"kind": "subject", "value": "alice"}},
+        {
+            "actorIdentity": {"kind": "database-login"},
+            "databaseAuthorization": None,
+        },
+    ],
+)
+def test_reference_reader_rejects_malformed_authority_combinations(
+    selection: dict[str, object],
+) -> None:
+    compatibility = _SCHEMA_PATH.parents[1] / "compatibility"
+    canonical = load_case(
+        compatibility,
+        compatibility / "cases" / "m-execution-authority-001-equal-subject-authority-joins.yaml",
+    )
+    raw = copy.deepcopy(canonical.raw)
+    raw["when"] = {"boundary": raw["when"]["boundary"], **selection}
+    malformed = Case(path=canonical.path, raw=raw, model=canonical.model)
+    with pytest.raises(ValueError, match=r"actorIdentity|databaseAuthorization"):
+        _ = malformed.actor_selection

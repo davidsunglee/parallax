@@ -1,0 +1,24 @@
+# Equal database-login authority joins (m-execution-authority): both the outer
+# scope and joining call explicitly derive independent database-login scopes
+# from one opened root. The runtime supplies both identities and they compare
+# equal without a caller value or authorization fixture. The joining body runs
+# and the boundary commits after the one observing read.
+model: models/account.yaml
+tags: [m-execution-authority, m-unit-work, m-db-port, m-api-conformance, authority, join]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection authority join intent (shape:boundary)"
+when:
+  actorIdentity: {kind: database-login}
+  boundary:
+    - action: read
+      note: the outer body proves it reached modeled work
+    - action: join
+      actorIdentity: {kind: database-login}
+      note: an independently selected login actor on the same root joins by value
+then:
+  outcome: committed
+  roundTrips: 1

@@ -610,7 +610,7 @@ def test_a_controlled_scope_gives_the_session_back_even_if_revocation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The runtime serves one scope at a time, so a scope that failed to hand the
-    # session back would leave it refusing every later acquisition. Relinquishing
+    # session back would leave it refusing every later acquisition. Releasing
     # is therefore what the exit does last and unconditionally.
     from parallax.postgres._connection import PostgresConnection
 
@@ -815,7 +815,7 @@ def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_en
     # `m-db-port`: a close stops admission and neither waits for borrowers nor
     # interrupts their statements. This runtime has one session and nothing to
     # hand it back to, so what would otherwise be "closed when it comes back" is
-    # "retired when the scope that held it relinquishes".
+    # "retired when the scope that held it releases".
     connection = _FakeConnection()
     runtime = _adapter(connection).open()
     scope = runtime.connection()

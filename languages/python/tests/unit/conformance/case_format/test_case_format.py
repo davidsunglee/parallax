@@ -340,6 +340,75 @@ def test_load_case_parses_a_real_corpus_case() -> None:
     assert case.primary_module == "m-predicate"
 
 
+def test_authority_cases_decode_to_closed_ingress_values() -> None:
+    subject = case_format.load_case(
+        case_format.default_cases_dir()
+        / "m-execution-authority-001-equal-subject-authority-joins.yaml"
+    )
+    assert case_format.actor_selection(subject) == case_format.SubjectSelection("alice", "role-a")
+    subject_when = cast("dict[str, object]", subject.document["when"])
+    boundary = cast("list[dict[str, object]]", subject_when["boundary"])
+    assert case_format.step_actor_selection(boundary[1], where="when.boundary[1]") is None
+    assert case_format.step_actor_selection(
+        boundary[2], where="when.boundary[2]"
+    ) == case_format.SubjectSelection("alice", "role-a")
+
+    login = case_format.load_case(
+        case_format.default_cases_dir()
+        / "m-execution-authority-005-equal-login-authority-joins.yaml"
+    )
+    assert case_format.actor_selection(login) == case_format.DatabaseLoginSelection()
+    login_when = cast("dict[str, object]", login.document["when"])
+    login_boundary = cast("list[dict[str, object]]", login_when["boundary"])
+    assert (
+        case_format.step_actor_selection(login_boundary[1], where="when.boundary[1]")
+        == case_format.DatabaseLoginSelection()
+    )
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"actorIdentity": {"kind": "subject", "value": "alice"}},
+        {"databaseAuthorization": "role-a"},
+        {"actorIdentity": None},
+        {"databaseAuthorization": None},
+        {"actorIdentity": {"kind": "service"}},
+        {"actorIdentity": {"kind": "subject"}, "databaseAuthorization": "role-a"},
+        {
+            "actorIdentity": {"kind": "subject", "value": "alice", "extra": True},
+            "databaseAuthorization": "role-a",
+        },
+        {"actorIdentity": {"kind": "database-login", "value": "runner"}},
+        {
+            "actorIdentity": {"kind": "database-login"},
+            "databaseAuthorization": "role-a",
+        },
+        {
+            "actorIdentity": {"kind": "database-login"},
+            "databaseAuthorization": None,
+        },
+        {
+            "actorIdentity": {"kind": "subject", "value": "db-login:runner"},
+            "databaseAuthorization": "role-a",
+        },
+    ],
+)
+def test_authority_reader_rejects_malformed_combinations(
+    selection: dict[str, object],
+) -> None:
+    case = Case(
+        path=Path("m-execution-authority-999-invalid.yaml"),
+        case_id="m-execution-authority-999",
+        shape="boundary",
+        tags=("m-execution-authority",),
+        model="models/account.yaml",
+        document={"when": selection},
+    )
+    with pytest.raises(ValueError, match=r"actorIdentity|databaseAuthorization"):
+        case_format.actor_selection(case)
+
+
 def test_load_case_rejects_bad_filename(tmp_path: Path) -> None:
     path = _write(tmp_path, "not-a-case.yaml", "shape: read\ntags: [m-core]\n")
     with pytest.raises(ValueError, match="<module>-NNN"):

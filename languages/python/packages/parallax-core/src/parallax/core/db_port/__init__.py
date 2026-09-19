@@ -73,9 +73,9 @@ from parallax.core.db_port._resources import (
     DatabaseRuntime,
     DatabaseStartupError,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
     StartupPhase,
-    Unrelinquished,
 )
 from parallax.core.dialect import Dialect
 
@@ -111,6 +111,7 @@ __all__ = [
     "PoolMetricsSource",
     "PoolSample",
     "PoolUnavailable",
+    "ReleaseUnconfirmed",
     "ResourceCondition",
     "Returned",
     "RollbackFailed",
@@ -119,7 +120,6 @@ __all__ = [
     "Row",
     "StartupPhase",
     "TransactionOutcome",
-    "Unrelinquished",
     "isolation_level",
     "report_resource_issues",
     "report_unregistration_failure",

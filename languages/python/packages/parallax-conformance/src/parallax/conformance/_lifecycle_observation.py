@@ -35,8 +35,8 @@ from parallax.core.db_port import (
     CleanupPhase,
     CleanupResult,
     Invalidated,
+    ReleaseUnconfirmed,
     Returned,
-    Unrelinquished,
 )
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
@@ -746,8 +746,8 @@ def _cleanup(result: CleanupResult | None) -> dict[str, object]:
             disposition = "returned"
         case Invalidated(issues):
             disposition = "invalidated"
-        case Unrelinquished(issues):
-            disposition = "unrelinquished"
+        case ReleaseUnconfirmed(issues):
+            disposition = "release-unconfirmed"
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
     observed: dict[str, object] = {"cleanup": disposition}
