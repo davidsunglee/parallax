@@ -65,7 +65,7 @@ from parallax.conformance.vo_models import Branch
 from parallax.core import LATEST, Edge
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import edge_of
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Transaction
 
 __all__ = [
     "StaleMilestoneError",
@@ -85,7 +85,7 @@ class StaleMilestoneError(RuntimeError):
     """
 
 
-def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
+def render_balance_milestone(db: ScopedDatabase, *, id: int) -> tuple[Balance, Edge]:
     """RENDER time (Transaction-Time-Only): a plain, non-transactional find — the
     displayed milestone plus its edge (the Transaction-Time dimension's own from-instant,
     ``in_z``), the whole of what the form needs to transport."""
@@ -94,7 +94,7 @@ def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
 
 
 def submit_balance_edit(
-    db: Database,
+    db: ScopedDatabase,
     *,
     id: int,
     edge: Edge,
@@ -123,7 +123,7 @@ def submit_balance_edit(
     db.transact(fn, concurrency=concurrency)
 
 
-def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
+def render_branch_milestone(db: ScopedDatabase, *, id: int) -> tuple[Branch, Edge]:
     """RENDER time (bitemporal): a non-transactional current-rectangle find —
     the displayed rectangle plus its edge on BOTH declared axes (Valid Time and
     Transaction Time)."""
@@ -132,7 +132,7 @@ def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
 
 
 def submit_branch_edit(
-    db: Database,
+    db: ScopedDatabase,
     *,
     id: int,
     edge: Edge,

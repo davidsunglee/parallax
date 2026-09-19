@@ -44,7 +44,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import object_query_node
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import prepare_model
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import Database, ScopedDatabase
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.handle._read_plan import (
@@ -235,11 +235,11 @@ class CatalogPort:
         raise NotImplementedError
 
 
-def _eager(database: Database, workload: Workload) -> int:
+def _eager(database: ScopedDatabase, workload: Workload) -> int:
     return len(database.wire.find(workload.query).results())
 
 
-def _streamed(database: Database, workload: Workload, page_size: int) -> int:
+def _streamed(database: ScopedDatabase, workload: Workload, page_size: int) -> int:
     count = 0
     with database.wire.stream(workload.query, batch_size=page_size) as stream:
         for _root in stream:
@@ -248,7 +248,11 @@ def _streamed(database: Database, workload: Workload, page_size: int) -> int:
 
 
 def _last_streamed(
-    database: Database, workload: Workload, page_size: int, *, collect_at_page_boundary: bool
+    database: ScopedDatabase,
+    workload: Workload,
+    page_size: int,
+    *,
+    collect_at_page_boundary: bool,
 ) -> object:
     latest: object | None = None
     with database.wire.stream(workload.query, batch_size=page_size) as stream:
@@ -261,7 +265,7 @@ def _last_streamed(
     return latest
 
 
-def _first(database: Database, workload: Workload, page_size: int) -> object:
+def _first(database: ScopedDatabase, workload: Workload, page_size: int) -> object:
     with database.wire.stream(workload.query, batch_size=page_size) as stream:
         return next(iter(stream))
 
@@ -308,7 +312,8 @@ def _live_timing(
     warmups: int,
     measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
-    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as database:
+    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as root:
+        database = root.using_database_login()
         work: Callable[[], object]
         if path.startswith("live.eager"):
 
@@ -343,7 +348,8 @@ def _provider_free(
     page_size = 32 if ".page32." in path else None
 
     def work() -> int:
-        database = Database(_SoleRuntime(CatalogPort(workload, roots)), ORDERS_MODEL)
+        root = Database(_SoleRuntime(CatalogPort(workload, roots)), ORDERS_MODEL)
+        database = root.using_database_login()
         try:
             return (
                 _eager(database, workload)
@@ -351,7 +357,7 @@ def _provider_free(
                 else _streamed(database, workload, page_size)
             )
         finally:
-            database.close()
+            root.close()
 
     milliseconds = _timed(work, warmups=warmups, measured=measured)
     if path.endswith("minRootsPerSecond"):
@@ -373,7 +379,8 @@ def _live_memory(
         if path.startswith("streamedMemory.")
         else None
     )
-    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as database:
+    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as root:
+        database = root.using_database_login()
         if page_size is None:
             database.wire.find(workload.query)
         else:
@@ -617,7 +624,8 @@ def _geometry(
     selected = cast("geometry_support.Layout", layout)
     roots = READ_GEOMETRY_ROOTS
     port = geometry_support.GeometryPort(level, selected, roots)
-    database = Database(port.open(), geometry_support.MODEL)
+    root = Database(port.open(), geometry_support.MODEL)
+    database = root.using_database_login()
     query = geometry_support.read_query(level, selected)
     try:
         if metric == "elapsedUsPerRoot":
@@ -658,7 +666,7 @@ def _geometry(
         value = max(0, peak - before) / 1_024
         return value, "KiB", (value,)
     finally:
-        database.close()
+        root.close()
 
 
 def measure(

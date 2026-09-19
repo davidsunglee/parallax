@@ -57,7 +57,8 @@ def _accounts(db: Any) -> list[Any]:
 )
 def test_every_supported_configuration_connects_and_serves(profile_run: Any, pool: Any) -> None:
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=pool), _ACCOUNT) as db:
+    with connect(profile_run.configured(pool=pool), _ACCOUNT) as _root_db:
+        db = _root_db.using_database_login()
         assert _accounts(db)
 
 
@@ -66,20 +67,22 @@ def test_a_handle_serves_after_a_close_of_another_over_the_same_configuration(
 ) -> None:
     _seeded(profile_run)
     configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
-    first = connect(configured, _ACCOUNT)
-    second = connect(configured, _ACCOUNT)
+    first_root = connect(configured, _ACCOUNT)
+    second_root = connect(configured, _ACCOUNT)
+    second = second_root.using_database_login()
     try:
-        first.close()
+        first_root.close()
         assert _accounts(second)
     finally:
-        first.close()
-        second.close()
+        first_root.close()
+        second_root.close()
 
 
 def test_a_closed_handle_refuses_the_next_operation(profile_run: Any) -> None:
     _seeded(profile_run)
-    db = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
-    db.close()
+    root = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
+    db = root.using_database_login()
+    root.close()
 
     with pytest.raises(ExecutionFailure) as refused:
         _accounts(db)
@@ -92,12 +95,13 @@ def test_a_retry_after_a_close_fails_rather_than_replaying(profile_run: Any) -> 
     # A retry needs a connection of its own, so a handle closed underneath a
     # retry loop stops it rather than letting it run again.
     _seeded(profile_run)
-    db = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
+    root = connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)), _ACCOUNT)
+    db = root.using_database_login()
     attempts: list[int] = []
 
     def body(_tx: Transaction) -> None:
         attempts.append(1)
-        db.close()
+        root.close()
         raise RuntimeError("this attempt fails after the handle closed")
 
     with pytest.raises(ExecutionFailure):
@@ -133,7 +137,10 @@ def test_a_whole_eager_read_and_each_delivery_page_need_one_slot(profile_run: An
     # One connection is enough for both shapes: the eager read materializes
     # inside its acquisition, and each delivery page returns its lease in turn.
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT) as db:
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT
+    ) as _root_db:
+        db = _root_db.using_database_login()
         assert _accounts(db)
         with db.stream(Account.where(Account.all), batch_size=1) as roots:
             assert list(roots)
@@ -147,35 +154,36 @@ def test_an_exhausted_delivery_gives_its_slot_back_before_its_scope_ends(
     # INSIDE the delivery's own `with` block: it can only succeed if the
     # exhausted delivery released where it ended.
     _seeded(profile_run)
-    with (
-        connect(
-            profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0)),
-            _ACCOUNT,
-        ) as db,
-        db.stream(Account.where(Account.all), batch_size=1) as roots,
-    ):
-        assert list(roots)
-        assert _accounts(db)
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0)),
+        _ACCOUNT,
+    ) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(Account.where(Account.all), batch_size=1) as roots:
+            assert list(roots)
+            assert _accounts(db)
 
 
 def test_an_independent_read_uses_the_only_slot_between_delivery_pages(profile_run: Any) -> None:
     # Publication happens after the page lease returns, so independent work in
     # the consuming loop can use the only slot before the next page asks for it.
     _seeded(profile_run)
-    with (
-        connect(
-            profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0)),
-            _ACCOUNT,
-        ) as db,
-        db.stream(Account.where(Account.all), batch_size=1) as roots,
-    ):
-        next(iter(roots))
-        assert _accounts(db)
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0)),
+        _ACCOUNT,
+    ) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(Account.where(Account.all), batch_size=1) as roots:
+            next(iter(roots))
+            assert _accounts(db)
 
 
 def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: Any) -> None:
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT) as db:
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)), _ACCOUNT
+    ) as _root_db:
+        db = _root_db.using_database_login()
 
         def body(tx: Transaction) -> int:
             found = tx.find(Account.where(Account.all)).results()
@@ -188,7 +196,10 @@ def test_a_transaction_and_its_participating_work_share_one_slot(profile_run: An
 
 def test_an_independent_transaction_needs_a_slot_of_its_own(profile_run: Any) -> None:
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=PoolOptions(min_size=0, max_size=2)), _ACCOUNT) as db:
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=0, max_size=2)), _ACCOUNT
+    ) as _root_db:
+        db = _root_db.using_database_login()
         started = threading.Event()
         release = threading.Event()
         outcomes: list[str] = []
@@ -216,7 +227,8 @@ def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> 
     with connect(
         profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0)),
         _ACCOUNT,
-    ) as db:
+    ) as _root_db:
+        db = _root_db.using_database_login()
         node: dict[str, object] = {"target": "Account", "predicate": {"all": {}}}
         assert db.wire.find(node).results()
         with db.wire.stream(node, batch_size=1) as roots:
@@ -228,7 +240,10 @@ def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> 
 
 def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run: Any) -> None:
     _seeded(profile_run)
-    with connect(profile_run.configured(pool=PoolOptions(min_size=1, max_size=2)), _ACCOUNT) as db:
+    with connect(
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=2)), _ACCOUNT
+    ) as _root_db:
+        db = _root_db.using_database_login()
         existing = _accounts(db)
         new_id = max(int(account.id) for account in existing) + 1
 
@@ -280,7 +295,8 @@ def test_every_documented_retention_form_opens_against_a_real_server(profile_run
     forms = database_pooling_stories.every_retention_form_is_one_configuration_value(conninfo)
 
     for adapter in (forms.default, forms.tuned, forms.zero_minimum, forms.on_demand):
-        with connect(adapter, _ACCOUNT) as db:
+        with connect(adapter, _ACCOUNT) as _root_db:
+            db = _root_db.using_database_login()
             assert _accounts(db)
 
 

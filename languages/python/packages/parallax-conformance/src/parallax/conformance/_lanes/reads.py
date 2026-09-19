@@ -81,7 +81,7 @@ def case_database(
     lifecycle: ExecutionLifecycleProvider,
     *,
     clock: Clock | None = None,
-) -> handle.Database:
+) -> handle.Database[object]:
     """A Handle connected from ``port`` serving ``case``'s model under its edition,
     configured with the case's own root record
     (:func:`~parallax.conformance.case_format.database_options`).
@@ -236,7 +236,8 @@ def run_read_case(
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
     apply_given_corrupt(case, model, port)
-    with case_database(case, port, observed.provider) as db:
+    with case_database(case, port, observed.provider) as root:
+        db = root.using_database_login()
         try:
             result = (
                 transact(
@@ -300,7 +301,8 @@ def _wire_read(
     """
     observed = lifecycle.observation()
     apply_given_corrupt(case, model, port)
-    with case_database(case, port, observed.provider) as db:
+    with case_database(case, port, observed.provider) as root:
+        db = root.using_database_login()
         try:
             return underlying(lambda: db.wire.find(query)), observed
         except READ_ERRORS as exc:
@@ -448,7 +450,8 @@ def _wire_delivery(
     """
     observed = lifecycle_run(lifecycle).observation()
     apply_given_corrupt(case, model, port)
-    with case_database(case, port, observed.provider) as db:
+    with case_database(case, port, observed.provider) as root:
+        db = root.using_database_login()
         roots: list[object] = []
 
         def drained() -> None:

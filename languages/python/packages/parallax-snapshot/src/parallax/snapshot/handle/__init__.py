@@ -150,12 +150,13 @@ from __future__ import annotations
 
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
 from parallax.snapshot.handle._adoption import ExecutionFailure
-from parallax.snapshot.handle._database import Database, connect, prepare_model
+from parallax.snapshot.handle._database import Database, ScopedDatabase, connect, prepare_model
 from parallax.snapshot.handle._errors import (
     QueryTargetError,
     SnapshotConnectionError,
     SnapshotMaterializationError,
 )
+from parallax.snapshot.handle._execution_authority import InvalidPrincipalError, Principal
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._options import DatabaseOptions
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
@@ -185,6 +186,7 @@ from parallax.snapshot.handle._stream import (
 )
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._transaction_runner import (
+    TransactionAuthorityError,
     TransactionOptionConflictError,
     TransactionOwnershipError,
     TransactionRollbackError,
@@ -226,14 +228,17 @@ __all__ = [
     "HistoryFindResult",
     "InvalidData",
     "InvalidDataError",
+    "InvalidPrincipalError",
     "KeyedWriteValueError",
     "ModelSelection",
     "NoResultFound",
     "ObjectKey",
+    "Principal",
     "PublicationConflictError",
     "PublishedRow",
     "QueryTargetError",
     "RowsResult",
+    "ScopedDatabase",
     "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
@@ -245,6 +250,7 @@ __all__ = [
     "StoredDataIssue",
     "TooManyResultsFound",
     "Transaction",
+    "TransactionAuthorityError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
     "TransactionRollbackError",

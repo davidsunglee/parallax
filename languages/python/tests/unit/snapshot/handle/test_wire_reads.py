@@ -139,8 +139,8 @@ def _order_row(order_id: int = 1) -> MappingRow:
     }
 
 
-def _wire_database(port: QueuePort) -> handle.Database:
-    return handle.Database.connect(port, ORDERS)
+def _wire_database(port: QueuePort) -> handle.ScopedDatabase:
+    return handle.Database.connect(port, ORDERS).using_database_login()
 
 
 def _entity(published: object) -> WireEntity:
@@ -299,7 +299,9 @@ def test_a_document_occurrence_publishes_the_members_the_document_held() -> None
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, CUSTOMER).using_database_login().wire.find(query).result()
+    )
     address = _mapping(root["address"])
     geo = _mapping(address["geo"])
     # `geo.point` is a declared `one` the stored document never carried, so it is
@@ -318,7 +320,9 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
         query = deserialize_query(
             {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
         )
-        root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
+        root = _entity(
+            handle.Database.connect(port, CUSTOMER).using_database_login().wire.find(query).result()
+        )
         return _mapping(root["address"])
 
     assert published({"street": "1 Park Ave", "city": "Oslo"}) == {
@@ -358,7 +362,9 @@ def test_only_an_entity_node_can_carry_a_read_origin() -> None:
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, CUSTOMER).using_database_login().wire.find(query).result()
+    )
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
     assert read_origin_of(cast("Any", address)) is None
@@ -370,7 +376,9 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 4}}}
     )
-    root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, CUSTOMER).using_database_login().wire.find(query).result()
+    )
     assert root["address"] is None
 
     # A `many` has no absent state, so a document omitting `phones` stored that
@@ -382,7 +390,9 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 3}}}
     )
-    root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, CUSTOMER).using_database_login().wire.find(query).result()
+    )
     assert _mapping(root["address"])["phones"] == []
 
 
@@ -729,7 +739,7 @@ def _customer_wire(model: DomainModel, row: MappingRow) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
     query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})
-    return connect(port, model).wire.find(query).checked().result()
+    return connect(port, model).using_database_login().wire.find(query).checked().result()
 
 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
@@ -778,7 +788,13 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
     query = deserialize_query(
         {"target": "Customer", "predicate": {"eq": {"attr": "Customer.id", "value": 1}}}
     )
-    published = handle.Database.connect(port, CUSTOMER).wire.find(query).checked().result()
+    published = (
+        handle.Database.connect(port, CUSTOMER)
+        .using_database_login()
+        .wire.find(query)
+        .checked()
+        .result()
+    )
     assert isinstance(published, InvalidData)
     record = cast("InvalidData[object]", published)
     assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
@@ -786,10 +802,12 @@ def test_the_constructor_door_classifies_the_same_way_connect_does() -> None:
 
 def test_a_classless_connection_serves_wire_and_refuses_typed_before_any_io() -> None:
     with pytest.raises(handle.SnapshotConnectionError):
-        handle.Database(RefusingAdapter(), ORDERS).find(cast("Any", Gadget.where(Gadget.id == 1)))
+        handle.Database.connect(RefusingAdapter(), ORDERS).using_database_login().find(
+            cast("Any", Gadget.where(Gadget.id == 1))
+        )
     # The capability the same connection DOES hold is an executed read, not a
     # reachable namespace: the Wire lane needs no Entity Class, so it runs.
-    served = handle.Database.connect(QueuePort([[_order_row()]]), ORDERS)
+    served = handle.Database.connect(QueuePort([[_order_row()]]), ORDERS).using_database_login()
     assert isinstance(served.wire, WireDatabaseView)
     published = served.wire.find(
         {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
@@ -823,7 +841,9 @@ def test_an_inheritance_participant_publishes_its_family_variant() -> None:
         ]
     )
     query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
-    root = _entity(handle.Database.connect(port, ANIMAL).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, ANIMAL).using_database_login().wire.find(query).result()
+    )
     assert root["familyVariant"] == "Dog"
     assert root["barkVolume"] == 3
 
@@ -863,7 +883,7 @@ def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes
             ],
         }
     )
-    roots = handle.Database.connect(port, ANIMAL).wire.find(query).results()
+    roots = handle.Database.connect(port, ANIMAL).using_database_login().wire.find(query).results()
     dog, cat = (_entity(root) for root in roots)
     # The guard admits only the Dog, so the Cat never sees the view at all — an
     # absent key, which is what unloaded means — while the admitted Dog's own
@@ -893,7 +913,9 @@ def test_a_temporal_end_publishes_the_canonical_infinity_literal() -> None:
             "temporal": {"transaction-time": {"asOf": "latest"}},
         }
     )
-    root = _entity(handle.Database.connect(port, INVOICE).wire.find(query).result())
+    root = _entity(
+        handle.Database.connect(port, INVOICE).using_database_login().wire.find(query).result()
+    )
     assert root["txStart"] == "2024-04-01T00:00:00.000000Z"
     assert root["txEnd"] == "infinity"
 
@@ -930,13 +952,18 @@ _HISTORY_QUERY: Mapping[str, object] = {
 
 def test_a_milestone_set_wire_read_publishes_every_milestone_in_one_ordered_result() -> None:
     port = _history_port()
-    roots = handle.Database.connect(port, INVOICE).wire.find(_HISTORY_QUERY).results()
+    roots = (
+        handle.Database.connect(port, INVOICE)
+        .using_database_login()
+        .wire.find(_HISTORY_QUERY)
+        .results()
+    )
     assert [_entity(root)["amount"] for root in roots] == ["50.00", "75.00"]
 
 
 def test_a_participating_milestone_set_wire_read_runs_inside_the_transaction() -> None:
     port = _history_port()
-    database = handle.Database.connect(port, INVOICE)
+    database = handle.Database.connect(port, INVOICE).using_database_login()
     result = database.transact(lambda tx: tx.wire.find(_HISTORY_QUERY).results())
     assert [_entity(root)["amount"] for root in result] == ["50.00", "75.00"]
 

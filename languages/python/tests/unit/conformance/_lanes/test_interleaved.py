@@ -88,10 +88,10 @@ class _ScriptedExecution:
         self.terminate_calls = 0
         self._database = handle.Database.connect(
             port, model, options=options, clock=clock, lifecycle_provider=lifecycle_provider
-        )
+        ).using_database_login()
 
     @property
-    def database(self) -> handle.Database:
+    def database(self) -> handle.ScopedDatabase:
         return self._database
 
     @property

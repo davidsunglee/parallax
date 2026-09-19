@@ -69,7 +69,7 @@ def _orders_query() -> Any:
     return Order.where(Order.active == True)  # noqa: E712 - the query algebra's own equality
 
 
-def _db(adapter: Any, model: Any = ACCOUNT) -> Database:
+def _db(adapter: Any, model: Any = ACCOUNT) -> Database[Any]:
     return connect(adapter, model, clock=FixedClock(FIXED))
 
 
@@ -116,7 +116,7 @@ def test_two_handles_from_one_configuration_own_two_independent_runtimes() -> No
 
     # Closing one leaves the other working, which is what makes reusing a
     # configuration safe rather than a way to share a resource by accident.
-    assert second.find(_account_query()).result().owner == "Newton"
+    assert second.using_database_login().find(_account_query()).result().owner == "Newton"
     second.close()
 
 
@@ -136,7 +136,8 @@ def test_an_eager_read_holds_one_connection_through_its_whole_execution() -> Non
     # publication it is materialized into: a graph half-built from rows is not a
     # result anything may return.
     adapter = ScriptedAdapter(Read(rows=[_ACCOUNT_ROW]))
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         db.find(_account_query()).result()
 
     assert (adapter.acquisitions, adapter.cleanups) == (1, [Returned()])
@@ -144,7 +145,8 @@ def test_an_eager_read_holds_one_connection_through_its_whole_execution() -> Non
 
 def test_two_eager_reads_acquire_twice() -> None:
     adapter = ScriptedAdapter(Read(rows=[_ACCOUNT_ROW]), Read(rows=[_ACCOUNT_ROW]))
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         db.find(_account_query()).result()
         db.find(_account_query()).result()
     assert adapter.acquisitions == 2
@@ -153,7 +155,8 @@ def test_two_eager_reads_acquire_twice() -> None:
 def test_an_eager_read_that_fails_still_releases_and_keeps_its_own_failure() -> None:
     failure = DatabaseError(category=None, native_code=None, message="the statement failed")
     adapter = ScriptedAdapter(Read(raises=failure))
-    with _db(adapter) as db, pytest.raises(ExecutionFailure) as raised:
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure) as raised:
+        db = _root_db.using_database_login()
         db.find(_account_query()).result()
 
     assert raised.value.__cause__ is failure
@@ -168,7 +171,8 @@ def test_a_transaction_attempt_holds_one_connection_and_a_retry_acquires_afresh(
         Transact(Read(rows=[_ACCOUNT_ROW]), commit=deadlock()),
         Transact(Read(rows=[_ACCOUNT_ROW])),
     )
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         db.transact(lambda tx: tx.find(_account_query()).result())
 
     assert adapter.acquisitions == 2
@@ -177,7 +181,8 @@ def test_a_transaction_attempt_holds_one_connection_and_a_retry_acquires_afresh(
 
 def test_participating_work_inherits_the_attempts_connection_and_returns_nothing() -> None:
     adapter = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW]), Read(rows=[_ACCOUNT_ROW])))
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
 
         def body(tx: Transaction) -> None:
             tx.find(_account_query()).result()
@@ -190,7 +195,8 @@ def test_participating_work_inherits_the_attempts_connection_and_returns_nothing
 
 def test_a_stream_acquires_at_its_first_page_and_not_at_scope_entry() -> None:
     adapter = ScriptedAdapter(Read(rows=[_order_row(1)]), Read(rows=[]))
-    with _db(adapter, ORDERS_MODEL) as db:
+    with _db(adapter, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
         delivery = db.stream(_orders_query(), batch_size=2)
         assert adapter.acquisitions == 0
         with delivery as roots:
@@ -203,7 +209,8 @@ def test_an_exhausted_stream_releases_where_it_ends_rather_than_at_its_scope_exi
     # A delivery that is over must not keep capacity until the caller happens to
     # leave its `with` block.
     adapter = ScriptedAdapter(Read(rows=[_order_row(1)]), Read(rows=[]))
-    with _db(adapter, ORDERS_MODEL) as db:
+    with _db(adapter, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
         with db.stream(_orders_query(), batch_size=2) as roots:
             assert list(roots)
             assert adapter.cleanups == [Returned()]
@@ -214,7 +221,8 @@ def test_a_stream_a_caller_abandoned_has_already_released_its_page() -> None:
     # Publication begins only after the page lease has returned, so abandoning
     # the delivery leaves no connection for scope exit to settle.
     adapter = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))
-    with _db(adapter, ORDERS_MODEL) as db:
+    with _db(adapter, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
         with db.stream(_orders_query(), batch_size=2) as roots:
             next(iter(roots))
             assert adapter.cleanups == [Returned()]
@@ -223,15 +231,18 @@ def test_a_stream_a_caller_abandoned_has_already_released_its_page() -> None:
 
 def test_a_stream_closed_before_its_first_page_releases_nothing() -> None:
     adapter = ScriptedAdapter()
-    with _db(adapter, ORDERS_MODEL) as db, db.stream(_orders_query(), batch_size=2):
-        pass
+    with _db(adapter, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
+        with db.stream(_orders_query(), batch_size=2):
+            pass
     assert (adapter.acquisitions, adapter.cleanups) == (0, [])
 
 
 def test_a_failed_stream_releases_where_it_failed() -> None:
     failure = DatabaseError(category=None, native_code=None, message="the page failed")
     adapter = ScriptedAdapter(Read(raises=failure))
-    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure):  # noqa: SIM117 - one combined `with` would nest the raises inside the handle's own scope
+    with _db(adapter, ORDERS_MODEL) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         with db.stream(_orders_query(), batch_size=2) as roots:
             list(roots)
     assert adapter.cleanups == [Returned()]
@@ -253,7 +264,8 @@ def test_an_attempt_that_cannot_acquire_is_terminal_and_runs_no_callback() -> No
     adapter = ScriptedAdapter(acquisition_failures=[refusal])
     ran: list[str] = []
 
-    with _db(adapter) as db, pytest.raises(ExecutionFailure) as raised:
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure) as raised:
+        db = _root_db.using_database_login()
         db.transact(lambda _tx: ran.append("body"))
 
     # Named under the edition the attempt adopted — the failure is the
@@ -265,7 +277,8 @@ def test_an_attempt_that_cannot_acquire_is_terminal_and_runs_no_callback() -> No
 
 def test_an_attempt_that_cannot_acquire_is_not_retried_however_retriable_it_looks() -> None:
     adapter = ScriptedAdapter(acquisition_failures=[_unacquirable("timeout")])
-    with _db(adapter) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         db.transact(lambda _tx: None, max_retries=5)
     assert adapter.acquisitions == 0
 
@@ -276,7 +289,8 @@ def test_an_eager_read_that_cannot_acquire_fails_with_the_reason_acquisition_gav
     refusal = _unacquirable("queue_rejected")
     adapter = ScriptedAdapter(acquisition_failures=[refusal])
 
-    with _db(adapter) as db, pytest.raises(ExecutionFailure) as raised:
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure) as raised:
+        db = _root_db.using_database_login()
         db.find(_account_query())
 
     assert raised.value.__cause__ is refusal
@@ -286,7 +300,8 @@ def test_a_stream_that_cannot_acquire_its_first_page_fails_the_delivery() -> Non
     refusal = _unacquirable("timeout")
     adapter = ScriptedAdapter(acquisition_failures=[refusal])
 
-    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure) as raised:  # noqa: SIM117 - one combined `with` would nest the raises inside the handle's own scope
+    with _db(adapter, ORDERS_MODEL) as _root_db, pytest.raises(ExecutionFailure) as raised:
+        db = _root_db.using_database_login()
         with db.stream(_orders_query(), batch_size=2) as roots:
             list(roots)
 
@@ -302,7 +317,8 @@ def test_a_failed_entry_consumes_the_partial_cleanup_it_left_behind() -> None:
         acquisition_failures=[_unacquirable("preparation_failed")], cleanup_results=[partial]
     )
 
-    with _db(adapter) as db, pytest.raises(ExecutionFailure):
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure):
+        db = _root_db.using_database_login()
         db.find(_account_query())
 
     assert adapter.cleanups == [partial]
@@ -323,7 +339,8 @@ def test_a_successful_read_survives_a_cleanup_problem() -> None:
     )
     adapter = ScriptedAdapter(Read(rows=[_ACCOUNT_ROW]), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
         assert db.find(_account_query()).result().owner == "Newton"
 
 
@@ -333,7 +350,8 @@ def test_a_committed_transaction_survives_a_cleanup_problem() -> None:
     )
     adapter = ScriptedAdapter(Transact(Write()), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter) as db:
+    with _db(adapter) as _root_db:
+        db = _root_db.using_database_login()
 
         def body(tx: Transaction) -> str:
             tx.insert(Account(id=2, owner="Linus", balance=Decimal("1.00")))
@@ -349,7 +367,8 @@ def test_an_operations_own_failure_is_not_replaced_by_a_cleanup_problem() -> Non
     )
     adapter = ScriptedAdapter(Read(raises=failure), cleanup_results=[release_unconfirmed])
 
-    with _db(adapter) as db, pytest.raises(ExecutionFailure) as raised:
+    with _db(adapter) as _root_db, pytest.raises(ExecutionFailure) as raised:
+        db = _root_db.using_database_login()
         db.find(_account_query()).result()
 
     assert raised.value.__cause__ is failure
@@ -459,8 +478,8 @@ def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
 def test_omitted_options_and_a_whole_record_none_are_the_built_in_record() -> None:
     omitted = _db(ScriptedAdapter(Transact()))
     explicit = connect(ScriptedAdapter(Transact()), ACCOUNT, options=None, clock=FixedClock(FIXED))
-    assert omitted.transact(lambda tx: tx.options) == DatabaseOptions()
-    assert explicit.transact(lambda tx: tx.options) == DatabaseOptions()
+    assert omitted.using_database_login().transact(lambda tx: tx.options) == DatabaseOptions()
+    assert explicit.using_database_login().transact(lambda tx: tx.options) == DatabaseOptions()
 
 
 def test_an_invalid_record_opens_no_runtime_at_all() -> None:
@@ -475,7 +494,7 @@ def test_the_direct_constructor_takes_the_same_record() -> None:
     adapter = ScriptedAdapter(Transact())
     options = DatabaseOptions(isolation="serializable")
     db = Database(adapter.open(), ACCOUNT, options=options, clock=FixedClock(FIXED))
-    assert db.transact(lambda tx: tx.options) is options
+    assert db.using_database_login().transact(lambda tx: tx.options) is options
     assert adapter.calls == [BeginCall("serializable"), CommitCall()]
 
 
@@ -484,7 +503,8 @@ def test_participating_work_answers_the_attempts_connection_without_acquiring() 
     # connection rather than a second borrower of it, so it acquires nothing and
     # releases nothing of its own.
     adapter = ScriptedAdapter(Transact(Read(rows=[_order_row(1)]), Read(rows=[])))
-    with _db(adapter, ORDERS_MODEL) as db:
+    with _db(adapter, ORDERS_MODEL) as _root_db:
+        db = _root_db.using_database_login()
 
         def body(tx: Transaction) -> list[object]:
             with tx.stream(_orders_query(), batch_size=2) as roots:

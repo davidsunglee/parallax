@@ -316,7 +316,7 @@ def test_readless_update_where_buffers_one_statement_no_read() -> None:
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
-    Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert port.calls == [
         BeginCall(),
         WriteCall(POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
@@ -334,7 +334,9 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
         )
 
     with raises_contextualized(WriteRejectedError) as raised:
-        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
@@ -354,7 +356,9 @@ def test_readless_nested_document_many_assignment_is_refused_before_write_sql() 
         )
 
     with raises_contextualized(WriteRejectedError) as raised:
-        Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, _NESTED_READLESS_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert "route.segment.stops" in str(raised.value)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -383,7 +387,9 @@ def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
             NestedReadlessVoyage.title.set("Coastal"),
         )
 
-    Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, _NESTED_READLESS_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
 
 
@@ -393,7 +399,7 @@ def test_readless_delete_where_buffers_one_statement_no_read() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1))
 
-    Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert port.calls == [
         BeginCall(),
         WriteCall(POSTGRES.to_driver_sql("delete from person where id = ?"), (1,)),
@@ -419,7 +425,9 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
             Order.price.set(Decimal("9.99")),
         )
 
-    Database.connect(forward_port, ORDERS, clock=FixedClock(FIXED)).transact(forward)
+    Database.connect(forward_port, ORDERS, clock=FixedClock(FIXED)).using_database_login().transact(
+        forward
+    )
 
     reordered_port = ScriptedAdapter(Transact(Write()))
 
@@ -430,7 +438,9 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
             Order.name.set("Hopper"),
         )
 
-    Database.connect(reordered_port, ORDERS, clock=FixedClock(FIXED)).transact(reordered)
+    Database.connect(
+        reordered_port, ORDERS, clock=FixedClock(FIXED)
+    ).using_database_login().transact(reordered)
 
     assert forward_port.calls == reordered_port.calls
     assert forward_port.calls == [
@@ -450,7 +460,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -470,7 +480,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     with raises_contextualized(
         inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
     ):
-        Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
@@ -490,7 +500,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
         )
 
     with raises_contextualized(QueryDefinitionError, match=r"Payment\.amount") as caught:
-        Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -502,7 +512,7 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(QueryDefinitionError, match="at least one assignment") as caught:
-        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -518,7 +528,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
         )
 
     with raises_contextualized(QueryDefinitionError, match="assigned twice") as caught:
-        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -532,7 +542,9 @@ def test_bitemporal_where_verb_requires_valid_from() -> None:
         )
 
     with raises_contextualized(ValueError, match="requires valid_from"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
 
 
 def test_audit_only_where_verb_forbids_valid_from() -> None:
@@ -542,7 +554,7 @@ def test_audit_only_where_verb_forbids_valid_from() -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
 
     with raises_contextualized(ValueError, match="takes no valid_from"):
-        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 def test_non_temporal_where_verb_forbids_valid_from() -> None:
@@ -554,7 +566,7 @@ def test_non_temporal_where_verb_forbids_valid_from() -> None:
         )
 
     with raises_contextualized(ValueError, match="takes no valid_from"):
-        Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, PERSON, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> None:
@@ -684,7 +696,9 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
-    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn, concurrency="locking")
+    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login().transact(
+        fn, concurrency="locking"
+    )
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # one Transaction-Time-only close per resolved row, no chain
     close_sql = POSTGRES.to_driver_sql(
@@ -707,7 +721,9 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
 
-    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn, concurrency="optimistic")
+    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login().transact(
+        fn, concurrency="optimistic"
+    )
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2
     gated_sql = POSTGRES.to_driver_sql(
@@ -774,7 +790,7 @@ def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
         raise _Abandon
 
     with raises_contextualized(_Abandon):
-        Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, model, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 def test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it() -> None:
@@ -813,7 +829,7 @@ def test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it() ->
         raise _Abandon
 
     with raises_contextualized(_Abandon):
-        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -842,7 +858,7 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
             mm.Balance.where(mm.Balance.value < 200), mm.Balance.value.set(Decimal("175.00"))
         )
 
-    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(port, BALANCE, clock=FixedClock(FIXED)).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close then chain
     chain_sql, chain_binds = writes[1].sql, writes[1].binds
@@ -883,7 +899,9 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
             WhereLedger.where(WhereLedger.id == 1), WhereLedger.name.set("Baltic Traders")
         )
 
-    Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert reads[0].sql == POSTGRES.to_driver_sql(
@@ -929,7 +947,9 @@ def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor
             WhereBinaryLedger.name.set("new"),
         )
 
-    Database.connect(port, _WHERE_BINARY_LEDGER_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, _WHERE_BINARY_LEDGER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2
     assert b"\x0a\x1b" in writes[1].binds
@@ -968,7 +988,9 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
             WhereVoyage.where(WhereVoyage.id == 1), WhereVoyage.title.set("Coastal Return")
         )
 
-    Database.connect(port, _WHERE_VOYAGE_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, _WHERE_VOYAGE_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert reads[0].sql == POSTGRES.to_driver_sql(
@@ -1029,7 +1051,9 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     def fn(tx: Transaction) -> None:
         tx.terminate_where(WhereCharter.where(WhereCharter.id == 1), valid_from=valid_from)
 
-    Database.connect(port, _WHERE_CHARTER_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, _WHERE_CHARTER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only (no tail)
     head_binds = writes[1].binds
@@ -1063,9 +1087,9 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
             valid_from=valid_from,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head (old) + new tail
 
@@ -1077,9 +1101,9 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
     def fn(tx: Transaction) -> None:
         tx.terminate_where(WherePosition.where(WherePosition.id == 1), valid_from=valid_from)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only (no tail)
 
@@ -1097,9 +1121,9 @@ def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
             until=until,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
 
@@ -1114,9 +1138,9 @@ def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
             WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 3  # close + head + tail (no middle)
 
@@ -1141,9 +1165,9 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
             until=until,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
 
@@ -1180,9 +1204,9 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
             valid_from=valid_from,
         )
 
-    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
@@ -1214,9 +1238,9 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
             until=until,
         )
 
-    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
     head_binds = writes[1].binds
@@ -1247,9 +1271,9 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     def fn(tx: Transaction) -> None:
         tx.terminate_where(WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from)
 
-    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
@@ -1275,9 +1299,9 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
             WhereRectangle.where(WhereRectangle.id == 1), valid_from=valid_from, until=until
         )
 
-    Database.connect(port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_RECTANGLE_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql  # the need-sensitive projection fired
@@ -1316,9 +1340,9 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(WhereLedger.where(WhereLedger.id == 1))
 
-    Database.connect(port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_LEDGER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert "t0.address" in reads[0].sql
@@ -1346,9 +1370,9 @@ def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_ro
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Bergen")),
         )
 
-    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     # No DML and no version advance: the reassigned document is IDENTICAL to
     # the resolved row's own stored value, so the row is eliminated entirely.
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
@@ -1372,9 +1396,9 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
             WhereRoster.address.set(WhereRosterAddress(city="Bergen")),
         )
 
-    Database.connect(typed_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
-        typed, concurrency="optimistic"
-    )
+    Database.connect(
+        typed_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(typed, concurrency="optimistic")
     assert [type(op) for op in typed_port.calls] == [BeginCall, ReadCall, CommitCall]
 
     # The same value spelled as the rendered document `set` equally accepts, which
@@ -1388,9 +1412,9 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
             WhereRoster.address.set(cast("Any", {"city": "Bergen"})),
         )
 
-    Database.connect(document_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)).transact(
-        document, concurrency="optimistic"
-    )
+    Database.connect(
+        document_port, _WHERE_ROSTER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(document, concurrency="optimistic")
     assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
@@ -1493,9 +1517,9 @@ def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op
             WhereBinary.payload.set(b"\x0a\x1b"),
         )
 
-    Database.connect(port, _WHERE_BINARY_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_BINARY_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
@@ -1513,9 +1537,9 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )
 
-    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 1
     assert writes[0].sql == POSTGRES.to_driver_sql(
@@ -1541,9 +1565,9 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )
 
-    Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     reads = [op for op in port.calls if isinstance(op, ReadCall)]
     assert reads[0].sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.version, not t0.address is null, t0.address "
@@ -1566,9 +1590,9 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
         )
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(
         isinstance(op, (ReadCall, WriteCall)) for op in port.calls
     )  # never reached the resolve
@@ -1585,9 +1609,9 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
         )
 
     with raises_contextualized(ValueError, match="requires valid_from < until"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(
         isinstance(op, (ReadCall, WriteCall)) for op in port.calls
     )  # never reached the resolve
@@ -1608,9 +1632,9 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
         )
 
     with raises_contextualized(InstantError, match="no `timestamp`"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn, concurrency="optimistic")
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
 
@@ -1641,9 +1665,9 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
     with raises_contextualized(instructions.WriteInstructionError, match="valid_from is absent"):
         account_db(account).transact(absent_valid_from)
     with raises_contextualized(instructions.WriteInstructionError, match="until is absent"):
-        Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            absent_until, concurrency="optimistic"
-        )
+        Database.connect(
+            position, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(absent_until, concurrency="optimistic")
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in account.calls)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in position.calls)
 
@@ -1663,7 +1687,9 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.update_where(query, mm.Person.name.set("Ada"))
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1674,7 +1700,9 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.delete_where(query)
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1692,7 +1720,7 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
     with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(
             ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)
-        ).transact(fn)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1704,7 +1732,9 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     with raises_contextualized(QueryTargetError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
 
@@ -1721,7 +1751,9 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
         tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
     with raises_contextualized(ModelRejectedError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.rule == "between-bounds-inverted"
 
 
@@ -1732,7 +1764,9 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
     with raises_contextualized(ModelRejectedError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -1801,7 +1835,7 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
     with raises_contextualized(expected) as caught:
         Database.connect(
             ScriptedAdapter(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
-        ).transact(fn)
+        ).using_database_login().transact(fn)
     if rule is not None:
         assert cast("ModelRejectedError", caught.value).rule == rule
 
@@ -1834,7 +1868,9 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
         _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
 
     with raises_contextualized(expected):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert port.calls == [BeginCall(), RollbackCall()]
 
 
@@ -1853,9 +1889,9 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None
             _NON_UTC_UNTIL,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn, concurrency="optimistic")
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
     middle_binds = writes[2].binds
@@ -1898,7 +1934,9 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         )
 
     with raises_contextualized(InstantError):
-        Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
+        Database.connect(
+            idle, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(unrenderable)
     assert idle.calls == [BeginCall(), RollbackCall()]
 
     typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
@@ -1911,9 +1949,9 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
             until=_NON_UTC_UNTIL,
         )
 
-    Database.connect(typed_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        typed, concurrency="optimistic"
-    )
+    Database.connect(
+        typed_port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(typed, concurrency="optimistic")
 
     seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
@@ -1928,9 +1966,9 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
             until=dt.datetime.fromisoformat("2024-09-01T00:00:00+00:00"),
         )
 
-    Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        wire, concurrency="optimistic"
-    )
+    Database.connect(
+        seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(wire, concurrency="optimistic")
     typed_writes = [op for op in typed_port.calls if isinstance(op, WriteCall)]
     assert len(typed_writes) == 4  # close + head + middle + tail
     assert typed_writes == [op for op in seam_port.calls if isinstance(op, WriteCall)]
@@ -2071,7 +2109,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         raise _Abandon
 
     with raises_contextualized(_Abandon):
-        Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, model, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 # The ingress's second refusal, driven the same way: a milestone verb the
@@ -2122,7 +2160,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         raise _Abandon
 
     with raises_contextualized(_Abandon):
-        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().transact(fn)
 
 
 # The buffering seam's OWN contract, below every ingress: `buffer_predicate` and
@@ -2168,7 +2206,9 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
         raise _Abandon
 
     with raises_contextualized(_Abandon):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
 
 
 class _Abandon(Exception):
@@ -2188,7 +2228,9 @@ def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -2199,7 +2241,9 @@ def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
         )
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedAdapter(Transact()), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            ScriptedAdapter(Transact()), PAYMENT, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
 
 
@@ -2382,10 +2426,7 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
     case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
     groups, views = _recorded_groups_and_views(monkeypatch)
     handle = acquisition_support.database(case)
-    try:
-        acquisition_support.acquire(handle, case)
-    finally:
-        handle.close()
+    acquisition_support.acquire(handle, case)
 
     (group,) = groups
     assert isinstance(group.observations, TemporalColumns)
@@ -2444,10 +2485,7 @@ def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
     case = acquisition_support.case_named("acquisition.rows-8.document")
     groups, views = _recorded_groups_and_views(monkeypatch)
     handle = acquisition_support.database(case)
-    try:
-        acquisition_support.acquire(handle, case)
-    finally:
-        handle.close()
+    acquisition_support.acquire(handle, case)
 
     assert len(groups) == 1 and len(views) == case.rows
     gc.collect()

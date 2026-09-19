@@ -53,7 +53,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import Database, QueryTargetError, Transaction
+from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -134,15 +134,17 @@ class _QuarantiningProvider:
         self.reported.append(error)
 
 
-def _connected(adapter: DatabaseAdapter, model: Any, provider: Any) -> Database:
-    return connect(adapter, model, clock=FixedClock(_FIXED), lifecycle_provider=provider)
+def _connected(adapter: DatabaseAdapter, model: Any, provider: Any) -> ScopedDatabase:
+    return connect(
+        adapter, model, clock=FixedClock(_FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
-def _orders(port: DatabaseAdapter, recorder: RecordingLifecycleProvider) -> Database:
+def _orders(port: DatabaseAdapter, recorder: RecordingLifecycleProvider) -> ScopedDatabase:
     return _connected(port, ORDERS_MODEL, recorder)
 
 
-def _accounts(port: DatabaseAdapter, recorder: RecordingLifecycleProvider) -> Database:
+def _accounts(port: DatabaseAdapter, recorder: RecordingLifecycleProvider) -> ScopedDatabase:
     return _connected(port, ACCOUNT, recorder)
 
 
@@ -622,7 +624,9 @@ def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_en
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ORDERS_MODEL, edition="orders-a"))
     port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
-    db = connect(port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder)
+    db = connect(
+        port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder
+    ).using_database_login()
 
     with db.stream(_active_orders(), batch_size=2) as stream:
         assert stream.edition == "orders-a"

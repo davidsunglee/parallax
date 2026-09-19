@@ -47,7 +47,7 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import ScopedDatabase
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -58,8 +58,10 @@ from tests._support.db_port import (
 from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
 
-def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
+    return connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def _installed(provider: Any) -> InstalledLifecycle:
@@ -72,7 +74,7 @@ def _installed(provider: Any) -> InstalledLifecycle:
     return InstalledLifecycle(provider, DeliveryState())
 
 
-def _read(db: Database) -> None:
+def _read(db: ScopedDatabase) -> None:
     db.find(mm.Account.where(mm.Account.id == 7)).result()
 
 

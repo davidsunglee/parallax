@@ -1,9 +1,11 @@
 """Parallax snapshot lifecycle extension (``parallax-snapshot``).
 
-Snapshot graph materialization and the developer handle over the spine. The
-package re-exports exactly the spec §8 surface: :func:`connect` (the
-composition-root entry point — application code constructs a concrete adapter
-and calls ``parallax.snapshot.connect(adapter, model)``), :class:`DatabaseOptions`
+Snapshot graph materialization and the scoped developer execution surface over
+the spine. The package re-exports exactly the spec §8 surface: :func:`connect`
+(the composition-root entry point — application code constructs a concrete
+adapter and calls ``parallax.snapshot.connect(adapter, model)``),
+:class:`Principal` and :class:`ScopedDatabase` (the explicit authority selection
+contract and immutable execution scope), :class:`DatabaseOptions`
 beside it (the immutable transaction defaults a Database Root is connected
 with, the record every outer ``db.transact`` resolves its omitted keywords
 against, and what ``tx.options`` answers), the preparation and
@@ -76,8 +78,8 @@ that materialized the node; ``UnloadedRelationshipError`` is *defined* by
 ``parallax.core.entity`` and re-exported here by the package that can produce the
 unloaded state, so a caller who never touches a Snapshot can never see it raised.
 
-The handle classes (``Database``, ``Transaction``) and the lowering seam stay
-importable from :mod:`parallax.snapshot.handle`.
+The remaining handle classes (``Database``, ``Transaction``) and the lowering
+seam stay importable from :mod:`parallax.snapshot.handle`.
 """
 
 from parallax.core.entity import UnloadedRelationshipError
@@ -97,12 +99,15 @@ from parallax.snapshot.handle import (
     ExecutionFailure,
     InvalidData,
     InvalidDataError,
+    InvalidPrincipalError,
     KeyedWriteValueError,
     ModelSelection,
     NoResultFound,
     ObjectKey,
+    Principal,
     PublicationConflictError,
     QueryTargetError,
+    ScopedDatabase,
     ServingModel,
     Snapshot,
     SnapshotConnectionError,
@@ -113,6 +118,7 @@ from parallax.snapshot.handle import (
     SnapshotStreamStateError,
     StoredDataIssue,
     TooManyResultsFound,
+    TransactionAuthorityError,
     TransactionOwnershipError,
     WireEntity,
     WireValue,
@@ -134,12 +140,15 @@ __all__ = [
     "ExecutionFailure",
     "InvalidData",
     "InvalidDataError",
+    "InvalidPrincipalError",
     "KeyedWriteValueError",
     "ModelSelection",
     "NoResultFound",
     "ObjectKey",
+    "Principal",
     "PublicationConflictError",
     "QueryTargetError",
+    "ScopedDatabase",
     "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
@@ -152,6 +161,7 @@ __all__ = [
     "SnapshotStreamStateError",
     "StoredDataIssue",
     "TooManyResultsFound",
+    "TransactionAuthorityError",
     "TransactionOwnershipError",
     "UnloadedRelationshipError",
     "WireEntity",

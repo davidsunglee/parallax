@@ -62,7 +62,8 @@ def a_root_default_is_overridden_per_call_and_a_join_inherits_the_override(
     runs. Nothing is passed as ``None``: only an omitted keyword inherits.
     """
     root = DatabaseOptions(isolation="repeatable_read", max_retries=2)
-    with connect(adapter, model, options=root) as db:
+    with connect(adapter, model, options=root) as database:
+        db = database.using_database_login()
         inherited = db.transact(lambda tx: tx.options)
 
         def outer(tx: Transaction) -> ResolvedOptions:

@@ -714,6 +714,10 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         )
         for role in _ROLE_AUTHORIZATIONS.values():
             self._session.execute_write(f'grant usage on schema public to "{role}"', [])
+            self._session.execute_write(
+                f'grant select, insert, update, delete on all tables in schema public to "{role}"',
+                [],
+            )
 
     def close(self) -> None:
         """Close this provisioning, and anything a caller left open behind it."""

@@ -57,7 +57,7 @@ def _target_node() -> dict[str, object]:
 
 
 def _balance_of(profile_run: Any) -> Decimal:
-    verify = connect(profile_run.port, MODELS["account"])
+    verify = connect(profile_run.port, MODELS["account"]).using_database_login()
     return verify.find(Account.where(Account.id == TARGET_ID)).result().balance
 
 
@@ -65,7 +65,7 @@ def test_a_publication_after_a_read_leaves_every_envelope_it_published_on_a(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving)
+    db = connect(_seeded(profile_run), serving).using_database_login()
 
     typed = db.find(Account.where(Account.id == TARGET_ID))
     wired = db.wire.find(_target_node())
@@ -83,7 +83,7 @@ def test_a_publication_after_a_read_leaves_every_envelope_it_published_on_a(
 
 def test_a_publication_during_a_stream_leaves_every_page_on_a(profile_run: Any) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving)
+    db = connect(_seeded(profile_run), serving).using_database_login()
     delivered: list[int] = []
 
     with db.stream(Account.where(Account.id >= 1), batch_size=1) as stream:
@@ -112,7 +112,7 @@ def test_a_delayed_refusal_from_a_reports_a_inside_an_execution_failure_under_b(
     a = prepare_model(MODELS["customer"], edition="2026-09-a")
     b = prepare_model(MODELS["customer"], edition="2026-09-b")
     serving = ServingModel(a)
-    db = connect(port, serving)
+    db = connect(port, serving).using_database_login()
 
     snapshot = db.wire.find({"target": _CUSTOMER, "predicate": {"all": {}}})
     serving.publish(b, expected=a)
@@ -129,7 +129,7 @@ def test_a_typed_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving)
+    db = connect(_seeded(profile_run), serving).using_database_login()
 
     account = db.find(Account.where(Account.id == TARGET_ID)).result()
     serving.publish(b, expected=a)
@@ -148,7 +148,7 @@ def test_a_wire_value_read_under_a_licenses_a_keyed_write_validated_under_b(
     profile_run: Any,
 ) -> None:
     a, b, serving = _editions()
-    db = connect(_seeded(profile_run), serving)
+    db = connect(_seeded(profile_run), serving).using_database_login()
 
     node = db.wire.find(_target_node()).result()
     serving.publish(b, expected=a)

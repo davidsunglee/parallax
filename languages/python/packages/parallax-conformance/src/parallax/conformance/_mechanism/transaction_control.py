@@ -81,7 +81,7 @@ def underlying[T](execution: Callable[[], T]) -> T:
 
 
 def transact[T](
-    database: handle.Database,
+    database: handle.ScopedDatabase,
     body: Callable[[handle.Transaction], T],
     **keywords: Unpack[TransactionKeywords],
 ) -> T:

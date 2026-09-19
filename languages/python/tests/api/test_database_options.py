@@ -32,7 +32,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.snapshot import DatabaseOptions, connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, ScopedDatabase, Transaction
 
 _ACCOUNT = MODELS["account"]
 _root_options_story = (
@@ -71,7 +71,7 @@ def test_the_direct_constructor_takes_the_same_keywords_over_an_open_runtime() -
 
 
 def test_transact_names_the_four_options_by_their_record_field_names() -> None:
-    signature = inspect.signature(Database.transact)
+    signature = inspect.signature(ScopedDatabase.transact)
     keywords = [name for name in signature.parameters if name not in ("self", "fn")]
     assert keywords == ["max_retries", "concurrency", "retry_optimistic_conflicts", "isolation"]
     assert all(
@@ -183,7 +183,8 @@ def test_an_unconfigured_root_runs_at_read_committed_over_a_stronger_session_def
     # port consults, so the transaction requested its level and got it.
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
-    with connect(_probed(profile_run, seen), _ACCOUNT) as db:
+    with connect(_probed(profile_run, seen), _ACCOUNT) as _root_db:
+        db = _root_db.using_database_login()
         options = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
     assert options == DatabaseOptions()
     assert seen == [
@@ -201,7 +202,8 @@ def test_a_root_default_and_an_explicit_override_each_reach_the_transaction(
     _seeded(profile_run)
     seen: list[dict[str, str | None]] = []
     root = DatabaseOptions(isolation="serializable")
-    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as db:
+    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:
+        db = _root_db.using_database_login()
         inherited = db.transact(lambda tx: (_read_one(tx), tx.options)[1])
         overridden = db.transact(
             lambda tx: (_read_one(tx), tx.options)[1], isolation="repeatable_read"
@@ -223,7 +225,8 @@ def test_every_level_a_root_can_be_configured_with_is_the_level_its_attempts_run
     seen: list[dict[str, str | None]] = []
     with connect(
         _probed(profile_run, seen), _ACCOUNT, options=DatabaseOptions(isolation=level)
-    ) as db:
+    ) as _root_db:
+        db = _root_db.using_database_login()
         db.transact(_read_one)
     assert [entry["requested"] for entry in seen] == [level]
     assert [entry["effective"] for entry in seen] == [level.replace("_", " ")]
@@ -258,7 +261,8 @@ def test_a_standalone_read_and_stream_under_a_configured_root_open_no_transactio
         retry_optimistic_conflicts=True,
         isolation="serializable",
     )
-    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as db:
+    with connect(_probed(profile_run, seen), _ACCOUNT, options=root) as _root_db:
+        db = _root_db.using_database_login()
         found = db.find(Account.where(Account.id == 1)).result()
         with db.stream(Account.where(Account.id == 1), batch_size=1) as delivery:
             streamed = list(delivery)

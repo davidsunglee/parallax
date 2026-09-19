@@ -220,7 +220,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -614,17 +614,19 @@ def _bytes_within_the_bound(measured: Mapping[_Point, int]) -> None:
         assert kept * unit <= least * _bound(point), (smallest, least, point, kept)
 
 
-def _public_db(adapter: DatabaseAdapter, provider: ExecutionLifecycleProvider) -> Database:
+def _public_db(adapter: DatabaseAdapter, provider: ExecutionLifecycleProvider) -> ScopedDatabase:
     """A handle over ``port`` whose roots are opened by ``Database.transact``
     itself rather than at the seam, observed by ``provider``."""
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+    return connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
-def _observed_db(adapter: DatabaseAdapter) -> Database:
+def _observed_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     return _public_db(adapter, PROVIDER)
 
 
-def _one_read(db: Database) -> Callable[[], None]:
+def _one_read(db: ScopedDatabase) -> Callable[[], None]:
     def run() -> None:
         db.find(mm.Account.where(mm.Account.id == 7)).result()
 
@@ -958,7 +960,7 @@ def _concurrent_roots(count: int, providers: int, shape: _Chain) -> Seam:
     return run
 
 
-def _threaded_roots(point: _Point, db: Database) -> Seam:
+def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
     """``point.roots`` transactions open on ``db`` at once, each joined
     ``point.depth`` times, sampled with every one of them inside its deepest
     callback.

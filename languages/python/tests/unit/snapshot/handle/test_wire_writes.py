@@ -40,6 +40,7 @@ from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,
+    ScopedDatabase,
     Transaction,
     TransactionTimePinReadOnlyError,
     WireEntity,
@@ -194,7 +195,7 @@ def _node(tx: Transaction, query: dict[str, object]) -> WireEntity:
     return tx.wire.find(query).result()
 
 
-def _standalone(db: Database, query: dict[str, object]) -> WireEntity:
+def _standalone(db: ScopedDatabase, query: dict[str, object]) -> WireEntity:
     return db.wire.find(query).result()
 
 
@@ -339,7 +340,9 @@ def test_a_wire_update_until_splits_the_observed_rectangle() -> None:
             until=_UNTIL,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
 
     kinds = [op.sql.split()[0] for op in _writes(port)]
     assert kinds == ["update", "insert", "insert", "insert"]
@@ -351,7 +354,9 @@ def test_a_wire_terminate_until_closes_and_reopens_the_flanks() -> None:
     def fn(tx: Transaction) -> None:
         tx.wire.terminate_until(_node(tx, _POSITION_QUERY), valid_from=_VALID_FROM, until=_UNTIL)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
 
     kinds = [op.sql.split()[0] for op in _writes(port)]
     assert kinds == ["update", "insert", "insert"]
@@ -368,7 +373,9 @@ def test_a_wire_insert_until_opens_one_bounded_rectangle() -> None:
             until=_UNTIL,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
 
     assert [op.sql.split()[0] for op in _writes(port)] == ["insert"]
 
@@ -421,7 +428,9 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
             else:
                 tx.wire.terminate_until_where(target, valid_from=_VALID_FROM, until=_UNTIL)
 
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
         assert len(_writes(port)) == expected
 
 
@@ -579,7 +588,9 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
             tx.wire.terminate_until(node, valid_from=_VALID_FROM, until=cast("dt.datetime", None))
 
     db_for(ACCOUNT, account).transact(absent_valid_from)
-    Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(absent_until)
+    Database.connect(
+        position, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(absent_until)
     assert _writes(account) == []
     assert _writes(position) == []
 
@@ -607,7 +618,9 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
                 until=cast("dt.datetime", "2024-11-01"),
             )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     assert _writes(port) == []
 
 
@@ -640,7 +653,9 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
             tx.wire.update_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
 
     for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):
-        Database.connect(port, SAMPLE_META, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(
+            port, SAMPLE_META, clock=FixedClock(FIXED)
+        ).using_database_login().transact(fn)
         assert _writes(port) == []
 
 
@@ -703,7 +718,9 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
                 _POSITION_TARGET, none_changes, valid_from=_VALID_FROM, until=_UNTIL
             )
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
     assert _writes(port) == []
 
 
@@ -1011,12 +1028,14 @@ def test_two_wire_intents_over_different_regions_are_refused_synchronously() -> 
             tx.wire.update_until(node, {"value": "400.00"}, valid_from=_OTHER_FROM, until=_UNTIL)
         assert exc_info.value.code == "write-evidence-already-claimed"
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    Database.connect(
+        port, WHERE_POSITION_META, clock=FixedClock(FIXED)
+    ).using_database_login().transact(fn)
 
 
 def test_a_wire_verb_refuses_before_any_io() -> None:
     port = ScriptedAdapter(Transact())
-    db = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
+    db = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login()
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError):
@@ -1364,7 +1383,7 @@ def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:
 
 def test_the_wire_view_is_reachable_from_the_module_level_connect() -> None:
     port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(
+    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().transact(
         lambda tx: tx.wire.delete(_node(tx, _ACCOUNT_QUERY))
     )
     assert len(_writes(port)) == 1

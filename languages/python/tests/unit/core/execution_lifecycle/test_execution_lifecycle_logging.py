@@ -89,7 +89,7 @@ from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_f
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     ScriptedAdapter,
@@ -183,8 +183,10 @@ def _attempt_failure(*, retry_eligible: bool) -> AttemptFailure:
     return AttemptFailure("callback", _failure(), retry_eligible)
 
 
-def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
+    return connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def test_a_started_transition_carries_its_correlation_and_its_own_payload(

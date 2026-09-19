@@ -411,7 +411,10 @@ def test_a_value_object_of_a_materialized_graph_round_trips() -> None:
         Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument({"street": "Main"})}])
     )
     customer = (
-        connect(port, vo.CUSTOMER_MODEL).find(vo.Customer.where(vo.Customer.id == 1)).result()
+        connect(port, vo.CUSTOMER_MODEL)
+        .using_database_login()
+        .find(vo.Customer.where(vo.Customer.id == 1))
+        .result()
     )
     assert isinstance(customer, vo.Customer)
 
@@ -891,6 +894,7 @@ def test_a_hydratable_invalid_root_carries_no_write_authority() -> None:
     )
     record = (
         connect(port, vo.CUSTOMER_MODEL)
+        .using_database_login()
         .find(vo.Customer.where(vo.Customer.id == 1))
         .checked()
         .result()
@@ -943,6 +947,6 @@ def test_a_shared_child_carries_an_origin_only_under_the_valid_root() -> None:
         tx.update(invalid_customer.edit(name="Rejected"))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        connect(port, vo.CUSTOMER_MODEL).transact(fn)
+        connect(port, vo.CUSTOMER_MODEL).using_database_login().transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)

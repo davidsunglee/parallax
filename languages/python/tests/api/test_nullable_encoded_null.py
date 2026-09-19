@@ -36,7 +36,7 @@ def test_nullable_encoded_sql_null_survives_delivery_and_predecessor_observation
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(mm.WRITABLE_SCALARS_MODEL), {})
-    db = connect(profile_run.port, mm.WRITABLE_SCALARS_MODEL)
+    db = connect(profile_run.port, mm.WRITABLE_SCALARS_MODEL).using_database_login()
     db.transact(
         lambda tx: tx.insert(
             mm.WritableScalar(

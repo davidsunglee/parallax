@@ -181,7 +181,8 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     the pool that is serving traffic.
     """
     serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
-    db = connect(adapter, serving)
+    database = connect(adapter, serving)
+    db = database.using_database_login()
     before = db.transact(lambda tx: tx.edition)
 
     a = serving.current()
@@ -218,7 +219,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     after, nickname = db.transact(name_the_account)
     # The service outlives one update; this story does not, so it closes the
     # handle it opened. An application closes its own at shutdown instead.
-    db.close()
+    database.close()
     return PublishedUpdate(
         before_edition=before,
         statements=delta.statements,

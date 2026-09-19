@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -113,7 +113,7 @@ def _adapter(*, metrics: object | None = None, script: Any = ()) -> ScriptedAdap
     return ScriptedAdapter(*script, metrics=metrics)  # pyright: ignore[reportArgumentType] - a source double satisfies the protocol structurally
 
 
-def _connected(provider: Any, *, metrics: object | None = None, script: Any = ()) -> Database:
+def _connected(provider: Any, *, metrics: object | None = None, script: Any = ()) -> Database[Any]:
     return connect(
         _adapter(metrics=metrics, script=script), ACCOUNT_MODEL, lifecycle_provider=provider
     )
@@ -183,7 +183,8 @@ def test_a_provider_declining_every_root_still_observes_the_pool() -> None:
 
     db = _connected(provider, metrics=DetachableSource(), script=[Read()])
     try:
-        list(db.wire.find({"target": "Account", "predicate": {"all": {}}}).results())
+        scoped = db.using_database_login()
+        list(scoped.wire.find({"target": "Account", "predicate": {"all": {}}}).results())
         assert provider.roots == 1
         assert provider.events == []
         assert len(provider.offered) == 1
@@ -364,7 +365,7 @@ def test_two_callers_closing_at_once_give_the_registration_up_once_and_last() ->
     first = threading.Thread(target=db.close)
     first.start()
     assert runtime.entered.wait(_DEADLINE)
-    shutdown = observing(db, "_shutdown")
+    shutdown = observing(cast("Any", db)._resources, "shutdown")
     second = threading.Thread(target=close_and_record)
     second.start()
     assert shutdown.contended.wait(_DEADLINE)

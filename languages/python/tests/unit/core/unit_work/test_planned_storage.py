@@ -1426,7 +1426,9 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
             valid_from=valid_from,
         )
 
-    Database.connect(port, WHERE_POSITION_META, clock=clock).transact(fn, concurrency="optimistic")
+    Database.connect(port, WHERE_POSITION_META, clock=clock).using_database_login().transact(
+        fn, concurrency="optimistic"
+    )
     writes = [(op.sql, op.binds) for op in port.calls if isinstance(op, WriteCall)]
     # Each resolved row settles to its own close + head + tail (three
     # statements), and the three rows' own topologies never interleave or

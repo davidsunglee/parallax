@@ -15,7 +15,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-db-port", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-execution-authority", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "edit", "error", "concurrencySuccess", "rejected", "evolution"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -25,7 +25,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 }
 ```
 
-The one unclaimed implementation prerequisite is `m-db-port`.
+There are no unclaimed implementation prerequisites.
 Deferred behavior is recorded separately. Verification selects the active slice
 tag intersected with the relevant capability tags.
 
@@ -62,6 +62,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
 | `m-edit` | src/edit | edit | `m-metamodel` | depcheck.toml |
+| `m-execution-authority` | src/execution-authority | execution-authority | `m-db-port`, `m-unit-work` | depcheck.toml |
 | `m-execution-lifecycle` | src/execution-lifecycle | execution-lifecycle | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | depcheck.toml |
 | `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | depcheck.toml |

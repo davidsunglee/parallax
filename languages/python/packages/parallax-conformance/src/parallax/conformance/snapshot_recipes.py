@@ -21,7 +21,7 @@ from typing import Any
 
 from parallax.conformance.read_models import Document, Payment
 from parallax.conformance.story_models import Account, Order, OrderStatus
-from parallax.snapshot.handle import Database, Snapshot, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction
 
 __all__ = [
     "read_a_table_per_concrete_subtype_family",
@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 
-def read_to_one_relationship_states(db: Database) -> tuple[Snapshot[Any], Snapshot[Any]]:
+def read_to_one_relationship_states(db: ScopedDatabase) -> tuple[Snapshot[Any], Snapshot[Any]]:
     """The three runtime states a to-one relationship takes, over one Entity that
     declares both multiplicities. A to-one's multiplicity is its foreign key's
     nullability: ``order_id`` is non-nullable, so ``order`` is 1..1 and every
@@ -54,7 +54,7 @@ def read_to_one_relationship_states(db: Database) -> tuple[Snapshot[Any], Snapsh
     return included, db.find(OrderStatus.where(OrderStatus.all))
 
 
-def read_a_table_per_hierarchy_family(db: Database) -> Snapshot[Any]:
+def read_a_table_per_hierarchy_family(db: ScopedDatabase) -> Snapshot[Any]:
     """An abstract-root read of a table-per-hierarchy family: every row of the one
     shared table, each materialized as the concrete class its declared tag value
     names. ``type(node)`` is the observation (``python.md`` §4) — a ``CardPayment``
@@ -63,7 +63,7 @@ def read_a_table_per_hierarchy_family(db: Database) -> Snapshot[Any]:
     return db.find(Payment.where(Payment.all))
 
 
-def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
+def read_a_table_per_concrete_subtype_family(db: ScopedDatabase) -> Snapshot[Any]:
     """The same read over a table-per-concrete-subtype family, whose concretes own
     separate tables and no tag at all: the read unions them, and each row still
     materializes as its own declared concrete class — including one reached
@@ -72,7 +72,7 @@ def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
     return db.find(Document.where(Document.all))
 
 
-def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, list[str]]:
+def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[int, list[str]]:
     """A read delivered one root at a time instead of all at once, in both
     namespaces over one query.
 
@@ -108,7 +108,7 @@ def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, li
     return quantity, names
 
 
-def stream_and_write_inside_one_transaction(db: Database, page: int) -> list[Decimal]:
+def stream_and_write_inside_one_transaction(db: ScopedDatabase, page: int) -> list[Decimal]:
     """A streamed delivery inside a unit of work, writing every root it hands over.
 
     ``tx.stream`` is ``tx.find``'s peer the same way, and what participation adds

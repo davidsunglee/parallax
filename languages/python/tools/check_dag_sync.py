@@ -97,6 +97,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-unit-work": "parallax.core.unit_work",
     "m-read-lock": "parallax.core.read_lock",
     "m-auto-retry": "parallax.core.auto_retry",
+    "m-execution-authority": "parallax.snapshot.handle._execution_authority",
     "m-execution-lifecycle": "parallax.core.execution_lifecycle",
     "m-opt-lock": "parallax.core.opt_lock",
     "m-temporal-read": "parallax.core.temporal_read",
@@ -411,6 +412,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.unit_work",
             "parallax.core.read_lock",
             "parallax.core.opt_lock",
+            "parallax.snapshot.handle._execution_authority",
             "parallax.core.execution_lifecycle",
         }
     ),
@@ -579,6 +581,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
     "parallax.snapshot.handle._retention": "parallax.snapshot.handle",
     "parallax.snapshot.handle._publication": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._execution_authority": "parallax.snapshot.handle",
 }
 
 # Child scopes a grant on the PARENT does not carry. A forbidden row is the
@@ -638,6 +641,7 @@ SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
         "parallax.core.entity._pydantic_storage",
         "parallax.snapshot.handle._publication",
         "parallax.snapshot.handle._retention",
+        "parallax.snapshot.handle._execution_authority",
     }
 )
 
@@ -875,9 +879,12 @@ def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
     """
     marked: dict[str, dict[str, str]] = {mark: {} for mark in ("isolated", "sealed")}
     for module, owner, scope_cell, _deps, _rule in _table_rows(text):
-        if _SUPPORT_ROW not in module or scope_cell == _APPLICATION_OWNED:
+        if scope_cell == _APPLICATION_OWNED:
             continue
-        for match in _CHILD_MARK.finditer(module):
+        matches = tuple(_CHILD_MARK.finditer(module))
+        if not matches:
+            continue
+        for match in matches:
             mark, parent = match.group(1), match.group(2)
             for scope in _row_scopes(scope_cell, owner):
                 previous = marked[mark].get(scope)

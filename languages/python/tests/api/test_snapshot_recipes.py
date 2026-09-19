@@ -50,7 +50,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import SnapshotStreamStateError, connect, is_view_loaded
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import Database, ScopedDatabase
 from tests._support.db_port import ConnectsAsItself, projected_row
 
 _ACCOUNT = MODELS["account"]
@@ -59,7 +59,7 @@ _PAYMENT = MODELS["payment"]
 _DOCUMENT = MODELS["document"]
 
 
-def _seed_orders(db: Database) -> None:
+def _seed_orders(db: ScopedDatabase) -> None:
     db.transact(
         lambda tx: (
             tx.insert(
@@ -85,7 +85,7 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(_ORDERS), {})
-    db = connect(profile_run.port, _ORDERS)
+    db = connect(profile_run.port, _ORDERS).using_database_login()
     _seed_orders(db)
 
     included, unincluded = read_to_one_relationship_states(db)
@@ -120,7 +120,7 @@ def test_a_table_per_hierarchy_family_materializes_its_declared_concretes(
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(_PAYMENT), {})
-    db = connect(profile_run.port, _PAYMENT)
+    db = connect(profile_run.port, _PAYMENT).using_database_login()
     db.transact(
         lambda tx: (
             tx.insert(CardPayment(id=1, amount=Decimal("200.00"), card_network="visa")),
@@ -144,7 +144,7 @@ def test_a_table_per_concrete_subtype_family_materializes_its_declared_concretes
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(_DOCUMENT), {})
-    db = connect(profile_run.port, _DOCUMENT)
+    db = connect(profile_run.port, _DOCUMENT).using_database_login()
     db.transact(
         lambda tx: (
             tx.insert(
@@ -174,7 +174,7 @@ def test_a_table_per_concrete_subtype_family_materializes_its_declared_concretes
     assert not hasattr(by_id[3], "currency")  # Memo is not a FinancialDocument
 
 
-def _seed_streamed_orders(db: Database, count: int) -> None:
+def _seed_streamed_orders(db: ScopedDatabase, count: int) -> None:
     """``count`` active orders, each carrying two items, so a delivery pages over
     something with fan-out and every page's child level is non-empty."""
 
@@ -214,7 +214,7 @@ def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
     # summed child quantities and on the roots' order, which is the Continuation
     # Order the delivery derived from a query that declared none.
     profile_run.reset(model_of(_ORDERS), {})
-    db = connect(profile_run.port, _ORDERS)
+    db = connect(profile_run.port, _ORDERS).using_database_login()
     _seed_streamed_orders(db, 7)
 
     readings = [stream_a_result_one_root_at_a_time(db, page) for page in (2, 3, 16)]
@@ -230,7 +230,7 @@ def test_a_streamed_delivery_is_scope_bound_and_single_pass(profile_run: Any) ->
     # earns by leaving it: there is no whole-result accessor to reach for, and a
     # delivery hands its roots to one view, once.
     profile_run.reset(model_of(_ORDERS), {})
-    db = connect(profile_run.port, _ORDERS)
+    db = connect(profile_run.port, _ORDERS).using_database_login()
     _seed_streamed_orders(db, 3)
 
     with db.stream(Order.where(Order.all), batch_size=2) as orders:
@@ -249,7 +249,7 @@ def test_a_participating_delivery_writes_every_root_exactly_once(profile_run: An
     # no write moves one. The committed rows are what says so, read back after the
     # boundary rather than from the values the loop held.
     profile_run.reset(model_of(_ACCOUNT), {})
-    db = connect(profile_run.port, _ACCOUNT)
+    db = connect(profile_run.port, _ACCOUNT).using_database_login()
     db.transact(
         lambda tx: [
             tx.insert(Account(id=n, owner=f"owner-{n}", balance=Decimal("100.00")))
@@ -267,13 +267,13 @@ def test_a_participating_delivery_writes_every_root_exactly_once(profile_run: An
 # --------------------------------------------------------------------------- #
 # Database-free run-through of every recipe body.                              #
 # --------------------------------------------------------------------------- #
-def _streamed_delivery_at_page_two(db: Database) -> tuple[int, list[str]]:
+def _streamed_delivery_at_page_two(db: ScopedDatabase) -> tuple[int, list[str]]:
     """The streamed recipe with its page size bound, so the run-through drives
     every recipe through one signature."""
     return stream_a_result_one_root_at_a_time(db, 2)
 
 
-def _streamed_write_at_page_two(db: Database) -> list[Decimal]:
+def _streamed_write_at_page_two(db: ScopedDatabase) -> list[Decimal]:
     """The participating recipe, bound the same way."""
     return stream_and_write_inside_one_transaction(db, 2)
 
@@ -401,9 +401,9 @@ class _CannedOrderPort(ConnectsAsItself):
     ],
 )
 def test_every_recipe_runs_through_the_shipped_surface(
-    recipe: Callable[[Database], Any], model: str, port: Callable[[], Any]
+    recipe: Callable[[ScopedDatabase], Any], model: str, port: Callable[[], Any]
 ) -> None:
-    recipe(Database.connect(port(), MODELS[model]))
+    recipe(Database.connect(port(), MODELS[model]).using_database_login())
 
 
 def test_every_recipe_the_module_exports_has_a_driver() -> None:

@@ -1340,7 +1340,8 @@ def run_standalone_find(
     observed = lifecycle.observation()
     with handle.Database.connect(
         port, context.serving, options=context.options, lifecycle_provider=observed.provider
-    ) as db:
+    ) as _root_db:
+        db = _root_db.using_database_login()
         return (
             transact(db, lambda tx: tx.wire.find(query), **context.requests),
             observed,
@@ -2036,7 +2037,8 @@ def _execute_write_unit(
         options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    ) as database:
+    ) as _root_database:
+        database = _root_database.using_database_login()
 
         def body(tx: handle.Transaction) -> None:
             state = GroupState()
@@ -2142,7 +2144,8 @@ def _run_readless_predicate_write(
         options=context.options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    ) as database:
+    ) as _root_database:
+        database = _root_database.using_database_login()
 
         def body(tx: handle.Transaction) -> None:
             buffer_prepared_predicate_write(tx, instruction)
@@ -2280,7 +2283,8 @@ def _run_materializing_pair(
         options=context.options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    ) as database:
+    ) as _root_database:
+        database = _root_database.using_database_login()
 
         def body(tx: handle.Transaction) -> None:
             buffer_prepared_predicate_write(tx, instruction)
@@ -2780,7 +2784,8 @@ class _GroupSession:
     """
 
     adapter: DatabaseAdapter
-    database: handle.Database
+    root: handle.Database[object]
+    database: handle.ScopedDatabase
 
     def __init__(
         self,
@@ -2790,17 +2795,15 @@ class _GroupSession:
         observation: LifecycleObservation,
     ) -> None:
         object.__setattr__(self, "adapter", adapter)
-        object.__setattr__(
-            self,
-            "database",
-            handle.Database.connect(
-                adapter,
-                context.serving,
-                options=context.options,
-                clock=FixedClock(instant),
-                lifecycle_provider=observation.provider,
-            ),
+        root = handle.Database.connect(
+            adapter,
+            context.serving,
+            options=context.options,
+            clock=FixedClock(instant),
+            lifecycle_provider=observation.provider,
         )
+        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "database", root.using_database_login())
 
     @property
     def dialect(self) -> Dialect:
@@ -2808,7 +2811,7 @@ class _GroupSession:
 
     def close(self) -> None:
         """Close the Handle this session opened, and the runtime under it."""
-        self.database.close()
+        self.root.close()
 
 
 def run_group_step(
@@ -3445,7 +3448,7 @@ def refuse_a_conflict_retry_opt_in(
 
 
 def _conflict_attempt_affected(
-    database: handle.Database,
+    database: handle.ScopedDatabase,
     requests: case_format.TransactionKeywords,
     implied: type[WriteEffectError],
     body: Callable[[handle.Transaction], int],
@@ -3560,7 +3563,8 @@ def _conflict_source_nodes(
         options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    ) as database:
+    ) as _root_database:
+        database = _root_database.using_database_login()
         nodes: dict[ObjectKey, handle.WireEntity] = {}
         with observed.resolving_reads():
             snapshot = database.wire.find(
@@ -3667,7 +3671,8 @@ def _run_conflict_write(
         options=options,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    ) as database:
+    ) as _root_database:
+        database = _root_database.using_database_login()
         landed = _landed_conflict_rows(resolved)
         sources = [_conflict_source_node(target, write, nodes) for write in resolved]
         for write, node in zip(resolved, sources, strict=True):

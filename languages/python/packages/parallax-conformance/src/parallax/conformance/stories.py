@@ -92,7 +92,7 @@ from parallax.conformance.vo_models import (
 from parallax.core.entity import Entity
 from parallax.core.object_query import LATEST
 from parallax.core.unit_work import Clock
-from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transaction
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
 
@@ -136,7 +136,7 @@ class WriteStory:
     title: str
     kind: StoryKind
     model: str
-    run: Callable[[Database], list[Entity] | None]
+    run: Callable[[ScopedDatabase], list[Entity] | None]
     clock: Callable[[], Clock] | None = None
 
 
@@ -148,7 +148,7 @@ def story_snippet(story: WriteStory) -> str:
 # --------------------------------------------------------------------------- #
 # m-unit-work: the 10 non-temporal Account/Order(Item) stories.               #
 # --------------------------------------------------------------------------- #
-def insert_then_read_your_own_write(db: Database) -> list[Entity]:
+def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
@@ -156,7 +156,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
     return db.transact(fn)  # the dependent find observes the flushed insert
 
 
-def aborted_update_is_discarded(db: Database) -> list[Entity]:
+def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
     fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
@@ -170,7 +170,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
 
 
-def fk_ordered_inserts(db: Database) -> None:
+def fk_ordered_inserts(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -188,7 +188,7 @@ def fk_ordered_inserts(db: Database) -> None:
     db.transact(fn)  # the flush inserts the parent before the child
 
 
-def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
+def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
         tx.update(current.edit(balance=Decimal("175.00")))
@@ -198,7 +198,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
     return db.transact(fn)  # raises — no value is returned as though durable
 
 
-def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
+def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         tx.update(current.edit(balance=Decimal("175.00")))
@@ -207,7 +207,7 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
     return db.transact(fn)
 
 
-def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
+def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
@@ -216,7 +216,7 @@ def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
     return db.transact(fn)  # [] — the dependent find observes the deletion
 
 
-def create_then_delete_a_parent_child_pair(db: Database) -> None:
+def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
     def create(tx: Transaction) -> None:
         tx.insert(
             Order(
@@ -239,7 +239,7 @@ def create_then_delete_a_parent_child_pair(db: Database) -> None:
     db.transact(teardown)
 
 
-def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
+def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
@@ -251,7 +251,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
     return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
 
 
-def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
+def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
@@ -262,7 +262,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
 
 
-def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
+def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.delete(current)
@@ -278,14 +278,14 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
 # --------------------------------------------------------------------------- #
 # m-txtime-write: Balance Transaction-Time-Only milestone-chaining stories.    #
 # --------------------------------------------------------------------------- #
-def transaction_time_only_insert_opens_a_current_milestone(db: Database) -> None:
+def transaction_time_only_insert_opens_a_current_milestone(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     db.transact(fn)
 
 
-def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -> None:
+def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -303,7 +303,7 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: Database) -
     db.transact(close)
 
 
-def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
+def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -317,7 +317,7 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
     db.transact(update)
 
 
-def transaction_time_only_chain_update_carries_every_new_attribute(db: Database) -> None:
+def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
@@ -329,7 +329,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: Database)
     db.transact(update)
 
 
-def transaction_time_only_chain_update_from_existing_history(db: Database) -> None:
+def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase) -> None:
     # m-txtime-write-005: the fixtures are loaded (`given.fixtures: true`) —
     # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
     # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
@@ -345,7 +345,7 @@ def transaction_time_only_chain_update_from_existing_history(db: Database) -> No
 # --------------------------------------------------------------------------- #
 # m-opt-lock: Account (versioned, non-temporal) keyed-write stories.          #
 # --------------------------------------------------------------------------- #
-def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) -> None:
+def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
     # m-opt-lock-002: the `locking` preference is the workflow-level override
     # that forces every Entity to participate pessimistically. Its
     # in-transaction read takes a shared row lock, so the keyed update needs no
@@ -364,7 +364,7 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) 
 # --------------------------------------------------------------------------- #
 # m-batch-write: Wallet (unversioned, non-temporal) predicate-write stories.  #
 # --------------------------------------------------------------------------- #
-def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
+def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     # m-batch-write-005: Wallet carries no version and no temporal axis, so a
     # predicate-selected delete has nothing to gate per row — it lowers
     # DIRECTLY to one set-shaped `delete ... where balance < ?`, no
@@ -383,7 +383,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
 # --------------------------------------------------------------------------- #
 # m-bitemp-write: Position full-bitemporal stories.                           #
 # --------------------------------------------------------------------------- #
-def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
+def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert_until(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -394,7 +394,7 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: Database) -> None:
     db.transact(fn)
 
 
-def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
+def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None:
     # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
     # two-way degenerate of the rectangle split — no middle, no old tail (the
     # correction runs to infinity): inactivate the original on the Transaction-Time
@@ -419,7 +419,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
     db.transact(correct)
 
 
-def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> None:
+def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) -> None:
     # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
     # insert of a fully-current rectangle — Valid Time [B, infinity) at
     # Transaction Time [txInstant, infinity), current on BOTH axes. No prior row to
@@ -433,7 +433,7 @@ def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: Database) -> Non
     db.transact(fn)
 
 
-def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
+def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -454,7 +454,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
     db.transact(split)
 
 
-def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) -> None:
+def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDatabase) -> None:
     # m-unit-work-015: Position id 1 holds TWO rectangles current on Transaction
     # Time, so reading it twice at different Valid-Time coordinates leaves two
     # pieces of evidence about ONE primary key. The correction is written against
@@ -484,7 +484,7 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) ->
 # Value Object documents through milestone chaining/splitting like scalar    #
 # columns.                                                                    #
 # --------------------------------------------------------------------------- #
-def supplier_transaction_time_only_chain_update_carries_the_document(db: Database) -> None:
+def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Supplier(
@@ -521,7 +521,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: Databas
     db.transact(update)
 
 
-def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None:
+def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Branch(
@@ -565,7 +565,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
 # declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
 # so these exercise `to_document`'s omission of unset optional inner members.#
 # --------------------------------------------------------------------------- #
-def customer_insert_carries_the_whole_address_document(db: Database) -> None:
+def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(
             Customer(
@@ -586,7 +586,7 @@ def customer_insert_carries_the_whole_address_document(db: Database) -> None:
     db.transact(fn)
 
 
-def customer_update_replaces_the_whole_address_document(db: Database) -> None:
+def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Customer(
@@ -620,7 +620,7 @@ def customer_update_replaces_the_whole_address_document(db: Database) -> None:
     db.transact(replace)
 
 
-def customer_update_nulls_the_address_document_out(db: Database) -> None:
+def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
             Customer(

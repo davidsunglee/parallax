@@ -33,7 +33,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Transaction
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -57,15 +57,17 @@ something.
 """
 
 
-def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
-    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> ScopedDatabase:
+    return connect(
+        adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def _query() -> Any:
     return mm.Account.where(mm.Account.id == 7)
 
 
-def _read(db: Database) -> None:
+def _read(db: ScopedDatabase) -> None:
     db.find(_query()).result()
 
 
@@ -160,7 +162,7 @@ class _Provider:
 
 def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
     port = ScriptedAdapter()
-    handle: list[Database] = []
+    handle: list[ScopedDatabase] = []
     provider = _Provider(opening=lambda: _read(handle[0]))
     db = _db(port, provider)
     handle.append(db)
@@ -173,7 +175,7 @@ def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
 
 def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    handle: list[Database] = []
+    handle: list[ScopedDatabase] = []
     provider = _Provider(handling=lambda: _read(handle[0]))
     db = _db(port, provider)
     handle.append(db)
@@ -189,7 +191,7 @@ def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() ->
 
 def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
-    handle: list[Database] = []
+    handle: list[ScopedDatabase] = []
     provider = _Provider(
         handling=_raising(RuntimeError("the exporter queue is full")),
         reporting=lambda: _read(handle[0]),
@@ -222,7 +224,7 @@ def test_the_refusal_is_per_handle_so_an_unrelated_handle_stays_usable() -> None
 
 def test_the_refusal_is_per_thread_so_a_handler_may_hand_work_to_another() -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
-    handle: list[Database] = []
+    handle: list[ScopedDatabase] = []
     escaped: list[BaseException] = []
 
     def elsewhere() -> None:
@@ -259,7 +261,7 @@ def test_the_state_is_cleared_however_a_lifecycle_context_is_left() -> None:
     assert [type(op) for op in port.calls] == [ReadCall]
 
 
-def _database_entry_points(db: Database) -> dict[str, _Work]:
+def _database_entry_points(db: ScopedDatabase) -> dict[str, _Work]:
     """Every public operation a ``Database`` offers.
 
     Every read takes the sentinel, the Wire pair included: a Wire view passes
@@ -351,7 +353,7 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     # happen to be instrumented: a verb reached from a lifecycle context could
     # buffer a write, force a flush, or open a second boundary.
     port = ScriptedAdapter(Transact(Write()))
-    handle: list[Database] = []
+    handle: list[ScopedDatabase] = []
     opened: list[Transaction] = []
     refused: dict[str, list[str]] = {}
 

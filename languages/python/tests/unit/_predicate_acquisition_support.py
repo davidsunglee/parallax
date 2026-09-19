@@ -49,7 +49,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite
-from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 
@@ -241,15 +241,15 @@ class _Abandoned(Exception):
     """Raised after the checkpoint so the transaction rolls back unflushed."""
 
 
-def database(case: Case) -> Database:
+def database(case: Case) -> ScopedDatabase:
     """A connected handle over ``case``'s port, composed outside every window."""
     return Database(
         AcquisitionPort(case.layout, case.rows).open(), MODEL, clock=FixedClock(INSTANT)
-    )
+    ).using_database_login()
 
 
 def acquire(
-    handle: Database,
+    handle: ScopedDatabase,
     case: Case,
     *,
     opened: Checkpoint | None = None,

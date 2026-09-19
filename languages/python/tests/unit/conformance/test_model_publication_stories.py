@@ -160,12 +160,12 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     # because a Domain Model that composes at all is one every derivation
     # accepts, and A's preparation must reach the recipe unharmed.
     port = _AccountPort()
-    connected: list[tuple[ServingModel, ModelSelection, Database]] = []
+    connected: list[tuple[ServingModel, ModelSelection, Database[Any]]] = []
 
-    def connect_and_hold(adapter: DatabaseAdapter, serving: ServingModel) -> Database:
-        db = connect(adapter, serving)
-        connected.append((serving, serving.current(), db))
-        return db
+    def connect_and_hold(adapter: DatabaseAdapter, serving: ServingModel) -> Database[Any]:
+        root = connect(adapter, serving)
+        connected.append((serving, serving.current(), root))
+        return root
 
     candidate = model_of(NICKNAMED_ACCOUNT_MODEL)
     derive_entity_facts = graph_construction_module._entity_facts  # pyright: ignore[reportPrivateUsage] - the real derivation this refusal stands in front of
@@ -184,10 +184,10 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     with pytest.raises(GraphConstructionError):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
 
-    ((serving, a, db),) = connected
+    ((serving, a, root),) = connected
     assert port.writes == []
     assert serving.current() is a
-    assert db.transact(lambda tx: tx.edition) == "2026-09-a"
+    assert root.using_database_login().transact(lambda tx: tx.edition) == "2026-09-a"
 
 
 def test_a_boundary_that_never_opened_stops_the_update_before_it_publishes() -> None:

@@ -76,7 +76,7 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
 )
 from parallax.snapshot import ServingModel, connect, prepare_model
-from parallax.snapshot.handle import Database, Transaction, TransactionRollbackError
+from parallax.snapshot.handle import ScopedDatabase, Transaction, TransactionRollbackError
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -98,8 +98,10 @@ from tests.unit._transact_support import (
 )
 
 
-def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> Database:
-    return connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> ScopedDatabase:
+    return connect(
+        adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider
+    ).using_database_login()
 
 
 def _transitions(events: Sequence[ExecutionEvent]) -> list[str]:
@@ -890,7 +892,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
             ACCOUNT,
             clock=FixedClock(FIXED),
             lifecycle_provider=recorder,
-        ).transact(body, max_retries=0)
+        ).using_database_login().transact(body, max_retries=0)
 
     root = _only(recorder)
     first_read, later_read = (event for event in root.events if isinstance(event, ReadFinished))
@@ -1194,7 +1196,9 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
 def test_a_transaction_with_no_provider_installed_records_nothing() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW]), Write()))
-    connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(_increase_balance)
+    connect(port, ACCOUNT, clock=FixedClock(FIXED)).using_database_login().transact(
+        _increase_balance
+    )
     assert recorder.roots == ()
 
 

@@ -32,7 +32,8 @@ def invalid_customer_root(model: DomainModel) -> Entity:
             )
         ),
         model,
-    ) as db:
+    ) as _root_db:
+        db = _root_db.using_database_login()
         invalid = db.find(Customer.where(Customer.id == 6)).checked().result()
     assert isinstance(invalid, InvalidData)
     assert invalid.data is not None

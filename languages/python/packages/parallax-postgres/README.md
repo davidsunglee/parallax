@@ -9,7 +9,8 @@ companion `psycopg-pool`. See `languages/python/spec/python.md`.
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
 from parallax.snapshot import connect
 
-with connect(PostgresAdapter("postgresql://localhost/app"), model) as db:
+with connect(PostgresAdapter("postgresql://localhost/app"), model) as root:
+    db = root.using_database_login()
     ...
 ```
 
@@ -19,10 +20,11 @@ policy, and stores both. That is what makes it safe to build at import time,
 hold as a module constant, share between threads, and — for a forking server —
 build before the fork and open after it.
 
-`connect` is what opens a runtime, and the handle it returns is what owns that
-runtime. **Close it**: `db.close()` and the context manager above are
+`connect` is what opens a runtime, and the Database Root it returns is what owns
+that runtime. Modeled work requires an explicitly selected `ScopedDatabase`, as
+shown above. **Close the root**: `root.close()` and the context manager above are
 equivalent, and both are idempotent. Every `connect` over one configuration
-opens an independent runtime, so closing one handle leaves another working.
+opens an independent runtime, so closing one root leaves another working.
 
 Each operation acquires a connection and gives it back — an eager read for its
 whole execution, each standalone stream page through its materialization, and a

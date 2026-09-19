@@ -725,6 +725,7 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
             "parallax.snapshot.handle._write_lowering",
             "parallax.snapshot.handle._retention",
             "parallax.snapshot.handle._publication",
+            "parallax.snapshot.handle._execution_authority",
         }
     )
     # A scope's own name is never among its siblings, an only child has none,
@@ -794,6 +795,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.snapshot.handle._write_lowering",
             "parallax.snapshot.handle._retention",
             "parallax.snapshot.handle._publication",
+            "parallax.snapshot.handle._execution_authority",
         }
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()
@@ -854,6 +856,16 @@ def test_the_spec_marks_the_child_scopes_the_tool_isolates_and_seals() -> None:
         for scope, parent in scopes.items():
             assert dag.CHILD_SCOPE_PARENT[scope] == parent
     dag.check_child_scope_marks(marked)
+
+
+def test_execution_authority_is_a_sealed_behavioral_child_with_core_only_grants() -> None:
+    scope = "parallax.snapshot.handle._execution_authority"
+    marked = dag.parse_child_scope_marks(dag.PYTHON_MD.read_text())
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+
+    assert marked["sealed"][scope] == "parallax.snapshot.handle"
+    assert adjacency[scope] == frozenset({"parallax.core.db_port", "parallax.core.unit_work"})
+    assert scope in adjacency["parallax.snapshot.handle._read_scope"]
 
 
 def test_a_seal_dropped_by_the_tool_alone_fails_generation(
