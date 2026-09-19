@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +29,5 @@ def install_role(connection: Any, role: PostgresRole) -> None:
     connection.execute(SQL("SET ROLE {}").format(Identifier(role.name)))
 
 
-def restore_role(connection: Any, *, before_execute: Callable[[], None] | None = None) -> None:
-    if before_execute is not None:
-        before_execute()
+def restore_role(connection: Any) -> None:
     connection.execute("RESET ROLE")

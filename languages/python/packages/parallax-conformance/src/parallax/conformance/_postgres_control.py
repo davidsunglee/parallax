@@ -65,6 +65,7 @@ from parallax.snapshot import handle
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
     from types import TracebackType
+    from typing import LiteralString
 
     from parallax.core.db_port import (
         Bind,
@@ -336,6 +337,14 @@ class ControlledScope:
 
 
 @dataclass(frozen=True, slots=True)
+class _RestorationBoundary:
+    runtime: ControlledRuntime
+
+    def execute(self, statement: LiteralString) -> psycopg.Cursor[TupleRow]:
+        return self.runtime.execute_restoration(statement)
+
+
+@dataclass(frozen=True, slots=True)
 class _ControlledExecutionSource:
     runtime: ControlledRuntime
     role: PostgresRole | None
@@ -395,6 +404,7 @@ class ControlledRuntime:
         self._retirement_active = False
         self._restoration_pending = False
         self._restoration_active = False
+        self._restoration_boundary = _RestorationBoundary(self)
         self._on_retired: Callable[[], None] | None = None
 
     @property
@@ -452,9 +462,10 @@ class ControlledRuntime:
         """Restore the login role unless session retirement already owns cleanup.
 
         Cleanup owns the retirement claim through the call into the shared role
-        helper, closing the gap in which teardown could condemn the session just
-        before RESET ROLE began. The helper publishes when it is about to enter
-        native I/O; only then may termination interrupt a blocked round trip.
+        helper, closing the gap in which teardown could condemn the session
+        before RESET ROLE began. The controlled execution boundary publishes
+        entry into that call; only then may termination interrupt a blocked
+        round trip.
         """
         restore_error: Exception | None = None
         with self._retirement:
@@ -463,13 +474,8 @@ class ControlledRuntime:
                     return
                 self._restoration_pending = True
 
-            def begin_native_restoration() -> None:
-                with self._retirement_changed:
-                    self._restoration_active = True
-                    self._retirement_changed.notify_all()
-
             try:
-                restore_role(self._connection, before_execute=begin_native_restoration)
+                restore_role(self._restoration_boundary)
             except Exception as exc:
                 restore_error = exc
             finally:
@@ -484,6 +490,12 @@ class ControlledRuntime:
             retired = self._retired
         if restore_error is not None and not retired:
             raise restore_error
+
+    def execute_restoration(self, statement: LiteralString) -> psycopg.Cursor[TupleRow]:
+        with self._retirement_changed:
+            self._restoration_active = True
+            self._retirement_changed.notify_all()
+        return self._connection.execute(statement)
 
     def release(self, scope: ControlledScope) -> CleanupResult:
         with self._state:

@@ -934,13 +934,9 @@ def test_termination_cannot_overtake_principal_restoration_before_native_io(
     restoring = threading.Event()
     closing = threading.Event()
 
-    def park_before_native_io(
-        connection: Any, *, before_execute: Callable[[], None] | None = None
-    ) -> None:
+    def park_before_native_io(connection: Any) -> None:
         entered_restore.set()
         assert permit_restore.wait(timeout=5.0)
-        if before_execute is not None:
-            before_execute()
         connection.execute("RESET ROLE")
 
     def park_reset() -> None:
