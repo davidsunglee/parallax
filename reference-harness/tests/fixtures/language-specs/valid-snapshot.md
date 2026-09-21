@@ -46,45 +46,66 @@ shared-node states remain distinct without issuing later SQL.
 
 ## 7. Source-enforcement topology
 
-| Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
-|---|---|---|---|---|
-| `m-api-conformance` | src/api-proof | api-proof | `m-case-format` | depcheck.toml |
-| `m-txtime-write` | src/txtime-write | txtime-write | `m-temporal-read`, `m-unit-work` | depcheck.toml |
-| `m-auto-retry` | src/auto-retry | auto-retry | `m-unit-work`, `m-db-error` | depcheck.toml |
-| `m-batch-write` | src/batch-write | batch-write | `m-unit-work` | depcheck.toml |
-| `m-bitemp-write` | src/bitemp-write | bitemp-write | `m-txtime-write` | depcheck.toml |
-| `m-case-format` | src/case-format | case-format | `m-core` | depcheck.toml |
-| `m-conformance-adapter` | src/conformance | conformance | `m-case-format` | depcheck.toml |
-| `m-core` | src/core | core | none | depcheck.toml |
-| `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
-| `m-db-port` | src/db-port | db-port | `m-core`, `m-dialect` | depcheck.toml |
-| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | depcheck.toml |
-| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
-| `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
-| `m-edit` | src/edit | edit | `m-metamodel` | depcheck.toml |
-| `m-execution-authority` | src/execution-authority | execution-authority | `m-db-port`, `m-unit-work` | depcheck.toml |
-| `m-execution-lifecycle` | src/execution-lifecycle | execution-lifecycle | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | depcheck.toml |
-| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
-| `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | depcheck.toml |
-| `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
-| `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
-| `m-model-evolution` | src/model-evolution | model-evolution | `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | depcheck.toml |
-| `m-schema-delta` | src/schema-delta | schema-delta | `m-model-evolution`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-dialect` | depcheck.toml |
-| `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
-| `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |
-| `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |
-| `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
-| `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
-| `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire`, `m-edit` | depcheck.toml |
-| `m-sql` | src/sql | sql | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
-| `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
-| `m-temporal-read` | src/temporal-read | temporal-read | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit`, `m-document-codec` | depcheck.toml |
-| `m-value-object` | src/value-object | value-object | `m-metamodel`, `m-model-formation` | depcheck.toml |
-| `m-wire` | src/wire | wire | `m-core` | depcheck.toml |
-| adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |
+| Behavioral module | Enforcement scope |
+|---|---|
+| `m-api-conformance` | `api-proof` |
+| `m-txtime-write` | `txtime-write` |
+| `m-auto-retry` | `auto-retry` |
+| `m-batch-write` | `batch-write` |
+| `m-bitemp-write` | `bitemp-write` |
+| `m-case-format` | `case-format` |
+| `m-conformance-adapter` | `conformance` |
+| `m-core` | `core` |
+| `m-db-error` | `db-error` |
+| `m-db-port` | `db-port` |
+| `m-deep-fetch` | `deep-fetch` |
+| `m-descriptor` | `descriptor` |
+| `m-dialect` | `dialect` |
+| `m-document-codec` | `document-codec` |
+| `m-edit` | `edit` |
+| `m-execution-authority` | `execution-authority` |
+| `m-execution-lifecycle` | `execution-lifecycle` |
+| `m-inheritance` | `inheritance` |
+| `m-storage-layout` | `storage-layout` |
+| `m-metamodel` | `metamodel` |
+| `m-model-formation` | `model-formation` |
+| `m-model-evolution` | `model-evolution` |
+| `m-schema-delta` | `schema-delta` |
+| `m-navigate` | `navigate` |
+| `m-object-query` | `object-query` |
+| `m-predicate` | `predicate` |
+| `m-opt-lock` | `opt-lock` |
+| `m-pk-gen` | `pk-gen` |
+| `m-read-lock` | `read-lock` |
+| `m-snapshot-read` | `snapshot` |
+| `m-sql` | `sql` |
+| `m-relationship` | `relationship` |
+| `m-temporal-read` | `temporal-read` |
+| `m-unit-work` | `unit-work` |
+| `m-value-object` | `value-object` |
+| `m-wire` | `wire` |
+
+| Enforcement scope | Allowed direct first-party dependencies |
+|---|---|
+| `snapshot.materialize` | `m-metamodel`, `m-inheritance`, `m-relationship`, `m-wire` |
+| `snapshot` | `snapshot.materialize`, `m-snapshot-read`, `m-execution-lifecycle` |
+| `db-port.diagnostics` | (none) |
+| `db-port` | `db-port.diagnostics` |
+
+| Restricted external package | Granted enforcement scopes |
+|---|---|
+| `postgres_driver` | `postgres-adapter`, `conformance` |
+
+| Child enforcement scope | Parent enforcement scope | Import policy |
+|---|---|---|
+| `snapshot.materialize` | `snapshot` | ordinary |
+| `db-port.diagnostics` | `db-port` | sealed |
+
+The composition root is application or test code under `tests/composition`;
+it is owned by no scope and imports `snapshot` and the `postgres-adapter`
+scope directly. `api-proof` is a test collection boundary. `depcheck` reads
+each table back and compares it with its own declaration of the same
+relation, so neither side can be edited alone.
 
 ## 8. Deployable artifact topology
 

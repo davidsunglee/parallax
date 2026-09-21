@@ -6000,278 +6000,120 @@ child in one place alone, against the wrong parent, under the wrong policy, or
 twice — a second row is a contradiction to reject, not a later reading to keep —
 fails the sync check.
 
-| Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
-|---|---|---|---|---|
-| `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
-| `m-wire` | `parallax.core.wire` | `parallax.core.wire` | `m-core` | generated forbidden contracts |
-| `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
-| `m-edit` | `parallax.core.entity._edit` | `parallax.core.entity._edit` | `m-metamodel` | generated forbidden contracts |
-| `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
-| Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
-| `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel`, `m-inheritance` | generated forbidden contracts + cross-package contract |
-| `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-metamodel` | generated forbidden contracts |
-| `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| `m-model-evolution` | `parallax.evolution.model_evolution` | `parallax.evolution.model_evolution` | `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts + cross-package contract |
-| `m-schema-delta` | `parallax.evolution.schema_delta` | `parallax.evolution.schema_delta` | `m-model-evolution`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-dialect` | generated forbidden contracts + cross-package contract |
-| `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel`, `m-wire` | generated forbidden contracts |
-| `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance`, `m-wire` | generated forbidden contracts |
-| `m-object-query` | `parallax.core.object_query` | `parallax.core.object_query` | `m-predicate`, `m-metamodel`, `m-inheritance`, `m-wire` | generated forbidden contracts |
-| Typed Object Query surface (support, child of `parallax.core.object_query`) | `parallax.core.object_query._fluent` | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | generated forbidden contracts |
-| `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
-| Detached exception projection (support) | `parallax.core.diagnostics` | `parallax.core.diagnostics` | (none) | generated forbidden contracts |
-| `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core`, `m-dialect` | generated forbidden contracts |
-| Database port diagnostic projection edge (support edge of the database port scope) | `parallax.core.db_port` | `parallax.core.db_port` | `parallax.core.diagnostics` | generated forbidden contracts |
-| `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit`, `m-document-codec` | generated forbidden contracts |
-| `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
-| `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
-| `m-execution-authority` (behavioral, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._execution_authority` | `parallax.snapshot.handle._execution_authority` | `m-db-port`, `m-unit-work` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
-| Execution lifecycle diagnostic projection edge (support edge of the execution lifecycle scope) | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` | generated forbidden contracts |
-| `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
-| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
-| `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
-| `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-txtime-write` | generated forbidden contracts |
-| `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
-| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire`, `m-edit` | generated forbidden contracts + cross-package contract |
-| Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` | generated forbidden contracts |
-| Snapshot root/scope composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
-| Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot delivery materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materialization` | `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-db-port`, `m-sql`, `m-read-lock`, `m-execution-lifecycle` | generated forbidden contracts |
-| Snapshot Page, Root View, and representation publication (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.snapshot._inspection`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
-| Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
-| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
-| Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-authority`, `m-execution-lifecycle` | generated forbidden contracts |
-| Snapshot keyed write ingress (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` | generated forbidden contracts |
-| Snapshot execution-surface refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Snapshot transaction write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
-| Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Snapshot model publication (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._publication` | `parallax.snapshot.handle._publication` | `parallax.core.entity`, `m-unit-work` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
-| `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
-| `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
-| Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
-| Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
-| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-object-query`, `m-document-codec` | generated forbidden contracts |
-| Construction-input sentinels and the node handle (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._construction_input` | `parallax.core.entity._construction_input` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Concrete Postgres adapter and its owned runtime (support) | `parallax.postgres.adapter`, `._options`, `._runtime`, `._context`, `._connection` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` | generated forbidden contracts + cross-package contract |
-| Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
+The relations this section declares are stated as four strict tables, each the
+whole of one relation and each read back by `tools/check_dag_sync.py` and
+compared with the one declaration the tool holds of it: the behavioral mapping
+with `MODULE_SCOPE`, the first-party support relation with
+`PYTHON_FIRST_PARTY_GRANTS`, the restricted-external ownership with
+`RESTRICTED_EXTERNAL_GRANTS`, and the child topology with `CHILD_SCOPES`. A
+table edited alone, or a declaration edited alone, fails the sync check before
+anything is generated, and `--write` regenerates nothing past a disagreement. A
+cell declares only what it spells in backticks; source paths, enforcement-tool
+names, and descriptive labels stay out of the tables and are stated once in
+prose after them.
 
-Behavioral modules carry a module tag, so their allowed direct dependencies are
-already machine-readable from the fenced `dependency-graph` block in
-`core/spec/modules.md`. Support scopes carry no tag, and a behavioral scope may
-also need a Python-only support edge that has no language-neutral module tag;
-their rows above are the only declaration of those edges. The fenced
-`support-scope-graph` block below is the machine-readable form of exactly those
-support edges, written in the same `A --> B` grammar and naming enforcement
-scopes on both sides.
+The first table maps every behavioral module — each claimed module and each
+unclaimed transitive prerequisite — to the enforcement scope that owns it. A
+behavioral module's allowed direct dependencies are its edges in the fenced
+`dependency-graph` block of `core/spec/modules.md`, mapped through this table,
+and are restated nowhere here. `m-api-conformance` is the one module whose
+scope is not a `parallax` package: `tests.api` is a pytest collection boundary,
+which is what enforces it, so its row satisfies the core template's
+row-per-module rule and is the one row `tools/check_dag_sync.py` sets aside
+rather than comparing with `MODULE_SCOPE`.
+
+| Behavioral module | Enforcement scope |
+|---|---|
+| `m-api-conformance` | `tests.api` |
+| `m-auto-retry` | `parallax.core.auto_retry` |
+| `m-batch-write` | `parallax.core.batch_write` |
+| `m-bitemp-write` | `parallax.core.bitemp_write` |
+| `m-case-format` | `parallax.conformance.case_format` |
+| `m-conformance-adapter` | `parallax.conformance.cli` |
+| `m-core` | `parallax.core.base` |
+| `m-db-error` | `parallax.core.db_error` |
+| `m-db-port` | `parallax.core.db_port` |
+| `m-deep-fetch` | `parallax.core.deep_fetch` |
+| `m-descriptor` | `parallax.descriptor` |
+| `m-dialect` | `parallax.core.dialect` |
+| `m-document-codec` | `parallax.core.document_codec` |
+| `m-edit` | `parallax.core.entity._edit` |
+| `m-execution-authority` | `parallax.snapshot.handle._execution_authority` |
+| `m-execution-lifecycle` | `parallax.core.execution_lifecycle` |
+| `m-inheritance` | `parallax.core.inheritance` |
+| `m-metamodel` | `parallax.core.metamodel` |
+| `m-model-evolution` | `parallax.evolution.model_evolution` |
+| `m-model-formation` | `parallax.core.model_formation` |
+| `m-navigate` | `parallax.core.navigate` |
+| `m-object-query` | `parallax.core.object_query` |
+| `m-opt-lock` | `parallax.core.opt_lock` |
+| `m-pk-gen` | `parallax.core.pk_gen` |
+| `m-predicate` | `parallax.core.predicate` |
+| `m-read-lock` | `parallax.core.read_lock` |
+| `m-relationship` | `parallax.core.relationship` |
+| `m-schema-delta` | `parallax.evolution.schema_delta` |
+| `m-snapshot-read` | `parallax.snapshot._read_result` |
+| `m-sql` | `parallax.core.sql_gen` |
+| `m-storage-layout` | `parallax.core.storage_layout` |
+| `m-temporal-read` | `parallax.core.temporal_read` |
+| `m-txtime-write` | `parallax.core.txtime_write` |
+| `m-unit-work` | `parallax.core.unit_work` |
+| `m-value-object` | `parallax.core.value_object` |
+| `m-wire` | `parallax.core.wire` |
+
+The second table declares the edges no module tag carries: for a support scope,
+which has no tag and so no edge in `core/spec/modules.md`, everything it may
+import directly; for a behavioral scope, the Python-only supplement to its
+tagged edges — `parallax.core.db_port` and `parallax.core.execution_lifecycle`
+each reach the detached diagnostic projection this way, and
+`parallax.snapshot._read_result` reaches the row-to-graph package it publishes
+results from, a Python scope with no language-neutral tag. A behavioral scope
+with no such supplement has no row. The dependency cell holds `(none)` alone
+or comma-separated backticked tokens, each a module tag or a `parallax.*`
+scope a row of the first two tables declares; a token of any other shape is
+rejected rather than skipped — a third-party package is never a grant here,
+and is declared by the restricted-external table below — and `(none)` beside
+a real grant is a contradiction rather than a wider grant. A scope granting
+nothing must still be declared, because its emptiness is what it enforces. A
+group of scopes sharing one grant names every member in the scope cell: the
+write-execution cluster is the one such group, enforced as one boundary so that
+helpers may move between its three modules without a spec edit. Each scope is
+declared by exactly one row, a second row being a contradiction to reject
+rather than a later reading to keep.
 `parallax.descriptor._hub --> parallax.core.entity` is the descriptor
 distribution's sole Python-only edge; the parent `m-descriptor` scope's
-`m-core` and `m-metamodel` edges remain language-neutral and come from
-`core/spec/modules.md`.
-The prose rows and the block MUST agree. `tools/check_dag_sync.py` parses
-**both** — the rows' "Allowed direct dependencies" column and the block — and
-fails when they disagree with each other or when its own `SUPPORT_SCOPE_DEPS`
-table disagrees with either, so the generated contracts cannot drift from this
-section and no single representation can be edited alone. Each support scope is
-declared by exactly one prose row, and a second row for a support scope already
-declared fails rather than replacing the first. In the rows, only a
-backticked module tag or `parallax.*` scope declares a grant; unbackticked
-prose names no enforcement scope, and a third-party package is never a grant
-here — a restricted external package is declared by its own table below. A
-scope granting nothing has no
-edge to write and must still be declared, because its emptiness is what it
-enforces: both representations spell it `(none)` — the dependency column
-outright, the block as the edge target — and naming `(none)` beside a real
-grant is rejected as a contradiction.
+`m-core`, `m-metamodel`, and `m-inheritance` edges remain language-neutral and
+come from `core/spec/modules.md`.
 
-```support-scope-graph
-parallax.core.diagnostics --> (none)
-parallax.core.db_port --> parallax.core.diagnostics
-parallax.core.execution_lifecycle --> parallax.core.diagnostics
-parallax.core._formation_profile --> parallax.core.metamodel
-parallax.core._formation_profile --> parallax.core.model_formation
-parallax.core._formation_profile --> parallax.core.inheritance
-parallax.core._formation_profile --> parallax.core.storage_layout
-parallax.core._formation_profile --> parallax.core.value_object
-parallax.core._formation_profile --> parallax.core.relationship
-parallax.core._formation_profile --> parallax.core.temporal_read
-parallax.core._formation_profile --> parallax.core.opt_lock
-parallax.descriptor._hub --> parallax.core.entity
-parallax.core.entity --> parallax.core.base
-parallax.core.entity --> parallax.core.metamodel
-parallax.core.entity --> parallax.core.inheritance
-parallax.core.entity --> parallax.core.relationship
-parallax.core.entity --> parallax.core.predicate
-parallax.core.entity --> parallax.core.object_query
-parallax.core.entity --> parallax.core.temporal_read
-parallax.core.entity --> parallax.core.document_codec
-parallax.core.entity --> parallax.core._formation_profile
-parallax.core.entity._expressions --> parallax.core.metamodel
-parallax.core.entity._expressions --> parallax.core.predicate
-parallax.core.entity._expressions --> parallax.core.object_query
-parallax.core.entity._expressions --> parallax.core.base
-parallax.core.entity._expressions --> parallax.core.wire
-parallax.core.entity._expressions --> parallax.core.document_codec
-parallax.core.object_query._fluent --> parallax.core.base
-parallax.core.object_query._fluent --> parallax.core.metamodel
-parallax.core.object_query._fluent --> parallax.core.predicate
-parallax.core.object_query._fluent --> parallax.core.entity
-parallax.core.entity._construction_input --> (none)
-parallax.core.entity._pydantic_storage --> (none)
-parallax.core.entity._instance_state --> parallax.core.entity._construction_input
-parallax.core.entity._instance_state --> parallax.core.entity._pydantic_storage
-parallax.core.entity._layout --> parallax.core.metamodel
-parallax.core.entity._layout --> parallax.core.inheritance
-parallax.core.entity._layout --> parallax.core.relationship
-parallax.core.execution_lifecycle.testing --> parallax.core.execution_lifecycle
-parallax.snapshot._inspection --> parallax.core.entity
-parallax.snapshot._inspection --> parallax.core.metamodel
-parallax.snapshot._inspection --> parallax.core.inheritance
-parallax.snapshot._inspection --> parallax.core.relationship
-parallax.snapshot._inspection --> parallax.core.temporal_read
-parallax.core.continuation --> parallax.core.metamodel
-parallax.core.continuation --> parallax.core.inheritance
-parallax.core.continuation --> parallax.core.predicate
-parallax.core.continuation --> parallax.core.object_query
-parallax.core.continuation --> parallax.core.temporal_read
-parallax.core.continuation --> parallax.core.wire
-parallax.snapshot.handle --> parallax.core.continuation
-parallax.snapshot.handle --> parallax.snapshot.materialize
-parallax.snapshot.handle --> parallax.snapshot._read_result
-parallax.snapshot.handle --> parallax.snapshot._inspection
-parallax.snapshot.handle --> parallax.core.entity
-parallax.snapshot.handle --> parallax.core.base
-parallax.snapshot.handle --> parallax.core.wire
-parallax.snapshot.handle --> parallax.core.metamodel
-parallax.snapshot.handle --> parallax.core.predicate
-parallax.snapshot.handle --> parallax.core.inheritance
-parallax.snapshot.handle --> parallax.core.storage_layout
-parallax.snapshot.handle --> parallax.core.temporal_read
-parallax.snapshot.handle --> parallax.core.deep_fetch
-parallax.snapshot.handle --> parallax.core.navigate
-parallax.snapshot.handle --> parallax.core.dialect
-parallax.snapshot.handle --> parallax.core.db_port
-parallax.snapshot.handle --> parallax.core.sql_gen
-parallax.snapshot.handle --> parallax.core.unit_work
-parallax.snapshot.handle --> parallax.core.read_lock
-parallax.snapshot.handle --> parallax.core.auto_retry
-parallax.snapshot.handle --> parallax.core.execution_lifecycle
-parallax.snapshot.handle --> parallax.core.opt_lock
-parallax.snapshot.handle --> parallax.core.batch_write
-parallax.snapshot.handle --> parallax.core.txtime_write
-parallax.snapshot.handle --> parallax.core.bitemp_write
-parallax.snapshot._read_result --> parallax.snapshot.materialize
-parallax.snapshot.materialize --> parallax.core.entity._construction_input
-parallax.snapshot.materialize --> parallax.core.entity._layout
-parallax.snapshot.materialize --> parallax.core.deep_fetch
-parallax.snapshot.materialize --> parallax.core.document_codec
-parallax.snapshot.materialize --> parallax.core.metamodel
-parallax.snapshot.materialize --> parallax.core.inheritance
-parallax.snapshot.materialize --> parallax.core.relationship
-parallax.snapshot.materialize --> parallax.core.temporal_read
-parallax.snapshot.materialize --> parallax.core.wire
-parallax.snapshot.materialize --> parallax.core.entity
-parallax.snapshot.materialize --> parallax.snapshot._inspection
-parallax.snapshot.handle._materialization --> parallax.core.continuation
-parallax.snapshot.handle._materialization --> parallax.snapshot.materialize
-parallax.snapshot.handle._materialization --> parallax.snapshot._read_result
-parallax.snapshot.handle._materialization --> parallax.snapshot._inspection
-parallax.snapshot.handle._materialization --> parallax.core.entity
-parallax.snapshot.handle._materialization --> parallax.core.metamodel
-parallax.snapshot.handle._materialization --> parallax.core.inheritance
-parallax.snapshot.handle._materialization --> parallax.core.temporal_read
-parallax.snapshot.handle._materialization --> parallax.core.db_port
-parallax.snapshot.handle._materialization --> parallax.core.sql_gen
-parallax.snapshot.handle._materialization --> parallax.core.read_lock
-parallax.snapshot.handle._materialization --> parallax.core.execution_lifecycle
-parallax.snapshot.handle._preflight --> parallax.core.metamodel
-parallax.snapshot.handle._preflight --> parallax.core.predicate
-parallax.snapshot.handle._preflight --> parallax.core.object_query
-parallax.snapshot.handle._read_scope --> parallax.core.entity
-parallax.snapshot.handle._read_scope --> parallax.core.continuation
-parallax.snapshot.handle._read_scope --> parallax.snapshot._read_result
-parallax.snapshot.handle._read_scope --> parallax.snapshot._inspection
-parallax.snapshot.handle._read_scope --> parallax.core.object_query
-parallax.snapshot.handle._read_scope --> parallax.core.temporal_read
-parallax.snapshot.handle._read_scope --> parallax.core.db_port
-parallax.snapshot.handle._read_scope --> parallax.core.unit_work
-parallax.snapshot.handle._read_scope --> parallax.core.read_lock
-parallax.snapshot.handle._read_scope --> parallax.core.opt_lock
-parallax.snapshot.handle._read_scope --> parallax.snapshot.handle._execution_authority
-parallax.snapshot.handle._read_scope --> parallax.core.execution_lifecycle
-parallax.snapshot.handle._keyed_writes --> parallax.core.entity
-parallax.snapshot.handle._keyed_writes --> parallax.snapshot._inspection
-parallax.snapshot.handle._keyed_writes --> parallax.core.metamodel
-parallax.snapshot.handle._keyed_writes --> parallax.core.document_codec
-parallax.snapshot.handle._keyed_writes --> parallax.core.temporal_read
-parallax.snapshot.handle._keyed_writes --> parallax.core.unit_work
-parallax.snapshot.handle._keyed_writes --> parallax.core.execution_lifecycle
-parallax.snapshot.handle._errors --> (none)
-parallax.snapshot.handle._family --> parallax.core.base
-parallax.snapshot.handle._family --> parallax.core.wire
-parallax.snapshot.handle._family --> parallax.core.metamodel
-parallax.snapshot.handle._family --> parallax.core.inheritance
-parallax.snapshot.handle._family --> parallax.core.storage_layout
-parallax.snapshot.handle._family --> parallax.core.document_codec
-parallax.snapshot.handle._family --> parallax.core.temporal_read
-parallax.snapshot.handle._family --> parallax.core.dialect
-parallax.snapshot.handle._family --> parallax.core.db_port
-parallax.snapshot.handle._family --> parallax.core.sql_gen
-parallax.snapshot.handle._family --> parallax.core.unit_work
-parallax.snapshot.handle._family --> parallax.core.opt_lock
-parallax.snapshot.handle._family --> parallax.core.txtime_write
-parallax.snapshot.handle._family --> parallax.core.bitemp_write
-parallax.snapshot.handle._keyed_sql --> parallax.core.base
-parallax.snapshot.handle._keyed_sql --> parallax.core.wire
-parallax.snapshot.handle._keyed_sql --> parallax.core.metamodel
-parallax.snapshot.handle._keyed_sql --> parallax.core.inheritance
-parallax.snapshot.handle._keyed_sql --> parallax.core.storage_layout
-parallax.snapshot.handle._keyed_sql --> parallax.core.document_codec
-parallax.snapshot.handle._keyed_sql --> parallax.core.temporal_read
-parallax.snapshot.handle._keyed_sql --> parallax.core.dialect
-parallax.snapshot.handle._keyed_sql --> parallax.core.db_port
-parallax.snapshot.handle._keyed_sql --> parallax.core.sql_gen
-parallax.snapshot.handle._keyed_sql --> parallax.core.unit_work
-parallax.snapshot.handle._keyed_sql --> parallax.core.opt_lock
-parallax.snapshot.handle._keyed_sql --> parallax.core.txtime_write
-parallax.snapshot.handle._keyed_sql --> parallax.core.bitemp_write
-parallax.snapshot.handle._write_lowering --> parallax.core.base
-parallax.snapshot.handle._write_lowering --> parallax.core.wire
-parallax.snapshot.handle._write_lowering --> parallax.core.metamodel
-parallax.snapshot.handle._write_lowering --> parallax.core.inheritance
-parallax.snapshot.handle._write_lowering --> parallax.core.storage_layout
-parallax.snapshot.handle._write_lowering --> parallax.core.document_codec
-parallax.snapshot.handle._write_lowering --> parallax.core.temporal_read
-parallax.snapshot.handle._write_lowering --> parallax.core.dialect
-parallax.snapshot.handle._write_lowering --> parallax.core.db_port
-parallax.snapshot.handle._write_lowering --> parallax.core.sql_gen
-parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
-parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
-parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
-parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
-parallax.snapshot.handle._retention --> parallax.core.metamodel
-parallax.snapshot.handle._retention --> parallax.core.unit_work
-parallax.snapshot.handle._retention --> parallax.core.temporal_read
-parallax.snapshot.handle._retention --> parallax.snapshot.handle._family
-parallax.snapshot.handle._publication --> parallax.core.entity
-parallax.snapshot.handle._publication --> parallax.core.unit_work
-parallax.postgres --> parallax.core.base
-parallax.postgres --> parallax.core.wire
-parallax.postgres --> parallax.core.db_port
-parallax.postgres --> parallax.core.db_error
-parallax.postgres --> parallax.core.dialect
-```
+| Enforcement scope | Allowed direct first-party dependencies |
+|---|---|
+| `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
+| `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
+| `parallax.core.db_port` | `parallax.core.diagnostics` |
+| `parallax.core.diagnostics` | (none) |
+| `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` |
+| `parallax.core.entity._construction_input` | (none) |
+| `parallax.core.entity._expressions` | `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-object-query`, `m-document-codec` |
+| `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` |
+| `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` |
+| `parallax.core.entity._pydantic_storage` | (none) |
+| `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` |
+| `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` |
+| `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` |
+| `parallax.descriptor._hub` | `parallax.core.entity` |
+| `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
+| `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
+| `parallax.snapshot._read_result` | `parallax.snapshot.materialize` |
+| `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle._errors` | (none) |
+| `parallax.snapshot.handle._family`, `parallax.snapshot.handle._keyed_sql`, `parallax.snapshot.handle._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` |
+| `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` |
+| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-db-port`, `m-sql`, `m-read-lock`, `m-execution-lifecycle` |
+| `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` |
+| `parallax.snapshot.handle._publication` | `parallax.core.entity`, `m-unit-work` |
+| `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-authority`, `m-execution-lifecycle` |
+| `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` |
+| `parallax.snapshot.materialize` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.snapshot._inspection`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
 
 Third-party packages are outside every scope, and a first-party grant says
 nothing about them. A **restricted external package** is one the framework
@@ -6338,14 +6180,14 @@ nested inside and the **import policy** governing it. A child is `ordinary`
 when its generated row is the whole of its enforcement; `isolated` and `sealed`
 are the two policies whose other half `tools/check_scope_ownership.py` grades
 over the files, as stated above. Parent and policy are properties of one
-declared relationship, so they are declared together, once, here — the labels
-the rows above carry describe a child and declare nothing. `tools/check_dag_sync.py`
-parses the table — every child and parent must be a declared scope, a child must
-be nested inside its parent, the policy vocabulary is closed, and a child is
-declared by one row, a second being a contradiction to reject rather than a
-later reading to keep — and compares it, parent and policy alike, with its own
-`CHILD_SCOPES` table, so a child declared, re-parented, or re-policied on
-either side alone fails the sync check before anything is generated.
+declared relationship, so they are declared together, once, here.
+`tools/check_dag_sync.py` parses the table — every child and parent must be a
+declared scope, a child must be nested inside its parent, the policy vocabulary
+is closed, and a child is declared by one row, a second being a contradiction
+to reject rather than a later reading to keep — and compares it, parent and
+policy alike, with its own `CHILD_SCOPES` table, so a child declared,
+re-parented, or re-policied on either side alone fails the sync check before
+anything is generated.
 `tools/check_scope_ownership.py` reads that same table for the parent/child
 chains a file may resolve along, for the siblings a zero-grant row names, and
 for the scopes each policy governs.
@@ -6373,12 +6215,44 @@ for the scopes each policy governs.
 | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle` | sealed |
 | `parallax.snapshot.handle._write_lowering` | `parallax.snapshot.handle` | ordinary |
 
+Generated first-party and direct-external contracts are the default for every
+framework-owned production scope the tables above declare: each sources one
+first-party `forbidden` contract, the complement of its closure, and is a
+source of every restricted package's contract it is not granted. Three cases
+stand outside that default and are stated here once. The conformance-family
+scopes `parallax.conformance.case_format` and `parallax.conformance.cli` are
+parity-checked like any other and exempt as importing sources — the core
+conformance-family exception of `modules.md` — while every production scope
+stays forbidden from importing `parallax.conformance` as one package.
+`tests.api` is a pytest collection boundary rather than an import-linter scope.
+The application composition root — application or test code calling
+`parallax.snapshot.connect` — is owned by no scope and graded by no contract:
+it imports `parallax.snapshot` and one concrete adapter such as
+`parallax.postgres`, which is how a deployment selects a `DatabaseAdapter`
+without Snapshot naming one.
+
+A change is made in the relation that owns it, on both sides of the parity
+check. A new behavioral scope is an edge change in `core/spec/modules.md` where
+its dependencies change, plus a row of the behavioral table and a
+`MODULE_SCOPE` entry. A new support scope or Python-only edge is a row of the
+first-party table and a `PYTHON_FIRST_PARTY_GRANTS` entry, kept as `(none)`
+only where an empty grant is enforced. A new restricted package is a row of the
+restricted-external table and a `RESTRICTED_EXTERNAL_GRANTS` entry, together
+with literal negative and positive `lint-imports` canaries naming it: a package
+misspelled consistently on both sides would forbid a node the graph never
+holds, and import-linter drops such a node without a word. A new or changed
+child is a row of the child table and a `CHILD_SCOPES` entry. A first scope in
+a new `parallax` package adds that package to the import-linter roots and must
+leave the package's interface module either a declared scope or an exact
+ownership exemption (*Filesystem ownership*, below).
+
 - **Dependency-analysis tool.** import-linter; configuration in
   `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
   `languages/python/tools/check_dag_sync.py`, which parses the fenced
   `dependency-graph` block in `core/spec/modules.md`, computes the DAG's
-  transitive closure over the table above (core edges plus the declared
-  support-scope edges), and emits the **forbidden-edge complement**
+  transitive closure over the relations above (core edges mapped through the
+  behavioral table, plus the declared first-party grants), and emits the
+  **forbidden-edge complement**
   as import-linter `forbidden` contracts — one forbidden import per
   production scope pair the closure does not permit. The composition scope's
   `m-sql` edge is deliberate: `m-unit-work` takes no edge to SQL generation
@@ -6536,7 +6410,7 @@ for the scopes each policy governs.
   those boundaries rather than the module docstring alone.
   `parallax.core.entity._edit` is declared beside it as a child of the
   Entity frontend, but its behavioral `m-edit` row and module-DAG edge supply its
-  grants, so it has no support row or `support-scope-graph` edge. All are
+  grants, so it has no first-party support row. All are
   generated as ordinary contract sources, and none is a new supported import
   path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
@@ -6754,7 +6628,7 @@ locking unions retain the core refusal.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale, and the case where one support scope is declared by two prose rows; any disagreement between the §7 child-scope table and `check_dag_sync.py`'s `CHILD_SCOPES` fails the same way — a child declared on one side alone, a parent or an import policy the two sides state differently, a child declared by two rows, one not nested inside its parent, or one whose child or parent is not a declared scope; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement between a §7 relation and `check_dag_sync.py`'s declaration of it, each checked before generation: the behavioral-scope table against `MODULE_SCOPE` — a module declared on one side alone, or mapped to a different scope — and the first-party support table against `PYTHON_FIRST_PARTY_GRANTS` — a scope or a grant declared on one side alone, one scope declared by two rows, or a grant naming a scope no row declares; any disagreement between the §7 child-scope table and `check_dag_sync.py`'s `CHILD_SCOPES` fails the same way — a child declared on one side alone, a parent or an import policy the two sides state differently, a child declared by two rows, one not nested inside its parent, or one whose child or parent is not a declared scope; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | CPython 3.14 `python-check-dbfree` leg with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

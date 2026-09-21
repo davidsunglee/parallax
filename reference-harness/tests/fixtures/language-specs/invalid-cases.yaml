@@ -185,33 +185,47 @@
   code: missing-aggregate-command
   message: "no complete verification command over every scheduling class"
 
-- name: reversed-source-dependency
+- name: source-topology-header
   base: valid-snapshot.md
-  old: "| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |"
-  new: "| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation`, `m-descriptor` | depcheck.toml |"
-  code: reversed-source-dependency
-  message: "allows m-inheritance --> m-descriptor, which the module DAG runs the other way"
+  old: "| Behavioral module | Enforcement scope |"
+  new: "| Behavioral module | Owning scope |"
+  code: topology-header
+  message: "table under '## 7. Source-enforcement topology' does not retain the canonical columns"
 
-- name: undeclared-source-dependency
+- name: incomplete-source-row
   base: valid-snapshot.md
-  old: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |"
-  new: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel`, `m-dialect` | depcheck.toml |"
-  code: undeclared-source-dependency
-  message: "allows m-pk-gen --> m-dialect, which the module DAG does not declare"
+  old: "| `m-pk-gen` | `pk-gen` |"
+  new: "| `m-pk-gen` |  |"
+  code: incomplete-topology-row
+  message: "table under '## 7. Source-enforcement topology' has a row with blank or missing cells"
 
-- name: missing-source-dependency
+- name: missing-source-module
   base: valid-snapshot.md
-  old: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | depcheck.toml |"
-  new: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | depcheck.toml |"
-  code: missing-source-dependency
-  message: "omits the declared dependency m-deep-fetch --> m-relationship"
+  old: |-
+    | `m-pk-gen` | `pk-gen` |
+    | `m-read-lock` | `read-lock` |
+  new: "| `m-read-lock` | `read-lock` |"
+  code: missing-source-module
+  message: "source-enforcement topology has no row for m-pk-gen"
 
-- name: combined-source-module-row
+# The unclaimed prerequisite owes a row exactly as a claimed module does.
+- name: missing-prerequisite-module
   base: valid-snapshot.md
-  old: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |"
-  new: "| `m-pk-gen`, `m-value-object` | src/pk-gen | pk-gen | `m-metamodel`, `m-model-formation` | depcheck.toml |"
-  code: combined-source-module-row
-  message: "combines m-pk-gen, m-value-object in one row"
+  old: |-
+    | `m-db-port` | `db-port` |
+    | `m-deep-fetch` | `deep-fetch` |
+  new: "| `m-deep-fetch` | `deep-fetch` |"
+  code: missing-source-module
+  message: "source-enforcement topology has no row for m-db-port"
+
+- name: duplicate-source-module
+  base: valid-snapshot.md
+  old: "| `m-pk-gen` | `pk-gen` |"
+  new: |-
+    | `m-pk-gen` | `pk-gen` |
+    | `m-pk-gen` | `metamodel` |
+  code: duplicate-source-module
+  message: "source-enforcement topology repeats m-pk-gen"
 
 - name: stray-lifecycle-extension
   base: valid-snapshot.md

@@ -6,12 +6,15 @@ Covers the two canaries the import-linter complement must guarantee:
 * a deliberately illegal scope import fails ``lint-imports``.
 
 plus generator correctness (DAG parsing, closure, and the conformance-family
-importer exemption), and the support-scope additions:
+importer exemption), and the four §7 relations:
 
-* ``SUPPORT_SCOPE_DEPS`` is parity-checked against **both** §7 declarations of
-  the support-scope graph — the prose table rows and the ``support-scope-graph``
-  fence — with a drift canary per representation, including the state in which
-  two of the three are edited consistently and the third is left stale; and
+* the behavioral mapping §7 declares as one table — module tag to enforcement
+  scope — the table grammar, the one pytest-bounded row set aside, and parity
+  with ``MODULE_SCOPE``, with a drift canary per side;
+* the first-party support relation §7 declares as one table — enforcement scope
+  to its allowed direct first-party dependencies — the strict cell grammar, the
+  write-lowering group row naming its three scopes, and parity with
+  ``PYTHON_FIRST_PARTY_GRANTS``, with a drift canary per side;
 * child scopes are emitted as contract *sources*, and as forbidden *targets*
   only in a sibling's zero-grant row or — for a declared isolated child — in
   every row that overlaps it nowhere, with a ``lint-imports``
@@ -55,9 +58,6 @@ import pytest
 
 import check_dag_sync as dag
 from tests._support.repo import PY_ROOT
-
-# The §7 table header the prose parser keys on, for synthetic one-row fixtures.
-_HEADER = "| Behavioral/support module | a | b | c | d |"
 
 
 @pytest.fixture(scope="module")
@@ -126,6 +126,16 @@ def kept_with(tree: Path, module: str, statement: str) -> str:
     result = _linted_with(tree, module, statement)
     assert result.returncode == 0, result.stdout
     return " ".join(result.stdout.split())
+
+
+def _spec_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: str) -> None:
+    """Point the tool at a copy of the spec with ``old`` replaced by ``new`` once."""
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(old, new, 1)
+    assert edited != original
+    tampered = tmp_path / "python.md"
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
 
 
 # --------------------------------------------------------------------------
@@ -210,9 +220,9 @@ def test_build_adjacency_skips_unmapped_importer() -> None:
 def test_build_adjacency_fails_on_unknown_support_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     tampered["parallax.core.entity"] = frozenset({"parallax.core.does_not_exist"})
-    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
     with pytest.raises(ValueError, match="absent from the §7 enforcement map"):
         dag.build_adjacency([])
 
@@ -229,11 +239,198 @@ def test_render_block_is_deterministic() -> None:
 
 
 # --------------------------------------------------------------------------
-# §7 support-scope parity: the spec fence is the third input.
+# §7's behavioral mapping: one table, compared with MODULE_SCOPE.
 # --------------------------------------------------------------------------
-def test_parse_support_scope_graph_reads_the_spec_fence() -> None:
-    declared = dag.parse_support_scope_graph(dag.PYTHON_MD.read_text())
+# The behavioral-scope table header the parser keys on, for synthetic fixtures.
+_BEHAVIORAL_HEADER = "| Behavioral module | Enforcement scope |\n|---|---|"
+
+
+def _behavioral_table(*rows: tuple[str, str]) -> str:
+    body = "".join(f"| {module} | {scope} |\n" for module, scope in rows)
+    return f"{_BEHAVIORAL_HEADER}\n{body}"
+
+
+def test_parse_dependency_graph_skips_blank_lines() -> None:
+    assert dag.parse_dependency_graph("```dependency-graph\n\nm-a --> m-b\n\n```") == [
+        ("m-a", "m-b")
+    ]
+
+
+def test_parse_dependency_graph_rejects_a_malformed_line() -> None:
+    with pytest.raises(ValueError, match="unparseable dependency-graph line"):
+        dag.parse_dependency_graph("```dependency-graph\nnot an edge\n```")
+
+
+def test_the_spec_and_the_tool_agree_on_the_behavioral_mapping() -> None:
+    declared = dag.parse_behavioral_scope_table(dag.PYTHON_MD.read_text())
+    dag.check_behavioral_scope_parity(declared)
+    assert declared == {**dag.MODULE_SCOPE, **dag.PYTEST_BOUNDED_SCOPES}
+
+
+def test_the_pytest_bounded_row_is_read_once_and_set_aside_from_parity() -> None:
+    # The core template demands a row per claimed module, so the row exists;
+    # import-linter grades no test package, so MODULE_SCOPE omits it and parity
+    # must neither report it as spec-only nor require the tool to carry it.
+    declared = dag.parse_behavioral_scope_table(dag.PYTHON_MD.read_text())
+    assert declared["m-api-conformance"] == "tests.api"
+    assert "m-api-conformance" not in dag.MODULE_SCOPE
+    dag.check_behavioral_scope_parity(declared)
+    del declared["m-api-conformance"]
+    dag.check_behavioral_scope_parity(declared)
+
+
+def test_parse_behavioral_scope_table_reads_module_to_scope() -> None:
+    declared = dag.parse_behavioral_scope_table(
+        _behavioral_table(
+            ("`m-core`", "`parallax.core.base`"),
+            ("`m-api-conformance`", "`tests.api`"),
+        )
+    )
+    assert declared == {"m-core": "parallax.core.base", "m-api-conformance": "tests.api"}
+
+
+def test_parse_behavioral_scope_table_rejects_a_scope_outside_parallax() -> None:
+    # Only the pytest-bounded modules may name a scope no contract is sourced
+    # from, and only the scope the tool names for them.
+    with pytest.raises(ValueError, match=r"maps 'm-core' to 'tests\.core', which is neither"):
+        dag.parse_behavioral_scope_table(_behavioral_table(("`m-core`", "`tests.core`")))
+    with pytest.raises(ValueError, match=r"maps 'm-api-conformance' to 'tests\.other'"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`m-api-conformance`", "`tests.other`"))
+        )
+
+
+def test_parse_behavioral_scope_table_rejects_a_non_module_tag() -> None:
+    with pytest.raises(ValueError, match=r"'parallax\.core\.base' is not a behavioral module tag"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`parallax.core.base`", "`parallax.core.base`"))
+        )
+
+
+def test_parse_behavioral_scope_table_rejects_a_cell_naming_two_names() -> None:
+    with pytest.raises(ValueError, match="module cell must hold exactly one backticked name"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`m-core`, `m-wire`", "`parallax.core.base`"))
+        )
+    with pytest.raises(ValueError, match="scope cell must hold exactly one backticked name"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`m-core`", "`parallax.core.base` or `parallax.core.wire`"))
+        )
+
+
+def test_parse_behavioral_scope_table_rejects_a_duplicate_row() -> None:
+    with pytest.raises(ValueError, match="declares 'm-core' more than once"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(
+                ("`m-core`", "`parallax.core.base`"),
+                ("`m-core`", "`parallax.core.wire`"),
+            )
+        )
+
+
+def test_parse_behavioral_scope_table_rejects_a_missing_table() -> None:
+    with pytest.raises(ValueError, match="no §7 behavioral-scope table"):
+        dag.parse_behavioral_scope_table("no table here")
+
+
+def test_a_behavioral_module_remapped_in_the_spec_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spec_with(
+        tmp_path,
+        monkeypatch,
+        "| `m-edit` | `parallax.core.entity._edit` |",
+        "| `m-edit` | `parallax.core.entity` |",
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "behavioral module 'm-edit' has drifted between the spec and the tool: the spec "
+            "maps it to 'parallax.core.entity', the tool maps it to 'parallax.core.entity._edit'"
+        ),
+    ):
+        dag.generate()
+
+
+def test_a_behavioral_row_dropped_from_the_spec_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spec_with(tmp_path, monkeypatch, "| `m-pk-gen` | `parallax.core.pk_gen` |\n", "")
+    with pytest.raises(ValueError, match=r"declared only in the tool \['m-pk-gen'\]"):
+        dag.generate()
+
+
+def test_a_behavioral_row_added_to_the_spec_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _spec_with(
+        tmp_path,
+        monkeypatch,
+        "| `m-pk-gen` | `parallax.core.pk_gen` |\n",
+        "| `m-agg` | `parallax.core.agg` |\n| `m-pk-gen` | `parallax.core.pk_gen` |\n",
+    )
+    with pytest.raises(ValueError, match=r"declared only in the spec \['m-agg'\]"):
+        dag.generate()
+
+
+def test_the_pytest_bounded_module_given_a_parallax_scope_fails_parity() -> None:
+    # A row mapping it into the package tree would claim a contract source the
+    # tool never generates; parity sees it as a module the tool does not model.
+    declared = dag.parse_behavioral_scope_table(
+        _behavioral_table(("`m-api-conformance`", "`parallax.tests.api`"))
+    )
+    with pytest.raises(ValueError, match=r"declared only in the spec \['m-api-conformance'\]"):
+        dag.check_behavioral_scope_parity(declared)
+
+
+def test_a_behavioral_module_remapped_by_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dag, "MODULE_SCOPE", {**dag.MODULE_SCOPE, "m-pk-gen": "parallax.core.keys"})
+    with pytest.raises(ValueError, match=r"behavioral module 'm-pk-gen' has drifted"):
+        dag.generate()
+
+
+def test_a_behavioral_module_dropped_by_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dag,
+        "MODULE_SCOPE",
+        {module: scope for module, scope in dag.MODULE_SCOPE.items() if module != "m-pk-gen"},
+    )
+    with pytest.raises(ValueError, match=r"declared only in the spec \['m-pk-gen'\]"):
+        dag.generate()
+
+
+# --------------------------------------------------------------------------
+# §7's first-party support relation: one table, compared with
+# PYTHON_FIRST_PARTY_GRANTS.
+# --------------------------------------------------------------------------
+# The first-party support table header the parser keys on, for synthetic fixtures.
+_FIRST_PARTY_HEADER = "| Enforcement scope | Allowed direct first-party dependencies |\n|---|---|"
+
+
+def _first_party_table(*rows: tuple[str, str]) -> str:
+    body = "".join(f"| {scope} | {deps} |\n" for scope, deps in rows)
+    return f"{_FIRST_PARTY_HEADER}\n{body}"
+
+
+def _spec_first_party_grants() -> dict[str, frozenset[str]]:
+    return dag.parse_first_party_support_table(dag.PYTHON_MD.read_text())
+
+
+def test_the_spec_and_the_tool_agree_on_first_party_grants() -> None:
+    declared = _spec_first_party_grants()
+    dag.check_first_party_support_parity(declared)
+    assert declared == dict(dag.PYTHON_FIRST_PARTY_GRANTS)
+
+
+def test_parse_first_party_support_table_reads_the_committed_rows() -> None:
+    declared = _spec_first_party_grants()
     assert "parallax.snapshot.materialize" in declared["parallax.snapshot.handle"]
+    # The Postgres row grants first-party scopes alone: the driver it imports is
+    # declared by the restricted-external table, not by this column.
     assert declared["parallax.postgres"] == frozenset(
         {
             "parallax.core.base",
@@ -243,305 +440,242 @@ def test_parse_support_scope_graph_reads_the_spec_fence() -> None:
             "parallax.core.dialect",
         }
     )
+    # The composition root is application-owned and has no row at all.
+    assert "parallax.snapshot" not in declared
 
 
-def test_parse_support_scope_graph_rejects_missing_block() -> None:
-    with pytest.raises(ValueError, match="support-scope-graph"):
-        dag.parse_support_scope_graph("no fenced block here")
-
-
-def test_parse_support_scope_graph_rejects_a_malformed_line() -> None:
-    with pytest.raises(ValueError, match="unparseable support-scope-graph line"):
-        dag.parse_support_scope_graph("```support-scope-graph\nnot an edge\n```")
-
-
-def test_the_shared_fence_grammar_skips_blank_lines() -> None:
-    # One grammar backs both fences, so this holds for `dependency-graph` too.
-    assert dag.parse_support_scope_graph("```support-scope-graph\n\na --> b\n\n```") == {
-        "a": frozenset({"b"})
-    }
-    assert dag.parse_dependency_graph("```dependency-graph\n\nm-a --> m-b\n```") == [("m-a", "m-b")]
-
-
-def _spec_declarations() -> tuple[dict[str, frozenset[str]], dict[str, frozenset[str]]]:
-    """§7's two declarations of the support-scope graph: the fence, then the prose."""
-    text = dag.PYTHON_MD.read_text()
-    return dag.parse_support_scope_graph(text), dag.parse_support_scope_table(text)
-
-
-def test_committed_support_scope_table_matches_the_spec() -> None:
-    # Parity holds today, so `generate()` never raises on the committed tree.
-    dag.check_support_scope_parity(*_spec_declarations())
-
-
-def test_support_scope_parity_fails_on_a_dropped_grant() -> None:
-    declared, prose = _spec_declarations()
-    declared["parallax.postgres"] = declared["parallax.postgres"] - {"parallax.core.dialect"}
-    prose["parallax.postgres"] = declared["parallax.postgres"]
-    with pytest.raises(ValueError, match=r"'parallax\.postgres' has drifted"):
-        dag.check_support_scope_parity(declared, prose)
-
-
-def test_support_scope_parity_fails_on_a_scope_only_the_spec_declares() -> None:
-    declared, prose = _spec_declarations()
-    declared["parallax.core.ghost"] = frozenset({"parallax.core.base"})
-    prose["parallax.core.ghost"] = frozenset({"parallax.core.base"})
-    with pytest.raises(ValueError, match="declared only in the spec"):
-        dag.check_support_scope_parity(declared, prose)
-
-
-def test_support_scope_parity_fails_on_a_scope_only_the_tool_declares() -> None:
-    declared, prose = _spec_declarations()
-    del declared["parallax.snapshot.handle._materialization"]
-    del prose["parallax.snapshot.handle._materialization"]
-    with pytest.raises(ValueError, match="declared only in the tool"):
-        dag.check_support_scope_parity(declared, prose)
-
-
-def test_a_tampered_spec_fence_fails_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The full canary: editing §7 without editing the tool (or the reverse) makes
-    # `check_dag_sync.py` refuse to generate, so `python-check-dag-sync` blocks.
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace("parallax.snapshot.handle --> parallax.core.navigate\n", "", 1)
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
-
-    with pytest.raises(ValueError, match=r"'parallax\.snapshot\.handle' has drifted"):
-        dag.generate()
-
-
-# --------------------------------------------------------------------------
-# §7 prose parity: the authoritative rows are the third input.
-#
-# §7 states support-scope grants twice ("The prose rows and the block MUST
-# agree"), so a check reading only the fence lets a prose row silently disagree
-# with what is enforced. These canaries prove each representation is load-bearing.
-# --------------------------------------------------------------------------
-def test_parse_support_scope_table_reads_the_prose_rows() -> None:
-    prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
-    assert "parallax.snapshot.materialize" in prose["parallax.snapshot.handle"]
-    # The Postgres row grants first-party scopes alone: the driver it imports is
-    # declared by the restricted-external table, not by this column.
-    assert prose["parallax.postgres"] == frozenset(
-        {
-            "parallax.core.base",
-            "parallax.core.wire",
-            "parallax.core.db_port",
-            "parallax.core.db_error",
-            "parallax.core.dialect",
-        }
-    )
-    # The composition-root row is application-owned and declares no scope.
-    assert "parallax.snapshot" not in prose
-
-
-def test_parse_support_scope_table_expands_the_child_group_row() -> None:
-    # The write-execution row names three scopes in the *owner* cell, two of
-    # them abbreviated, because its enforcement-scope cell says "those three
-    # scopes". All three must resolve, sharing one grant row.
-    prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
+def test_the_write_lowering_group_row_names_its_three_scopes() -> None:
+    # One row, three scopes in its scope cell, one shared grant.
+    declared = _spec_first_party_grants()
     group = [
         "parallax.snapshot.handle._family",
         "parallax.snapshot.handle._keyed_sql",
         "parallax.snapshot.handle._write_lowering",
     ]
-    assert set(group) <= set(prose)
-    assert len({prose[scope] for scope in group}) == 1
+    assert set(group) <= set(declared)
+    assert len({declared[scope] for scope in group}) == 1
+    assert declared[group[0]] == dag.PYTHON_FIRST_PARTY_GRANTS[group[0]]
 
 
-def test_the_three_declarations_agree_on_the_committed_tree() -> None:
-    fence, prose = _spec_declarations()
-    assert prose == fence
-    assert prose == dict(dag.SUPPORT_SCOPE_DEPS)
+def test_first_party_support_parity_fails_on_a_dropped_grant() -> None:
+    declared = _spec_first_party_grants()
+    declared["parallax.postgres"] = declared["parallax.postgres"] - {"parallax.core.dialect"}
+    with pytest.raises(ValueError, match=r"'parallax\.postgres' has drifted"):
+        dag.check_first_party_support_parity(declared)
 
 
-def test_parse_support_scope_table_rejects_a_missing_table() -> None:
-    with pytest.raises(ValueError, match="no §7 enforcement-topology table"):
-        dag.parse_support_scope_table("no table here")
+def test_first_party_support_parity_fails_on_a_scope_only_the_spec_declares() -> None:
+    declared = _spec_first_party_grants()
+    declared["parallax.core.ghost"] = frozenset({"parallax.core.base"})
+    with pytest.raises(ValueError, match="declared only in the spec"):
+        dag.check_first_party_support_parity(declared)
 
 
-def test_parse_support_scope_table_rejects_an_empty_table() -> None:
+def test_first_party_support_parity_fails_on_a_scope_only_the_tool_declares() -> None:
+    declared = _spec_first_party_grants()
+    del declared["parallax.snapshot.handle._materialization"]
+    with pytest.raises(ValueError, match="declared only in the tool"):
+        dag.check_first_party_support_parity(declared)
+
+
+def test_parse_first_party_support_table_rejects_a_missing_table() -> None:
+    with pytest.raises(ValueError, match="no §7 first-party support table"):
+        dag.parse_first_party_support_table("no table here")
+
+
+def test_parse_first_party_support_table_rejects_an_empty_table() -> None:
     with pytest.raises(ValueError, match="has no rows"):
-        dag.parse_support_scope_table(f"{_HEADER}\n|---|---|---|---|---|")
+        dag.parse_first_party_support_table(f"{_FIRST_PARTY_HEADER}\n")
 
 
-def test_parse_support_scope_table_rejects_a_row_of_the_wrong_width() -> None:
-    with pytest.raises(ValueError, match="does not have 5 cells"):
-        dag.parse_support_scope_table(f"{_HEADER}\n| one | two |\n")
+def test_parse_first_party_support_table_rejects_a_row_of_the_wrong_width() -> None:
+    with pytest.raises(ValueError, match="does not have 2 cells"):
+        dag.parse_first_party_support_table(f"{_FIRST_PARTY_HEADER}\n| one | two | three |\n")
 
 
-def test_parse_support_scope_table_rejects_a_support_row_naming_no_scope() -> None:
-    with pytest.raises(ValueError, match="names no enforcement scope"):
-        dag.parse_support_scope_table(
-            f"{_HEADER}\n| Thing (support) | prose | prose | `m-core` | x |\n"
-        )
-
-
-def test_a_scope_cell_of_backticked_prose_falls_back_to_the_owner_cell() -> None:
-    # The fallback is keyed on "names no scope", not on the group row's exact
-    # wording, so a scope cell whose backticks hold prose rather than a dotted
-    # name resolves from the owner column just as the group row does.
-    prose = dag.parse_support_scope_table(
-        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | `see owner` | `m-core` | x |\n"
+def test_parse_first_party_support_table_reads_a_group_row_as_one_shared_grant() -> None:
+    declared = dag.parse_first_party_support_table(
+        _first_party_table(("`parallax.core.thing`, `parallax.core.other`", "`m-core`"))
     )
-    assert prose == {"parallax.core.thing": frozenset({"parallax.core.base"})}
+    assert declared == {
+        "parallax.core.thing": frozenset({"parallax.core.base"}),
+        "parallax.core.other": frozenset({"parallax.core.base"}),
+    }
 
 
-def test_parse_support_scope_table_rejects_a_leading_dot_with_no_antecedent() -> None:
-    with pytest.raises(ValueError, match="has no preceding full name"):
-        dag.parse_support_scope_table(
-            f"{_HEADER}\n| Thing (support) | `._orphan` | those scopes | `m-core` | x |\n"
+def test_parse_first_party_support_table_rejects_a_scope_cell_of_prose() -> None:
+    # The scope cell is the relation's key: a cell that spells no backticked
+    # name, or one whose backticked text is not a scope, declares nothing and is
+    # refused rather than resolved from somewhere else.
+    with pytest.raises(ValueError, match="scope cell must hold comma-separated backticked"):
+        dag.parse_first_party_support_table(_first_party_table(("those three scopes", "`m-core`")))
+    with pytest.raises(ValueError, match=r"'see owner' is not a `parallax\.\*` enforcement scope"):
+        dag.parse_first_party_support_table(_first_party_table(("`see owner`", "`m-core`")))
+
+
+def test_parse_first_party_support_table_rejects_an_abbreviated_scope() -> None:
+    # A group row names every member outright; a sibling abbreviated against
+    # the preceding name is not a scope.
+    with pytest.raises(
+        ValueError, match=r"'\._keyed_sql' is not a `parallax\.\*` enforcement scope"
+    ):
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.snapshot.handle._family`, `._keyed_sql`", "`m-core`"))
         )
 
 
-def test_parse_support_scope_table_rejects_an_unmodeled_module_tag() -> None:
+def test_parse_first_party_support_table_rejects_a_duplicate_scope_row() -> None:
+    with pytest.raises(ValueError, match=r"declares 'parallax\.core\.thing' more than once"):
+        dag.parse_first_party_support_table(
+            _first_party_table(
+                ("`parallax.core.thing`", "`m-core`"),
+                ("`parallax.core.thing`", "`m-wire`"),
+            )
+        )
+
+
+def test_parse_first_party_support_table_rejects_an_unmodeled_module_tag() -> None:
     with pytest.raises(ValueError, match="MODULE_SCOPE does not model"):
-        dag.parse_support_scope_table(
-            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-            "`parallax.core.thing` | `m-ghost-999` | x |\n"
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "`m-ghost-999`"))
         )
 
 
-def test_parse_support_scope_table_rejects_a_backticked_non_scope_grant() -> None:
+def test_parse_first_party_support_table_rejects_a_backticked_non_scope_grant() -> None:
     # A third-party package is never a first-party grant, however it is spelled:
     # backticked, a token that is neither a module tag nor a scope is a spec
     # error rather than a skip, and its owners belong in the restricted-external
     # table instead.
     with pytest.raises(ValueError, match="neither a module tag nor"):
-        dag.parse_support_scope_table(
-            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-            "`parallax.core.thing` | `psycopg` | x |\n"
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "`m-core`, `psycopg`"))
         )
 
 
-def test_parse_support_scope_table_rejects_no_grants_beside_a_real_grant() -> None:
-    # The same contradiction the fence rejects, in the representation that
-    # spells an empty grant outright. If only one of the two refused it, §7
-    # could state the contradiction in the prose and still pass parity — the
-    # fence and `SUPPORT_SCOPE_DEPS` would simply be made to agree with the
-    # grant, and nothing would report that the row also declared none.
+def test_parse_first_party_support_table_rejects_unbackticked_prose_in_the_grant_cell() -> None:
+    # The cell is a relation's column: a token nobody parses would be a grant
+    # nobody enforces, so it is refused rather than read past.
+    with pytest.raises(ValueError, match="dependencies cell must hold comma-separated backticked"):
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "`m-core`, psycopg"))
+        )
+
+
+def test_parse_first_party_support_table_rejects_no_grants_beside_a_real_grant() -> None:
     with pytest.raises(ValueError, match=r"declares \(none\) beside a real grant"):
-        dag.parse_support_scope_table(
-            f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-            "`parallax.core.thing` | (none), `m-core` | x |\n"
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "(none), `m-core`"))
+        )
+    # Beside prose it is the prose that is refused, as it would be anywhere else.
+    with pytest.raises(ValueError, match="dependencies cell must hold comma-separated backticked"):
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "(none), psycopg"))
         )
 
 
-def test_parse_support_scope_table_reads_no_grants_alone_as_an_empty_row() -> None:
-    prose = dag.parse_support_scope_table(
-        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-        "`parallax.core.thing` | (none) | x |\n"
+def test_parse_first_party_support_table_reads_no_grants_alone_as_an_empty_row() -> None:
+    declared = dag.parse_first_party_support_table(
+        _first_party_table(("`parallax.core.thing`", "(none)"))
     )
-    assert prose == {"parallax.core.thing": frozenset()}
+    assert declared == {"parallax.core.thing": frozenset()}
 
 
-def test_no_grants_beside_unbackticked_prose_is_still_an_empty_row() -> None:
-    # The other direction of the same rule: §7 says only a backticked module tag
-    # or `parallax.*` scope declares a grant, so unbackticked `psycopg`
-    # contradicts nothing. Rejecting on "text survived removing (none)" would
-    # refuse a row this section explicitly permits.
-    prose = dag.parse_support_scope_table(
-        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-        "`parallax.core.thing` | (none), psycopg | x |\n"
+def test_parse_first_party_support_table_rejects_a_grant_no_row_declares() -> None:
+    # A grant is an edge to a scope some contract is sourced from; naming a
+    # scope neither the behavioral mapping nor this table declares would grant
+    # an edge to nothing.
+    with pytest.raises(
+        ValueError, match=r"grants scopes no §7 row declares: \['parallax\.core\.ghost'\]"
+    ):
+        dag.parse_first_party_support_table(
+            _first_party_table(("`parallax.core.thing`", "`m-core`, `parallax.core.ghost`"))
+        )
+    # A scope another row of the same table declares is fine, in either order.
+    declared = dag.parse_first_party_support_table(
+        _first_party_table(
+            ("`parallax.core.thing`", "`parallax.core.other`"),
+            ("`parallax.core.other`", "(none)"),
+        )
     )
-    assert prose == {"parallax.core.thing": frozenset()}
-    explained = dag.parse_support_scope_table(
-        f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
-        "`parallax.core.thing` | (none) — nothing first-party at all | x |\n"
-    )
-    assert explained == {"parallax.core.thing": frozenset()}
+    assert declared["parallax.core.thing"] == frozenset({"parallax.core.other"})
 
 
-def test_a_tampered_prose_row_alone_fails_generation(
+def test_a_first_party_row_edited_in_the_spec_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # THE canary this arm exists for: the fence and `SUPPORT_SCOPE_DEPS` are
-    # untouched and agree, so the pre-existing comparison passes; only the
-    # prose row is edited, and generation must still refuse.
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(
+    _spec_with(
+        tmp_path,
+        monkeypatch,
         "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
         "`parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
         "| `parallax.snapshot.handle._materialization` | `parallax.core.continuation`, "
         "`m-auto-retry`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, ",
-        1,
     )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
-
-    # The fence still matches the tool exactly — the pre-existing arm passes,
-    # so only the new prose arm can reject this edit.
-    assert dag.parse_support_scope_graph(edited) == dict(dag.SUPPORT_SCOPE_DEPS)
     with pytest.raises(
         ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
     ):
         dag.generate()
 
 
-def test_a_prose_row_deleted_alone_fails_generation(
+def test_a_first_party_row_dropped_from_the_spec_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The set-difference arm, prose side: dropping a whole support row leaves
-    # the fence declaring a scope the prose does not.
-    tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
-    edited = "\n".join(
+    row = next(
         line
         for line in original.splitlines()
-        if not line.startswith("| Snapshot delivery materialization (support")
+        if line.startswith("| `parallax.snapshot.handle._materialization` | `parallax.core.")
     )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
-
-    with pytest.raises(ValueError, match="internally inconsistent"):
+    _spec_with(tmp_path, monkeypatch, f"{row}\n", "")
+    with pytest.raises(
+        ValueError,
+        match=r"declared only in the tool \['parallax\.snapshot\.handle\._materialization'\]",
+    ):
         dag.generate()
 
 
-def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_first_party_grant_added_to_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The third state: two of the three representations edited together and
-    # agreeing, the third left behind. Before the prose arm this passed
-    # silently and shipped the over-grant.
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(
-        "parallax.snapshot.handle._materialization --> parallax.core.metamodel\n",
-        "parallax.snapshot.handle._materialization --> parallax.core.metamodel\n"
-        "parallax.snapshot.handle._materialization --> parallax.core.auto_retry\n",
-        1,
-    )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
     monkeypatch.setattr(
         dag,
-        "SUPPORT_SCOPE_DEPS",
+        "PYTHON_FIRST_PARTY_GRANTS",
         {
-            **dag.SUPPORT_SCOPE_DEPS,
-            "parallax.snapshot.handle._materialization": dag.SUPPORT_SCOPE_DEPS[
+            **dag.PYTHON_FIRST_PARTY_GRANTS,
+            "parallax.snapshot.handle._materialization": dag.PYTHON_FIRST_PARTY_GRANTS[
                 "parallax.snapshot.handle._materialization"
             ]
             | {"parallax.core.auto_retry"},
         },
     )
-
     with pytest.raises(
         ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
     ):
         dag.generate()
 
 
-def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> None:
-    # Command level, not library level: `python-check-dag-sync` runs the script, so the
-    # prose arm has to block there too. The script resolves the three files it reads
+def test_a_first_party_scope_dropped_by_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dag,
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {
+            scope: grants
+            for scope, grants in dag.PYTHON_FIRST_PARTY_GRANTS.items()
+            if scope != "parallax.snapshot.handle._materialization"
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"declared only in the spec \['parallax\.snapshot\.handle\._materialization'\]",
+    ):
+        dag.generate()
+
+
+def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path) -> None:
+    # Command level, not library level: `python-check-dag-sync` runs the script, so
+    # parity has to block there too. The script resolves the three files it reads
     # from its own location, so a copy of it laid out beside a tampered spec is the
     # command run against that spec, and the committed spec is never written.
     checkout = tmp_path / "languages" / "python"
@@ -571,15 +705,15 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> 
     )
 
     assert result.returncode == 1, result.stdout
-    assert "parallax.snapshot.handle._materialization" in result.stderr
-    assert "prose table" in result.stderr
+    assert "first-party support scope 'parallax.snapshot.handle._materialization'" in result.stderr
+    assert "the spec grants" in result.stderr
 
 
 # --------------------------------------------------------------------------
 # The handle grant row.
 # --------------------------------------------------------------------------
 def test_handle_scope_no_longer_grants_pk_gen() -> None:
-    handle = dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    handle = dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
     assert "parallax.core.pk_gen" not in handle
     # Removing it genuinely forbids the scope: nothing else reaches pk_gen.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
@@ -590,7 +724,7 @@ def test_handle_scope_no_longer_grants_pk_gen() -> None:
 def test_handle_scope_still_grants_navigate() -> None:
     # Deliberate, per spec/python.md §7: `Transaction.find` is a claimed find and
     # composes `parallax.core.navigate.canonicalize` directly.
-    assert "parallax.core.navigate" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    assert "parallax.core.navigate" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
 
 
 def test_the_read_composition_row_forbids_every_write_policy_the_parent_grants() -> None:
@@ -606,7 +740,7 @@ def test_the_read_composition_row_forbids_every_write_policy_the_parent_grants()
         "parallax.core.bitemp_write",
     )
     for policy in writes:
-        assert policy in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"], policy
+        assert policy in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"], policy
         assert policy not in forbidden["parallax.snapshot.handle"], policy
         assert policy in forbidden[scope], policy
 
@@ -624,7 +758,7 @@ def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_grants() -
         "parallax.snapshot._read_result",
         "parallax.core.read_lock",
     ):
-        assert reach in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"], reach
+        assert reach in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"], reach
         assert reach not in forbidden["parallax.snapshot.handle"], reach
         assert reach in forbidden[scope], reach
 
@@ -673,7 +807,7 @@ def test_the_spec_and_the_tool_agree_on_the_child_topology() -> None:
     declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
     assert declared == dict(dag.CHILD_SCOPES)
     dag.check_child_scope_parity(declared)
-    declared_scopes = set(dag.SUPPORT_SCOPE_DEPS) | set(dag.MODULE_SCOPE.values())
+    declared_scopes = set(dag.PYTHON_FIRST_PARTY_GRANTS) | set(dag.MODULE_SCOPE.values())
     for child, scope in declared.items():
         assert child.startswith(f"{scope.parent}.")
         assert child in declared_scopes
@@ -763,7 +897,7 @@ def test_parse_child_scope_table_rejects_a_row_of_the_wrong_width() -> None:
 
 def test_parse_child_scope_table_rejects_a_missing_table() -> None:
     with pytest.raises(ValueError, match="no §7 child-scope table"):
-        dag.parse_child_scope_table(f"{_HEADER}\n| x | y | z | (none) | w |\n")
+        dag.parse_child_scope_table(_first_party_table(("`parallax.core.thing`", "(none)")))
 
 
 def test_a_child_scope_is_a_forbidden_target_only_where_it_overlaps_nothing() -> None:
@@ -904,7 +1038,9 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
     # exception keeps the row tight for every other descriptor module instead.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert dag.SUPPORT_SCOPE_DEPS["parallax.descriptor._hub"] == frozenset({"parallax.core.entity"})
+    assert dag.PYTHON_FIRST_PARTY_GRANTS["parallax.descriptor._hub"] == frozenset(
+        {"parallax.core.entity"}
+    )
     assert "parallax.core.entity" not in adjacency["parallax.descriptor"]
     assert "parallax.core.entity" in forbidden["parallax.descriptor"]
     assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
@@ -932,7 +1068,7 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
             "parallax.core.entity._pydantic_storage",
         }
     )
-    assert siblings <= dag.SUPPORT_SCOPE_DEPS["parallax.core.entity._instance_state"]
+    assert siblings <= dag.PYTHON_FIRST_PARTY_GRANTS["parallax.core.entity._instance_state"]
     assert not siblings & adjacency["parallax.core.entity"]
     assert all(dag.scope_ancestors(one) == frozenset({"parallax.core.entity"}) for one in siblings)
     assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
@@ -959,16 +1095,6 @@ _RECORDER_ROW = (
     "| `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle` "
     "| isolated |"
 )
-
-
-def _spec_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: str) -> None:
-    """Point the tool at a copy of the spec with ``old`` replaced by ``new`` once."""
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(old, new, 1)
-    assert edited != original
-    tampered = tmp_path / "python.md"
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
 
 
 def test_a_seal_dropped_by_the_tool_alone_fails_generation(
@@ -1063,39 +1189,21 @@ def test_a_child_declared_by_two_rows_fails_generation(
         dag.generate()
 
 
-def test_the_mixed_table_labels_declare_no_child_topology(
+def test_a_first_party_scope_declared_by_two_rows_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The "sealed child of" phrasing a mixed-table row's first cell carries is
-    # description: the child-scope table is the one declaration, so rewording a
-    # label moves nothing and the committed block stays in sync.
-    _spec_with(
-        tmp_path,
-        monkeypatch,
-        "(support, sealed child of `parallax.snapshot.handle`)",
-        "(support, child of `parallax.snapshot.handle`)",
-    )
-    assert dag.main(["--check"]) == 0
-
-
-def test_a_support_scope_declared_by_two_prose_rows_fails_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The prose rows are one of three declarations of the support-scope graph,
-    # so a second row for the same scope is a contradiction the parity check
-    # never sees: the later grants would replace the earlier ones, and agreeing
-    # with the fence would clear a row that disagrees with it.
+    # A second row for the same scope is a contradiction the parity check
+    # would never see: the later grants would replace the earlier ones, and
+    # agreeing with the tool would clear a row that disagrees with it.
     original = dag.PYTHON_MD.read_text()
     row = next(
         line
         for line in original.splitlines()
-        if line.startswith("| Snapshot write-observation retention (support")
+        if line.startswith("| `parallax.snapshot.handle._retention` | `m-metamodel`")
     )
     contradiction = row.replace("`m-metamodel`", "`m-sql`", 1)
     assert contradiction != row
-    tampered = tmp_path / "python.md"
-    tampered.write_text(original.replace(row, f"{contradiction}\n{row}", 1))
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+    _spec_with(tmp_path, monkeypatch, row, f"{contradiction}\n{row}")
 
     with pytest.raises(ValueError, match="more than once"):
         dag.generate()
@@ -1111,7 +1219,7 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     scope = "parallax.snapshot.handle._errors"
-    assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset()
+    assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset()
     assert dag.transitive_closure(adjacency, scope) == frozenset()
     blocked = set(forbidden[scope])
     assert "parallax.core.base" in blocked
@@ -1119,7 +1227,7 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
     assert dag.CONFORMANCE_ROOT in blocked
     # ...and only its own package's ancestors escape, for the overlap reason
     # every child row omits them.
-    assert set(dag.SUPPORT_SCOPE_DEPS) - set(dag.CHILD_SCOPES) - blocked == {
+    assert set(dag.PYTHON_FIRST_PARTY_GRANTS) - set(dag.CHILD_SCOPES) - blocked == {
         "parallax.snapshot.handle"
     }
 
@@ -1141,20 +1249,12 @@ def test_a_zero_grant_row_also_forbids_every_sibling_child_scope() -> None:
     assert "parallax.snapshot.handle" not in blocked
 
 
-def test_the_fence_spells_a_zero_grant_scope_with_the_no_grants_target() -> None:
-    declared = dag.parse_support_scope_graph(dag.PYTHON_MD.read_text())
+def test_the_table_spells_a_zero_grant_scope_with_none() -> None:
+    # A scope contributing no edge at all still has a row, and parity holds on
+    # it: the emptiness is the declaration.
+    declared = _spec_first_party_grants()
     assert declared["parallax.snapshot.handle._errors"] == frozenset()
-    # And the prose column spells the same thing, so parity holds on a scope
-    # that contributes no edge at all.
-    prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
-    assert prose["parallax.snapshot.handle._errors"] == frozenset()
-
-
-def test_parse_support_scope_graph_rejects_no_grants_beside_a_real_grant() -> None:
-    with pytest.raises(ValueError, match=r"declare \(none\) beside a real grant"):
-        dag.parse_support_scope_graph(
-            "```support-scope-graph\na --> (none)\na --> parallax.core.base\n```"
-        )
+    assert dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle._errors"] == frozenset()
 
 
 # --------------------------------------------------------------------------
@@ -1168,7 +1268,7 @@ def test_the_preflight_seam_grants_the_query_module_not_the_frontend() -> None:
     # reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     scope = "parallax.snapshot.handle._preflight"
-    assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset(
+    assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset(
         {
             "parallax.core.metamodel",
             "parallax.core.predicate",
@@ -1228,7 +1328,7 @@ def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None
 def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: Path) -> None:
     # `m-batch-write` IS in the parent handle grant row, so the broad contract
     # permits this import; only the `_materialization` child contract can reject it.
-    assert "parallax.core.batch_write" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    assert "parallax.core.batch_write" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
     reported = broken_by(
         linted_copy,
         "parallax.snapshot.handle._materialization",
@@ -1304,7 +1404,7 @@ def test_a_write_policy_import_in_the_read_composition_fails_lint_imports(
     # `m-batch-write` IS in the parent handle grant row — the Write Planner's
     # strategy adapters are wired there — so the broad contract permits this
     # import and only the child row can reject it.
-    assert "parallax.core.batch_write" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    assert "parallax.core.batch_write" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
     reported = broken_by(
         linted_copy,
         "parallax.snapshot.handle._read_scope",
@@ -1328,7 +1428,9 @@ def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports(
     # Row-to-graph conversion IS in the parent handle grant row — every read the
     # package publishes goes through it — so the broad contract permits this
     # import and only the child row can reject it.
-    assert "parallax.snapshot.materialize" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    assert (
+        "parallax.snapshot.materialize" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
+    )
     reported = broken_by(
         linted_copy,
         "parallax.snapshot.handle._keyed_writes",
@@ -1585,7 +1687,7 @@ def test_parse_restricted_external_table_rejects_a_row_of_the_wrong_width() -> N
 
 def test_parse_restricted_external_table_rejects_a_missing_table() -> None:
     with pytest.raises(ValueError, match="no §7 restricted-external table"):
-        dag.parse_restricted_external_table(f"{_HEADER}\n| x | y | z | (none) | w |\n")
+        dag.parse_restricted_external_table(_first_party_table(("`parallax.core.thing`", "(none)")))
 
 
 def test_an_owner_added_to_the_spec_alone_fails_generation(

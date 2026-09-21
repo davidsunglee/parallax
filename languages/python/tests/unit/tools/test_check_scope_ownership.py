@@ -16,9 +16,9 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
-present in ``SUPPORT_SCOPE_DEPS`` but missing from ``CHILD_SCOPES`` is exactly
-the state in which ``check_dag_sync`` would emit it into its own parent's
-forbidden row, where import-linter silently skips it.
+present in ``PYTHON_FIRST_PARTY_GRANTS`` but missing from ``CHILD_SCOPES`` is
+exactly the state in which ``check_dag_sync`` would emit it into its own
+parent's forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
 ancestor scopes**, not one owner outright: a file inside a declared child scope
@@ -185,9 +185,9 @@ def test_undeclared_nested_scope_fails(
     # as a child of `parallax.core.entity` is precisely the state in which the
     # generator emits it into its parent's forbidden row and import-linter skips
     # it. The ownership check refuses it instead.
-    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     tampered["parallax.core.entity._members"] = frozenset({"parallax.core.base"})
-    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
 
     assert own.main([]) == 1
     err = capsys.readouterr().err
@@ -198,9 +198,9 @@ def test_undeclared_nested_scope_fails(
 def test_a_declared_nested_scope_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     # The same nested scope, correctly registered, passes — so the failure above
     # is the missing declaration, not the nesting itself.
-    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     tampered["parallax.core.entity._members"] = frozenset({"parallax.core.base"})
-    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
     monkeypatch.setattr(
         dag,
         "CHILD_SCOPES",
@@ -286,10 +286,10 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
         "parallax.core.entity._pydantic_storage": "parallax.core.entity",
         "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     }
-    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered = dict(dag.PYTHON_FIRST_PARTY_GRANTS)
     for scope in zero_grant:
         tampered[scope] = frozenset({"parallax.core.base"})
-    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", tampered)
     assert own.zero_grant_scopes() == {}
     leaf = _scratch_package_path(_STDLIB_LEAF)
     leaf.write_text(_IMPORT_FREE)
@@ -313,9 +313,9 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     # so ANY nameable owner in the chain settles the module, at any depth.
     monkeypatch.setattr(
         dag,
-        "SUPPORT_SCOPE_DEPS",
+        "PYTHON_FIRST_PARTY_GRANTS",
         {
-            **dag.SUPPORT_SCOPE_DEPS,
+            **dag.PYTHON_FIRST_PARTY_GRANTS,
             "parallax.snapshot.handle._nest": frozenset({"parallax.core.base"}),
             "parallax.snapshot.handle._nest._leaf": frozenset({"parallax.core.base"}),
         },
@@ -512,8 +512,8 @@ def _without_sibling_grants(monkeypatch: pytest.MonkeyPatch) -> None:
     """Withdraw the two sibling grants the instance-state scope's imports stand on."""
     monkeypatch.setattr(
         dag,
-        "SUPPORT_SCOPE_DEPS",
-        {**dag.SUPPORT_SCOPE_DEPS, _BACKING: frozenset[str]()},
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, _BACKING: frozenset[str]()},
     )
 
 
@@ -548,8 +548,8 @@ def _sealed_probe_scope(monkeypatch: pytest.MonkeyPatch, granted: str) -> None:
     """Declare `_probe` a sealed child of the Entity frontend granted `granted`."""
     monkeypatch.setattr(
         dag,
-        "SUPPORT_SCOPE_DEPS",
-        {**dag.SUPPORT_SCOPE_DEPS, _PROBE_SCOPE: frozenset({granted})},
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, _PROBE_SCOPE: frozenset({granted})},
     )
     monkeypatch.setattr(
         dag,
