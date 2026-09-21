@@ -22,9 +22,9 @@ importer exemption), and the support-scope additions:
 * an isolated child scope, which a grant on its parent does NOT carry, with a
   canary importing the testing-only lifecycle recorder into a production scope
   the parent package is granted to;
-* the ``isolated`` and ``sealed`` marks §7's rows carry, each naming the parent
-  its guarantee is stated against — mark, scope, and parent compared with the
-  tool's tables, with a drift canary per side and one for a falsified parent;
+* the child topology §7 declares as one table — each child's parent and its
+  ``ordinary``, ``sealed``, or ``isolated`` import policy — the table grammar,
+  and parity with ``CHILD_SCOPES``, with a drift canary per side and per column;
 * a zero-grant child scope, whose emptiness IS its contract, with two canaries —
   one importing a scope from outside its own package, one importing a sibling
   child scope inside it, the half a package-scoped row can only reach by naming
@@ -658,30 +658,112 @@ def test_the_read_composition_row_inherits_retry_rather_than_forbidding_it() -> 
 # Child scopes: behavioral or support contract sources, and forbidden targets
 # in a sibling's zero-grant row.
 # --------------------------------------------------------------------------
-def test_child_scopes_are_declared_under_their_parent() -> None:
-    dag.check_child_scopes()
+# The child-scope table header the parser keys on, for synthetic fixtures.
+_CHILD_HEADER = (
+    "| Child enforcement scope | Parent enforcement scope | Import policy |\n|---|---|---|"
+)
+
+
+def _child_table(*rows: tuple[str, str, str]) -> str:
+    body = "".join(f"| {child} | {parent} | {policy} |\n" for child, parent, policy in rows)
+    return f"{_CHILD_HEADER}\n{body}"
+
+
+def test_the_spec_and_the_tool_agree_on_the_child_topology() -> None:
+    declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
+    assert declared == dict(dag.CHILD_SCOPES)
+    dag.check_child_scope_parity(declared)
     declared_scopes = set(dag.SUPPORT_SCOPE_DEPS) | set(dag.MODULE_SCOPE.values())
-    for child, parent in dag.CHILD_SCOPE_PARENT.items():
-        assert child.startswith(f"{parent}.")
+    for child, scope in declared.items():
+        assert child.startswith(f"{scope.parent}.")
         assert child in declared_scopes
+        assert scope.parent in declared_scopes
 
 
-def test_check_child_scopes_rejects_an_undeclared_parent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        dag, "CHILD_SCOPE_PARENT", {"parallax.core.ghost.child": "parallax.core.ghost"}
+def test_parse_child_scope_table_reads_child_parent_and_policy() -> None:
+    declared = dag.parse_child_scope_table(
+        _child_table(
+            ("`parallax.core.entity._layout`", "`parallax.core.entity`", "sealed"),
+            ("`parallax.core.entity._edit`", "`parallax.core.entity`", "ordinary"),
+        )
     )
-    with pytest.raises(ValueError, match="undeclared parent scope"):
-        dag.check_child_scopes()
+    assert declared == {
+        "parallax.core.entity._layout": dag.ChildScope(
+            parent="parallax.core.entity", policy="sealed"
+        ),
+        "parallax.core.entity._edit": dag.ChildScope(
+            parent="parallax.core.entity", policy="ordinary"
+        ),
+    }
 
 
-def test_check_child_scopes_rejects_a_child_outside_its_parent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        dag, "CHILD_SCOPE_PARENT", {"parallax.core.base": "parallax.snapshot.handle"}
-    )
+def test_parse_child_scope_table_rejects_an_unknown_policy() -> None:
+    # The vocabulary is closed: a policy nothing grades would be a promise no
+    # tool carries, so it is refused rather than read as ordinary.
+    with pytest.raises(ValueError, match="import policy 'porous', which is none of"):
+        dag.parse_child_scope_table(
+            _child_table(("`parallax.core.entity._layout`", "`parallax.core.entity`", "porous"))
+        )
+
+
+def test_parse_child_scope_table_rejects_an_undeclared_parent() -> None:
+    with pytest.raises(ValueError, match=r"undeclared parent scope 'parallax\.core\.ghost'"):
+        dag.parse_child_scope_table(
+            _child_table(("`parallax.core.entity._layout`", "`parallax.core.ghost`", "sealed"))
+        )
+
+
+def test_parse_child_scope_table_rejects_an_undeclared_child() -> None:
+    # Both policies beyond ordinary describe a child relationship, so neither can
+    # describe a scope nothing declares.
+    with pytest.raises(ValueError, match=r"'parallax\.core\.ghost', which is not a declared"):
+        dag.parse_child_scope_table(
+            _child_table(("`parallax.core.ghost`", "`parallax.core.entity`", "sealed"))
+        )
+
+
+def test_parse_child_scope_table_rejects_a_child_outside_its_parent() -> None:
     with pytest.raises(ValueError, match="not nested inside its parent"):
-        dag.check_child_scopes()
+        dag.parse_child_scope_table(
+            _child_table(("`parallax.core.base`", "`parallax.snapshot.handle`", "ordinary"))
+        )
+
+
+def test_parse_child_scope_table_rejects_a_duplicate_row() -> None:
+    # Keeping the last row would let a wrong parent or policy stand in the spec
+    # while the comparison, reading only what survived, matched the tool.
+    with pytest.raises(
+        ValueError, match=r"declares 'parallax\.core\.entity\._layout' more than once"
+    ):
+        dag.parse_child_scope_table(
+            _child_table(
+                ("`parallax.core.entity._layout`", "`parallax.core.entity`", "sealed"),
+                ("`parallax.core.entity._layout`", "`parallax.core.entity`", "ordinary"),
+            )
+        )
+
+
+def test_parse_child_scope_table_rejects_a_cell_naming_two_scopes() -> None:
+    with pytest.raises(ValueError, match="child cell must hold exactly one backticked"):
+        dag.parse_child_scope_table(
+            _child_table(
+                (
+                    "`parallax.core.entity._layout`, `parallax.core.entity._edit`",
+                    "`parallax.core.entity`",
+                    "sealed",
+                )
+            )
+        )
+
+
+def test_parse_child_scope_table_rejects_a_row_of_the_wrong_width() -> None:
+    with pytest.raises(ValueError, match="child-scope table row does not have 3 cells"):
+        dag.parse_child_scope_table(f"{_CHILD_HEADER}\n| one | two |\n")
+
+
+def test_parse_child_scope_table_rejects_a_missing_table() -> None:
+    with pytest.raises(ValueError, match="no §7 child-scope table"):
+        dag.parse_child_scope_table(f"{_HEADER}\n| x | y | z | (none) | w |\n")
 
 
 def test_a_child_scope_is_a_forbidden_target_only_where_it_overlaps_nothing() -> None:
@@ -695,18 +777,18 @@ def test_a_child_scope_is_a_forbidden_target_only_where_it_overlaps_nothing() ->
     # would otherwise carry it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert set(dag.CHILD_SCOPE_PARENT) <= set(forbidden)
+    assert set(dag.CHILD_SCOPES) <= set(forbidden)
     for scope, blocked in forbidden.items():
-        children_named = set(blocked) & set(dag.CHILD_SCOPE_PARENT)
+        children_named = set(blocked) & set(dag.CHILD_SCOPES)
         overlapping = dag.scope_ancestors(scope) | dag.scope_descendants(scope) | {scope}
-        expected = dag.ISOLATED_CHILD_SCOPES - overlapping
+        expected = dag.scopes_with_policy("isolated") - overlapping
         if not adjacency[scope]:
             expected = expected | dag.scope_siblings(scope)
         assert children_named == expected, scope
         # Whatever a row names, it never names something it overlaps.
         assert not (children_named & overlapping)
     # A parent still never forbids its own children.
-    for parent in set(dag.CHILD_SCOPE_PARENT.values()):
+    for parent in {declared.parent for declared in dag.CHILD_SCOPES.values()}:
         assert not (set(forbidden[parent]) & dag.scope_descendants(parent)), parent
 
 
@@ -725,14 +807,6 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
     # in its parent's row would overlap that contract's source package. That edge
     # is enforced over the files instead, by `tools/check_scope_ownership.py`.
     assert recorder not in forbidden["parallax.core.execution_lifecycle"]
-
-
-def test_check_child_scopes_rejects_an_isolated_scope_that_is_not_a_child(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(dag, "ISOLATED_CHILD_SCOPES", frozenset({"parallax.core.ghost"}))
-    with pytest.raises(ValueError, match="not declared child scopes"):
-        dag.check_child_scopes()
 
 
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
@@ -785,8 +859,8 @@ def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     parent = set(forbidden["parallax.snapshot.handle"])
-    for child, declared_parent in dag.CHILD_SCOPE_PARENT.items():
-        if declared_parent != "parallax.snapshot.handle":
+    for child, declared in dag.CHILD_SCOPES.items():
+        if declared.parent != "parallax.snapshot.handle":
             continue
         assert parent < set(forbidden[child]), child
     # `_materialization` owns read preparation, SQL generation, read locking,
@@ -867,27 +941,34 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
     # declared SEALED and `tools/check_scope_ownership.py` refuses the imports
     # into that package no granted scope covers — the two halves are what make
     # the grant complete.
-    assert "parallax.core.entity._instance_state" in dag.SEALED_CHILD_SCOPES
-
-
-def test_the_spec_marks_the_child_scopes_the_tool_isolates_and_seals() -> None:
-    marked = dag.parse_child_scope_marks(dag.PYTHON_MD.read_text())
-    assert set(marked["isolated"]) == dag.ISOLATED_CHILD_SCOPES
-    assert set(marked["sealed"]) == dag.SEALED_CHILD_SCOPES
-    for scopes in marked.values():
-        for scope, parent in scopes.items():
-            assert dag.CHILD_SCOPE_PARENT[scope] == parent
-    dag.check_child_scope_marks(marked)
+    assert dag.CHILD_SCOPES["parallax.core.entity._instance_state"].policy == "sealed"
 
 
 def test_execution_authority_is_a_sealed_behavioral_child_with_core_only_grants() -> None:
     scope = "parallax.snapshot.handle._execution_authority"
-    marked = dag.parse_child_scope_marks(dag.PYTHON_MD.read_text())
+    declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
 
-    assert marked["sealed"][scope] == "parallax.snapshot.handle"
+    assert declared[scope] == dag.ChildScope(parent="parallax.snapshot.handle", policy="sealed")
     assert adjacency[scope] == frozenset({"parallax.core.db_port", "parallax.core.unit_work"})
     assert scope in adjacency["parallax.snapshot.handle._read_scope"]
+
+
+_RETENTION_ROW = "| `parallax.snapshot.handle._retention` | `parallax.snapshot.handle` | sealed |"
+_RECORDER_ROW = (
+    "| `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle` "
+    "| isolated |"
+)
+
+
+def _spec_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: str) -> None:
+    """Point the tool at a copy of the spec with ``old`` replaced by ``new`` once."""
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(old, new, 1)
+    assert edited != original
+    tampered = tmp_path / "python.md"
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
 
 
 def test_a_seal_dropped_by_the_tool_alone_fails_generation(
@@ -895,77 +976,106 @@ def test_a_seal_dropped_by_the_tool_alone_fails_generation(
 ) -> None:
     # Sealing generates no contract, so unsealing a scope leaves every emitted
     # row byte-identical while the guarantee the spec still promises goes
-    # ungraded. The mark comparison is the only thing that reports it.
+    # ungraded. The table comparison is the only thing that reports it.
     monkeypatch.setattr(
         dag,
-        "SEALED_CHILD_SCOPES",
-        dag.SEALED_CHILD_SCOPES - {"parallax.snapshot.handle._retention"},
+        "CHILD_SCOPES",
+        {
+            **dag.CHILD_SCOPES,
+            "parallax.snapshot.handle._retention": dag.ChildScope(
+                parent="parallax.snapshot.handle", policy="ordinary"
+            ),
+        },
     )
-    with pytest.raises(ValueError, match="sealed child scopes have drifted"):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "child scope 'parallax.snapshot.handle._retention' has drifted between the spec "
+            "and the tool: the spec declares a sealed child of 'parallax.snapshot.handle', "
+            "the tool declares an ordinary child of 'parallax.snapshot.handle'"
+        ),
+    ):
         dag.generate()
 
 
-def test_a_mark_dropped_by_the_spec_alone_fails_generation(
+def test_a_policy_changed_by_the_spec_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(
-        "(support, isolated child of `parallax.core.execution_lifecycle`)",
-        "(support, child of `parallax.core.execution_lifecycle`)",
-        1,
-    )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
-
-    with pytest.raises(ValueError, match="isolated child scopes have drifted"):
+    _spec_with(tmp_path, monkeypatch, _RECORDER_ROW, _RECORDER_ROW.replace("isolated", "ordinary"))
+    with pytest.raises(
+        ValueError,
+        match=r"'parallax\.core\.execution_lifecycle\.testing' has drifted between the spec",
+    ):
         dag.generate()
 
 
-def test_a_mark_naming_another_parent_fails_generation(
+def test_a_child_row_dropped_by_the_spec_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A mark constrains a relationship, not a scope: §7 states each mark's
+    _spec_with(tmp_path, monkeypatch, f"{_RETENTION_ROW}\n", "")
+    with pytest.raises(
+        ValueError, match=r"declared only in the tool \['parallax\.snapshot\.handle\._retention'\]"
+    ):
+        dag.generate()
+
+
+def test_a_child_dropped_by_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tampered = {
+        child: declared
+        for child, declared in dag.CHILD_SCOPES.items()
+        if child != "parallax.snapshot.handle._retention"
+    }
+    monkeypatch.setattr(dag, "CHILD_SCOPES", tampered)
+    with pytest.raises(
+        ValueError, match=r"declared only in the spec \['parallax\.snapshot\.handle\._retention'\]"
+    ):
+        dag.generate()
+
+
+def test_a_parent_differing_between_the_spec_and_the_tool_fails_parity() -> None:
+    # A policy constrains a relationship, not a scope: §7 states each policy's
     # guarantee against the parent the row names, and the ownership walk takes
-    # that parent from CHILD_SCOPE_PARENT. A row naming a different one promises
-    # a guarantee nothing enforces while every scope set still matches.
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(
-        "(support, sealed child of `parallax.snapshot.handle`)",
-        "(support, sealed child of `parallax.core.entity`)",
-        1,
+    # that parent from CHILD_SCOPES. Two declarations agreeing on every child and
+    # every policy but one parent still promise a guarantee nothing enforces.
+    declared = dag.parse_child_scope_table(dag.PYTHON_MD.read_text())
+    declared["parallax.snapshot.handle._retention"] = dag.ChildScope(
+        parent="parallax.snapshot", policy="sealed"
     )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+    with pytest.raises(
+        ValueError,
+        match=re.escape("the spec declares a sealed child of 'parallax.snapshot', the tool"),
+    ):
+        dag.check_child_scope_parity(declared)
 
-    with pytest.raises(ValueError, match=re.escape("a sealed child of 'parallax.core.entity'")):
-        dag.generate()
 
-
-def test_a_mark_declared_twice_for_one_scope_fails_generation(
+def test_a_child_declared_by_two_rows_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # §7 declares each mark exactly once, so a second declaration for the same
-    # scope is a contradiction rather than a restatement. Keeping the last would
-    # let a wrong parent stand in the spec while the comparison — reading only
-    # what survived — matched CHILD_SCOPE_PARENT and passed.
-    tampered = tmp_path / "python.md"
-    original = dag.PYTHON_MD.read_text()
-    edited = original.replace(
-        "(support, sealed child of `parallax.snapshot.handle`)",
-        "(support, sealed child of `parallax.core.entity`, sealed child of "
-        "`parallax.snapshot.handle`)",
-        1,
+    _spec_with(
+        tmp_path,
+        monkeypatch,
+        _RETENTION_ROW,
+        f"{_RETENTION_ROW.replace('sealed', 'ordinary')}\n{_RETENTION_ROW}",
     )
-    assert edited != original
-    tampered.write_text(edited)
-    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
-
-    with pytest.raises(ValueError, match="a sealed child more than once"):
+    with pytest.raises(ValueError, match="more than once"):
         dag.generate()
+
+
+def test_the_mixed_table_labels_declare_no_child_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The "sealed child of" phrasing a mixed-table row's first cell carries is
+    # description: the child-scope table is the one declaration, so rewording a
+    # label moves nothing and the committed block stays in sync.
+    _spec_with(
+        tmp_path,
+        monkeypatch,
+        "(support, sealed child of `parallax.snapshot.handle`)",
+        "(support, child of `parallax.snapshot.handle`)",
+    )
+    assert dag.main(["--check"]) == 0
 
 
 def test_a_support_scope_declared_by_two_prose_rows_fails_generation(
@@ -991,17 +1101,6 @@ def test_a_support_scope_declared_by_two_prose_rows_fails_generation(
         dag.generate()
 
 
-def test_check_child_scopes_rejects_a_sealed_scope_that_is_not_a_child(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Sealing is a property of a child relationship — the grants are complete
-    # inside the package the child sits in — so it cannot describe a scope whose
-    # parent nothing declares.
-    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", frozenset({"parallax.core.ghost"}))
-    with pytest.raises(ValueError, match="sealed scopes are not declared child scopes"):
-        dag.check_child_scopes()
-
-
 # --------------------------------------------------------------------------
 # The zero-grant child scope: emptiness as a contract.
 # --------------------------------------------------------------------------
@@ -1020,7 +1119,7 @@ def test_a_zero_grant_scope_is_forbidden_every_first_party_scope() -> None:
     assert dag.CONFORMANCE_ROOT in blocked
     # ...and only its own package's ancestors escape, for the overlap reason
     # every child row omits them.
-    assert set(dag.SUPPORT_SCOPE_DEPS) - set(dag.CHILD_SCOPE_PARENT) - blocked == {
+    assert set(dag.SUPPORT_SCOPE_DEPS) - set(dag.CHILD_SCOPES) - blocked == {
         "parallax.snapshot.handle"
     }
 
@@ -1112,7 +1211,7 @@ def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> No
 def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    parent = dag.CHILD_SCOPE_PARENT["parallax.core.entity._expressions"]
+    parent = dag.CHILD_SCOPES["parallax.core.entity._expressions"].parent
     assert parent == "parallax.core.entity"
     assert set(forbidden["parallax.core.entity"]) < set(
         forbidden["parallax.core.entity._expressions"]
@@ -1653,11 +1752,11 @@ def test_a_delegated_child_that_is_not_a_leaf_fails_generation(
     # than widened.
     monkeypatch.setattr(
         dag,
-        "CHILD_SCOPE_PARENT",
+        "CHILD_SCOPES",
         {
-            **dag.CHILD_SCOPE_PARENT,
-            "parallax.core.entity._instance_state._nested": (
-                "parallax.core.entity._instance_state"
+            **dag.CHILD_SCOPES,
+            "parallax.core.entity._instance_state._nested": dag.ChildScope(
+                parent="parallax.core.entity._instance_state", policy="ordinary"
             ),
         },
     )

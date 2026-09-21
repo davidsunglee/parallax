@@ -5860,7 +5860,7 @@ reason: it reaches a value's attribute storage past every binding over it —
 including the framework's own presentation, which is layered directly on it —
 and what it reaches is Pydantic's own slot descriptors and nothing else, so a
 first-party import of any kind would mean it had grown a second job. All three
-are marked **sealed**, for the reason the three below them are.
+are **sealed**, for the reason the three below them are.
 
 `parallax.core.entity._layout` is reached the other way round. It carries a row
 of its own because a runtime that materializes values from stored rows needs the
@@ -5870,9 +5870,9 @@ the frontend's own closure. So every Snapshot module that carries one
 connection's cataloged model, or the layouts inside it, names the declared scope
 that owns what it reads rather than reaching a private module through the
 parent's edge; the same is true of the sentinel a row spells absence with, which
-is why that runtime is granted `._construction_input` as well. Both are marked
-**sealed** below, because "nothing else" is a claim about the package they sit in
-as much as about the ones they do not.
+is why that runtime is granted `._construction_input` as well. Both are
+**sealed**, because "nothing else" is a claim about the package they sit in as
+much as about the ones they do not.
 
 `parallax.core.object_query._fluent` is the one child scope declared for the
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
@@ -5944,11 +5944,12 @@ non-edges are rejected, not merely wrong directions; artifact separation never
 legalizes a forbidden edge.
 
 A grant names a whole scope, so a scope granted a parent may ordinarily import
-anything nested inside it. A scope marked **isolated** below is the exception:
-it is a forbidden target in every production row that neither contains it nor is
-contained by it, whatever those rows are granted, so reaching it is a rejected
-import rather than an unstated grant. The rows carrying that mark are the whole
-of it. The one import no row can reject is its own ancestors' —
+anything nested inside it. A child whose import policy the child-scope table
+below states as **isolated** is the exception: it is a forbidden target in every
+production row that neither contains it nor is contained by it, whatever those
+rows are granted, so reaching it is a rejected import rather than an unstated
+grant. The rows carrying that policy are the whole of it. The one import no row
+can reject is its own ancestors' —
 a forbidden entry there would overlap that contract's source, and import-linter
 skips it — so `tools/check_scope_ownership.py` rejects that edge over the files
 instead, resolving relative imports and reading an imported name as a possible
@@ -5957,9 +5958,9 @@ one, and neither naming the scope nor naming a member of it. No production
 module imports an isolated scope, and the two halves together are what enforce
 it.
 
-A scope marked **sealed** below is that same overlap seen from the other side: a
-child whose row is the whole of what it imports, inside the package holding it as
-well as outside it. A row can neither forbid what sits inside its own source
+A child whose policy is **sealed** is that same overlap seen from the other
+side: one whose row is the whole of what it imports, inside the package holding
+it as well as outside it. A row can neither forbid what sits inside its own source
 package nor except it, so it refuses a neighbour only through the chain that
 leaves it — reaching one whose own closure escapes the row is reported at
 whatever it escapes to, which is what keeps the writer, `construct`, and model
@@ -5970,9 +5971,9 @@ it happen to import. The same `tools/check_scope_ownership.py` walk closes that
 residue over the sealed scope's own files, in every spelling, so what a sealed
 scope reaches inside its parent package is what its row grants and nothing more,
 and a granted sibling stays legal however the import that reaches it is written.
-The rows carrying that mark are the whole of it;
-a scope not marked so is judged by its contract alone, and reaching a private
-module of its parent is what child scopes ordinarily do. Write-observation
+The rows carrying that policy are the whole of it; an **ordinary** child is
+judged by its contract alone, and reaching a private module of its parent is
+what child scopes ordinarily do. Write-observation
 retention is sealed for the rule read the other way round: the find executor
 drives it while its rows are live, and retention names nothing of that executor
 back. The executor is a module of the parent package, so no contract sourced at
@@ -5988,14 +5989,16 @@ and `m-unit-work` — is the whole of what the selection, its projections, and
 the Serving Model reach, and the seal is where that absence is graded over the
 package they live in rather than merely stated.
 
-Sealing generates nothing, so a scope losing that mark silently keeps every
+Sealing generates nothing, so a scope losing that policy silently keeps every
 contract it had; isolation shapes the target set of nearly every generated
-contract, so losing it changes them all at once. Both marks are therefore
-declared exactly once — the rows below, each naming the parent its guarantee is
-stated against — and `tools/check_dag_sync.py` compares mark and parent alike
-with the tables `tools/check_scope_ownership.py` enforces, so marking a scope in
-one place alone, against the wrong parent, or twice — a second declaration is a
-contradiction to reject, not a later reading to keep — fails the sync check.
+contract, so losing it changes them all at once. Each child's parent and policy
+are therefore declared exactly once — one row of the child-scope table below,
+naming the parent the policy's guarantee is stated against — and
+`tools/check_dag_sync.py` compares that table, parent and policy alike, with the
+`CHILD_SCOPES` table `tools/check_scope_ownership.py` enforces, so declaring a
+child in one place alone, against the wrong parent, under the wrong policy, or
+twice — a second row is a contradiction to reject, not a later reading to keep —
+fails the sync check.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -6328,6 +6331,48 @@ framework's own scopes.
 | `psycopg` | `parallax.postgres`, `parallax.conformance` |
 | `psycopg_pool` | `parallax.postgres` |
 
+A scope may declare **child enforcement scopes** over its own private
+implementation modules (*Child enforcement scopes*, below), and the table below
+is the whole of that topology: one row per child, naming the parent it is
+nested inside and the **import policy** governing it. A child is `ordinary`
+when its generated row is the whole of its enforcement; `isolated` and `sealed`
+are the two policies whose other half `tools/check_scope_ownership.py` grades
+over the files, as stated above. Parent and policy are properties of one
+declared relationship, so they are declared together, once, here — the labels
+the rows above carry describe a child and declare nothing. `tools/check_dag_sync.py`
+parses the table — every child and parent must be a declared scope, a child must
+be nested inside its parent, the policy vocabulary is closed, and a child is
+declared by one row, a second being a contradiction to reject rather than a
+later reading to keep — and compares it, parent and policy alike, with its own
+`CHILD_SCOPES` table, so a child declared, re-parented, or re-policied on
+either side alone fails the sync check before anything is generated.
+`tools/check_scope_ownership.py` reads that same table for the parent/child
+chains a file may resolve along, for the siblings a zero-grant row names, and
+for the scopes each policy governs.
+
+| Child enforcement scope | Parent enforcement scope | Import policy |
+|---|---|---|
+| `parallax.core.entity._construction_input` | `parallax.core.entity` | sealed |
+| `parallax.core.entity._edit` | `parallax.core.entity` | ordinary |
+| `parallax.core.entity._expressions` | `parallax.core.entity` | ordinary |
+| `parallax.core.entity._instance_state` | `parallax.core.entity` | sealed |
+| `parallax.core.entity._layout` | `parallax.core.entity` | sealed |
+| `parallax.core.entity._pydantic_storage` | `parallax.core.entity` | sealed |
+| `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle` | isolated |
+| `parallax.core.object_query._fluent` | `parallax.core.object_query` | ordinary |
+| `parallax.descriptor._hub` | `parallax.descriptor` | ordinary |
+| `parallax.snapshot.handle._errors` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._execution_authority` | `parallax.snapshot.handle` | sealed |
+| `parallax.snapshot.handle._family` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._keyed_sql` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._materialization` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._publication` | `parallax.snapshot.handle` | sealed |
+| `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle` | ordinary |
+| `parallax.snapshot.handle._retention` | `parallax.snapshot.handle` | sealed |
+| `parallax.snapshot.handle._write_lowering` | `parallax.snapshot.handle` | ordinary |
+
 - **Dependency-analysis tool.** import-linter; configuration in
   `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
   `languages/python/tools/check_dag_sync.py`, which parses the fenced
@@ -6547,9 +6592,9 @@ framework's own scopes.
   a child scope is deliberately owned by both the child and its parent: that is
   the state child scopes exist to create, and the child's tighter grant row is
   what governs it. Zero owners, **undeclared** overlapping owners (two or more
-  matching scopes that are not a parent/child chain declared in
-  `check_dag_sync.CHILD_SCOPE_PARENT`), and stale exemptions each fail the
-  check, which runs in `just python-check-scope-ownership`. The same tool adds
+  matching scopes that do not form a parent/child chain of the child-scope
+  table, read as `check_dag_sync.CHILD_SCOPES`), and stale exemptions each fail
+  the check, which runs in `just python-check-scope-ownership`. The same tool adds
   the file-level requirement no scope table can state: inside a
   package holding a scope granted `(none)`, every module must either resolve to
   a scope that row names — the zero-grant scope itself, one of its declared
@@ -6709,7 +6754,7 @@ locking unions retain the core refusal.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale, and the case where one support scope is declared by two prose rows; a child scope §7 marks isolated or sealed that `check_dag_sync.py`'s corresponding set does not name, the reverse, a mark naming a parent `check_dag_sync.CHILD_SCOPE_PARENT` does not declare for that scope, or the same mark declared twice for one scope, fails the same way; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale, and the case where one support scope is declared by two prose rows; any disagreement between the §7 child-scope table and `check_dag_sync.py`'s `CHILD_SCOPES` fails the same way — a child declared on one side alone, a parent or an import policy the two sides state differently, a child declared by two rows, one not nested inside its parent, or one whose child or parent is not a declared scope; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | CPython 3.14 `python-check-dbfree` leg with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |

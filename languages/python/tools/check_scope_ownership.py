@@ -23,10 +23,11 @@ Six findings fail the check:
 * **unowned** — the file matches no declared scope and is not exempt;
 * **undeclared overlapping owners** — the file matches several scopes that do
   not form a parent/child chain declared in
-  :data:`check_dag_sync.CHILD_SCOPE_PARENT`. Nesting must be declared, because a
-  nested scope the generator does not know about is emitted into its own
-  parent's forbidden row, where import-linter silently skips it — a contract
-  that looks present and enforces nothing;
+  :data:`check_dag_sync.CHILD_SCOPES`, the tool's copy of §7's child-scope
+  table. Nesting must be declared, because a nested scope the generator does
+  not know about is emitted into its own parent's forbidden row, where
+  import-linter silently skips it — a contract that looks present and enforces
+  nothing;
 * **import-free module beside a zero-grant scope** — see below;
 * **an isolated scope imported from inside its own ancestors** — see below;
 * **a sealed scope importing its own parent package beyond its grants** — see
@@ -64,10 +65,11 @@ own ancestor.
 Isolated scopes
 ---------------
 
-An **isolated** child scope (``check_dag_sync.ISOLATED_CHILD_SCOPES``) is a
-forbidden target in every production row that neither contains it nor is
-contained by it, which turns "no production path imports this" into a rejected
-import — everywhere except inside the scopes that DO contain it. A ``forbidden``
+An **isolated** child scope (the ``isolated`` policy of
+``check_dag_sync.CHILD_SCOPES``) is a forbidden target in every production row
+that neither contains it nor is contained by it, which turns "no production
+path imports this" into a rejected import — everywhere except inside the scopes
+that DO contain it. A ``forbidden``
 row is sourced at a package, and import-linter silently skips a forbidden module
 overlapping that source, so an ancestor's row can never name its own descendant.
 This walks those ancestors' files and rejects the import directly, resolving
@@ -78,8 +80,9 @@ complementary halves of one invariant, and neither half alone states it.
 Sealed scopes
 -------------
 
-A **sealed** child scope (``check_dag_sync.SEALED_CHILD_SCOPES``) declares that
-its grant row is complete inside the package holding it as well as outside it.
+A **sealed** child scope (the ``sealed`` policy of
+``check_dag_sync.CHILD_SCOPES``) declares that its grant row is complete inside
+the package holding it as well as outside it.
 The generated contract cannot state that half, for the mirror image of the
 isolated scope's reason: a row sourced at the child overlaps its own parent
 package, so it can neither forbid a module of that package nor except one. It
@@ -175,9 +178,12 @@ def owning_scopes(module: str, scopes: frozenset[str]) -> list[str]:
     return sorted(owners, key=len)
 
 
-def is_declared_chain(owners: list[str], children: Mapping[str, str]) -> bool:
+def is_declared_chain(owners: list[str], children: Mapping[str, dag.ChildScope]) -> bool:
     """True when each owner after the first declares its predecessor as parent."""
-    return all(children.get(deeper) == shallower for shallower, deeper in pairwise(owners))
+    return all(
+        deeper in children and children[deeper].parent == shallower
+        for shallower, deeper in pairwise(owners)
+    )
 
 
 def containing_package(relative_path: str) -> str:
@@ -278,7 +284,7 @@ def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
     so both are the edge this rejects.
     """
     found: set[str] = set()
-    for scope in dag.ISOLATED_CHILD_SCOPES:
+    for scope in dag.scopes_with_policy("isolated"):
         ancestors = dag.scope_ancestors(scope)
         for relative in paths:
             module = module_path(relative)
@@ -296,9 +302,9 @@ def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
 def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
     """A sealed child scope's imports of its own parent package beyond its grants.
 
-    A sealed scope (``check_dag_sync.SEALED_CHILD_SCOPES``) declares that its
-    grant row is the whole of what it imports, inside the package holding it as
-    well as outside it. A ``forbidden`` row sourced at the child overlaps that
+    A sealed scope (the ``sealed`` policy of ``check_dag_sync.CHILD_SCOPES``)
+    declares that its grant row is the whole of what it imports, inside the
+    package holding it as well as outside it. A ``forbidden`` row sourced at the child overlaps that
     package, so import-linter can neither reject a module of it nor except one —
     which is why the generator emits no ``ignore_imports`` entry for a grant
     naming a sibling either. What the row still refuses it refuses indirectly:
@@ -324,8 +330,8 @@ def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
     """
     found: set[str] = set()
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    for scope in dag.SEALED_CHILD_SCOPES:
-        parent = dag.CHILD_SCOPE_PARENT[scope]
+    for scope in dag.scopes_with_policy("sealed"):
+        parent = dag.CHILD_SCOPES[scope].parent
         permitted = (scope, *adjacency[scope])
         for relative in paths:
             if not is_inside(module_path(relative), scope):
@@ -348,8 +354,8 @@ def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
 def zero_grant_scopes() -> Mapping[str, str]:
     """Declared child scopes §7 grants nothing, mapped to the package holding them."""
     return {
-        scope: parent
-        for scope, parent in dag.CHILD_SCOPE_PARENT.items()
+        scope: declared.parent
+        for scope, declared in dag.CHILD_SCOPES.items()
         if scope in dag.SUPPORT_SCOPE_DEPS and not dag.SUPPORT_SCOPE_DEPS[scope]
     }
 
@@ -397,7 +403,7 @@ def production_files() -> list[str]:
 def audit(
     paths: list[str],
     scopes: frozenset[str],
-    children: Mapping[str, str],
+    children: Mapping[str, dag.ChildScope],
     exemptions: Mapping[str, str],
 ) -> dict[str, list[str]]:
     """Group every ownership finding by kind; an empty result means the tree is clean.
@@ -456,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
 
     paths = production_files()
     scopes = declared_scopes()
-    findings = audit(paths, scopes, dag.CHILD_SCOPE_PARENT, EXEMPTIONS)
+    findings = audit(paths, scopes, dag.CHILD_SCOPES, EXEMPTIONS)
     if not findings:
         nested = sum(1 for path in paths if len(owning_scopes(module_path(path), scopes)) > 1)
         print(
@@ -475,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
         "  every scope of spec/python.md §7 is covered by no import-linter contract,\n"
         "  so no gate constrains what it imports; a file under several scopes that\n"
         "  are not a declared parent/child chain has an enforcement model nothing\n"
-        "  agrees on, and a child scope missing from CHILD_SCOPE_PARENT generates a\n"
+        "  agrees on, and a child scope missing from CHILD_SCOPES generates a\n"
         "  contract import-linter silently skips. An import-free module beside a\n"
         "  zero-grant scope is reached by neither that scope's forbidden row nor any\n"
         "  chain out of it, so no gate would report an import of it. An isolated\n"
