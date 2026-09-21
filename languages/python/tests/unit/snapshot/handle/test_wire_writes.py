@@ -46,6 +46,7 @@ from parallax.snapshot.handle import (
     WireEntity,
     WriteEvidenceError,
 )
+from parallax.snapshot.materialize import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -1557,3 +1558,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         "cardNetwork": "Visa",
         "familyVariant": "CardPayment",
     }
+    origin = read_origin_of(opened[0])
+    assert origin is not None
+    assert origin.entity.name == "CardPayment"
+    assert origin.observation is None

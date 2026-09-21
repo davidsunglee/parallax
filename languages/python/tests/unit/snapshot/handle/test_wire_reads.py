@@ -39,6 +39,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.entity import _layout as entity_layout
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -267,7 +269,7 @@ def test_an_eager_wire_publication_releases_its_encoder(
 
 
 def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
-    publication = wire_publication(CUSTOMER_META, "edition")
+    publication = wire_publication(CatalogedModel(CUSTOMER_META), "edition")
     publication.release()
     publication.release()
     empty = PageBuilder(ViewSchema.of()).finish((), Pin())
@@ -867,6 +869,33 @@ def test_an_inheritance_participant_publishes_its_family_variant() -> None:
     )
     assert root["familyVariant"] == "Dog"
     assert root["barkVolume"] == 3
+
+
+def test_a_wire_read_publishes_the_variant_its_prepared_layout_fixed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The spelling is fixed once, where the selection's catalog lays out the
+    # concrete; a delivery reads it off the layout and derives none of its own,
+    # so after the model is prepared no read reaches the inheritance spelling.
+    row = {
+        "id": 1,
+        "kind": "dog",
+        "name": "Rex",
+        "owner_id": None,
+        "license_id": "L",
+        "bark_volume": 3,
+    }
+    port = QueuePort([[row], [row]])
+    database = own_root(handle.Database.connect(port, ANIMAL)).using_database_login()
+    query = deserialize_query({"target": "Animal", "predicate": {"all": {}}})
+
+    def refusing_variant(*args: object) -> str:
+        raise AssertionError("a Wire read derived a family variant of its own")
+
+    monkeypatch.setattr(entity_layout, "family_variant_name", refusing_variant)
+    first = _entity(database.wire.find(query).result())
+    second = _entity(database.wire.find(query).result())
+    assert first["familyVariant"] == second["familyVariant"] == "Dog"
 
 
 def test_a_loaded_null_to_one_view_publishes_null_and_a_guarded_parent_publishes_nothing() -> None:

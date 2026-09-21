@@ -4,10 +4,11 @@ A layout is the flyweight a materializing runtime reads instead of rebuilding a
 wrapper skeleton per row. Which members a resolved concrete Entity carries, in
 what order, where its category boundary falls, which positions its family's
 primary key occupies, which of its Attributes may hold the open temporal bound,
-what canonical order its relationship views take, and which of its directions
-are to-many are all functions of the accepted Metamodel alone — so a catalog
-derives them per exact Entity, and every row, every graph, and every execution
-it serves shares what it derived rather than rebuilding one.
+what canonical order its relationship views take, which of its directions are
+to-many, and which spelling an inheritance participant publishes its variant
+under are all functions of the accepted Metamodel alone — so a catalog derives
+them per exact Entity, and every row, every graph, and every execution it
+serves shares what it derived rather than rebuilding one.
 
 Stated over the accepted :class:`~parallax.core.metamodel.Metamodel` rather than
 over the :class:`~parallax.core.entity.DomainModel` that carries one, because
@@ -42,7 +43,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
-from parallax.core.inheritance import EntityMemberSelection
+from parallax.core.inheritance import EntityMemberSelection, family_variant_name
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -123,6 +124,15 @@ class EntityLayout:
     reaches it through, so it is settled here beside the position that direction
     takes rather than resolved again through the relationship facet by whoever
     writes or reads that position.
+
+    ``family_variant`` is the stable spelling an inheritance participant
+    publishes under the synthetic ``familyVariant`` key — the bare concrete
+    name, or the canonical qualified one when another concrete in the family
+    shares that local name — and ``None`` for a standalone Entity, which
+    publishes no such key. It is fixed here because the spelling is a fact of
+    the family's accepted concrete set, so every publication of this concrete
+    reads the one spelling the catalog derived rather than resolving the
+    inheritance facet again per node or memoizing its own answer per delivery.
     """
 
     concrete: EntityIdentity
@@ -134,6 +144,7 @@ class EntityLayout:
     to_many: frozenset[RelationshipIdentity]
     primary_key: tuple[int, ...]
     temporal_starts: tuple[int, ...] = ()
+    family_variant: str | None = None
 
     @property
     def members(self) -> Sequence[MemberIdentity]:
@@ -227,7 +238,8 @@ class LayoutCatalog:
         return layout
 
     def _build(self, identity: EntityIdentity) -> EntityLayout:
-        position = inheritance_view(self._model).entity(identity)
+        facet = inheritance_view(self._model)
+        position = facet.entity(identity)
         if (
             position is None
         ):  # pragma: no cover - an accepted model positions every Entity it declares
@@ -259,6 +271,9 @@ class LayoutCatalog:
             ),
             primary_key=self._key_positions(identity, position.root, index_of),
             temporal_starts=self._temporal_start_positions(position.root, index_of),
+            family_variant=(
+                None if position.strategy is None else family_variant_name(facet, identity)
+            ),
         )
 
     def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:

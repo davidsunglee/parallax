@@ -408,19 +408,12 @@ def test_one_wire_encoder_reuses_equal_expensive_values_across_pages_and_not_del
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     encoded: list[object] = []
-    variants: list[object] = []
-    family_variant = wire_materialize._family_variant  # pyright: ignore[reportPrivateUsage]
 
     def counting_encode(neutral_type: NeutralType, value: ManagedValue) -> object:
         encoded.append(value)
         return encode_wire(neutral_type, value)
 
-    def counting_variant(model: object, entity: object) -> str | None:
-        variants.append(entity)
-        return family_variant(model, entity)  # type: ignore[arg-type]
-
     monkeypatch.setattr(wire_materialize, "encode_managed_wire", counting_encode)
-    monkeypatch.setattr(wire_materialize, "_family_variant", counting_variant)
     rows = [_order_row(index) for index in range(1, 4)]
 
     for _ in range(2):
@@ -430,7 +423,6 @@ def test_one_wire_encoder_reuses_equal_expensive_values_across_pages_and_not_del
 
     assert encoded.count(Decimal("10.50")) == 2
     assert encoded.count(dt.date(2024, 1, 5)) == 2
-    assert len(variants) == 2
 
 
 def _observe_wire_encoders(

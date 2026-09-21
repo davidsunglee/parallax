@@ -182,7 +182,7 @@ def publication_for(selected: SelectedReadModel, interface: ReadInterface, /) ->
     if interface == "typed":
         return typed_publication(selected.model.meta, materializing(selected), selected.edition)
     if interface == "wire":
-        return wire_publication(selected.model.meta, selected.edition)
+        return wire_publication(selected.model, selected.edition)
     raise ValueError(f"the values lane publishes no graph, so {interface!r} names no publication")
 
 

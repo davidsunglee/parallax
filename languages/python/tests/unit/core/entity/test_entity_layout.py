@@ -26,7 +26,8 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import models
+from parallax.conformance import class_models, models
+from parallax.core.entity import _layout as layout_module
 from parallax.core.entity._layout import (
     CatalogedModel,
     EntityLayout,
@@ -34,7 +35,12 @@ from parallax.core.entity._layout import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import EntityMemberSelection, InheritanceEntityView, InheritanceFacet
+from parallax.core.inheritance import (
+    EntityMemberSelection,
+    InheritanceEntityView,
+    InheritanceFacet,
+    family_variant_name,
+)
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -51,7 +57,7 @@ from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RelationshipViewKey, RootView
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
-from tests.unit._corpus_model_support import corpus, target
+from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"
@@ -292,6 +298,104 @@ def test_a_table_per_concrete_subtype_participant_keeps_its_own_identity() -> No
 def test_a_standalone_entity_is_its_own_family() -> None:
     layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
     assert layout.family == _identity("Order")
+
+
+# --------------------------------------------------------------------------- #
+# The family variant: fixed per exact Entity where the catalog lays it out.     #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_standalone_entity_fixes_no_family_variant() -> None:
+    layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
+    assert layout.family_variant is None
+
+
+def test_an_inheritance_participant_fixes_its_bare_variant_spelling() -> None:
+    catalog = LayoutCatalog(corpus_model("animal"))
+    assert catalog.entity(_identity("Dog")).family_variant == "Dog"
+    assert catalog.entity(_identity("Cat")).family_variant == "Cat"
+
+
+def test_a_table_per_concrete_subtype_participant_fixes_its_own_spelling() -> None:
+    catalog = LayoutCatalog(corpus_model("rate"))
+    assert catalog.entity(_identity("DepositRate")).family_variant == "DepositRate"
+    assert catalog.entity(_identity("Rate")).family_variant == "Rate"
+
+
+def test_a_local_name_two_concretes_of_one_family_share_is_spelled_canonically() -> None:
+    from parallax.descriptor._records import Attribute, Entity, Inheritance
+    from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+
+    root = Entity(
+        name="Record",
+        namespace="catalog",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    archive = Entity(
+        name="SharedVariant",
+        namespace="archive",
+        table="archive_shared",
+        inheritance=Inheritance(role="concrete-subtype", parent="catalog.Record"),
+        attributes=(Attribute(name="archiveLabel", type="string", column="shared_label"),),
+    )
+    catalog_variant = Entity(
+        name="SharedVariant",
+        namespace="catalog",
+        table="catalog_shared",
+        inheritance=Inheritance(role="concrete-subtype", parent="catalog.Record"),
+        attributes=(Attribute(name="catalogLabel", type="string", column="shared_label"),),
+    )
+    catalog = LayoutCatalog(formed(DescriptorMetamodel(entities=(root, archive, catalog_variant))))
+    assert (
+        catalog.entity(_identity("SharedVariant", namespace="archive")).family_variant
+        == "archive.SharedVariant"
+    )
+    assert (
+        catalog.entity(_identity("SharedVariant", namespace="catalog")).family_variant
+        == "catalog.SharedVariant"
+    )
+
+
+def test_a_class_backed_model_fixes_the_variant_its_descriptor_twin_fixes() -> None:
+    # The spelling is a function of the accepted metadata alone, so the two
+    # provenances of one model lay out one answer for every Entity.
+    descriptor_meta = model_of(_domain_models()["animal"])
+    descriptor = LayoutCatalog(descriptor_meta)
+    class_backed = LayoutCatalog(model_of(class_models.MODELS["animal"]))
+    spellings = {
+        entity.identity: descriptor.entity(entity.identity).family_variant
+        for entity in descriptor_meta.entities
+    }
+    assert any(spelling is not None for spelling in spellings.values())
+    for identity, spelling in spellings.items():
+        assert class_backed.entity(identity).family_variant == spelling
+
+
+def test_the_catalog_derives_each_participants_variant_once_and_a_lookup_derives_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derived: list[EntityIdentity] = []
+
+    def counting(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
+        derived.append(concrete)
+        return family_variant_name(facet, concrete)
+
+    monkeypatch.setattr(layout_module, "family_variant_name", counting)
+    model = corpus_model("animal")
+    catalog = LayoutCatalog(model)
+    participants = [
+        entity.identity
+        for entity in model.entities
+        if _view(model, entity.identity).strategy is not None
+    ]
+    assert participants
+    assert sorted(derived, key=str) == sorted(participants, key=str)
+
+    derived.clear()
+    for entity in model.entities:
+        catalog.entity(entity.identity)
+    assert derived == []
 
 
 def test_a_single_column_key_reads_the_raw_scalar_out_of_its_own_position() -> None:

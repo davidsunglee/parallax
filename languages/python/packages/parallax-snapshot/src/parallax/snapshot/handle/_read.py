@@ -1128,13 +1128,17 @@ def typed_publication(
     return ResultPublication("typed", roots_of, edition, _release_nothing)
 
 
-def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
-    """Publish through the wire materializer: frozen declared-name value trees."""
+def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
+    """Publish through the wire materializer: frozen declared-name value trees.
+
+    ``model`` is the selection's cataloged model. Each node's family variant
+    is read off the layout that catalog fixed, so the publication's one
+    delivery-scoped reuse state is the scalar encoder.
+    """
 
     from parallax.snapshot.materialize._wire import shared_wire_encoder
 
     encode: _DeliveryWireEncoder | None = shared_wire_encoder()
-    variants: dict[EntityIdentity, str | None] = {}
     released = False
 
     def release() -> None:
@@ -1142,7 +1146,6 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
         if released:
             return
         released = True
-        variants.clear()
         if encode is not None:
             encode.release()
             encode = None
@@ -1170,12 +1173,11 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
         def publish(root: RootView, position: int) -> Iterator[object]:
             yield from wire_roots(
                 root,
-                meta,
+                model.meta,
                 includes,
                 ordinal_offset=ordinal_offset + position,
                 sources=sources,
                 encode=current,
-                variants=variants,
             )
 
         cadence = cast(
