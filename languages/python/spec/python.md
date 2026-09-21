@@ -2792,9 +2792,11 @@ of shared edition identity.
   carries, in what order, where its Attribute / Value Object boundary falls,
   which positions its family's primary key occupies, which of its Attributes may
   hold the open temporal bound, what canonical order its relationship views
-  take, and which of those directions are to-many are fixed by the accepted
-  Metamodel alone. They MUST be derived per exact Entity and shared, never
-  rebuilt per row, per Page, or per execution. A model whose accepted metadata
+  take, which of those directions are to-many, and — for an inheritance
+  participant — the stable variant spelling it publishes under `familyVariant`
+  are fixed by the accepted Metamodel alone. They MUST be derived per exact
+  Entity and shared, never rebuilt per row, per Page, per execution, or per
+  delivery. A model whose accepted metadata
   fixes no such row — two members claiming one position, or a family primary key
   the row does not express — is refused where the layout is derived, as a raised
   error rather than a stored-data classification.
@@ -3920,8 +3922,9 @@ of shared edition identity.
 - **The published value.** Every returned Entity mapping — result root and
   included node alike — is a `WireEntity`; there is no separate root type. Keys
   are declared model member names, never physical column names, and an
-  inheritance participant additionally carries its stable variant spelling under
-  `familyVariant`. Leaves are canonical Wire Values (`m-wire`), the same
+  inheritance participant additionally carries, under `familyVariant`, the
+  stable variant spelling its exact-model member layout fixes (§3). Leaves are
+  canonical Wire Values (`m-wire`), the same
   spelling the document codec stores; a temporal end's open bound carries
   `m-core`'s `infinity` literal. A Value Object occurrence in it is a mapping
   whose keys are the members the read contract carries, at every depth

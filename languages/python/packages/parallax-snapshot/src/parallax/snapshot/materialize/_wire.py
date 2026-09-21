@@ -28,7 +28,16 @@ with depth, so a back-reference renders its target once, in full, and terminates
 That is what replaces a primary-key stub: the tree, not a cycle detector, is what
 makes the value finite.
 
-Aliasing is preserved rather than copied: the unwind memoizes on
+The walk reads a node through a :class:`NodeReader`, the one seam between the
+representation a node is stored in and the Wire semantics rendered over it. A
+reader answers the layout a node is read against, its positional member values,
+one relationship view's raw arm, and the Read Origin it carries; the walk owns
+declaration order, the family variant that layout fixed, occurrence rendering,
+view keys, include-tree termination, and aliasing. :class:`RootViewReader` is
+the adapter over a Root View's own indexed state, borrowing rather than copying
+it.
+
+Aliasing is preserved rather than copied: the walk memoizes on
 ``(node, subtree)``, so every position reaching one Root View node under one subtree
 answers the identical frozen object. The cache lives for one materialization pass
 and dies with it, so its scope IS the materialization unit.
@@ -39,11 +48,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, Self, SupportsIndex, cast
+from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
-from parallax.core.inheritance import family_variant_name
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -63,9 +71,12 @@ from parallax.snapshot.materialize._root import RootView
 __all__ = [
     "EMPTY_UNWIND",
     "FAMILY_VARIANT_KEY",
+    "NodeReader",
+    "RootViewReader",
     "UnwindTree",
     "WireEntity",
     "WireValue",
+    "WireWalk",
     "opened_wire_entity",
     "read_origin_of",
     "shared_wire_encoder",
@@ -346,7 +357,6 @@ def wire_roots(
     ordinal_offset: int = 0,
     sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
     encode: _Encoder = encode_managed_wire,
-    variants: dict[EntityIdentity, str | None] | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``root_view``'s roots as Wire values, in result order.
 
@@ -365,72 +375,124 @@ def wire_roots(
     retained: Mapping[int, ReadOrigin] = (
         sources if classification.conforming else MappingProxyType({})
     )
-    unwind = _Unwind(root_view, model, retained, encode, variants)
+    walk = WireWalk(RootViewReader(root_view, retained), encode)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
-            published.append(unwind.node(verdict.node, includes))
+            published.append(walk.node(verdict.node, includes))
             continue
-        data = None if verdict.node is None else unwind.node(verdict.node, includes)
+        data = None if verdict.node is None else walk.node(verdict.node, includes)
         published.append(cast("InvalidData[WireEntity]", verdict.published(data)))
     return tuple(published)
 
 
-class _Unwind:
-    """One materialization pass's walk, and the memo it shares across roots.
+class NodeReader[Node](Protocol):
+    """How one representation answers what the Wire walk asks of a node.
 
-    The memo is per pass rather than per root deliberately: two roots reaching
-    one Root View node under one subtree share the same node in the typed lane
-    too, and a value that refuses mutation through the instance is safely
-    shared. It dies when the pass returns.
+    The walk is generic over the native reference a representation addresses a
+    node by — an allocation index into a Root View — and asks a reader four
+    things of one: the layout its state is read against, its positional member
+    values, one requested relationship view's raw arm, and the Read Origin it
+    carries. Everything about what those answers BECOME — declared-name keys,
+    canonical leaves, the variant the layout fixed, occurrence rendering, finite
+    descent, aliasing — belongs to the walk, so a reader exposes storage and
+    renders nothing.
+
+    ``member_values`` is consumed once, in layout order, and is never sliced or
+    copied by the walk, so a Root View answers its Page-owned tuple by reference.
+    ``relationship`` answers ``ABSENT`` for a view the node does not carry,
+    ``None`` for loaded-null, a native reference for loaded-one, and a tuple of
+    them for loaded-many: the reader's answer already travels in the shape the
+    walk renders, so nothing is translated between them.
     """
 
-    __slots__ = (
-        "_cache",
-        "_encode",
-        "_leaf_cache",
-        "_model",
-        "_root",
-        "_sources",
-        "_trusted",
-        "_variants",
-    )
+    def layout(self, node: Node) -> EntityLayout: ...
 
-    def __init__(
-        self,
-        root: RootView,
-        model: Metamodel,
-        sources: Mapping[int, ReadOrigin],
-        encode: _Encoder,
-        variants: dict[EntityIdentity, str | None] | None,
-    ) -> None:
+    def member_values(self, node: Node) -> Iterable[object]: ...
+
+    def relationship(self, node: Node, view: RelationshipViewKey) -> object: ...
+
+    def origin(self, node: Node) -> ReadOrigin | None: ...
+
+
+class RootViewReader:
+    """The :class:`NodeReader` over one Root View: a node is its allocation
+    index, and every answer borrows the Root View's own indexed state.
+
+    ``sources`` is the Read Origin the read retained per projection index,
+    resolved through the Root View's canonical projection for each node; it is
+    empty for a root that does not conform, so a hydrated invalid graph carries
+    none.
+    """
+
+    __slots__ = ("_root", "_sources")
+
+    def __init__(self, root: RootView, sources: Mapping[int, ReadOrigin]) -> None:
         self._root = root
-        self._model = model
         self._sources = sources
+
+    def layout(self, node: int) -> EntityLayout:
+        return self._root.layout(node)
+
+    def member_values(self, node: int) -> tuple[object, ...]:
+        return self._root.member_values(node)
+
+    def relationship(self, node: int, view: RelationshipViewKey) -> object:
+        # A Root View row is the union of the source rows its own concrete can
+        # carry, so a node whose concrete a path-root guard excluded from the
+        # level attaching this view holds NO SLOT for it, and answers absence.
+        # The union's other unloaded state — a slot present and holding ABSENT,
+        # left wherever a level could have reached the node but did not — cannot
+        # arise at a view the walk names: reaching the node there meant following
+        # the arm that view's own level wrote, and a level writes every parent it
+        # gathers. So a missing slot is the union's width showing through, and a
+        # present one is answered exactly as its level wrote it.
+        slot = self._root.view_layout(node).index_of.get(view)
+        return ABSENT if slot is None else self._root.view(node, slot)
+
+    def origin(self, node: int) -> ReadOrigin | None:
+        return self._root.projection_value(node, self._sources)
+
+
+class WireWalk[Node]:
+    """One materialization pass's walk over a reader's nodes, and the memo it
+    shares across the roots of that pass.
+
+    The memo keys the reader's native reference beside the subtree a node
+    renders under, so two positions reaching one node under one subtree answer
+    the identical frozen object — and therefore the identical claim — exactly
+    as two positions reaching one Entity instance do in the typed lane; a value
+    that refuses mutation through the instance is safely shared. The leaf
+    subtree is one object shared by every position that renders members and no
+    relationship, so a node reached under it is keyed by the reference alone.
+    The memo dies when the pass returns.
+    """
+
+    __slots__ = ("_cache", "_encode", "_leaf_cache", "_reader", "_trusted")
+
+    def __init__(self, reader: NodeReader[Node], encode: _Encoder = encode_managed_wire) -> None:
+        self._reader = reader
         self._encode = encode
         self._trusted = encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
-        self._cache: dict[tuple[int, int], _WireEntityNode] = {}
-        self._leaf_cache: dict[int, _WireEntityNode] = {}
-        self._variants = {} if variants is None else variants
+        self._cache: dict[tuple[Node, int], _WireEntityNode] = {}
+        self._leaf_cache: dict[Node, _WireEntityNode] = {}
 
-    def node(self, index: int, subtree: UnwindTree) -> _WireEntityNode:
+    def node(self, node: Node, subtree: UnwindTree) -> _WireEntityNode:
         leaf = subtree is EMPTY_UNWIND
-        key: int | tuple[int, int] = index if leaf else (index, id(subtree))
+        key: Node | tuple[Node, int] = node if leaf else (node, id(subtree))
         cache: dict[Any, _WireEntityNode] = self._leaf_cache if leaf else self._cache
         cached = cache.get(key)
         if cached is not None:
             return cached
-        entity = self._build(index, subtree)
-        # Two positions reaching one Root View node under one subtree answer the
-        # identical object and therefore the identical claim, exactly as two
-        # positions reaching one Entity instance do in the typed lane.
-        object.__setattr__(entity, "_source", self._root.projection_value(index, self._sources))
+        entity = self._build(node, subtree)
+        object.__setattr__(entity, "_source", self._reader.origin(node))
         cache[key] = entity
         return entity
 
-    def _build(self, node: int, subtree: UnwindTree) -> _WireEntityNode:
-        layout = self._root.layout(node)
-        values = self._root.member_values(node)
+    def _build(self, node: Node, subtree: UnwindTree) -> _WireEntityNode:
+        reader = self._reader
+        layout = reader.layout(node)
+        values = iter(reader.member_values(node))
         rendered: dict[str, WireValue] = {}
         for attribute, value in zip(layout.attributes, values, strict=False):
             if value is not ABSENT:
@@ -441,54 +503,34 @@ class _Unwind:
                     if self._trusted
                     else _wire_scalar(attribute.type, value, self._encode)
                 )
-        variant = self._variants.get(layout.concrete, ABSENT)
-        if variant is ABSENT:
-            variant = _family_variant(self._model, layout.concrete)
-            self._variants[layout.concrete] = variant
-        if variant is not None:
-            rendered[FAMILY_VARIANT_KEY] = cast("str", variant)
-        for occurrence, value in zip(
-            layout.occurrences, values[layout.attribute_count :], strict=True
-        ):
+        if layout.family_variant is not None:
+            rendered[FAMILY_VARIANT_KEY] = layout.family_variant
+        for occurrence, value in zip(layout.occurrences, values, strict=True):
             if value is not ABSENT:
                 rendered[occurrence.identity.path[-1]] = _occurrence(
                     value, occurrence, _STORED, self._encode, trusted=self._trusted
                 )
-        view_layout = self._root.view_layout(node)
         for view, child in subtree.children.items():
-            # A Root View row is the union of the source rows its own concrete can
-            # carry, so a node whose concrete a path-root guard excluded from the
-            # level attaching this view holds NO SLOT for it, and renders none.
-            # The union's other unloaded state — a slot present and holding
-            # ABSENT, left wherever a level could have reached the node but did
-            # not — cannot arise at a view this walk names: reaching the node here
-            # meant following the arm that view's own level wrote, and a level
-            # writes every parent it gathers. So the skip below is the union's
-            # width showing through, and the one under it is unreachable.
-            slot = view_layout.index_of.get(view)
-            if slot is None:
+            value = reader.relationship(node, view)
+            if value is ABSENT:
                 continue
-            value = self._root.view(node, slot)
-            if value is ABSENT:  # pragma: no cover - see above: a slot this walk names is written
-                continue
-            key = view.narrowed_view or view.relationship.name
-            rendered[key] = self._related(value, child)
+            rendered[view.narrowed_view or view.relationship.name] = self._related(value, child)
         return _frozen_mapping(_WireEntityNode, rendered)
 
     def _related(self, value: object, subtree: UnwindTree) -> WireValue:
-        """One loaded view's arm resolved against the Root View's own nodes.
+        """One loaded view's arm resolved against the reader's own nodes.
 
         The arm travels in the value's SHAPE: a tuple is loaded-many,
-        ``None`` is loaded-null, and a lone allocation index is loaded-one.
+        ``None`` is loaded-null, and a lone native reference is loaded-one.
         """
         if isinstance(value, tuple):
             sequence = list.__new__(_FrozenSequence)
-            for index in cast("tuple[int, ...]", value):
-                list[Any].append(sequence, self.node(index, subtree))
+            for element in cast("tuple[Node, ...]", value):
+                list[Any].append(sequence, self.node(element, subtree))
             return sequence
         if value is None:
             return None
-        return self.node(cast("int", value), subtree)
+        return self.node(cast("Node", value), subtree)
 
 
 def _put(rendered: dict[str, WireValue], key: str, value: WireValue) -> None:
@@ -691,7 +733,7 @@ def _held_members(
 
 
 def opened_wire_entity(
-    model: Metamodel, entity: EntityIdentity, row: Mapping[str, object], hint: ReadOrigin
+    model: CatalogedModel, entity: EntityIdentity, row: Mapping[str, object], hint: ReadOrigin
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
 
@@ -709,13 +751,15 @@ def opened_wire_entity(
     the declared ones. That is exact because ``row`` is an opening row's canonical
     member set — a complete Create Payload by `m-unit-work`'s own full-document
     rule, carrying the empty collection at every ``many`` the payload omitted.
+
+    ``model`` is the cataloged model the transaction writes under, so the
+    member bindings and the family variant come off the one layout its catalog
+    fixed for ``entity`` — the same layout a read of the row publishes against.
     """
-    position = inheritance_view(model).entity(entity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise ValueError(f"{entity.canonical}: no Inheritance Facet view")
+    layout = model.layouts.entity(entity)
     rendered: dict[str, WireValue] = {}
     for name, value in row.items():
-        binding = position.member_selection.binding(name)
+        binding = layout.member_selection.binding(name)
         if isinstance(binding, AttributeMetadata):
             _put(rendered, name, _wire_scalar(binding.type, value))
             continue
@@ -725,27 +769,11 @@ def opened_wire_entity(
                 name,
                 _occurrence(value, binding, _AUTHORED, encode_wire),
             )
-    variant = _family_variant(model, entity)
-    if variant is not None:
-        _put(rendered, FAMILY_VARIANT_KEY, variant)
+    if layout.family_variant is not None:
+        _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireEntityNode, rendered)
     object.__setattr__(node, "_source", hint)
     return node
-
-
-def _family_variant(model: Metamodel, entity: EntityIdentity) -> str | None:
-    """``entity``'s stable wire variant spelling, or absence for a standalone
-    Entity.
-
-    An inheritance participant's position carries a root-owned strategy and a
-    standalone Entity's carries none, so the participation test is the strategy
-    itself rather than a second enumeration of the family.
-    """
-    facet = inheritance_view(model)
-    position = facet.entity(entity)
-    if position is None or position.strategy is None:
-        return None
-    return family_variant_name(facet, entity)
 
 
 def unwind_tree(

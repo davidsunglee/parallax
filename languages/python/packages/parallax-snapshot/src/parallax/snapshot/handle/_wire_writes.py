@@ -244,7 +244,7 @@ def wire_insert(
         valid_from=valid_from,
         until=until,
     )
-    return opened_wire_entity(lane.keyed.model.meta, opened.identity, opened.row, opened.hint)
+    return opened_wire_entity(lane.keyed.model, opened.identity, opened.row, opened.hint)
 
 
 def wire_keyed_write(
