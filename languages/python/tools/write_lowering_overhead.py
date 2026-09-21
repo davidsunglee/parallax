@@ -4,9 +4,10 @@ The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
 the twenty categorical keyed-write cases, the geometry inserts, and the
 changed-ancestor successors through actual driver serialization, the
-predicate-acquisition families to their buffered group, and the
-model-preparation checkpoint. Measurements are observations:
-only an incomplete matrix changes this command's exit status.
+predicate-acquisition families to their buffered group, the public Wire insert
+to the node it answers, and the two model-preparation checkpoints.
+Measurements are observations: only an incomplete matrix changes this
+command's exit status.
 """
 
 from __future__ import annotations
@@ -90,8 +91,10 @@ single sample."""
 
 KEYED_WINDOW: Final = "keyed-write"
 ACQUISITION_WINDOW: Final = "predicate-acquisition"
+RESPONSE_WINDOW: Final = "wire-insert-response"
 MODEL_WINDOW: Final = "model-preparation"
 MODEL_CASE: Final = "model.prepared"
+MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     KEYED_WINDOW: (
         "Typed or Wire input through preparation, settlement, SQL lowering, production "
@@ -101,6 +104,11 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows "
         "through production acquisition to a buffered Materialized Write Group; no "
         "ingress preparation, JSON parsing, flush, or serialization"
+    ),
+    RESPONSE_WINDOW: (
+        "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open "
+        "transaction, from the payload arriving to the frozen node it answers; no flush, "
+        "lowering, or serialization"
     ),
     MODEL_WINDOW: "one complete model preparation from the declared Entity Classes",
 }
@@ -121,11 +129,28 @@ if Path(lowering_support.__file__ or "").resolve() != SUPPORT_MODULE:
 WINDOWS: Final[Mapping[str, str]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
     **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
+    MODEL_FAMILY_CASE: MODEL_WINDOW,
 }
 """Every case the child can be asked for, and the window it reads."""
 
 CASE_NAMES: Final = tuple(WINDOWS)
+CONTROL_CASE_NAMES: Final = (
+    *(case.name for case in lowering_support.RESPONSE_CASES),
+    MODEL_FAMILY_CASE,
+)
+"""The cases added as before/after controls beside the lowering matrix: the
+public insert response and the family-bearing preparation."""
+LEGACY_CASE_NAMES: Final = tuple(name for name in CASE_NAMES if name not in CONTROL_CASE_NAMES)
+"""The case set the retained captures were taken over, before the controls."""
+CASE_COVERAGES: Final[Mapping[str, tuple[str, ...]]] = {
+    "current": CASE_NAMES,
+    "legacy": LEGACY_CASE_NAMES,
+}
+"""Every complete case set a write-lowering envelope may carry, by the name a
+validation failure reports it under; a matrix is exact under one whole case
+set and one whole counter vocabulary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,15 +355,17 @@ def case_readings(runtime: str, reading: ChildReading) -> tuple[Reading, ...]:
 
 
 def expected_addresses(
-    runtimes: Sequence[str], call_names: Sequence[str] = CALL_NAMES
+    runtimes: Sequence[str],
+    call_names: Sequence[str] = CALL_NAMES,
+    case_names: Sequence[str] = CASE_NAMES,
 ) -> frozenset[tuple[str, str, str]]:
-    """Every (runtime, case, cell) address a complete envelope carries whose
-    keyed-write cases count ``call_names``."""
+    """Every (runtime, case, cell) address a complete envelope over
+    ``case_names`` carries whose keyed-write cases count ``call_names``."""
     addresses: set[tuple[str, str, str]] = set()
     for runtime in runtimes:
-        for case, window in WINDOWS.items():
+        for case in case_names:
             addresses.update((runtime, case, metric) for metric in METRICS)
-            if window == KEYED_WINDOW:
+            if WINDOWS[case] == KEYED_WINDOW:
                 addresses.update((runtime, case, f"calls.{name}") for name in call_names)
     return frozenset(addresses)
 

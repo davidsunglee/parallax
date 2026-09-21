@@ -78,10 +78,14 @@ total of what the window allocated.
 | `keyed-write` | write-lowering | Typed row serialization or the caller's Wire mapping; preparation; settlement; SQL lowering; production PostgreSQL bind adaptation; psycopg's own transformer dump of every bind, document binds included | database execution and network time |
 | `predicate-acquisition` | write-lowering | a prepared Bitemporal `updateUntil` predicate; the resolving read's planning and compilation; row publication and materialization; per-row no-op selection; predecessor ownership establishment from freshly composed mutable rows; aligned column construction; buffering of the Materialized Write Group | ingress preparation, JSON parsing, the flush, and driver serialization — the transaction is abandoned after the checkpoint |
 | `model-preparation` | write-lowering | one `prepare_model` over the whole structural write model: formation from the declared Entity Classes, layouts, row codec, graph construction, and write planner | the Entity Class declarations themselves, which are retained by the importing module |
+| `wire-insert-response` | write-lowering | one public `tx.wire.insert` of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen Wire node it answers | the commit that flushes the buffered row, its lowering, and driver serialization |
 | `live-delivery` | snapshot-delivery | a connected Wire find or stream against PostgreSQL, parsing included | nothing |
 | `provider-free-delivery` | snapshot-delivery | a Wire find over already-parsed provider rows through production planning, materialization, and publication | parsing and provider work |
 | `positional-materialization` | snapshot-delivery | the shipped raw-row conversion loop over prepared reads, to a finished Page | planning, statement execution, and publication |
 | `read-plan-compilation` | snapshot-delivery | one whole-table instance read planned through `ReadPlanCache.plan` into an empty cache of production capacity: deep-fetch planning, `compile_read`, and the prepared level binding the cache then retains, which is the growth from an empty cache to one compiled entry | the cache itself, composed before the window as production composes it when a handle connects; model preparation and query validation (`preflight`), likewise composed once outside it; statement execution, materialization, and publication |
+| `read-plan-reuse` | snapshot-delivery | one read looked up on the read plan cache already holding its compiled entry | planning, compilation, execution, and materialization |
+| `control-delivery` | snapshot-delivery | a Wire or Typed find or stream over already-parsed provider rows through production planning, materialization, and publication; the Typed result is never projected | parsing and provider work; the root and its port, composed before the window |
+| `result-held-metadata` | snapshot-delivery | the bytes one eager Typed result keeps reachable, read with its root open and sharing the prepared model and again with the root closed and the result the sole owner of whatever it still reaches | nothing but what the result does not reach |
 
 Retained checkpoints: `keyed-write` samples with the serialized rows, the
 prepared instruction, the buffered item, and the settled plan alive, before
@@ -214,6 +218,27 @@ the deepest chain, and the widest occurrence are the structures a compiled plan
 could differ over; sparsity and Many cardinality are stored-data properties and
 add nothing a plan retains. Elapsed and peak are one compilation on a fresh
 empty cache per sample; retained is the checkpoint above.
+
+### Before/after controls — the `control` group and two write cases
+
+The controls price what a change to result publication could move without
+being the feature itself, so a before capture and an after capture pair every
+one of them. `tests/unit/_delivery_control_support.py` spells the Snapshot
+member's control matrix once, and the write member's two control cases sit
+beside its lowering matrix in `tests/unit/_write_lowering_support.py`.
+
+| Control | Addresses | Window |
+|---|---|---|
+| Unprojected Typed delivery beside direct Wire delivery | `control-delivery-<workload>`, cells `<lane>.<form>.roots<n>.<metric>` over `conventional-fanout` and `duplicate-include`, lanes `wire` and `typed`, forms `eager` and `page32`, `n` at each memory scaling arm, metrics `elapsedUs`, `peakKiB`, `retainedKiB` | `control-delivery` |
+| Guarded include planning and delivery | `control-guarded-<width>` for widths 1, 2, and 3 — `Dog.owner`, then `Cat.owner`, then `WildBoar.owner`, each continued by `pets` narrowed to `Cat` — cells `plan.cold.<metric>`, `plan.warm.elapsedUs`, `plan.warm.retainedKiB`, and `<lane>.eager.roots<n>.<metric>` at 32 and 256 roots | `read-plan-compilation`, `read-plan-reuse`, `control-delivery` |
+| Result-held metadata | `control-held`, cells `<model>.<state>.retainedKiB` over the `small` orders model and the `large` geometry model, `shared` with the root open and `closed` after it | `result-held-metadata` |
+| Public Wire insert response | `response.insert.family.wire`: one `tx.wire.insert` of a `Dog` row of a table-per-hierarchy family carrying a One nesting a One and a Many, per-row units | `wire-insert-response` |
+| Family-bearing preparation | `model.prepared.family`: one `prepare_model` over that family alone | `model-preparation` |
+
+A Snapshot envelope is exact with the whole control group or, as the retained
+captures are, without it; `--verify --require-member snapshot-delivery` and
+`--require-member write-lowering` accept the current matrices alone, and
+`--compare --require-compatible` pairs every control before any arithmetic.
 
 ### Predicate-acquisition families — 3 levels per layout
 

@@ -26,11 +26,29 @@ Comparison pairs readings only when their subject, runtime, window, workload,
 cell, and unit all agree, names every cell present on one side alone, and
 judges a timing delta against one explicit noise allowance.
 
+Two opt-in checks tighten either mode. ``--verify ... --require-member
+SUBJECT`` also verifies that member against the exact matrix its report owner
+declares — ``instance-state`` beside the two members every verification
+requires, or one of those two against its current matrix rather than any
+coverage it once carried — so a capture the evidence audit needs whole cannot
+pass on the general collector's optional-member policy. ``--compare BASE HEAD
+--require-compatible`` refuses to print arithmetic until the two captures are
+established as comparable: clean producing trees, equal workload, contract,
+lock, sampling, and host facts, equal control and instrument sources and
+interpreter identities as the ``conditions.json`` written beside each
+portfolio records them, and every cell present on both sides in the same
+window, unit, and sample count, with the cells a report owner declares
+head-only the one permitted difference. Every missing or incomparable cell is
+named rather than folded into a ratio.
+
 Collection records how long each member took beside what it measured: a
 ``durations.json`` sidecar of spans taken outside every measured window, folded
 from each member's own sidecar. Durations are telemetry, so a member that
 writes none, or one whose sidecar does not decode, leaves its attribution
-unavailable and its envelope untouched.
+unavailable and its envelope untouched. ``conditions.json`` beside them records
+what the comparison above needs and the envelopes cannot carry: the digest of
+every instrument and control source each member measured through, and the
+identity of every interpreter it measured on.
 
 A capture is also partitioned into shards, each one member or one workload
 slice of the Snapshot member, so that separate runners can measure them and an
@@ -59,10 +77,12 @@ import uuid
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final, cast
 
 from jsonschema import ValidationError
 
+import instance_state_overhead as instance_report
 import write_lowering_overhead as write_report
 from durations import Spans, render
 from interpreter_matrix import (
@@ -78,6 +98,7 @@ from parallax.conformance.budget import BudgetContract, MemoryGates, reading_byt
 from parallax.conformance.cost_envelope import Reading, validate
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
+    CONTROL_GROUP,
     Selection,
     every_cell,
     expanded_cells,
@@ -112,6 +133,10 @@ alike. A diagnostic run is not evidence, so no path it writes may land here; a
 member script's own diagnostic is printed and writes nothing anywhere."""
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
 WRITE_SUBJECT: Final = write_report.SUBJECT
+INSTANCE_STATE_SUBJECT: Final = instance_report.SUBJECT
+REQUIRABLE_MEMBERS: Final = (SNAPSHOT_SUBJECT, WRITE_SUBJECT, INSTANCE_STATE_SUBJECT)
+"""The subjects ``--require-member`` accepts: each has a report owner that
+declares its exact matrix, which is what requiring a member checks it against."""
 TIMING_NOISE_ALLOWANCE: Final = 0.05
 """The relative allowance a timing delta between two captures must exceed to be
 read as anything but noise. Two identical quiet captures on the capture runner
@@ -160,6 +185,64 @@ MEMBERS: Final = (
         required=True,
     ),
 )
+REQUIRED_SUBJECTS: Final = frozenset(member.subject for member in MEMBERS if member.required)
+
+
+@dataclass(frozen=True, slots=True)
+class MemberSources:
+    """The sources one member measures through, relative to the workspace:
+    ``instruments`` are the report and reading scripts and the instruments they
+    read with, ``controls`` the workload definitions they measure over."""
+
+    instruments: tuple[str, ...]
+    controls: tuple[str, ...]
+
+
+MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
+    SNAPSHOT_SUBJECT: MemberSources(
+        (
+            "tools/snapshot_delivery_overhead.py",
+            "tools/snapshot_delivery_reading.py",
+            "tests/unit/memory_instruments.py",
+        ),
+        (
+            "tests/unit/_snapshot_materialization_support.py",
+            "tests/unit/_structural_geometry_support.py",
+            "tests/unit/_delivery_control_support.py",
+        ),
+    ),
+    "lifecycle-overhead": MemberSources(("tools/lifecycle_overhead.py",), ()),
+    INSTANCE_STATE_SUBJECT: MemberSources(
+        (
+            "tools/instance_state_overhead.py",
+            "tools/instance_state_reading.py",
+            "tests/unit/memory_instruments.py",
+        ),
+        ("tests/unit/_instance_state_support.py",),
+    ),
+    WRITE_SUBJECT: MemberSources(
+        (
+            "tools/write_lowering_overhead.py",
+            "tools/write_lowering_reading.py",
+            "tests/unit/memory_instruments.py",
+        ),
+        (
+            "tests/unit/_write_lowering_support.py",
+            "tests/unit/_predicate_acquisition_support.py",
+            "tests/unit/_structural_geometry_support.py",
+        ),
+    ),
+}
+"""Every member's sources, by subject. Two captures are comparable over a
+member only when its controls agree exactly; its instruments must agree too
+unless the member declares head-only cells, since the instrument measuring a
+head-only cell has no before revision to agree with."""
+
+HEAD_ONLY: Final[Mapping[str, frozenset[str]]] = {
+    INSTANCE_STATE_SUBJECT: instance_report.HEAD_ONLY_CELLS,
+}
+"""The cells each report owner declares as measured on a comparison's head
+side alone; a subject absent here declares none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,13 +252,19 @@ class MemberResult:
     failure: str | None = None
 
 
+type MemberRuntimes = Mapping[str, Mapping[str, RuntimeStatus]]
+"""Each member's recorded interpreter identity per runtime, by subject."""
+
+
 @dataclass(frozen=True, slots=True)
 class Collection:
     """Every member's outcome, in ``MEMBERS`` order, beside the spans the
-    collection recorded around and inside them."""
+    collection recorded around and inside them and the interpreter identities
+    each member recorded."""
 
     results: tuple[MemberResult, ...]
     durations: Spans
+    runtimes: MemberRuntimes = MappingProxyType({})
 
     @property
     def failed_required(self) -> bool:
@@ -290,13 +379,23 @@ def validate_snapshot_matrix(
     contract: BudgetContract,
     selected: Selection = every_cell,
     runtimes: Sequence[str] | None = None,
+    *,
+    require_controls: bool = False,
 ) -> None:
     """Validate the exact contract-derived Snapshot report matrix on every
     supported runtime among the addresses ``selected``, with comparisons of the
-    selected contract cells on the authority runtime alone."""
+    selected contract cells on the authority runtime alone.
+
+    The matrix is exact with the control group, or without it as a capture
+    taken before the group existed is; ``require_controls`` accepts the current
+    matrix alone."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
     expected = selected_addresses(contract, minors, selected)
     readings = _indexed(_readings(document), label="Snapshot reading")
+    if not require_controls and set(readings) != set(expected):
+        without = selected_addresses(contract, minors, selected, controls=False)
+        if set(readings) == set(without):
+            expected = without
     _exact(expected, readings, label="Snapshot reading")
     comparisons = _indexed(
         cast("Sequence[Document]", document["comparisons"]), label="Snapshot comparison"
@@ -363,26 +462,36 @@ def validate_snapshot_matrix(
 
 
 def validate_write_lowering_matrix(
-    document: Document, runtimes: Sequence[str] | None = None
+    document: Document, runtimes: Sequence[str] | None = None, *, current: bool = False
 ) -> None:
     """Validate the exact runtime-by-case write matrix, its windows, and units.
 
-    The matrix is exact under one whole counter vocabulary: the current one a
-    child answers, or the legacy one the retained captures were taken under,
-    across every keyed-write case on every runtime. A matrix that mixes the two
-    anywhere, or carries a counter from neither, is exact under none."""
+    The matrix is exact under one whole case coverage and one whole counter
+    vocabulary: the current ones a child answers, or the legacy ones the
+    retained captures were taken under, across every case on every runtime. A
+    matrix that mixes two anywhere, or carries a case or counter from neither,
+    is exact under none. ``current`` accepts the current coverage and
+    vocabulary alone."""
     readings = _indexed(_readings(document), label="write-lowering reading")
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
-    vocabularies = {
-        name: write_report.expected_addresses(minors, call_names)
-        for name, call_names in write_report.CALL_VOCABULARIES.items()
+    coverages = {"current": write_report.CASE_NAMES} if current else write_report.CASE_COVERAGES
+    vocabularies = (
+        {"current": write_report.CALL_NAMES} if current else write_report.CALL_VOCABULARIES
+    )
+    matrices = {
+        (coverage, vocabulary): write_report.expected_addresses(minors, call_names, case_names)
+        for coverage, case_names in coverages.items()
+        for vocabulary, call_names in vocabularies.items()
     }
     found = frozenset(readings)
-    if found not in vocabularies.values():
-        closest, expected = min(vocabularies.items(), key=lambda item: len(item[1] ^ found))
+    if found not in matrices.values():
+        (coverage, vocabulary), expected = min(
+            matrices.items(), key=lambda item: len(item[1] ^ found)
+        )
         raise ValueError(
-            "write-lowering reading matrix is not exact under any one counter vocabulary; "
-            f"against the {closest} vocabulary: {', '.join(_inexact(expected, found))}"
+            "write-lowering reading matrix is not exact under any one case coverage and "
+            f"counter vocabulary; against the {coverage} cases and {vocabulary} counters: "
+            f"{', '.join(_inexact(expected, found))}"
         )
     if cast("Sequence[object]", document.get("comparisons", ())):
         raise ValueError("write-lowering evidence declares no comparisons")
@@ -409,20 +518,80 @@ def validate_write_lowering_matrix(
             raise ValueError(f"{_spelled(address)} value disagrees with its sample median")
 
 
+def validate_instance_state_matrix(
+    document: Document, runtimes: Sequence[str] | None = None
+) -> None:
+    """Validate the exact instance-state matrix its report owner declares over
+    every supported runtime: each scenario's readings under every arm, each
+    runtime's aggregates and operation ratios, their units, and the advisory
+    comparisons recomputed from the readings they compare."""
+    minors = tuple(runtimes) if runtimes is not None else supported_minors()
+    readings = _indexed(_readings(document), label="instance-state reading")
+    _exact(
+        (("", workload, cell) for workload, cell in instance_report.expected_addresses(minors)),
+        readings,
+        label="instance-state reading",
+    )
+    comparisons = _indexed(
+        cast("Sequence[Document]", document["comparisons"]), label="instance-state comparison"
+    )
+    _exact(
+        (("", workload, cell) for workload, cell in instance_report.expected_comparisons(minors)),
+        comparisons,
+        label="instance-state comparison",
+    )
+    for address, reading_document in readings.items():
+        _runtime, _workload, cell = address
+        expected_unit = instance_report.unit_of(cell)
+        if reading_document["unit"] != expected_unit:
+            raise ValueError(
+                f"{_spelled(address)} reading unit {reading_document['unit']!r}, "
+                f"expected {expected_unit!r}"
+            )
+        if "window" in reading_document:
+            raise ValueError(f"{_spelled(address)} names a window; the matrix reads none")
+        if _samples(reading_document):
+            raise ValueError(f"{_spelled(address)} carries samples; each reading is one value")
+        _number(reading_document["value"])
+    for address, comparison_document in comparisons.items():
+        _runtime, workload, cell = address
+        value = _number(readings[address]["value"])
+        aggregate = cell == instance_report.AGGREGATE_COMPARISON
+        fields = {
+            "operator": "at-least" if aggregate else "at-most",
+            "limit": instance_report.AGGREGATE_TARGET
+            if aggregate
+            else instance_report.REGRESSION_LIMIT,
+            "unit": "ratio",
+        }
+        limit = float(fields["limit"])
+        fields["outcome"] = (
+            "within" if (value >= limit if aggregate else value <= limit) else "outside"
+        )
+        for name, expected_field in fields.items():
+            if comparison_document[name] != expected_field:
+                raise ValueError(
+                    f"{workload}.{cell} comparison {name} "
+                    f"{comparison_document[name]!r}, expected {expected_field!r}"
+                )
+
+
 def collect(runner: Runner = run_member, spans: Spans | None = None) -> Collection:
     """Attempt every member in order and fail only after required envelope
     validation. Each member runs inside its own span and is asked for a
     durations sidecar of its own, folded into ``spans`` when it arrives."""
     recorder = spans if spans is not None else Spans()
     results: list[MemberResult] = []
+    runtimes: dict[str, Mapping[str, RuntimeStatus]] = {}
     with (
         tempfile.TemporaryDirectory(prefix="parallax-durations-") as scratch,
         recorder.span("collection", COLLECTION_SPAN),
     ):
         for member in MEMBERS:
-            result, _runtimes = _attempt(member, (), Path(scratch), recorder, runner)
+            result, identities = _attempt(member, (), Path(scratch), recorder, runner)
             results.append(result)
-    return Collection(tuple(results), recorder)
+            runtimes[member.subject] = identities
+    return Collection(tuple(results), recorder, runtimes)
 
 
 def _attempt(
@@ -550,6 +719,77 @@ def _summary(document: Document, durations: Spans | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+CONDITIONS_FILE: Final = "conditions.json"
+CONDITIONS_VERSION: Final = 1
+
+
+def source_digests(sources: MemberSources, workspace: Path | None = None) -> dict[str, str]:
+    """The SHA-256 digest of each of ``sources``, by workspace-relative path."""
+    root = workspace if workspace is not None else WORKSPACE
+    return {
+        path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+        for path in (*sources.instruments, *sources.controls)
+    }
+
+
+def conditions_document(
+    runtimes: MemberRuntimes, workspace: Path | None = None
+) -> dict[str, object]:
+    """What a comparison needs beside the portfolio: every member's instrument
+    and control source digests as the capturing checkout holds them, and the
+    interpreter identity it recorded for each runtime."""
+    return {
+        "schemaVersion": CONDITIONS_VERSION,
+        "members": {
+            member.subject: {
+                "sources": source_digests(MEMBER_SOURCES[member.subject], workspace),
+                "runtimes": {
+                    runtime: status.document()
+                    for runtime, status in sorted(runtimes.get(member.subject, {}).items())
+                },
+            }
+            for member in MEMBERS
+        },
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class MemberConditions:
+    sources: Mapping[str, str]
+    runtimes: Mapping[str, RuntimeStatus]
+
+
+type Conditions = Mapping[str, MemberConditions]
+"""Each member's recorded conditions, by subject."""
+
+
+def load_conditions(path: Path) -> Conditions:
+    """The conditions a sidecar records; ``ValueError`` names the first way
+    the document is not one."""
+    document = _object(_load(path), "conditions")
+    if document.get("schemaVersion") != CONDITIONS_VERSION:
+        raise ValueError(
+            f"{path} has schemaVersion {document.get('schemaVersion')!r}, "
+            f"expected {CONDITIONS_VERSION}"
+        )
+    members = _object(document.get("members"), "conditions members")
+    loaded: dict[str, MemberConditions] = {}
+    for subject, recorded in members.items():
+        fields = _object(recorded, f"{subject} conditions")
+        sources = _object(fields.get("sources"), f"{subject} sources")
+        runtimes = _object(fields.get("runtimes"), f"{subject} runtimes")
+        if not all(
+            isinstance(digest, str) and LOCK_DIGEST_PATTERN.fullmatch(digest)
+            for digest in sources.values()
+        ):
+            raise ValueError(f"{subject} sources are not all digests")
+        loaded[subject] = MemberConditions(
+            {str(source): cast("str", digest) for source, digest in sources.items()},
+            {str(runtime): runtime_status(status) for runtime, status in runtimes.items()},
+        )
+    return loaded
+
+
 def write_portfolio(collection: Collection, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     document = portfolio_document(collection.results)
@@ -558,6 +798,8 @@ def write_portfolio(collection: Collection, out: Path) -> None:
     )
     (out / "summary.md").write_text(_summary(document, collection.durations), encoding="utf-8")
     collection.durations.write(out / DURATIONS_FILE)
+    if collection.runtimes:
+        _write_json(out / CONDITIONS_FILE, conditions_document(collection.runtimes))
     for result in collection.results:
         if result.envelope is not None:
             (out / f"{result.member.subject}.json").write_text(
@@ -688,18 +930,34 @@ def is_diagnostic(document: Document) -> bool:
     )
 
 
-def verify(document: Document, contract: BudgetContract | None = None) -> list[str]:
+def verify(
+    document: Document,
+    contract: BudgetContract | None = None,
+    required: Sequence[str] = (),
+) -> list[str]:
     """Every reason the required portfolio is not valid evidence: a missing,
     malformed, or incomplete required envelope, a snapshot-delivery envelope
     that is not authoritative, a capture taken from a dirty tree, a workload
     digest disagreeing with the inspected checkout, or members produced at
     different commits.
 
+    ``required`` names members held to their owners' exact current matrices
+    beyond that: ``instance-state`` must then be present, complete, clean,
+    current, and produced at the same commit, and a member every verification
+    already requires must carry its current matrix rather than any coverage it
+    once carried. A name outside :data:`REQUIRABLE_MEMBERS` is a ``ValueError``.
+
     The write-lowering envelope's authority is not among these: its sampling
     protocol is its own, so it is non-authoritative by construction. Neither is
     a ceiling exceeded, a memory gate passed, an arm grown, a moved lock, or an
     unpublished producing commit: see :func:`advisories`.
     """
+    unknown = sorted(set(required) - set(REQUIRABLE_MEMBERS))
+    if unknown:
+        raise ValueError(
+            f"{', '.join(unknown)} cannot be required; requirable members are "
+            f"{list(REQUIRABLE_MEMBERS)}"
+        )
     if is_diagnostic(document):
         return ["a diagnostic reading set is not evidence and cannot be verified"]
     active = contract or BudgetContract.load()
@@ -708,7 +966,7 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         return failures
     try:
         validate(snapshot)
-        validate_snapshot_matrix(snapshot, active)
+        validate_snapshot_matrix(snapshot, active, require_controls=SNAPSHOT_SUBJECT in required)
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         return [*failures, f"the snapshot-delivery envelope is invalid: {error}"]
     if snapshot.get("authority") != "authoritative":
@@ -724,7 +982,7 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
         return failures
     try:
         validate(write)
-        validate_write_lowering_matrix(write)
+        validate_write_lowering_matrix(write, current=WRITE_SUBJECT in required)
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         return [*failures, f"the write-lowering envelope is invalid: {error}"]
     if write.get("incomplete") or write.get("errors"):
@@ -737,6 +995,30 @@ def verify(document: Document, contract: BudgetContract | None = None) -> list[s
     }
     if len(commits) != 1:
         failures.append("the snapshot-delivery and write-lowering envelopes name different commits")
+    if INSTANCE_STATE_SUBJECT in required:
+        failures += _instance_state_failures(document, commits)
+    return failures
+
+
+def _instance_state_failures(document: Document, commits: set[str]) -> list[str]:
+    """Why the instance-state member is not the complete, current evidence a
+    verification requiring it needs."""
+    member, failures = _required_member(document, INSTANCE_STATE_SUBJECT)
+    if member is None:
+        return failures
+    try:
+        validate(member)
+        validate_instance_state_matrix(member)
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        return [f"the instance-state envelope is invalid: {error}"]
+    if member.get("incomplete") or member.get("errors"):
+        failures.append("the instance-state envelope is incomplete")
+    failures += _provenance_failures(member, INSTANCE_STATE_SUBJECT, workload_digest())
+    commit = str(cast("Document", member["provenance"])["commit"])
+    if commits != {commit}:
+        failures.append(
+            "the instance-state envelope names a different commit from the required members"
+        )
     return failures
 
 
@@ -857,15 +1139,17 @@ def _spelled_pair(address: PairAddress) -> str:
     return f"{runtime or '-'} | {window or '-'} | {workload} | {cell}"
 
 
-def compare(base: Document, head: Document) -> str:
+def compare(base: Document, head: Document, preface: Sequence[str] = ()) -> str:
     """Render advisory deltas between two portfolios, pairing readings only on
-    identical subject, runtime, window, workload, cell, and unit."""
+    identical subject, runtime, window, workload, cell, and unit; ``preface``
+    lines state what was established about the pair before any arithmetic."""
     lines = [
         "# Python cost report comparison",
         "",
         f"Timing deltas within {TIMING_NOISE_ALLOWANCE:.0%} and byte deltas within "
         f"{MEMORY_NOISE_ALLOWANCE:.0%} are read as noise; count deltas are exact. A cell "
         "present on one side alone, or whose unit differs, is not compared.",
+        *(("", *preface) if preface else ()),
     ]
     subjects = sorted(
         {
@@ -930,6 +1214,223 @@ def _load(path: Path) -> Document:
     return cast("Document", json.loads(path.read_text(encoding="utf-8")))
 
 
+@dataclass(frozen=True, slots=True)
+class Compatibility:
+    """Why two captures are not comparable over the required members, and what
+    was accepted about them where they are."""
+
+    failures: tuple[str, ...]
+    notes: tuple[str, ...]
+
+
+PROVENANCE_CONDITIONS: Final = (
+    "workloadDigest",
+    "budgetContractDigest",
+    "lockDigest",
+    "sampling",
+    "machine",
+    "cpu",
+    "cores",
+    "ramGiB",
+    "os",
+    "cpython",
+    "postgres",
+)
+"""The provenance facts two comparable captures must agree on; the commit and
+the tree's cleanness are judged separately."""
+
+
+def compatibility(
+    base: Document,
+    head: Document,
+    base_conditions: Conditions | None,
+    head_conditions: Conditions | None,
+    subjects: Sequence[str],
+    contract: BudgetContract | None = None,
+) -> Compatibility:
+    """Whether ``base`` and ``head`` are matched captures over ``subjects``:
+    each member present once and valid on both sides, produced from clean
+    trees under equal provenance facts, through equal control sources and, unless
+    the member declares head-only cells, equal instruments, on interpreters of
+    one identity, with every cell on both sides in the same window, unit, and
+    sample count. A cell declared head-only is noted rather than refused."""
+    active = contract or BudgetContract.load()
+    failures: list[str] = []
+    notes: list[str] = []
+    for subject in subjects:
+        member_failures, member_notes = _member_compatibility(
+            subject, base, head, base_conditions, head_conditions, active
+        )
+        failures += member_failures
+        notes += member_notes
+    return Compatibility(tuple(failures), tuple(notes))
+
+
+def _comparable_envelope(
+    side: str, document: Document, subject: str, contract: BudgetContract
+) -> tuple[Document | None, list[str]]:
+    if is_diagnostic(document):
+        return None, [f"{side}: a diagnostic reading set is not evidence"]
+    members = _members(document, subject)
+    if len(members) != 1:
+        return None, [f"{side}: expected one {subject} envelope, found {len(members)}"]
+    envelope = members[0]
+    try:
+        validate(envelope)
+        validate_matrix(envelope, subject, contract)
+        if subject == INSTANCE_STATE_SUBJECT:
+            validate_instance_state_matrix(envelope)
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        return None, [f"{side}: the {subject} envelope is invalid: {error}"]
+    failures: list[str] = []
+    if envelope.get("incomplete") or envelope.get("errors"):
+        failures.append(f"{side}: the {subject} envelope is incomplete or carries errors")
+    provenance = _provenance(envelope)
+    if provenance is None or provenance.get("dirty") is not False:
+        failures.append(f"{side}: the {subject} envelope was not produced from a clean tree")
+    return envelope, failures
+
+
+def _member_compatibility(
+    subject: str,
+    base: Document,
+    head: Document,
+    base_conditions: Conditions | None,
+    head_conditions: Conditions | None,
+    contract: BudgetContract,
+) -> tuple[list[str], list[str]]:
+    failures: list[str] = []
+    notes: list[str] = []
+    base_envelope, base_failures = _comparable_envelope(BASE, base, subject, contract)
+    head_envelope, head_failures = _comparable_envelope(HEAD, head, subject, contract)
+    failures += base_failures + head_failures
+    if base_envelope is None or head_envelope is None:
+        return failures, notes
+    base_provenance = _provenance(base_envelope) or {}
+    head_provenance = _provenance(head_envelope) or {}
+    for field in PROVENANCE_CONDITIONS:
+        if base_provenance.get(field) != head_provenance.get(field):
+            failures.append(
+                f"the {subject} envelopes disagree on {field}: base "
+                f"{base_provenance.get(field)!r}, head {head_provenance.get(field)!r}"
+            )
+    runtimes = sorted(
+        {
+            str(reading.get("runtime"))
+            for reading in (*_readings(base_envelope), *_readings(head_envelope))
+            if "runtime" in reading
+        }
+    )
+    recorded = [
+        (side, conditions.get(subject) if conditions is not None else None)
+        for side, conditions in ((BASE, base_conditions), (HEAD, head_conditions))
+    ]
+    for side, conditions in recorded:
+        if conditions is None:
+            failures.append(
+                f"{side}: no recorded conditions for {subject}, so its sources and "
+                "interpreter identities are unknown"
+            )
+    if all(conditions is not None for _side, conditions in recorded):
+        (_base, base_recorded), (_head, head_recorded) = recorded
+        assert base_recorded is not None and head_recorded is not None
+        failures += _source_differences(subject, base_recorded, head_recorded, notes)
+        failures += _runtime_differences(subject, runtimes, base_recorded, head_recorded)
+    head_only = HEAD_ONLY.get(subject, frozenset())
+    base_pairs = _pairs(base_envelope)
+    head_pairs = _pairs(head_envelope)
+    for address in sorted(base_pairs.keys() - head_pairs.keys()):
+        failures.append(f"{subject} {_spelled_pair(address)} is missing on head")
+    for address in sorted(head_pairs.keys() - base_pairs.keys()):
+        if address[3] in head_only:
+            notes.append(f"{subject} {_spelled_pair(address)} is head-only")
+        else:
+            failures.append(
+                f"{subject} {_spelled_pair(address)} is present on head alone and not "
+                "declared head-only"
+            )
+    for address in sorted(base_pairs.keys() & head_pairs.keys()):
+        previous = base_pairs[address]
+        current = head_pairs[address]
+        if previous.get("unit") != current.get("unit"):
+            failures.append(
+                f"{subject} {_spelled_pair(address)} is read in {previous.get('unit')} on "
+                f"base and {current.get('unit')} on head"
+            )
+        base_samples = len(cast("Sequence[object]", previous.get("samples", ())))
+        head_samples = len(cast("Sequence[object]", current.get("samples", ())))
+        if base_samples != head_samples:
+            failures.append(
+                f"{subject} {_spelled_pair(address)} carries {base_samples} samples on base "
+                f"and {head_samples} on head"
+            )
+    return failures, notes
+
+
+def _source_differences(
+    subject: str, base: MemberConditions, head: MemberConditions, notes: list[str]
+) -> list[str]:
+    sources = MEMBER_SOURCES[subject]
+    failures: list[str] = []
+    for path in sources.controls:
+        if base.sources.get(path) != head.sources.get(path):
+            failures.append(f"the {subject} control source {path} differs between the captures")
+    permitted = bool(HEAD_ONLY.get(subject))
+    for path in sources.instruments:
+        if base.sources.get(path) == head.sources.get(path):
+            continue
+        if permitted:
+            notes.append(
+                f"the {subject} instrument {path} differs between the captures; permitted "
+                "because the member declares head-only cells"
+            )
+        else:
+            failures.append(f"the {subject} instrument {path} differs between the captures")
+    return failures
+
+
+def _runtime_differences(
+    subject: str, runtimes: Sequence[str], base: MemberConditions, head: MemberConditions
+) -> list[str]:
+    failures: list[str] = []
+    for runtime in runtimes:
+        base_status = base.runtimes.get(runtime, RuntimeUnavailable("not recorded"))
+        head_status = head.runtimes.get(runtime, RuntimeUnavailable("not recorded"))
+        if isinstance(base_status, RuntimeUnavailable) or isinstance(
+            head_status, RuntimeUnavailable
+        ):
+            unknown = [
+                f"{side} ({status.reason})"
+                for side, status in ((BASE, base_status), (HEAD, head_status))
+                if isinstance(status, RuntimeUnavailable)
+            ]
+            failures.append(
+                f"{subject} CPython {runtime} identity is unknown on {' and '.join(unknown)}"
+            )
+        elif not _same_interpreter(base_status, head_status):
+            failures.append(
+                f"{subject} CPython {runtime} is {base_status.implementation} "
+                f"{base_status.version} on base and {head_status.implementation} "
+                f"{head_status.version} on head"
+            )
+    return failures
+
+
+def compatibility_preface(subjects: Sequence[str], checked: Compatibility) -> list[str]:
+    """What a comparison that required compatibility states above its table."""
+    return [
+        f"Compatibility established over {', '.join(subjects)}: clean producing trees, equal "
+        "provenance, control sources, and interpreter identities, and every cell paired.",
+        *(f"- {note}" for note in checked.notes),
+    ]
+
+
+def conditions_beside(portfolio: Path) -> Conditions | None:
+    """The conditions written beside ``portfolio``, or absence when none was."""
+    path = portfolio.parent / CONDITIONS_FILE
+    return load_conditions(path) if path.exists() else None
+
+
 # --------------------------------------------------------------------------- #
 # Shards: the partition plan, and one shard's collection                       #
 # --------------------------------------------------------------------------- #
@@ -972,6 +1473,7 @@ SHARDS: Final[tuple[Shard, ...]] = (
     _snapshot_shard("conventional-fanout", "conventional-fanout"),
     _snapshot_shard("bitemporal-current", "bitemporal-current"),
     _snapshot_shard("versioned-document", "versioned-document"),
+    _snapshot_shard("controls", CONTROL_GROUP),
     _snapshot_shard(
         "geometry-plan-stress", "geometry", "plan", "stress-columns", "stress-document"
     ),
@@ -980,12 +1482,12 @@ SHARDS: Final[tuple[Shard, ...]] = (
 """The partition plan, heaviest shard first so the matrix's longest job starts
 first. The Snapshot member dominates a whole-member capture, so it is split by
 workload from its measured attribution: each of its five heavy workloads, which
-cost about the same as one another, is a shard of its own, and the four small
-ones share one, since another runner would cost more setup than it saves. Every
-other member is one whole shard. A split is a change to this data with its test
-rather than a new recipe, and a shard whose coverage changes takes a new id, so
-an old base or nightly capture of the same id can never be paired with
-different work."""
+cost about the same as one another, is a shard of its own, the provider-free
+control group is one more, and the four small ones share one, since another
+runner would cost more setup than it saves. Every other member is one whole
+shard. A split is a change to this data with its test rather than a new recipe,
+and a shard whose coverage changes takes a new id, so an old base or nightly
+capture of the same id can never be paired with different work."""
 
 ALL_SHARDS: Final = "all"
 SHARD_ID_PATTERN: Final = re.compile("[a-z0-9][a-z0-9-]*")
@@ -2656,6 +3158,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
     parser.add_argument(
+        "--require-member",
+        action="append",
+        default=[],
+        metavar="SUBJECT",
+        help=(
+            "also hold this member to its owner's exact current matrix under --verify, or "
+            f"to compatibility under --compare --require-compatible; one of {REQUIRABLE_MEMBERS}"
+        ),
+    )
+    parser.add_argument(
+        "--require-compatible",
+        action="store_true",
+        help="refuse --compare arithmetic until the two captures are established as comparable",
+    )
+    parser.add_argument(
         "--diagnostic",
         action="store_true",
         help="take readings for a subset of members, workloads, and runtimes; not evidence",
@@ -2698,6 +3215,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--against is an --assemble option")
     if args.request is not None and args.shard is None and args.assemble is None:
         parser.error("--request is a --shard or --assemble option")
+    if args.require_member and args.verify is None and args.compare is None:
+        parser.error("--require-member is a --verify or --compare option")
+    unknown_members = sorted(set(args.require_member) - set(REQUIRABLE_MEMBERS))
+    if unknown_members:
+        parser.error(
+            f"--require-member {', '.join(unknown_members)}: requirable members are "
+            f"{list(REQUIRABLE_MEMBERS)}"
+        )
+    if args.require_compatible and args.compare is None:
+        parser.error("--require-compatible is a --compare option")
     if args.diagnostic:
         subjects = args.member or [member.subject for member in MEMBERS if member.required]
         return diagnose(subjects, args.select, args.runtime, args.out)
@@ -2741,12 +3268,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(freshness)
         for advisory in advisories(document):
             print(advisory)
-        failures = verify(document)
+        failures = verify(document, required=args.require_member)
         for failure in failures:
             print(failure, file=sys.stderr)
         return 1 if failures else 0
     if args.compare is not None:
-        print(compare(_load(args.compare[0]), _load(args.compare[1])), end="")
+        base, head = (_load(path) for path in args.compare)
+        if not args.require_compatible:
+            print(compare(base, head), end="")
+            return 0
+        subjects = [
+            *(member.subject for member in MEMBERS if member.required),
+            *(subject for subject in args.require_member if subject not in REQUIRED_SUBJECTS),
+        ]
+        try:
+            conditions = [conditions_beside(path) for path in args.compare]
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
+        checked = compatibility(base, head, conditions[0], conditions[1], subjects)
+        if checked.failures:
+            print(
+                f"the captures are not comparable over {', '.join(subjects)}; no arithmetic "
+                "is reported:",
+                file=sys.stderr,
+            )
+            for failure in checked.failures:
+                print(failure, file=sys.stderr)
+            return 1
+        print(compare(base, head, compatibility_preface(subjects, checked)), end="")
         return 0
     if args.out is None:
         parser.error("--out is required when collecting")

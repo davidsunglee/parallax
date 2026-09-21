@@ -82,11 +82,25 @@ def test_managed_encoder_observations_count_returns_not_rows() -> None:
     assert calls["detachJsonContainer"] == 0
 
 
+def test_each_model_preparation_case_prepares_its_own_classes() -> None:
+    assert write_lowering_reading.MODEL_CLASSES == {
+        write_lowering_reading.MODEL_CASE: lowering_support.ENTITY_CLASSES,
+        write_lowering_reading.MODEL_FAMILY_CASE: lowering_support.FAMILY_ENTITY_CLASSES,
+    }
+    assert {
+        name
+        for name, window in write_lowering_reading.WINDOWS.items()
+        if window == "model-preparation"
+    } == set(write_lowering_reading.MODEL_CLASSES)
+
+
 def test_child_case_names_match_the_shared_workloads() -> None:
     assert (
         *(case.name for case in lowering_support.CASES),
         *(case.name for case in acquisition_support.CASES),
+        *(case.name for case in lowering_support.RESPONSE_CASES),
         write_lowering_reading.MODEL_CASE,
+        write_lowering_reading.MODEL_FAMILY_CASE,
     ) == CASE_NAMES
 
 
@@ -168,6 +182,16 @@ def test_an_acquisition_family_reads_its_window_per_resolved_row() -> None:
 @in_a_child_interpreter
 def test_the_model_preparation_checkpoint_reads_one_preparation() -> None:
     _assert_reading(write_lowering_reading.MODEL_CASE, units=1)
+
+
+@in_a_child_interpreter
+def test_the_public_insert_reads_its_response_window() -> None:
+    _assert_reading(lowering_support.RESPONSE_CASES[0].name, units=1)
+
+
+@in_a_child_interpreter
+def test_the_family_preparation_checkpoint_reads_one_preparation() -> None:
+    _assert_reading(write_lowering_reading.MODEL_FAMILY_CASE, units=1)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Take one isolated Snapshot delivery reading: a Budget Contract cell, one
-provider-free geometry read family address, or one read-plan compilation
-address.
+provider-free geometry read family address, one read-plan compilation address,
+or one before/after control address.
 
 This script is imported by nothing. It is the sole report-side reader of the
 whole-interpreter memory instruments and answers its parent with one JSON line.
@@ -41,7 +41,8 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.object_query._fluent import object_query_node
+from parallax.core.entity import DomainModel
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import prepare_model
 from parallax.snapshot.handle import Database, ScopedDatabase
@@ -57,6 +58,7 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materialization_support.py"
 GEOMETRY_MODULE: Final = WORKSPACE / "tests" / "unit" / "_structural_geometry_support.py"
+CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
@@ -69,17 +71,17 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     )
 
 from tests._support.db_port import projected_rows  # noqa: E402
+from tests.unit import _delivery_control_support as control_support  # noqa: E402
 from tests.unit import _snapshot_materialization_support as stress_support  # noqa: E402
 from tests.unit import _structural_geometry_support as geometry_support  # noqa: E402
 
-if Path(stress_support.__file__ or "").resolve() != SUPPORT_MODULE:
-    raise ImportError(
-        f"this reading requires {SUPPORT_MODULE}, but resolved {stress_support.__file__}"
-    )
-if Path(geometry_support.__file__ or "").resolve() != GEOMETRY_MODULE:
-    raise ImportError(
-        f"this reading requires {GEOMETRY_MODULE}, but resolved {geometry_support.__file__}"
-    )
+for module, expected_file in (
+    (stress_support, SUPPORT_MODULE),
+    (geometry_support, GEOMETRY_MODULE),
+    (control_support, CONTROL_MODULE),
+):
+    if Path(module.__file__ or "").resolve() != expected_file:
+        raise ImportError(f"this reading requires {expected_file}, but resolved {module.__file__}")
 
 # E402 again, and imported below the guard proving each module is this workspace's own.
 from tests.unit.memory_instruments import Seam, retained, untraced  # noqa: E402
@@ -174,7 +176,11 @@ class _SoleRuntime:
 
 
 class CatalogPort:
-    """Provider-free positional rows for the two catalog workloads that grade CPU."""
+    """Provider-free positional rows for the two catalog workloads that grade CPU.
+
+    One delivery consumes the root rows once; :meth:`reset` restores them for
+    the next, so a root composed outside a window can serve every run inside it.
+    """
 
     dialect: Dialect = POSTGRES
     __slots__ = ("_delivered", "_fanout", "_items", "_orders")
@@ -186,6 +192,9 @@ class CatalogPort:
         self._fanout = rows.fanout
         self._orders = rows.entity("parallax.compatibility.Order")
         self._items = rows.entity("parallax.compatibility.OrderItem")
+        self._delivered = 0
+
+    def reset(self) -> None:
         self._delivered = 0
 
     def execute(
@@ -539,17 +548,21 @@ class ColdPlan:
 
     __slots__ = ("cache", "model", "query")
 
-    def __init__(self, level: GeometryLevel, layout: str) -> None:
-        selected = cast("geometry_support.Layout", layout)
-        self.model = read_projection(
-            prepare_model(geometry_support.MODEL, edition=PLAN_EDITION)
-        ).model
-        self.query = preflight(
-            object_query_node(geometry_support.read_query(level, selected)),
-            model=self.model.meta,
-            form="graph",
-        )
+    def __init__(self, model: DomainModel, query: ObjectQuery[Any, Any]) -> None:
+        self.model = read_projection(prepare_model(model, edition=PLAN_EDITION)).model
+        self.query = preflight(object_query_node(query), model=self.model.meta, form="graph")
         self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
+
+    @classmethod
+    def geometry(cls, level: GeometryLevel, layout: str) -> ColdPlan:
+        """One geometry level's whole-table instance read under ``layout``."""
+        selected = cast("geometry_support.Layout", layout)
+        return cls(geometry_support.MODEL, geometry_support.read_query(level, selected))
+
+    @classmethod
+    def guarded(cls, width: int) -> ColdPlan:
+        """The guarded include workload's read at ``width`` guarded positions."""
+        return cls(control_support.GUARDED_MODEL, control_support.guarded_query(width))
 
     def plan(self) -> ReadPlan:
         return self.cache.plan(
@@ -578,7 +591,14 @@ def _plan(
     level: GeometryLevel, layout: str, metric: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
     """One geometry level's whole-table instance read compiled into an empty cache."""
-    prepared = ColdPlan(level, layout)
+    return _cold_plan(ColdPlan.geometry(level, layout), metric, warmups=warmups, measured=measured)
+
+
+def _cold_plan(
+    prepared: ColdPlan, metric: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """``prepared``'s read compiled into its empty cache: each sample one
+    compilation on a cache emptied outside the region it measures."""
     if metric == "elapsedUs":
         milliseconds = _timed(
             prepared.plan, warmups=warmups, measured=measured, prepare=prepared.reset
@@ -610,6 +630,197 @@ def _plan(
         tracemalloc.stop()
     value = max(0, peak - before) / 1_024
     return value, "KiB", (value,)
+
+
+def _warm_plan(
+    prepared: ColdPlan, metric: str, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """``prepared``'s read hit on the cache already holding its one entry:
+    the reuse a second delivery of the same query pays."""
+    prepared.plan()
+    if metric == "elapsedUs":
+        milliseconds = _timed(prepared.plan, warmups=warmups, measured=measured)
+        samples = tuple(elapsed * 1_000 for elapsed in milliseconds)
+        return float(sorted(samples)[len(samples) // 2]), "us", samples
+    tracemalloc.start()
+    try:
+        value = retained(prepared.warm) / 1_024
+    finally:
+        tracemalloc.stop()
+    return value, "KiB", (value,)
+
+
+def _traced(
+    work: Callable[[], object],
+    metric: str,
+    *,
+    prepare: Callable[[], None] = _unprepared,
+) -> tuple[float, str, tuple[float, ...]]:
+    """One traced run of ``work`` after one warm run of it: the bytes its
+    product keeps reachable, or the high-water mark it rose to, above the level
+    the process settled at before it, with ``prepare`` restoring its
+    precondition outside both."""
+    with untraced():
+        prepare()
+        work()
+    prepare()
+    gc.collect()
+    gc.collect()
+    tracemalloc.start()
+    try:
+        before, _ = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        held = work()
+        if metric == "retainedKiB":
+            gc.collect()
+        current, peak = tracemalloc.get_traced_memory()
+        value = (current if metric == "retainedKiB" else peak) - before
+        assert held is not None
+    finally:
+        tracemalloc.stop()
+    kib = max(0, value) / 1_024
+    return kib, "KiB", (kib,)
+
+
+def _last_root(stream: Any) -> object:
+    latest: object | None = None
+    with stream as delivery:
+        for root in delivery:
+            latest = root
+    gc.collect()
+    assert latest is not None
+    return latest
+
+
+def _lane_work(
+    database: ScopedDatabase,
+    lane: control_support.Lane,
+    wire_query: object,
+    typed_query: ObjectQuery[Any, Any],
+    form: control_support.Form,
+) -> Callable[[], object]:
+    """One delivery through ``lane`` in ``form``, answering what it leaves the
+    caller holding: the eager result, or the last streamed root."""
+    if lane == "wire":
+        view = database.wire
+        if form == "eager":
+            return lambda: view.find(cast("Any", wire_query))
+        return lambda: _last_root(
+            view.stream(cast("Any", wire_query), batch_size=control_support.PAGE_SIZE)
+        )
+    if form == "eager":
+        return lambda: database.find(typed_query)
+    return lambda: _last_root(database.stream(typed_query, batch_size=control_support.PAGE_SIZE))
+
+
+def _measured_work(
+    work: Callable[[], object],
+    metric: str,
+    *,
+    warmups: int,
+    measured: int,
+    prepare: Callable[[], None] = _unprepared,
+) -> tuple[float, str, tuple[float, ...]]:
+    if metric == "elapsedUs":
+        milliseconds = _timed(work, warmups=warmups, measured=measured, prepare=prepare)
+        samples = tuple(elapsed * 1_000 for elapsed in milliseconds)
+        return float(sorted(samples)[len(samples) // 2]), "us", samples
+    return _traced(work, metric, prepare=prepare)
+
+
+def _delivery_control(
+    control: control_support.DeliveryControl, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """One catalog workload delivered through either lane over provider-free
+    rows, the root and its port composed outside the window."""
+    workload = catalog()[control.workload_id]
+    port = CatalogPort(workload, control.roots)
+    root = Database(_SoleRuntime(port), ORDERS_MODEL)
+    database = root.using_database_login()
+    try:
+        work = _lane_work(
+            database,
+            control.lane,
+            workload.query,
+            control_support.TYPED_QUERIES[control.workload_id],
+            control.form,
+        )
+        return _measured_work(
+            work, control.metric, warmups=warmups, measured=measured, prepare=port.reset
+        )
+    finally:
+        root.close()
+
+
+def _guarded_read(
+    control: control_support.GuardedReadControl, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    """The guarded include workload delivered eagerly through either lane."""
+    root = Database(
+        control_support.GuardedPort(control.roots).open(), control_support.GUARDED_MODEL
+    )
+    database = root.using_database_login()
+    try:
+        query = control_support.guarded_query(control.width)
+        work = _lane_work(database, control.lane, query, query, "eager")
+        return _measured_work(work, control.metric, warmups=warmups, measured=measured)
+    finally:
+        root.close()
+
+
+def _held(control: control_support.HeldControl) -> tuple[float, str, tuple[float, ...]]:
+    """One eager Typed result's retained bytes: with the root still open and
+    sharing its prepared model, or after the root has closed and the result is
+    the only owner of whatever it keeps reachable."""
+    query: ObjectQuery[Any, Any]
+    if control.model == "small":
+        query = control_support.TYPED_QUERIES[control_support.HELD_SMALL_WORKLOAD_ID]
+
+        def compose() -> tuple[Database[Any], Callable[[], None]]:
+            port = CatalogPort(
+                catalog()[control_support.HELD_SMALL_WORKLOAD_ID], control_support.HELD_ROOTS
+            )
+            return Database(_SoleRuntime(port), ORDERS_MODEL), port.reset
+
+    else:
+        query = control_support.HELD_LARGE_QUERY
+
+        def compose() -> tuple[Database[Any], Callable[[], None]]:
+            port = control_support.held_large_port()
+            return Database(port.open(), control_support.HELD_LARGE_MODEL), _unprepared
+
+    if control.state == "shared":
+        root, prepare = compose()
+        database = root.using_database_login()
+        try:
+            return _traced(lambda: database.find(query), "retainedKiB", prepare=prepare)
+        finally:
+            root.close()
+
+    def closed() -> object:
+        root, _prepare = compose()
+        try:
+            return root.using_database_login().find(query)
+        finally:
+            root.close()
+
+    return _traced(closed, "retainedKiB")
+
+
+def _control(
+    control: control_support.ControlAddress, *, warmups: int, measured: int
+) -> tuple[float, str, tuple[float, ...]]:
+    match control:
+        case control_support.DeliveryControl():
+            return _delivery_control(control, warmups=warmups, measured=measured)
+        case control_support.GuardedReadControl():
+            return _guarded_read(control, warmups=warmups, measured=measured)
+        case control_support.GuardedPlanControl(width=width, phase="cold", metric=metric):
+            return _cold_plan(ColdPlan.guarded(width), metric, warmups=warmups, measured=measured)
+        case control_support.GuardedPlanControl(width=width, metric=metric):
+            return _warm_plan(ColdPlan.guarded(width), metric, warmups=warmups, measured=measured)
+        case control_support.HeldControl():
+            return _held(control)
 
 
 def _geometry(
@@ -733,6 +944,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         geometry = geometry_address(args.workload, args.cell)
         plan = plan_address(args.workload, args.cell)
+        control = control_support.control_address(
+            args.workload, args.cell, contract.memory_scaling_arms
+        )
     except (KeyError, ValueError) as error:
         parser.error(str(error))
     if geometry is not None:
@@ -744,6 +958,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         level, layout, metric = plan
         value, reading_unit, samples = _plan(
             level, layout, metric, warmups=args.warmups, measured=args.measured
+        )
+    elif control is not None:
+        value, reading_unit, samples = _control(
+            control, warmups=args.warmups, measured=args.measured
         )
     else:
         if args.workload not in catalog(contract):

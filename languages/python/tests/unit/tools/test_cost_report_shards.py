@@ -47,6 +47,7 @@ from interpreter_matrix import (
 )
 from parallax.conformance.budget import BudgetContract
 from snapshot_delivery_overhead import (
+    CONTROL_GROUP,
     GEOMETRY_GROUP,
     PLAN_GROUP,
     selected_addresses,
@@ -139,6 +140,7 @@ def test_the_plan_splits_snapshot_by_workload_heaviest_first_and_keeps_the_other
         ("snapshot-conventional-fanout", SNAPSHOT.subject, frozenset({"conventional-fanout"})),
         ("snapshot-bitemporal-current", SNAPSHOT.subject, frozenset({"bitemporal-current"})),
         ("snapshot-versioned-document", SNAPSHOT.subject, frozenset({"versioned-document"})),
+        ("snapshot-controls", SNAPSHOT.subject, frozenset({CONTROL_GROUP})),
         (
             "snapshot-geometry-plan-stress",
             SNAPSHOT.subject,
@@ -170,7 +172,8 @@ def test_the_plan_covers_every_snapshot_address_on_every_supported_minor_exactly
         workload_names(contract)
     )
     assert shard_arguments(SHARDS[0]) == [cost_report.WORKLOAD_OPTION, "duplicate-include"]
-    assert shard_arguments(SHARDS[5]) == [
+    assert shard_arguments(SHARDS[5]) == [cost_report.WORKLOAD_OPTION, CONTROL_GROUP]
+    assert shard_arguments(SHARDS[6]) == [
         cost_report.WORKLOAD_OPTION,
         GEOMETRY_GROUP,
         cost_report.WORKLOAD_OPTION,
@@ -563,7 +566,13 @@ def test_the_local_default_still_writes_the_complete_legacy_portfolio_over_whole
     assert portfolio["members"][0] == envelopes[SNAPSHOT.subject]
     assert portfolio["failures"] == []
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["portfolio.json", "summary.md", DURATIONS_FILE, *(f"{m.subject}.json" for m in MEMBERS)]
+        [
+            "portfolio.json",
+            "summary.md",
+            DURATIONS_FILE,
+            cost_report.CONDITIONS_FILE,
+            *(f"{m.subject}.json" for m in MEMBERS),
+        ]
     )
     assert not (out / CAPTURE_FILE).exists() and not (out / HEAD).exists()
 

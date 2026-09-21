@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import instance_state_overhead as instance_report
 import lifecycle_overhead
 import write_lowering_overhead as write_report
 from cost_report import (
@@ -46,6 +47,7 @@ from snapshot_delivery_overhead import (
     selected_addresses,
     unit,
 )
+from tests.unit._instance_state_support import REPORTED, Scenario
 
 type Document = dict[str, Any]
 
@@ -92,6 +94,50 @@ def complete_write(contract: BudgetContract) -> Document:
 def optional_document(member: Member, contract: BudgetContract) -> Document:
     return CostReportEnvelope(
         member.subject, canary_provenance(contract), "non-authoritative"
+    ).document()
+
+
+def _instance_arm(scenario: Scenario, retained: int, ratio: float) -> instance_report.ArmReading:
+    cells = len(scenario.values) + len(scenario.unloaded)
+    baseline_ns = float(max(cells, 1) * 100)
+    return instance_report.ArmReading(
+        cells=cells,
+        retained_bytes=retained,
+        bare_bytes=retained - max(cells, 1),
+        peak_bytes=retained + max(cells, 1),
+        construct_ns=baseline_ns * ratio,
+        call_ns=baseline_ns / max(cells, 1),
+        scaffolding_ns=0.0,
+        read_ns=baseline_ns * ratio,
+        dump_ns=baseline_ns * ratio,
+    )
+
+
+def _instance_reading(scenario: Scenario, contract: BudgetContract) -> instance_report.Reading:
+    scale = max(len(scenario.values) + len(scenario.unloaded), 1)
+    legacy = scale * 100
+    return instance_report.Reading(
+        scenario.name,
+        scenario.summary,
+        len(scenario.values),
+        contract.timing_warmups,
+        _instance_arm(scenario, legacy * 2, 1.0),
+        _instance_arm(scenario, legacy, 1.0),
+        _instance_arm(scenario, legacy // 2, 1.0),
+    )
+
+
+def complete_instance_state(contract: BudgetContract) -> Document:
+    """A complete instance-state envelope over every supported minor, its
+    compact arm retaining half of the legacy one and moving no operation."""
+    matrix: instance_report.Matrix = {
+        runtime: {scenario.name: _instance_reading(scenario, contract) for scenario in REPORTED}
+        for runtime in supported_minors()
+    }
+    return instance_report.build_envelope(
+        contract,
+        instance_report._provenance(contract, matrix),  # pyright: ignore[reportPrivateUsage] - entrypoint seam
+        matrix,
     ).document()
 
 

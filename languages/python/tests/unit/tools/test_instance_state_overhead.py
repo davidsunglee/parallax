@@ -336,3 +336,23 @@ def test_metadata_probes_each_runtime_through_this_reports_own_launch_path(
         "reason": "the identity probe exited 2: no such interpreter",
     }
     assert recorded["runtimes"][runtime]["version"] == "3.14.7"
+
+
+def test_the_report_declares_the_matrix_its_envelope_carries() -> None:
+    runtimes = ("3.13", "3.14")
+    assert report.expected_addresses(runtimes) == _expected_addresses(runtimes)
+    matrix = _matrix()
+    contract = BudgetContract.load()
+    envelope = report.build_envelope(
+        contract,
+        report._provenance(contract, matrix),  # pyright: ignore[reportPrivateUsage] - the entrypoint seam
+        matrix,
+    )
+    assert {(reading.workload, reading.cell) for reading in envelope.readings} == (
+        report.expected_addresses(tuple(matrix))
+    )
+    assert all(reading.unit == report.unit_of(reading.cell) for reading in envelope.readings)
+    assert {(comparison.workload, comparison.cell) for comparison in envelope.comparisons} == (
+        report.expected_comparisons(tuple(matrix))
+    )
+    assert frozenset() == report.HEAD_ONLY_CELLS

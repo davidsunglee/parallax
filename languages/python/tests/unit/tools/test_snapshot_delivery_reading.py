@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from inspect import signature
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 import snapshot_delivery_reading
+from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
+from parallax.core.object_query._fluent import object_query_node
 from parallax.snapshot.handle import Database
 from snapshot_delivery_reading import (
     GEOMETRY_METRICS,
     PLAN_METRICS,
     CatalogPort,
     ColdPlan,
+    _control,  # pyright: ignore[reportPrivateUsage] - the control readings are under test
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
@@ -22,6 +26,8 @@ from snapshot_delivery_reading import (
     geometry_address,
     plan_address,
 )
+from tests._support.root_ownership import own_root
+from tests.unit import _delivery_control_support as control_support
 from tests.unit.memory_instruments import in_a_child_interpreter, retained, serve_one_measurement
 
 
@@ -165,7 +171,7 @@ def test_plan_addresses_name_a_frozen_level_layout_and_metric() -> None:
 
 def test_the_plan_window_reads_a_cache_of_the_capacity_a_production_handle_composes() -> None:
     composed = signature(Database.connect).parameters["read_plan_cache_capacity"].default
-    cache = ColdPlan(plan_levels()[0], "columns").cache
+    cache = ColdPlan.geometry(plan_levels()[0], "columns").cache
     statistics = cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
 
     assert statistics.capacity == composed
@@ -177,7 +183,7 @@ def test_a_cold_plan_checkpoint_prices_one_entry_in_a_cache_composed_before_the_
 
     level = plan_levels()[0]
     for layout in ("columns", "document"):
-        prepared = ColdPlan(level, layout)
+        prepared = ColdPlan.geometry(level, layout)
         composed = prepared.cache._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
         tracemalloc.start()
         try:
@@ -200,6 +206,137 @@ def test_a_cold_plan_checkpoint_prices_one_entry_in_a_cache_composed_before_the_
             assert value > 0
             assert reading_unit == ("us" if metric == "elapsedUs" else "KiB")
             assert len(samples) == (2 if metric == "elapsedUs" else 1)
+
+
+# --------------------------------------------------------------------------- #
+# The control addresses and the workloads behind them                          #
+# --------------------------------------------------------------------------- #
+def test_control_addresses_parse_back_to_the_control_each_cell_names() -> None:
+    arms = BudgetContract.load().memory_scaling_arms
+    assert control_support.control_address("read-depth-1", "columns.peakKiB", arms) is None
+    assert control_support.control_address(
+        "control-delivery-duplicate-include", f"typed.page32.roots{arms[-1]}.retainedKiB", arms
+    ) == control_support.DeliveryControl(
+        "duplicate-include", "typed", "page32", arms[-1], "retainedKiB"
+    )
+    assert control_support.control_address(
+        "control-guarded-3", "plan.warm.elapsedUs", arms
+    ) == control_support.GuardedPlanControl(3, "warm", "elapsedUs")
+    assert control_support.control_address(
+        "control-guarded-2", "wire.eager.roots256.peakKiB", arms
+    ) == control_support.GuardedReadControl(2, "wire", 256, "peakKiB")
+    assert control_support.control_address(
+        "control-held", "large.closed.retainedKiB", arms
+    ) == control_support.HeldControl("large", "closed")
+    for workload, path in (
+        ("control-delivery-document-heavy", f"wire.eager.roots{arms[0]}.elapsedUs"),
+        ("control-delivery-duplicate-include", "wire.eager.roots7.elapsedUs"),
+        ("control-guarded-4", "plan.cold.elapsedUs"),
+        ("control-guarded-1", "plan.warm.peakKiB"),
+        ("control-held", "small.shared.elapsedUs"),
+    ):
+        with pytest.raises(ValueError, match="not a control address"):
+            control_support.control_address(workload, path, arms)
+    parsed = {
+        control_support.control_address(workload, path, arms)
+        for workload, path in control_support.control_cells(arms)
+    }
+    assert len(parsed) == len(control_support.control_cells(arms))
+
+
+def test_the_typed_twins_canonicalize_to_their_fixture_queries() -> None:
+    control_support.verify_typed_twins()
+    assert set(control_support.TYPED_QUERIES) == set(control_support.DELIVERY_WORKLOAD_IDS)
+
+
+def test_the_guarded_workload_widens_one_relationship_key_by_guarded_positions() -> None:
+    roots = 12
+    root = own_root(
+        Database(control_support.GuardedPort(roots).open(), control_support.GUARDED_MODEL)
+    )
+    database = root.using_database_login()
+    for width in control_support.GUARD_WIDTHS:
+        query = control_support.guarded_query(width)
+        assert len(object_query_node(query).includes) == width
+        published = database.wire.find(query).results()
+        assert len(published) == roots
+        by_variant = {node["familyVariant"]: node for node in published}
+        assert set(by_variant) == {"Dog", "Cat", "WildBoar"}
+        guarded = ("Dog", "Cat", "WildBoar")[:width]
+        for variant, node in by_variant.items():
+            if variant in guarded:
+                owner = cast("Mapping[str, Any]", node["owner"])
+                assert set(owner) == {"id", "name", "pets[Cat]"}
+                assert all(
+                    cast("Mapping[str, Any]", pet)["familyVariant"] == "Cat"
+                    for pet in cast("list[object]", owner["pets[Cat]"])
+                )
+            else:
+                assert "owner" not in node
+        typed = database.find(query).results()
+        assert len(typed) == roots
+    with pytest.raises(ValueError, match="not a guard width"):
+        control_support.guarded_query(4)
+
+
+@in_a_child_interpreter
+def test_a_delivery_control_reads_every_lane_and_form_over_a_reset_port() -> None:
+    for lane in control_support.LANES:
+        for form in control_support.FORMS:
+            for metric in control_support.METRICS:
+                control = control_support.DeliveryControl(
+                    "conventional-fanout", lane, form, 32, metric
+                )
+                value, reading_unit, samples = _control(control, warmups=1, measured=2)
+                assert value > 0, control
+                assert reading_unit == ("us" if metric == "elapsedUs" else "KiB")
+                assert len(samples) == (2 if metric == "elapsedUs" else 1)
+
+
+@in_a_child_interpreter
+def test_the_guarded_controls_plan_cold_and_warm_and_deliver_through_both_lanes() -> None:
+    for width in control_support.GUARD_WIDTHS:
+        for metric in control_support.METRICS:
+            value, reading_unit, samples = _control(
+                control_support.GuardedPlanControl(width, "cold", metric), warmups=1, measured=2
+            )
+            assert value > 0 and reading_unit == ("us" if metric == "elapsedUs" else "KiB")
+            assert len(samples) == (2 if metric == "elapsedUs" else 1)
+        warm_elapsed, _unit, _samples = _control(
+            control_support.GuardedPlanControl(width, "warm", "elapsedUs"), warmups=1, measured=2
+        )
+        cold_elapsed, _unit, _samples = _control(
+            control_support.GuardedPlanControl(width, "cold", "elapsedUs"), warmups=1, measured=2
+        )
+        assert warm_elapsed < cold_elapsed
+        warm_retained, _unit, _samples = _control(
+            control_support.GuardedPlanControl(width, "warm", "retainedKiB"), warmups=1, measured=2
+        )
+        assert warm_retained < 0.5
+        for lane in control_support.LANES:
+            for metric in control_support.METRICS:
+                value, _unit, _samples = _control(
+                    control_support.GuardedReadControl(width, lane, 32, metric),
+                    warmups=1,
+                    measured=2,
+                )
+                assert value > 0, (width, lane, metric)
+
+
+@in_a_child_interpreter
+def test_the_held_controls_read_a_result_shared_with_its_root_and_after_closing_it() -> None:
+    readings = {
+        (model, state): _control(control_support.HeldControl(model, state), warmups=1, measured=2)
+        for model in control_support.HELD_MODELS
+        for state in control_support.HELD_STATES
+    }
+    for (model, state), (value, reading_unit, samples) in readings.items():
+        assert value > 1, (model, state)
+        assert reading_unit == "KiB" and len(samples) == 1
+    for model in control_support.HELD_MODELS:
+        shared = readings[(model, "shared")][0]
+        closed = readings[(model, "closed")][0]
+        assert closed >= shared * 0.9, (model, shared, closed)
 
 
 if __name__ == "__main__":

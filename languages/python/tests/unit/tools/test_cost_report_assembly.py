@@ -188,7 +188,7 @@ def test_a_complete_pull_request_assembly_pairs_every_shard_on_its_own_runner(
     assert labelled == {(shard.id, side) for shard in SHARDS for side in (BASE, HEAD)}
     assert assembly.durations.unavailable == ()
     summary = assembly.summary()
-    assert f"Critical path: 180.000 s on shard `{SHARDS[-1].id}`" in summary
+    assert f"Critical path: {20.0 * len(SHARDS):.3f} s on shard `{SHARDS[-1].id}`" in summary
     assert "| Shard | Subject | Workloads | Head | Base | Pairing | Reasons |" in summary
     assert f"Planned {len(SHARDS)} shard(s); {len(SHARDS)} with a valid head capture" in summary
     assert "same-runner" in summary and "cross-runner" not in summary

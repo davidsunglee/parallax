@@ -4,17 +4,22 @@ This script is imported only by its gated suite. Report execution starts it in a
 child interpreter, where it drives one case through the production seams of its
 window and answers with one JSON line.
 
-Three windows are read. A keyed-write case runs from Typed or Wire input
+Four windows are read. A keyed-write case runs from Typed or Wire input
 through preparation, settlement, SQL lowering, production bind adaptation, and
 psycopg's own document serialization. A predicate-acquisition case runs from a
 prepared Bitemporal predicate and freshly composed resolving rows through
 production acquisition to a buffered Materialized Write Group, and stops before
-any flush. The model-preparation case runs one complete model preparation.
+any flush. A public insert case runs one ``tx.wire.insert`` of a nested,
+polymorphic payload inside an open transaction to the frozen node it answers,
+and stops before the commit that flushes the row. The model-preparation cases
+each run one complete model preparation: the structural write model, and the
+table-per-hierarchy family whose variant spelling that preparation derives.
 
 Elapsed time and the high-water mark are read over uninterrupted runs of the
 whole window. The retained checkpoint is read separately, at the production
 stage each window names — the write prepared and settled, the group buffered,
-the model prepared — so sampling never prolongs a lifetime inside a timed run.
+the node answered with its row buffered, the model prepared — so sampling never
+prolongs a lifetime inside a timed run.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from time import perf_counter_ns
 from types import CodeType, TracebackType
 from typing import Any, Final, Literal, cast
 
-from parallax.core import document_codec
+from parallax.core import Entity, document_codec
 from parallax.core.base import detach_json_container
 from parallax.core.document_codec._document import (
     encode_managed_document,
@@ -67,12 +72,16 @@ for module, expected in (
 # E402 again, and imported below the guard proving each module is this workspace's own.
 from tests.unit.memory_instruments import WARMUP, retained, untraced  # noqa: E402
 
-type Window = Literal["keyed-write", "predicate-acquisition", "model-preparation"]
+type Window = Literal[
+    "keyed-write", "predicate-acquisition", "wire-insert-response", "model-preparation"
+]
 
 KEYED_WINDOW: Final[Window] = "keyed-write"
 ACQUISITION_WINDOW: Final[Window] = "predicate-acquisition"
+RESPONSE_WINDOW: Final[Window] = "wire-insert-response"
 MODEL_WINDOW: Final[Window] = "model-preparation"
 MODEL_CASE: Final = "model.prepared"
+MODEL_FAMILY_CASE: Final = "model.prepared.family"
 MODEL_EDITION: Final = "write-lowering-report"
 METRICS: Final = ("elapsedUs", "transientBytes", "retainedBytes")
 RETAINED_WARMUPS: Final = WARMUP
@@ -98,9 +107,16 @@ subtree, and an unchanged successor returns neither."""
 WINDOWS: Final[Mapping[str, Window]] = {
     **{case.name: KEYED_WINDOW for case in lowering_support.CASES},
     **{case.name: ACQUISITION_WINDOW for case in acquisition_support.CASES},
+    **{case.name: RESPONSE_WINDOW for case in lowering_support.RESPONSE_CASES},
     MODEL_CASE: MODEL_WINDOW,
+    MODEL_FAMILY_CASE: MODEL_WINDOW,
 }
 CASE_NAMES: Final = tuple(WINDOWS)
+MODEL_CLASSES: Final[Mapping[str, tuple[type[Entity], ...]]] = {
+    MODEL_CASE: lowering_support.ENTITY_CLASSES,
+    MODEL_FAMILY_CASE: lowering_support.FAMILY_ENTITY_CLASSES,
+}
+"""The Entity Classes each model-preparation case prepares."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,9 +229,22 @@ def _acquisition_driver(case: acquisition_support.Case, handle: ScopedDatabase) 
     return Driver(case.rows, run, marked, checkpoint)
 
 
-def _model_driver() -> Driver:
+def _response_driver(case: lowering_support.ResponseCase, handle: ScopedDatabase) -> Driver:
+    def run() -> None:
+        lowering_support.insert_response(handle, case)
+
+    def marked(opened: Sampler, closed: Sampler) -> None:
+        lowering_support.insert_response(handle, case, opened=opened, closed=closed)
+
+    def checkpoint(sample: Sampler) -> None:
+        lowering_support.insert_response(handle, case, closed=sample)
+
+    return Driver(1, run, marked, checkpoint)
+
+
+def _model_driver(classes: Sequence[type[Entity]]) -> Driver:
     def prepare() -> object:
-        return prepare_model(DomainModel(*lowering_support.ENTITY_CLASSES), edition=MODEL_EDITION)
+        return prepare_model(DomainModel(*classes), edition=MODEL_EDITION)
 
     def run() -> None:
         prepare()
@@ -245,7 +274,12 @@ def driver_for(name: str) -> Generator[Driver]:
         with acquisition_support.database(case) as handle:
             yield _acquisition_driver(case, handle)
         return
-    yield _model_driver()
+    if window == RESPONSE_WINDOW:
+        response = lowering_support.response_case_named(name)
+        with lowering_support.response_database(response) as handle:
+            yield _response_driver(response, handle)
+        return
+    yield _model_driver(MODEL_CLASSES[name])
 
 
 def _timed(driver: Driver) -> int:
