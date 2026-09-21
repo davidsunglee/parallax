@@ -16,9 +16,9 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
-present in ``SUPPORT_SCOPE_DEPS`` but missing from ``CHILD_SCOPE_PARENT`` is
-exactly the state in which ``check_dag_sync`` would emit it into its own
-parent's forbidden row, where import-linter silently skips it.
+present in ``SUPPORT_SCOPE_DEPS`` but missing from ``CHILD_SCOPES`` is exactly
+the state in which ``check_dag_sync`` would emit it into its own parent's
+forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
 ancestor scopes**, not one owner outright: a file inside a declared child scope
@@ -80,7 +80,7 @@ def test_owning_scopes_returns_the_chain_outermost_first() -> None:
 
 def test_a_declared_child_chain_is_not_an_overlap() -> None:
     chain = ["parallax.snapshot.handle", "parallax.snapshot.handle._materialization"]
-    assert own.is_declared_chain(chain, dag.CHILD_SCOPE_PARENT)
+    assert own.is_declared_chain(chain, dag.CHILD_SCOPES)
     assert not own.is_declared_chain(chain, {})
 
 
@@ -124,11 +124,11 @@ def test_child_scope_files_are_owned_by_their_whole_declared_chain() -> None:
         if len(owners) > 1:
             nested[path] = owners
     for path, owners in nested.items():
-        assert own.is_declared_chain(owners, dag.CHILD_SCOPE_PARENT), path
+        assert own.is_declared_chain(owners, dag.CHILD_SCOPES), path
         assert set(owners[:-1]) == dag.scope_ancestors(owners[-1]), path
     # Every declared child scope owns at least one file, and every multiply owned
     # file belongs to one — so the nested set is exactly what §7 declares.
-    assert {owners[-1] for owners in nested.values()} == set(dag.CHILD_SCOPE_PARENT)
+    assert {owners[-1] for owners in nested.values()} == set(dag.CHILD_SCOPES)
     # ...and the tree is clean regardless: declared overlap never fails.
     assert own.main([]) == 0
 
@@ -203,8 +203,13 @@ def test_a_declared_nested_scope_is_accepted(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
     monkeypatch.setattr(
         dag,
-        "CHILD_SCOPE_PARENT",
-        {**dag.CHILD_SCOPE_PARENT, "parallax.core.entity._members": "parallax.core.entity"},
+        "CHILD_SCOPES",
+        {
+            **dag.CHILD_SCOPES,
+            "parallax.core.entity._members": dag.ChildScope(
+                parent="parallax.core.entity", policy="ordinary"
+            ),
+        },
     )
     assert own.main([]) == 0
 
@@ -215,11 +220,11 @@ def test_dropping_a_child_declaration_fails(
     # The committed child scopes depend on this coupling too: unregister one and
     # the five lowering/wrap modules stop having a legal owner chain.
     tampered = {
-        child: parent
-        for child, parent in dag.CHILD_SCOPE_PARENT.items()
+        child: declared
+        for child, declared in dag.CHILD_SCOPES.items()
         if child != "parallax.snapshot.handle._materialization"
     }
-    monkeypatch.setattr(dag, "CHILD_SCOPE_PARENT", tampered)
+    monkeypatch.setattr(dag, "CHILD_SCOPES", tampered)
     assert own.main([]) == 1
     assert "_materialization.py" in capsys.readouterr().err
 
@@ -317,11 +322,15 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     )
     monkeypatch.setattr(
         dag,
-        "CHILD_SCOPE_PARENT",
+        "CHILD_SCOPES",
         {
-            **dag.CHILD_SCOPE_PARENT,
-            "parallax.snapshot.handle._nest": "parallax.snapshot.handle",
-            "parallax.snapshot.handle._nest._leaf": "parallax.snapshot.handle._nest",
+            **dag.CHILD_SCOPES,
+            "parallax.snapshot.handle._nest": dag.ChildScope(
+                parent="parallax.snapshot.handle", policy="ordinary"
+            ),
+            "parallax.snapshot.handle._nest._leaf": dag.ChildScope(
+                parent="parallax.snapshot.handle._nest", policy="ordinary"
+            ),
         },
     )
     assert "parallax.snapshot.handle._nest" in dag.scope_siblings(
@@ -544,10 +553,12 @@ def _sealed_probe_scope(monkeypatch: pytest.MonkeyPatch, granted: str) -> None:
     )
     monkeypatch.setattr(
         dag,
-        "CHILD_SCOPE_PARENT",
-        {**dag.CHILD_SCOPE_PARENT, _PROBE_SCOPE: "parallax.core.entity"},
+        "CHILD_SCOPES",
+        {
+            **dag.CHILD_SCOPES,
+            _PROBE_SCOPE: dag.ChildScope(parent="parallax.core.entity", policy="sealed"),
+        },
     )
-    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", dag.SEALED_CHILD_SCOPES | {_PROBE_SCOPE})
 
 
 def _spellings(module: str, name: str) -> list[tuple[str, str, str]]:
@@ -635,9 +646,16 @@ def test_the_sealed_rule_applies_only_to_a_scope_declared_sealed(
     # import is what child scopes ordinarily do — `_expressions` reaches the
     # frontend's shared error module, and every write-lowering scope reaches its
     # siblings — so nothing here judges a scope §7 has not sealed.
-    assert set(dag.CHILD_SCOPE_PARENT) >= dag.SEALED_CHILD_SCOPES
     _without_sibling_grants(monkeypatch)
-    monkeypatch.setattr(dag, "SEALED_CHILD_SCOPES", frozenset[str]())
+    monkeypatch.setattr(
+        dag,
+        "CHILD_SCOPES",
+        {
+            child: dag.ChildScope(parent=declared.parent, policy="ordinary")
+            for child, declared in dag.CHILD_SCOPES.items()
+        },
+    )
+    assert dag.scopes_with_policy("sealed") == frozenset()
     assert own.main([]) == 0
 
 
@@ -649,7 +667,14 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
     # it does reach a module of that parent its row does not name — so sealing it
     # would be a claim about the tree that is not true, and the gate says so.
     monkeypatch.setattr(
-        dag, "SEALED_CHILD_SCOPES", frozenset({"parallax.core.entity._expressions"})
+        dag,
+        "CHILD_SCOPES",
+        {
+            **dag.CHILD_SCOPES,
+            "parallax.core.entity._expressions": dag.ChildScope(
+                parent="parallax.core.entity", policy="sealed"
+            ),
+        },
     )
     assert own.imports_escaping_a_sealed_child_row(own.production_files()) == [
         "parallax-core/src/parallax/core/entity/_expressions.py "

@@ -18,15 +18,18 @@ the §7 prose rows, the §7 fence, and :data:`SUPPORT_SCOPE_DEPS`. Editing any o
 of them alone fails generation, and so does editing two of them consistently
 while the third disagrees.
 
-§7 marks some child scopes ``isolated`` or ``sealed``. Isolation is generated:
-an isolated child joins the target universe every row draws from, so
-:data:`ISOLATED_CHILD_SCOPES` shapes almost every contract emitted here. Sealing
-generates nothing at all. What neither mark can express is the edge running
-between a scope and its own ancestors, which every contract skips as an overlap;
-``tools/check_scope_ownership.py`` closes that half over the files, reading both
-sets. So the marks are compared with the sets exactly, and marking a scope in §7
-alone — or holding it in a set alone — fails here rather than leaving one
-declaration promising a guarantee the other no longer carries.
+§7 declares the child topology as a relation of its own — each child scope's
+parent and its import policy, ``ordinary``, ``sealed``, or ``isolated`` —
+restated here as :data:`CHILD_SCOPES` and parity-checked row by row. Isolation
+is generated: an isolated child joins the target universe every row draws from,
+so that policy shapes almost every contract emitted here. Sealing generates
+nothing at all. What neither policy can express is the edge running between a
+scope and its own ancestors, which every contract skips as an overlap;
+``tools/check_scope_ownership.py`` closes that half over the files, reading the
+same table. So parent and policy are compared exactly, and declaring a child in
+§7 alone — or holding it here alone, under another parent, or under another
+policy — fails here rather than leaving one declaration promising a guarantee
+the other no longer carries.
 
 A forbidden row is the complement of a *closure*, so a scope is never forbidden
 what its own grants reach transitively. A scope that exists in order to stay
@@ -67,7 +70,9 @@ import sys
 from collections import deque
 from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, get_args
 
 _TOOL = "tools/check_dag_sync.py"
 _HERE = Path(__file__).resolve()
@@ -481,7 +486,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # account: what a read retains is a pure function of accepted metadata, the
     # columns a row observed, and Unit Work's own observation vocabulary,
     # resolved through the family leaf. The half facing INTO the package is
-    # beyond any contract sourced here and is graded by the SEALED mark below.
+    # beyond any contract sourced here and is graded by its SEALED policy below.
     # Measured against the PARENT grant this row replaces, nine of its
     # twenty-five grants fall outside this row's closure — `continuation`,
     # `parallax.snapshot.materialize`, `parallax.snapshot._read_result`,
@@ -516,7 +521,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # ancestors unconditionally, import-linter's forbidden contracts are
     # package-scoped on both sides, and the read executor lives in the parent
     # scope, so a row naming it overlaps its own source and is silently skipped.
-    # That is what the SEALED mark below is for: `check_scope_ownership.py` walks
+    # That is what the SEALED policy below is for: `check_scope_ownership.py` walks
     # this scope's files and refuses every import into `parallax.snapshot.handle`
     # no grant covers, so `_read`, `_write_inputs`, and every sibling but the
     # granted `_family` are rejected over the source rather than left to prose.
@@ -553,107 +558,154 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
 }
 
-# Enforcement scopes nested inside another scope, mapped to that parent. The
-# relation is declared rather than derived from dotted-path prefixes so that two
-# independent consumers must agree about it:
+ChildPolicy = Literal["ordinary", "sealed", "isolated"]
+_CHILD_POLICIES: tuple[ChildPolicy, ...] = get_args(ChildPolicy)
+
+
+@dataclass(frozen=True)
+class ChildScope:
+    """One row of §7's child-scope table: the parent a child is nested inside
+    and the import policy governing it.
+
+    ``ordinary`` — the child's generated row is the whole of its enforcement.
+
+    ``isolated`` — a grant on the PARENT does not carry the child. A forbidden
+    row is the complement of a closure over whole scopes, so a scope granted a
+    parent may ordinarily import anything nested inside it; an isolated child is
+    the exception, forbidden to every production scope that neither contains it
+    nor is contained by it, whatever those scopes reach. That is what turns "no
+    production path imports this" from a fact about the grant table — which
+    states only what a scope MAY import, never what it may not — into a rejected
+    import. The one containment a contract cannot state is a scope importing its
+    own descendant: import-linter silently skips a forbidden module overlapping
+    the contract's source package, so the parent's row can never name its own
+    child, and ``tools/check_scope_ownership.py`` closes that edge over the files.
+
+    ``sealed`` — the child's grant row is the whole of what it may import INSIDE
+    its own parent package as well as outside it. A row can neither forbid nor
+    except what sits inside its own source package, so it refuses a neighbour
+    only through the chain that leaves it: reaching one whose own closure escapes
+    the row is reported at whatever it escapes to. A neighbour reaching nothing
+    the row does not already permit leaves no chain to report, and nothing
+    rejects it — so without this policy, whether a narrow grant is the whole
+    story depends on what the modules beside it happen to import. A sealed child
+    declares that its grants ARE the whole story, and
+    ``tools/check_scope_ownership.py`` refuses the rest over the files: the same
+    division of labour isolation runs the other way round.
+    """
+
+    parent: str
+    policy: ChildPolicy
+
+
+# Enforcement scopes nested inside another scope, each mapped to that parent and
+# to its policy. The relation is declared rather than derived from dotted-path
+# prefixes so that two independent consumers must agree about it:
 #
 # * this generator emits a child as a contract *source*, and as a forbidden
-#   *target* only in a SIBLING's zero-grant row (:func:`scope_siblings`).
-#   Naming a child in its own parent's ``forbidden_modules`` would overlap the
-#   parent's source package, which import-linter >= 2.12 silently skips — the
-#   contract would look present and enforce nothing — and naming it in an
-#   unrelated scope's row would only restate the parent's own entry. A sibling
-#   overlaps neither way, which is what lets a scope granted nothing forbid it.
+#   *target* only in a SIBLING's zero-grant row (:func:`scope_siblings`) or —
+#   for an isolated child — in every row that overlaps it nowhere. Naming a
+#   child in its own parent's ``forbidden_modules`` would overlap the parent's
+#   source package, which import-linter >= 2.12 silently skips — the contract
+#   would look present and enforce nothing — and naming it in an unrelated
+#   scope's row would only restate the parent's own entry. A sibling overlaps
+#   neither way, which is what lets a scope granted nothing forbid it.
 # * ``tools/check_scope_ownership.py`` allows a production file to resolve to
 #   more than one scope only along a chain declared here. A nested scope added
 #   to :data:`SUPPORT_SCOPE_DEPS` but not registered here therefore fails the
 #   ownership check instead of silently producing that skipped contract. That
 #   tool also reads this table to find the siblings a zero-grant row names, and
 #   fails when a module beside one is import-free and undeclared — a sibling
-#   shape such a row cannot reach.
-CHILD_SCOPE_PARENT: Mapping[str, str] = {
-    "parallax.core.execution_lifecycle.testing": "parallax.core.execution_lifecycle",
-    "parallax.core.entity._edit": "parallax.core.entity",
-    "parallax.core.entity._expressions": "parallax.core.entity",
-    "parallax.core.object_query._fluent": "parallax.core.object_query",
-    "parallax.core.entity._construction_input": "parallax.core.entity",
-    "parallax.core.entity._instance_state": "parallax.core.entity",
-    "parallax.core.entity._layout": "parallax.core.entity",
-    "parallax.core.entity._pydantic_storage": "parallax.core.entity",
-    "parallax.descriptor._hub": "parallax.descriptor",
-    "parallax.snapshot.handle._materialization": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._read_scope": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._keyed_writes": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._family": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._retention": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._publication": "parallax.snapshot.handle",
-    "parallax.snapshot.handle._execution_authority": "parallax.snapshot.handle",
+#   shape such a row cannot reach — and takes from it the scopes whose sealed or
+#   isolated half it grades over the files.
+CHILD_SCOPES: Mapping[str, ChildScope] = {
+    # The four publication-side children of the Entity frontend are sealed
+    # because their whole reason to exist is what they cannot reach: the
+    # construction-input vocabulary both a row's producer and its reader are
+    # stated in must reach nothing at all, the backing beneath a published value
+    # must reach neither the declaration engine nor the writer, a layout is a
+    # pure function of accepted metadata, and a value's own attribute storage
+    # must reach nothing either — every one of which sits in the parent package
+    # beside them.
+    "parallax.core.entity._construction_input": ChildScope(
+        parent="parallax.core.entity", policy="sealed"
+    ),
+    "parallax.core.entity._edit": ChildScope(parent="parallax.core.entity", policy="ordinary"),
+    "parallax.core.entity._expressions": ChildScope(
+        parent="parallax.core.entity", policy="ordinary"
+    ),
+    "parallax.core.entity._instance_state": ChildScope(
+        parent="parallax.core.entity", policy="sealed"
+    ),
+    "parallax.core.entity._layout": ChildScope(parent="parallax.core.entity", policy="sealed"),
+    "parallax.core.entity._pydantic_storage": ChildScope(
+        parent="parallax.core.entity", policy="sealed"
+    ),
+    # The complete recorder is testing-only: it retains every event of every
+    # root by design, which is exactly what a production observability path may
+    # not do. No production scope is granted it, and isolation is what keeps the
+    # grant every production scope holds on its parent from carrying it in.
+    "parallax.core.execution_lifecycle.testing": ChildScope(
+        parent="parallax.core.execution_lifecycle", policy="isolated"
+    ),
+    "parallax.core.object_query._fluent": ChildScope(
+        parent="parallax.core.object_query", policy="ordinary"
+    ),
+    "parallax.descriptor._hub": ChildScope(parent="parallax.descriptor", policy="ordinary"),
+    "parallax.snapshot.handle._errors": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    "parallax.snapshot.handle._execution_authority": ChildScope(
+        parent="parallax.snapshot.handle", policy="sealed"
+    ),
+    "parallax.snapshot.handle._family": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    "parallax.snapshot.handle._keyed_sql": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    "parallax.snapshot.handle._keyed_writes": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    "parallax.snapshot.handle._materialization": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    "parallax.snapshot.handle._preflight": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    # Model publication is sealed for what a prepared selection must not hold:
+    # the demarcation, the read composition, the keyed write ingress, and every
+    # other module of the handle package carries a connection, an attempt, or an
+    # activity, and a selection that could name one would no longer be
+    # process-local state a Serving Model can hand to any execution. The seal is
+    # what grades that absence over the package the selection lives in.
+    "parallax.snapshot.handle._publication": ChildScope(
+        parent="parallax.snapshot.handle", policy="sealed"
+    ),
+    "parallax.snapshot.handle._read_scope": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
+    # Write-observation retention is sealed for the same reason read the other
+    # way: the read executor DRIVES it, and the dependency going only that way is
+    # what lets a row's evidence be a pure function of the row. That executor is
+    # a module of the parent package, so no contract sourced at the child can
+    # reject that import and the seal is where the rule is GRADED rather than
+    # merely stated — and it holds the rest of the package out with it, which is
+    # what makes retention's four grants its whole reach rather than its whole
+    # intent.
+    "parallax.snapshot.handle._retention": ChildScope(
+        parent="parallax.snapshot.handle", policy="sealed"
+    ),
+    "parallax.snapshot.handle._write_lowering": ChildScope(
+        parent="parallax.snapshot.handle", policy="ordinary"
+    ),
 }
 
-# Child scopes a grant on the PARENT does not carry. A forbidden row is the
-# complement of a closure over whole scopes, so a scope granted a parent may
-# ordinarily import anything nested inside it; a scope named here is the
-# exception, forbidden to every production scope that neither contains it nor is
-# contained by it, whatever those scopes reach. That is what turns "no
-# production path imports this" from a fact about the grant table — which states
-# only what a scope MAY import, never what it may not — into a rejected import.
-#
-# The one containment a contract cannot state is a scope importing its own
-# descendant: import-linter silently skips a forbidden module overlapping the
-# contract's source package, so the parent's row can never name its own child.
-# ``tools/check_scope_ownership.py`` closes that edge over the files themselves,
-# which is why the invariant holds although this table alone cannot state it.
-ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_lifecycle.testing"})
 
-# Child scopes whose grant row is the whole of what they may import INSIDE their
-# own parent package as well as outside it. A row can neither forbid nor except
-# what sits inside its own source package, so it refuses a neighbour only through
-# the chain that leaves it: reaching one whose own closure escapes the row is
-# reported at whatever it escapes to. A neighbour reaching nothing the row does
-# not already permit leaves no chain to report, and nothing rejects it — so
-# without this mark, whether a narrow grant is the whole story depends on what
-# the modules beside it happen to import. A scope named here declares that its
-# grants ARE the whole story, and `tools/check_scope_ownership.py` refuses the
-# rest over the files: the same division of labour `ISOLATED_CHILD_SCOPES` runs
-# the other way round.
-#
-# The four publication-side children of the Entity frontend are sealed because
-# their whole reason to exist is what they cannot reach: a layout is a pure
-# function of accepted metadata, the backing beneath a published value must reach
-# neither the declaration engine nor the writer, the construction-input
-# vocabulary both a row's producer and its reader are stated in must reach
-# nothing at all, and a value's own attribute storage must reach nothing either —
-# every one of which sits in the parent package beside them.
-#
-# Write-observation retention is sealed for the same reason read the other way:
-# the read executor DRIVES it, and the dependency going only that way is what
-# lets a row's evidence be a pure function of the row. That executor is a module
-# of the parent package, so no contract sourced at the child can reject that
-# import and the seal is where the rule is GRADED rather than merely stated —
-# and it holds the rest of the package out with it, which is what makes
-# retention's four grants its whole reach rather than its whole intent.
-#
-# Model publication is sealed for what a prepared selection must not hold: the
-# demarcation, the read composition, the keyed write ingress, and every other
-# module of the handle package carries a connection, an attempt, or an activity,
-# and a selection that could name one would no longer be process-local state a
-# Serving Model can hand to any execution. The seal is what grades that absence
-# over the package the selection lives in.
-SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
-    {
-        "parallax.core.entity._construction_input",
-        "parallax.core.entity._instance_state",
-        "parallax.core.entity._layout",
-        "parallax.core.entity._pydantic_storage",
-        "parallax.snapshot.handle._publication",
-        "parallax.snapshot.handle._retention",
-        "parallax.snapshot.handle._execution_authority",
-    }
-)
+def scopes_with_policy(policy: ChildPolicy) -> frozenset[str]:
+    """The declared child scopes :data:`CHILD_SCOPES` places under ``policy``."""
+    return frozenset(child for child, declared in CHILD_SCOPES.items() if declared.policy == policy)
+
 
 # The conformance-family enforcement scopes that carry a module tag and thus
 # appear as nodes in the DAG (m-case-format, m-conformance-adapter). They are
@@ -788,18 +840,16 @@ _TABLE_HEADER = "| Behavioral/support module |"
 _SUPPORT_ROW = "(support"
 _APPLICATION_OWNED = "(application-owned)"
 _BACKTICKED = re.compile(r"`([^`]+)`")
-# The mark a §7 row's first cell carries on a child scope whose enforcement needs
-# more than its generated row: "isolated child of `parent`", "sealed child of
-# `parent`". An unmarked child says "child of", and matches neither. The parent
-# is captured with the mark because it is what the mark constrains — both are
-# properties of one declared child relationship.
-_CHILD_MARK = re.compile(r"\b(isolated|sealed) child of `([^`]+)`")
 # The §7 restricted-external table: one row per top-level import name, owners in
 # the second cell. import-linter forbids an external only as its top-level
 # package and squashes every submodule import into that one node, so a dotted
 # name would declare a grant nothing could enforce.
 _RESTRICTED_EXTERNAL_HEADER = "| Restricted external package |"
 _TOP_LEVEL_PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# The §7 child-scope table: one row per child, its parent in the second cell and
+# its policy, unbackticked, in the third. Parent and policy are properties of one
+# declared relationship, which is why the row carries both.
+_CHILD_SCOPE_HEADER = "| Child enforcement scope |"
 
 
 def _table_rows(text: str, header: str, cells: int, label: str) -> list[list[str]]:
@@ -923,43 +973,72 @@ def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
     return declared
 
 
-def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
-    """The child relationships §7's prose rows mark ``isolated`` or ``sealed``.
+def _declared_scopes() -> frozenset[str]:
+    return frozenset(MODULE_SCOPE.values()) | frozenset(SUPPORT_SCOPE_DEPS)
 
-    Keyed by the mark, then by scope, valued by the parent that row declares the
-    scope a child OF. Both halves are compared in
-    :func:`check_child_scope_marks`: a mark names a relationship rather than a
-    scope, and §7 states each mark's guarantee against the parent the row names,
-    so a row naming the wrong parent declares a different guarantee from the one
-    enforced. §7 declares each mark exactly once, so a repeated declaration is
-    rejected rather than resolved — silently keeping the last would erase a
-    contradiction the comparison exists to catch.
+
+def _child_table_scope(cell: str, field: str) -> str:
+    names = _BACKTICKED.findall(cell)
+    if len(names) != 1:
+        raise ValueError(
+            f"§7 child-scope table: the {field} cell must hold exactly one backticked "
+            f"enforcement scope, got {cell!r}"
+        )
+    return names[0]
+
+
+def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
+    """The child topology §7 declares: child scope to the parent it is nested
+    inside and the policy governing it.
+
+    Every child and every parent must be a declared scope: the ownership walk
+    resolves a file along this chain, and both policies beyond ``ordinary`` are
+    properties OF a child relationship — one says a grant on the parent does not
+    carry the child, the other says the child's grants are complete inside the
+    parent's package — so no row can describe a scope nothing declares. A child
+    must be nested inside its parent by dotted path, the policy vocabulary is
+    closed, and a child is declared by one row: a second row is a contradiction
+    rather than a later reading to keep, since silently keeping the last would
+    erase exactly the disagreement parity exists to catch.
     """
-    marked: dict[str, dict[str, str]] = {mark: {} for mark in ("isolated", "sealed")}
-    for module, owner, scope_cell, _deps, _rule in _topology_rows(text):
-        if scope_cell == _APPLICATION_OWNED:
-            continue
-        matches = tuple(_CHILD_MARK.finditer(module))
-        if not matches:
-            continue
-        for match in matches:
-            mark, parent = match.group(1), match.group(2)
-            for scope in _row_scopes(scope_cell, owner):
-                previous = marked[mark].get(scope)
-                if previous is not None:
-                    raise ValueError(
-                        f"§7 declares {scope!r} a {mark} child more than once: "
-                        f"of {previous!r} and of {parent!r}"
-                    )
-                marked[mark][scope] = parent
-    return marked
+    scopes = _declared_scopes()
+    declared: dict[str, ChildScope] = {}
+    for child_cell, parent_cell, policy in _table_rows(text, _CHILD_SCOPE_HEADER, 3, "child-scope"):
+        child = _child_table_scope(child_cell, "child")
+        parent = _child_table_scope(parent_cell, "parent")
+        if child in declared:
+            raise ValueError(
+                f"§7 child-scope table declares {child!r} more than once; a second row "
+                "would replace the first before parity compares it"
+            )
+        if child not in scopes:
+            raise ValueError(
+                f"§7 child-scope table declares {child!r}, which is not a declared "
+                "enforcement scope"
+            )
+        if parent not in scopes:
+            raise ValueError(
+                f"§7 child-scope table row for {child!r} names an undeclared parent scope "
+                f"{parent!r}"
+            )
+        if not child.startswith(f"{parent}."):
+            raise ValueError(
+                f"§7 child-scope table row for {child!r}: the child is not nested inside "
+                f"its parent {parent!r}"
+            )
+        if policy not in _CHILD_POLICIES:
+            raise ValueError(
+                f"§7 child-scope table row for {child!r} states the import policy "
+                f"{policy!r}, which is none of {list(_CHILD_POLICIES)}"
+            )
+        declared[child] = ChildScope(parent=parent, policy=policy)
+    return declared
 
 
 def _grantable_external_owners() -> frozenset[str]:
     """The scopes a restricted external may be granted to: every declared
     production scope, plus the conformance root as one development-only grant."""
-    declared = frozenset(MODULE_SCOPE.values()) | frozenset(SUPPORT_SCOPE_DEPS)
-    return (declared - CONFORMANCE_SCOPES) | {CONFORMANCE_ROOT}
+    return (_declared_scopes() - CONFORMANCE_SCOPES) | {CONFORMANCE_ROOT}
 
 
 def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
@@ -1089,76 +1168,55 @@ def check_restricted_external_parity(declared: Mapping[str, frozenset[str]]) -> 
     )
 
 
-def check_child_scope_marks(marked: Mapping[str, Mapping[str, str]]) -> None:
-    """Fail when §7's row marks and this module's child-scope tables disagree.
+def check_child_scope_parity(declared: Mapping[str, ChildScope]) -> None:
+    """Fail when §7's child-scope table and :data:`CHILD_SCOPES` disagree,
+    spec-relative, because the spec is authoritative.
 
-    Sealing generates nothing — ``tools/check_scope_ownership.py`` reading
-    :data:`SEALED_CHILD_SCOPES` is the whole of it — so without this comparison
-    the spec could call a scope sealed while the tool no longer sealed it: every
-    contract still generated, every check still green, and one declaration still
-    promising a guarantee nothing graded. Dropping isolation does move the
-    generated rows, so the default check already fails on it; this comparison is
-    what makes that failure name the disagreement with §7 rather than report
-    unexplained contract drift.
-
-    The parent each mark names is compared with :data:`CHILD_SCOPE_PARENT` for
-    the same reason the scope is: §7 states each mark's guarantee against the
-    parent the row names, and the ownership walk takes that parent from that
-    table rather than from §7.
+    Sealing generates nothing — ``tools/check_scope_ownership.py`` reading the
+    policy is the whole of it — so without this comparison the spec could call a
+    scope sealed while the tool no longer sealed it: every contract still
+    generated, every check still green, and one declaration still promising a
+    guarantee nothing graded. Dropping isolation does move the generated rows,
+    so the default check already fails on it; this comparison is what makes
+    that failure name the disagreement with §7 rather than report unexplained
+    contract drift. The parent is compared with the policy because §7 states
+    each policy's guarantee against the parent the row names, and the ownership
+    walk takes that parent from the tool's table rather than from §7.
     """
-    for mark, declared in (("isolated", ISOLATED_CHILD_SCOPES), ("sealed", SEALED_CHILD_SCOPES)):
-        in_spec = marked.get(mark, {})
-        marked_scopes = frozenset(in_spec)
-        if marked_scopes != declared:
+    spec_only = sorted(set(declared) - set(CHILD_SCOPES))
+    tool_only = sorted(set(CHILD_SCOPES) - set(declared))
+    if spec_only or tool_only:
+        raise ValueError(
+            "CHILD_SCOPES has drifted from the spec/python.md §7 child-scope table: "
+            f"declared only in the spec {spec_only}, declared only in the tool {tool_only}"
+        )
+    for child in sorted(declared):
+        if declared[child] != CHILD_SCOPES[child]:
             raise ValueError(
-                f"the {mark} child scopes have drifted from spec/python.md §7: "
-                f"marked only in the spec {sorted(marked_scopes - declared)}, declared "
-                f"only in the tool {sorted(declared - marked_scopes)}"
+                f"child scope {child!r} has drifted between the spec and the tool: the "
+                f"spec declares {_describe(declared[child])}, the tool declares "
+                f"{_describe(CHILD_SCOPES[child])}"
             )
-        for scope, parent in sorted(in_spec.items()):
-            if CHILD_SCOPE_PARENT.get(scope) != parent:
-                raise ValueError(
-                    f"spec/python.md §7 marks {scope!r} a {mark} child of {parent!r}, "
-                    f"but CHILD_SCOPE_PARENT declares its parent "
-                    f"{CHILD_SCOPE_PARENT.get(scope)!r}"
-                )
 
 
-def check_child_scopes() -> None:
-    """Fail when a declared child scope is not nested under its declared parent,
-    or when a scope marked isolated or sealed is not a declared child at all.
-
-    Both marks are properties OF a child relationship — one says a grant on the
-    parent does not carry the child, the other says the child's grants are
-    complete inside the parent's package — so neither can describe a scope whose
-    parent nothing declares.
-    """
-    for child, parent in CHILD_SCOPE_PARENT.items():
-        if parent not in SUPPORT_SCOPE_DEPS and parent not in MODULE_SCOPE.values():
-            raise ValueError(f"child scope {child!r} names an undeclared parent scope {parent!r}")
-        if not child.startswith(f"{parent}."):
-            raise ValueError(f"child scope {child!r} is not nested inside its parent {parent!r}")
-    undeclared = ISOLATED_CHILD_SCOPES - set(CHILD_SCOPE_PARENT)
-    if undeclared:
-        raise ValueError(f"isolated scopes are not declared child scopes: {sorted(undeclared)}")
-    unsealed = SEALED_CHILD_SCOPES - set(CHILD_SCOPE_PARENT)
-    if unsealed:
-        raise ValueError(f"sealed scopes are not declared child scopes: {sorted(unsealed)}")
+def _describe(child: ChildScope) -> str:
+    article = "an" if child.policy == "ordinary" else "a"
+    return f"{article} {child.policy} child of {child.parent!r}"
 
 
 def scope_ancestors(scope: str) -> frozenset[str]:
     """Every declared scope that contains ``scope``, following the child chain."""
     seen: set[str] = set()
-    current = CHILD_SCOPE_PARENT.get(scope)
-    while current is not None and current not in seen:
-        seen.add(current)
-        current = CHILD_SCOPE_PARENT.get(current)
+    current = CHILD_SCOPES.get(scope)
+    while current is not None and current.parent not in seen:
+        seen.add(current.parent)
+        current = CHILD_SCOPES.get(current.parent)
     return frozenset(seen)
 
 
 def scope_descendants(scope: str) -> frozenset[str]:
     """Every declared scope nested inside ``scope``, at any depth."""
-    return frozenset(child for child in CHILD_SCOPE_PARENT if scope in scope_ancestors(child))
+    return frozenset(child for child in CHILD_SCOPES if scope in scope_ancestors(child))
 
 
 def scope_siblings(scope: str) -> frozenset[str]:
@@ -1167,13 +1225,13 @@ def scope_siblings(scope: str) -> frozenset[str]:
     A sibling neither contains ``scope`` nor is contained by it, so — unlike the
     shared parent package — it is a forbiddable target in ``scope``'s own row.
     """
-    parent = CHILD_SCOPE_PARENT.get(scope)
-    if parent is None:
+    declared = CHILD_SCOPES.get(scope)
+    if declared is None:
         return frozenset()
     return frozenset(
         sibling
-        for sibling, sibling_parent in CHILD_SCOPE_PARENT.items()
-        if sibling_parent == parent and sibling != scope
+        for sibling, sibling_declared in CHILD_SCOPES.items()
+        if sibling_declared.parent == declared.parent and sibling != scope
     )
 
 
@@ -1334,8 +1392,8 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     edge — so every production scope is forbidden from importing any conformance
     scope, modelled or not.
 
-    Child scopes (:data:`CHILD_SCOPE_PARENT`) are excluded from the general
-    target set. import-linter's ``forbidden`` contracts are package-scoped on
+    Child scopes (:data:`CHILD_SCOPES`) are excluded from the general target
+    set. import-linter's ``forbidden`` contracts are package-scoped on
     both sides, so a child named inside its own parent's forbidden row overlaps
     that contract's source package and is silently skipped; and naming a child
     in some *other* scope's row would only restate what the parent's own entry
@@ -1344,7 +1402,7 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
 
     That restatement argument holds only where the parent is itself forbidden. A
     scope GRANTED the parent reaches every child through the parent's package,
-    which is why :data:`ISOLATED_CHILD_SCOPES` names the children no grant on the
+    which is why the ``isolated`` policy names the children no grant on the
     parent carries: each is a target in every row that neither contains it nor is
     contained by it, granted or not, so importing one is a rejected import rather
     than an absent grant.
@@ -1376,8 +1434,8 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     target the wide package reaches back inside this row.
     """
     production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
-    production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPE_PARENT)
-    all_targets = production_targets | {CONFORMANCE_ROOT} | ISOLATED_CHILD_SCOPES
+    production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPES)
+    all_targets = production_targets | {CONFORMANCE_ROOT} | scopes_with_policy("isolated")
     forbidden: dict[str, list[str]] = {}
     for scope in production_sources:
         allowed = transitive_closure(adjacency, scope)
@@ -1520,11 +1578,10 @@ def splice(current: str, block: str) -> str:
 
 def generate() -> str:
     python_md = PYTHON_MD.read_text()
+    check_child_scope_parity(parse_child_scope_table(python_md))
     check_support_scope_parity(
         parse_support_scope_graph(python_md), parse_support_scope_table(python_md)
     )
-    check_child_scope_marks(parse_child_scope_marks(python_md))
-    check_child_scopes()
     check_restricted_external_parity(parse_restricted_external_table(python_md))
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)
