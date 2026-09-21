@@ -218,6 +218,24 @@
   code: missing-source-module
   message: "source-enforcement topology has no row for m-db-port"
 
+# A cell declares only what it spells in backticks, so a bare module token —
+# alone or beside another row's name — is prose rather than a row.
+- name: unbackticked-source-module
+  base: valid-snapshot.md
+  old: "| `m-pk-gen` | `pk-gen` |"
+  new: "| m-pk-gen | `pk-gen` |"
+  code: missing-source-module
+  message: "source-enforcement topology has no row for m-pk-gen"
+
+- name: smuggled-source-module
+  base: valid-snapshot.md
+  old: |-
+    | `m-pk-gen` | `pk-gen` |
+    | `m-read-lock` | `read-lock` |
+  new: "| `m-read-lock` m-pk-gen | `read-lock` |"
+  code: missing-source-module
+  message: "source-enforcement topology has no row for m-pk-gen"
+
 - name: duplicate-source-module
   base: valid-snapshot.md
   old: "| `m-pk-gen` | `pk-gen` |"

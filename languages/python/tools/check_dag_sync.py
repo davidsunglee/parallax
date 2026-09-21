@@ -138,7 +138,8 @@ MODULE_SCOPE: Mapping[str, str] = {
 # The behavioral modules whose enforcement scope is a pytest collection boundary
 # rather than a `parallax` package. import-linter grades none of them, so
 # MODULE_SCOPE omits them; §7 still carries a row for each, because the core
-# template requires a row per claimed module, and parity skips exactly these.
+# template requires a row per claimed module, and parity requires each row as
+# this table spells it.
 PYTEST_BOUNDED_SCOPES: Mapping[str, str] = {"m-api-conformance": "tests.api"}
 
 # The write-execution child cluster (`_family`, `_keyed_sql`, `_write_lowering`)
@@ -801,8 +802,8 @@ def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
 
 
 # The four §7 tables, each opened by its header line; contiguous `|`-prefixed
-# lines are its rows. A cell declares only what it spells in backticks.
-_BACKTICKED = re.compile(r"`([^`]+)`")
+# lines are its rows. A cell declares only what it spells in backticks, with
+# the two bare spellings named below: `_NO_GRANTS` and the child policy word.
 _BACKTICKED_ONLY = re.compile(r"`[^`]+`")
 # The behavioral-scope table: one row per behavioral module, the module tag in
 # the first cell and the enforcement scope owning it in the second.
@@ -847,13 +848,18 @@ def _table_rows(text: str, header: str, cells: int, label: str) -> list[list[str
 
 
 def _one_backticked(cell: str, label: str, field: str) -> str:
-    names = _BACKTICKED.findall(cell)
-    if len(names) != 1:
+    """The one backticked name a cell holds, and nothing else.
+
+    Text beside the name is refused rather than skipped: it would be read by
+    nobody and enforced by nothing here, while a reader counting bare tokens
+    could take it for a row of its own.
+    """
+    if not _BACKTICKED_ONLY.fullmatch(cell):
         raise ValueError(
-            f"§7 {label} table: the {field} cell must hold exactly one backticked name, "
-            f"got {cell!r}"
+            f"§7 {label} table: the {field} cell must hold exactly one backticked name "
+            f"and nothing else, got {cell!r}"
         )
-    return names[0]
+    return cell.strip("`")
 
 
 def _backticked_list(cell: str, label: str, field: str) -> list[str]:
@@ -1062,13 +1068,14 @@ def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
     for package_cell, owners_cell in _table_rows(
         text, _RESTRICTED_EXTERNAL_HEADER, 2, "restricted-external"
     ):
-        names = _BACKTICKED.findall(package_cell)
-        if len(names) != 1 or not _TOP_LEVEL_PACKAGE.fullmatch(names[0]):
+        package = package_cell.strip("`")
+        if not _BACKTICKED_ONLY.fullmatch(package_cell) or not _TOP_LEVEL_PACKAGE.fullmatch(
+            package
+        ):
             raise ValueError(
                 "§7 restricted-external table: the package cell must hold exactly one "
-                f"backticked top-level import name, got {package_cell!r}"
+                f"backticked top-level import name and nothing else, got {package_cell!r}"
             )
-        package = names[0]
         if package in namespaces:
             raise ValueError(
                 f"§7 restricted-external table: {package!r} is the first-party namespace, "
@@ -1079,12 +1086,12 @@ def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
                 f"§7 restricted-external table declares {package!r} more than once; a second "
                 "row would replace the first before parity compares it"
             )
-        owners = _BACKTICKED.findall(owners_cell)
-        if not owners:
+        if owners_cell in ("", _NO_GRANTS):
             raise ValueError(
                 f"§7 restricted-external table row for {package!r}: the owners cell grants "
                 f"no enforcement scope: {owners_cell!r}"
             )
+        owners = _backticked_list(owners_cell, "restricted-external", "owners")
         for owner in owners:
             if owner not in owners_universe:
                 raise ValueError(
@@ -1121,34 +1128,32 @@ def _compare_declarations(
 
 
 def check_behavioral_scope_parity(declared: Mapping[str, str]) -> None:
-    """Fail when §7's behavioral-scope table and :data:`MODULE_SCOPE` disagree,
-    spec-relative, because the spec is authoritative.
+    """Fail when §7's behavioral-scope table and the tool's declaration of the
+    mapping — :data:`MODULE_SCOPE` with :data:`PYTEST_BOUNDED_SCOPES` beside it —
+    disagree, spec-relative, because the spec is authoritative.
 
-    The pytest-bounded rows are the ones :data:`MODULE_SCOPE` deliberately
-    omits, so a row spelled exactly as :data:`PYTEST_BOUNDED_SCOPES` names it is
-    set aside rather than reported as spec-only. Every other row — one of those
-    modules remapped into the package tree included — must map its module to
-    the scope the tool maps it to, or the generated contracts would be sourced
-    from a scope §7 no longer names.
+    The pytest-bounded rows source no contract, which is why
+    :data:`MODULE_SCOPE` omits them; they are compared all the same, so the
+    table can neither drop a row the core template requires nor remap one of
+    those modules into the package tree while the tool still declares it a
+    pytest boundary. Every other row must map its module to the scope the tool
+    maps it to, or the generated contracts would be sourced from a scope §7 no
+    longer names.
     """
-    compared = {
-        module: scope
-        for module, scope in declared.items()
-        if PYTEST_BOUNDED_SCOPES.get(module) != scope
-    }
-    spec_only = sorted(set(compared) - set(MODULE_SCOPE))
-    tool_only = sorted(set(MODULE_SCOPE) - set(compared))
+    expected = {**MODULE_SCOPE, **PYTEST_BOUNDED_SCOPES}
+    spec_only = sorted(set(declared) - set(expected))
+    tool_only = sorted(set(expected) - set(declared))
     if spec_only or tool_only:
         raise ValueError(
             "MODULE_SCOPE has drifted from the spec/python.md §7 behavioral-scope table: "
             f"declared only in the spec {spec_only}, declared only in the tool {tool_only}"
         )
-    for module in sorted(compared):
-        if compared[module] != MODULE_SCOPE[module]:
+    for module in sorted(declared):
+        if declared[module] != expected[module]:
             raise ValueError(
                 f"behavioral module {module!r} has drifted between the spec and the tool: "
-                f"the spec maps it to {compared[module]!r}, the tool maps it to "
-                f"{MODULE_SCOPE[module]!r}"
+                f"the spec maps it to {declared[module]!r}, the tool maps it to "
+                f"{expected[module]!r}"
             )
 
 

@@ -292,7 +292,9 @@ caller observes, or record it here.
 The behavioral-module DAG governs dependencies between source enforcement
 scopes even when many scopes live in one source tree or common-runtime artifact.
 Record the source-enforcement map as four relations, each one strict table
-whose cells declare only what they spell in backticks. Source paths, tool
+whose cells declare only what they spell in backticks, with two bare
+spellings: the explicit empty grant, and the import policy word, which comes
+from the closed vocabulary the language's tooling defines. Source paths, tool
 names, and descriptive labels belong in prose beside the tables, not in them,
 so that each table can be read back mechanically and compared with the one
 declaration the enforcement tooling holds of the same relation. Do not use
