@@ -32,7 +32,14 @@ importer exemption), and the support-scope additions:
 * a child scope named as another scope's GRANT, which is how the typed query
   surface takes the Entity frontend without the rest of `m-object-query` taking
   it — with two canaries, one importing the Database Port into the read-preflight
-  seam directly and one reaching it through a chain.
+  seam directly and one reaching it through a chain; and
+* the restricted-external ownership §7 declares as its own relation — the table
+  grammar, parity with ``RESTRICTED_EXTERNAL_GRANTS`` in both directions, the
+  minimal blocked roots and delegated child exceptions each direct-only contract
+  is built from, and ``lint-imports`` canaries naming the four packages
+  literally: a Snapshot module importing any of them breaks, an unowned package
+  interface importing one breaks, every owner's own import is kept, and the
+  indirect Snapshot -> Entity -> Pydantic reach stays legal.
 """
 
 from __future__ import annotations
@@ -71,15 +78,10 @@ def linted_copy(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tree
 
 
-def broken_by(tree: Path, module: str, statement: str) -> str:
-    """`lint-imports`' report over ``tree``, unwrapped, with ``statement``
-    appended to ``module`` — the copied module named by its dotted import path,
-    created inside its package when the copy holds no module of that name.
-
-    Asserts a contract broke, because every caller is a canary whose subject is
-    which contract the tool then names and along which edge. The report wraps
-    long edges across lines, so it is answered unwrapped.
-    """
+def _linted_with(tree: Path, module: str, statement: str) -> subprocess.CompletedProcess[str]:
+    """Run `lint-imports` over ``tree`` with ``statement`` appended to ``module`` —
+    the copied module named by its dotted import path, created inside its
+    package when the copy holds no module of that name — and restore the copy."""
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
@@ -89,7 +91,7 @@ def broken_by(tree: Path, module: str, statement: str) -> str:
     original = target.read_text() if target.exists() else None
     target.write_text(f"{original or ''}{statement}\n")
     try:
-        result = subprocess.run(
+        return subprocess.run(
             [lint_imports],
             cwd=tree,
             capture_output=True,
@@ -103,7 +105,26 @@ def broken_by(tree: Path, module: str, statement: str) -> str:
         else:
             target.write_text(original)
 
+
+def broken_by(tree: Path, module: str, statement: str) -> str:
+    """`lint-imports`' report over ``tree``, unwrapped, with ``statement``
+    appended to ``module``.
+
+    Asserts a contract broke, because every caller is a canary whose subject is
+    which contract the tool then names and along which edge. The report wraps
+    long edges across lines, so it is answered unwrapped.
+    """
+    result = _linted_with(tree, module, statement)
     assert result.returncode != 0, result.stdout
+    return " ".join(result.stdout.split())
+
+
+def kept_with(tree: Path, module: str, statement: str) -> str:
+    """`lint-imports`' report over ``tree``, unwrapped, with ``statement``
+    appended to ``module``, asserting every contract was kept: the positive
+    half of a grant, which a breaking canary alone cannot prove."""
+    result = _linted_with(tree, module, statement)
+    assert result.returncode == 0, result.stdout
     return " ".join(result.stdout.split())
 
 
@@ -303,8 +324,8 @@ def test_a_tampered_spec_fence_fails_generation(
 def test_parse_support_scope_table_reads_the_prose_rows() -> None:
     prose = dag.parse_support_scope_table(dag.PYTHON_MD.read_text())
     assert "parallax.snapshot.materialize" in prose["parallax.snapshot.handle"]
-    # `psycopg` sits unbackticked in the Postgres row: a third-party
-    # distribution, not an enforcement scope, and so not a grant.
+    # The Postgres row grants first-party scopes alone: the driver it imports is
+    # declared by the restricted-external table, not by this column.
     assert prose["parallax.postgres"] == frozenset(
         {
             "parallax.core.base",
@@ -386,8 +407,10 @@ def test_parse_support_scope_table_rejects_an_unmodeled_module_tag() -> None:
 
 
 def test_parse_support_scope_table_rejects_a_backticked_non_scope_grant() -> None:
-    # Backticking `psycopg` would make it read as a declared grant; a token
-    # that is neither a module tag nor a scope is a spec error, not a skip.
+    # A third-party package is never a first-party grant, however it is spelled:
+    # backticked, a token that is neither a module tag nor a scope is a spec
+    # error rather than a skip, and its owners belong in the restricted-external
+    # table instead.
     with pytest.raises(ValueError, match="neither a module tag nor"):
         dag.parse_support_scope_table(
             f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
@@ -418,10 +441,9 @@ def test_parse_support_scope_table_reads_no_grants_alone_as_an_empty_row() -> No
 
 def test_no_grants_beside_unbackticked_prose_is_still_an_empty_row() -> None:
     # The other direction of the same rule: §7 says only a backticked module tag
-    # or `parallax.*` scope declares a grant, so `psycopg` — the exact
-    # unbackticked spelling the Postgres row already carries — contradicts
-    # nothing. Rejecting on "text survived removing (none)" would refuse a row
-    # this section explicitly permits.
+    # or `parallax.*` scope declares a grant, so unbackticked `psycopg`
+    # contradicts nothing. Rejecting on "text survived removing (none)" would
+    # refuse a row this section explicitly permits.
     prose = dag.parse_support_scope_table(
         f"{_HEADER}\n| Thing (support) | `parallax.core.thing` | "
         "`parallax.core.thing` | (none), psycopg | x |\n"
@@ -1062,10 +1084,14 @@ def test_the_preflight_seam_grants_the_query_module_not_the_frontend() -> None:
     assert "parallax.core._formation_profile" in blocked
     assert "parallax.core.opt_lock" in blocked
     assert "parallax.core.unit_work" in blocked
-    # No second contract and no exception mechanism: one ordinary row per scope.
-    block = dag.generate()
-    assert "allow_indirect_imports" not in block
-    assert block.count(f'source_modules = ["{scope}"]') == 1
+    # No second first-party contract and no exception mechanism: one ordinary
+    # row per scope, reporting indirect chains.
+    (row,) = [
+        contract
+        for contract in dag.generate().split("\n\n")
+        if f'source_modules = ["{scope}"]' in contract
+    ]
+    assert "allow_indirect_imports" not in row
 
 
 def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> None:
@@ -1362,3 +1388,407 @@ def test_production_import_of_unmodeled_conformance_scope_fails_lint_imports(
 
     assert "parallax.core.base" in reported
     assert "parallax.conformance" in reported
+
+
+# --------------------------------------------------------------------------
+# Restricted externals: §7's fourth relation, parity-checked and enforced as
+# one direct-only contract per package.
+# --------------------------------------------------------------------------
+# The restricted-external table header the parser keys on, for one-row fixtures.
+_EXTERNAL_HEADER = "| Restricted external package | Granted enforcement scopes |\n|---|---|"
+
+
+def _external_table(package_cell: str, owners_cell: str) -> str:
+    return f"{_EXTERNAL_HEADER}\n| {package_cell} | {owners_cell} |\n"
+
+
+def test_the_spec_and_the_tool_agree_on_restricted_externals() -> None:
+    declared = dag.parse_restricted_external_table(dag.PYTHON_MD.read_text())
+    assert declared == dict(dag.RESTRICTED_EXTERNAL_GRANTS)
+    dag.check_restricted_external_parity(declared)
+    # The four names are literal on purpose: a package misspelled consistently
+    # in spec and tool would generate a contract forbidding a node the graph
+    # never holds, which import-linter drops without a word.
+    assert set(declared) == {"pydantic", "pydantic_core", "psycopg", "psycopg_pool"}
+
+
+def test_parse_restricted_external_table_reads_one_top_level_name_per_row() -> None:
+    declared = dag.parse_restricted_external_table(
+        _external_table("`pydantic`", "`parallax.core.entity`, `parallax.conformance`")
+    )
+    assert declared == {
+        "pydantic": frozenset({"parallax.core.entity", dag.CONFORMANCE_ROOT}),
+    }
+
+
+def test_parse_restricted_external_table_rejects_a_dotted_package() -> None:
+    # import-linter squashes every submodule import into the top-level node and
+    # refuses a dotted external outright, so a grant at that granularity would
+    # be one nothing could enforce.
+    with pytest.raises(ValueError, match="exactly one backticked top-level import name"):
+        dag.parse_restricted_external_table(
+            _external_table("`pydantic.fields`", "`parallax.core.entity`")
+        )
+
+
+def test_parse_restricted_external_table_rejects_a_cell_naming_two_packages() -> None:
+    with pytest.raises(ValueError, match="exactly one backticked top-level import name"):
+        dag.parse_restricted_external_table(
+            _external_table("`pydantic`, `pydantic_core`", "`parallax.core.entity`")
+        )
+
+
+def test_parse_restricted_external_table_rejects_an_unbackticked_package() -> None:
+    with pytest.raises(ValueError, match="exactly one backticked top-level import name"):
+        dag.parse_restricted_external_table(_external_table("pydantic", "`parallax.core.entity`"))
+
+
+def test_parse_restricted_external_table_rejects_the_first_party_namespace() -> None:
+    with pytest.raises(ValueError, match="first-party namespace"):
+        dag.parse_restricted_external_table(_external_table("`parallax`", "`parallax.core.entity`"))
+
+
+def test_parse_restricted_external_table_rejects_empty_owners() -> None:
+    with pytest.raises(ValueError, match="grants no enforcement scope"):
+        dag.parse_restricted_external_table(_external_table("`pydantic`", "(none)"))
+
+
+def test_parse_restricted_external_table_rejects_an_undeclared_owner() -> None:
+    with pytest.raises(ValueError, match=r"'parallax\.core\.ghost', which is neither"):
+        dag.parse_restricted_external_table(
+            _external_table("`pydantic`", "`parallax.core.entity`, `parallax.core.ghost`")
+        )
+
+
+def test_parse_restricted_external_table_rejects_a_conformance_scope_as_owner() -> None:
+    # The conformance root is the one development-only grant; a conformance
+    # scope beneath it is not a production scope and sources no contract.
+    with pytest.raises(ValueError, match=r"'parallax\.conformance\.cli', which is neither"):
+        dag.parse_restricted_external_table(
+            _external_table("`psycopg`", "`parallax.conformance.cli`")
+        )
+
+
+def test_parse_restricted_external_table_rejects_a_duplicate_package() -> None:
+    table = (
+        f"{_EXTERNAL_HEADER}\n"
+        "| `pydantic` | `parallax.core.entity` |\n"
+        "| `pydantic` | `parallax.postgres` |\n"
+    )
+    with pytest.raises(ValueError, match="declares 'pydantic' more than once"):
+        dag.parse_restricted_external_table(table)
+
+
+def test_parse_restricted_external_table_rejects_a_row_of_the_wrong_width() -> None:
+    with pytest.raises(ValueError, match="restricted-external table row does not have 2 cells"):
+        dag.parse_restricted_external_table(f"{_EXTERNAL_HEADER}\n| one | two | three |\n")
+
+
+def test_parse_restricted_external_table_rejects_a_missing_table() -> None:
+    with pytest.raises(ValueError, match="no §7 restricted-external table"):
+        dag.parse_restricted_external_table(f"{_HEADER}\n| x | y | z | (none) | w |\n")
+
+
+def test_an_owner_added_to_the_spec_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "| `psycopg_pool` | `parallax.postgres` |",
+        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot.handle` |",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match=r"restricted external package 'psycopg_pool' has drifted"):
+        dag.generate()
+
+
+def test_a_package_added_to_the_spec_alone_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "| `psycopg_pool` | `parallax.postgres` |",
+        "| `psycopg_pool` | `parallax.postgres` |\n| `sqlalchemy` | `parallax.postgres` |",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match=r"declared only in the spec \['sqlalchemy'\]"):
+        dag.generate()
+
+
+def test_an_owner_added_to_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dag,
+        "RESTRICTED_EXTERNAL_GRANTS",
+        {
+            **dag.RESTRICTED_EXTERNAL_GRANTS,
+            "pydantic": dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"] | {"parallax.snapshot.handle"},
+        },
+    )
+    with pytest.raises(ValueError, match=r"restricted external package 'pydantic' has drifted"):
+        dag.generate()
+
+
+def test_a_package_dropped_by_the_tool_alone_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tampered = {
+        package: owners
+        for package, owners in dag.RESTRICTED_EXTERNAL_GRANTS.items()
+        if package != "pydantic_core"
+    }
+    monkeypatch.setattr(dag, "RESTRICTED_EXTERNAL_GRANTS", tampered)
+    with pytest.raises(ValueError, match=r"declared only in the spec \['pydantic_core'\]"):
+        dag.generate()
+
+
+def test_a_parity_error_exits_one_with_one_line_and_no_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "| `psycopg_pool` | `parallax.postgres` |",
+        "| `psycopg_pool` | `parallax.postgres`, `parallax.snapshot.handle` |",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    assert dag.main([]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("tools/check_dag_sync.py: ")
+    assert "'psycopg_pool' has drifted between the spec and the tool" in captured.err
+    # Both sides are printed, so the developer sees which declaration to move.
+    assert "the spec grants ['parallax.postgres', 'parallax.snapshot.handle']" in captured.err
+    assert "the tool grants ['parallax.postgres']" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.err.count("\n") == 1
+
+
+def test_a_programming_defect_keeps_its_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only the expected declaration failures are condensed; anything else is a
+    # defect in the tool and must surface as one.
+    monkeypatch.setattr(dag, "RESTRICTED_EXTERNAL_GRANTS", None)
+    with pytest.raises(TypeError):
+        dag.main([])
+
+
+def test_minimal_scope_roots_drops_a_scope_beneath_another_member() -> None:
+    assert dag.minimal_scope_roots(
+        {
+            "parallax.snapshot.handle",
+            "parallax.snapshot.handle._preflight",
+            "parallax.core.entity._layout",
+            "parallax.core.base",
+        }
+    ) == ("parallax.core.base", "parallax.core.entity._layout", "parallax.snapshot.handle")
+
+
+def test_external_contract_sources_keep_a_blocked_child_of_a_granted_parent() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    production = frozenset(dag.compute_forbidden(adjacency))
+    sources = dag.external_contract_sources(dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"], production)
+    # The frontend is granted, so its package covers nothing as a source, and
+    # each ungranted child is a root of its own.
+    assert "parallax.core.entity" not in sources
+    assert {
+        "parallax.core.entity._construction_input",
+        "parallax.core.entity._expressions",
+        "parallax.core.entity._layout",
+    } <= set(sources)
+    # A blocked child of a blocked parent is left to the parent's entry.
+    assert "parallax.snapshot.handle" in sources
+    assert not any(source.startswith("parallax.snapshot.handle.") for source in sources)
+    # Granted scopes never appear, and neither does the conformance root.
+    assert not set(sources) & dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"]
+    assert sources == tuple(sorted(sources))
+
+
+def test_a_granted_child_beneath_a_blocked_ancestor_becomes_two_exceptions() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    production = frozenset(dag.compute_forbidden(adjacency))
+    granted = dag.RESTRICTED_EXTERNAL_GRANTS["pydantic_core"]
+    sources = dag.external_contract_sources(granted, production)
+    assert "parallax.core.entity" in sources
+    assert dag.external_child_grant_exceptions(
+        sources=sources, external="pydantic_core", granted_scopes=granted
+    ) == (
+        "parallax.core.entity._instance_state -> pydantic_core",
+        "parallax.core.entity._instance_state.** -> pydantic_core",
+    )
+    # No granted scope of `pydantic` sits beneath a blocked one, so that
+    # contract carries no exception at all.
+    assert (
+        dag.external_child_grant_exceptions(
+            sources=dag.external_contract_sources(
+                dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"], production
+            ),
+            external="pydantic",
+            granted_scopes=dag.RESTRICTED_EXTERNAL_GRANTS["pydantic"],
+        )
+        == ()
+    )
+
+
+def test_a_delegated_child_that_is_not_a_leaf_fails_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `child.**` would also cover a declared scope nested beneath the child,
+    # whose own policy might differ, and import-linter has no expression for
+    # "this package minus a declared child"; so the grant is refused rather
+    # than widened.
+    monkeypatch.setattr(
+        dag,
+        "CHILD_SCOPE_PARENT",
+        {
+            **dag.CHILD_SCOPE_PARENT,
+            "parallax.core.entity._instance_state._nested": (
+                "parallax.core.entity._instance_state"
+            ),
+        },
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"not leaves of the child topology: \['parallax\.core\.entity\._instance_state'\]",
+    ):
+        dag.external_child_grant_exceptions(
+            sources=("parallax.core.entity",),
+            external="pydantic_core",
+            granted_scopes=frozenset({"parallax.core.entity._instance_state"}),
+        )
+
+
+def test_unowned_production_interfaces_are_the_roots_no_scope_owns() -> None:
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    production = frozenset(dag.compute_forbidden(adjacency))
+    assert dag.unowned_production_interfaces(production, dag.ROOT_PACKAGES) == frozenset(
+        {"parallax.core", "parallax.evolution", "parallax.snapshot"}
+    )
+    # A root that is itself a scope is owned, and the conformance root sources
+    # nothing.
+    assert "parallax.postgres" in production
+    assert "parallax.descriptor" in production
+
+
+def test_the_rendered_block_carries_the_external_contracts() -> None:
+    block = dag.generate()
+    assert "include_external_packages = true" in block
+    for package in dag.RESTRICTED_EXTERNAL_GRANTS:
+        assert f'name = "Direct imports of {package} require an explicit §7 grant"' in block
+    # Alerting is relaxed only where a delegated child grant is written, since a
+    # permission has no import to match yet and must not fail for lacking one.
+    assert block.count('unmatched_ignore_imports_alerting = "none"') == 1
+    assert "parallax.core.entity._instance_state.** -> pydantic_core" in block
+    assert 'name = "Unowned production interfaces import no restricted externals directly"' in block
+    assert block.count("as_packages = false") == 1
+    assert block.count("allow_indirect_imports = true") == len(dag.RESTRICTED_EXTERNAL_GRANTS) + 1
+    # The first-party family stays first, then one contract per package sorted
+    # by name, then the interface contract last.
+    names = re.findall(r'^name = "(.*)"$', block, re.MULTILINE)
+    externals = [name for name in names if name.startswith("Direct imports of ")]
+    assert externals == sorted(externals)
+    assert names[-1] == "Unowned production interfaces import no restricted externals directly"
+    assert names.index(externals[0]) == len(names) - len(externals) - 1
+
+
+def test_render_block_omits_the_interface_contract_when_every_root_is_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dag, "ROOT_PACKAGES", ("parallax.conformance", "parallax.postgres"))
+    block = dag.render_block({"parallax.postgres": []}, {}, frozenset({"parallax.postgres"}))
+    assert "Unowned production interfaces" not in block
+    assert "as_packages = false" not in block
+
+
+# --------------------------------------------------------------------------
+# Canary 10: a Snapshot module may name none of the four restricted packages.
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("package", ["pydantic", "pydantic_core", "psycopg", "psycopg_pool"])
+def test_a_restricted_import_in_a_snapshot_module_fails_lint_imports(
+    linted_copy: Path, package: str
+) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot._inspection",
+        f"import {package}  # deliberate restricted-external violation",
+    )
+
+    assert f"Direct imports of {package} require an explicit §7 grant BROKEN" in reported
+    assert f"parallax.snapshot._inspection -> {package}" in reported
+    # The first-party rows say nothing about it: only the external contract broke.
+    assert "may import only its permitted dependencies BROKEN" not in reported
+
+
+# --------------------------------------------------------------------------
+# Canary 11: the package interfaces no scope owns are graded exactly.
+# --------------------------------------------------------------------------
+def test_a_restricted_import_in_an_unowned_interface_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.core.__init__",
+        "import pydantic  # deliberate interface violation",
+    )
+
+    assert "Unowned production interfaces import no restricted externals directly BROKEN" in (
+        reported
+    )
+    assert "parallax.core -> pydantic" in reported
+
+
+# --------------------------------------------------------------------------
+# Canary 12: every owner's own import is kept, and the indirect reach stays legal.
+# --------------------------------------------------------------------------
+def test_the_untouched_copy_keeps_every_contract(linted_copy: Path) -> None:
+    # Snapshot reaches Pydantic through the Entity frontend today, and the
+    # direct-only shape is what keeps that chain unreported.
+    reported = kept_with(
+        linted_copy,
+        "parallax.snapshot._inspection",
+        "import parallax.core.entity._declaration  # granted frontend reach",
+    )
+    assert "Direct imports of pydantic require an explicit §7 grant KEPT" in reported
+
+
+def test_an_entity_module_may_import_pydantic(linted_copy: Path) -> None:
+    kept_with(linted_copy, "parallax.core.entity._canary_owner", "import pydantic")
+
+
+def test_the_instance_state_child_may_import_pydantic_core(linted_copy: Path) -> None:
+    kept_with(linted_copy, "parallax.core.entity._instance_state", "import pydantic_core")
+
+
+def test_a_postgres_module_may_import_the_driver(linted_copy: Path) -> None:
+    kept_with(
+        linted_copy,
+        "parallax.postgres._canary_driver",
+        "import psycopg\nimport psycopg_pool",
+    )
+
+
+def test_an_ungranted_entity_child_may_not_import_pydantic(linted_copy: Path) -> None:
+    # The parent is granted, so its package covers nothing as a source; the
+    # child's own root is what refuses the import.
+    reported = broken_by(
+        linted_copy,
+        "parallax.core.entity._layout",
+        "import pydantic  # deliberate child violation",
+    )
+
+    assert "Direct imports of pydantic require an explicit §7 grant BROKEN" in reported
+    assert "parallax.core.entity._layout -> pydantic" in reported

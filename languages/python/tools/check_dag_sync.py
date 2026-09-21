@@ -40,6 +40,15 @@ conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
 side (they may harness any behavioural scope), while every production scope is
 forbidden from importing any conformance scope.
 
+§7 also declares which scopes may import a *restricted external* package
+directly — the Pydantic substrate beneath an Entity value and the Psycopg driver
+beneath the Postgres adapter — as a relation of its own, restated here as
+:data:`RESTRICTED_EXTERNAL_GRANTS` and parity-checked the same way. Each such
+package becomes one ``forbidden`` contract sourced from every ungranted
+production scope, direct imports only: a scope granted a first-party scope that
+itself imports the package reaches it through that scope and never names it,
+which is what keeps Snapshot free of Pydantic while it reaches Entity values.
+
 Usage
 -----
 * ``python tools/check_dag_sync.py``            verify committed contracts (default)
@@ -57,6 +66,7 @@ import re
 import sys
 from collections import deque
 from collections.abc import Iterable, Mapping
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 _TOOL = "tools/check_dag_sync.py"
@@ -668,6 +678,42 @@ ROOT_PACKAGES: tuple[str, ...] = (
     "parallax.snapshot",
 )
 
+# Restricted external package -> the scopes that may import it DIRECTLY
+# (spec/python.md §7's restricted-external table). Keys are top-level import
+# names, the only granularity import-linter forbids an external at. A grant is a
+# permission to name the package, not a first-party edge: it enters no closure,
+# a parent's grant does not carry its declared children, and first-party
+# reachability confers nothing — `parallax.core.entity._pydantic_storage` owns
+# `pydantic` while its first-party row grants nothing at all.
+#
+# The Entity children are granted one by one because each imports the substrate
+# for its own reason: the frontend for its metaclass and validators, `_edit` for
+# the `BaseModel` bound it derives over, `_instance_state` for the root that
+# answers Pydantic for a value's state (and `pydantic_core` for the undefined
+# sentinel it compares against), `_pydantic_storage` for the slot descriptors it
+# reaches past every binding. `_construction_input`, `_expressions`, and
+# `_layout` are not granted, and so are contract sources of their own.
+#
+# The conformance harness is granted `pydantic` for its native edit witnesses —
+# fixtures that are deliberately Pydantic models exercising the Entity frontend
+# from outside it — and `psycopg` for the driver sessions it opens that no
+# application would. Both grants are parity-checked documentation: no contract
+# is sourced from a conformance scope, so neither generates anything.
+RESTRICTED_EXTERNAL_GRANTS: Mapping[str, frozenset[str]] = {
+    "pydantic": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.core.entity._edit",
+            "parallax.core.entity._instance_state",
+            "parallax.core.entity._pydantic_storage",
+            CONFORMANCE_ROOT,
+        }
+    ),
+    "pydantic_core": frozenset({"parallax.core.entity._instance_state"}),
+    "psycopg": frozenset({"parallax.postgres", CONFORMANCE_ROOT}),
+    "psycopg_pool": frozenset({"parallax.postgres"}),
+}
+
 
 _EDGE = re.compile(r"(\S+)\s*-->\s*(\S+)")
 
@@ -748,27 +794,37 @@ _BACKTICKED = re.compile(r"`([^`]+)`")
 # is captured with the mark because it is what the mark constrains — both are
 # properties of one declared child relationship.
 _CHILD_MARK = re.compile(r"\b(isolated|sealed) child of `([^`]+)`")
+# The §7 restricted-external table: one row per top-level import name, owners in
+# the second cell. import-linter forbids an external only as its top-level
+# package and squashes every submodule import into that one node, so a dotted
+# name would declare a grant nothing could enforce.
+_RESTRICTED_EXTERNAL_HEADER = "| Restricted external package |"
+_TOP_LEVEL_PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def _table_rows(text: str) -> list[list[str]]:
-    """The §7 enforcement-topology table as cell lists, separator row dropped."""
+def _table_rows(text: str, header: str, cells: int, label: str) -> list[list[str]]:
+    """A §7 table opened by ``header`` as cell lists, separator row dropped."""
     lines = text.splitlines()
-    header = next((i for i, line in enumerate(lines) if line.startswith(_TABLE_HEADER)), None)
-    if header is None:
-        raise ValueError("no §7 enforcement-topology table found in spec/python.md")
+    start = next((i for i, line in enumerate(lines) if line.startswith(header)), None)
+    if start is None:
+        raise ValueError(f"no §7 {label} table found in spec/python.md")
     rows: list[list[str]] = []
-    for line in lines[header + 1 :]:
+    for line in lines[start + 1 :]:
         if not line.startswith("|"):
             break
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if all(set(cell) <= set("-: ") for cell in cells):
+        row = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(set(cell) <= set("-: ") for cell in row):
             continue
-        if len(cells) != 5:
-            raise ValueError(f"§7 table row does not have 5 cells: {line!r}")
-        rows.append(cells)
+        if len(row) != cells:
+            raise ValueError(f"§7 {label} table row does not have {cells} cells: {line!r}")
+        rows.append(row)
     if not rows:
-        raise ValueError("§7 enforcement-topology table has no rows")
+        raise ValueError(f"§7 {label} table has no rows")
     return rows
+
+
+def _topology_rows(text: str) -> list[list[str]]:
+    return _table_rows(text, _TABLE_HEADER, 5, "enforcement-topology")
 
 
 def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
@@ -800,9 +856,11 @@ def _row_grants(cell: str, scope: str) -> frozenset[str]:
 
     Only backticked tokens declare a grant: a module tag resolved through
     :data:`MODULE_SCOPE`, or a ``parallax.*`` scope named outright. Unbackticked
-    prose in that cell names no enforcement scope (``psycopg`` is a third-party
-    distribution, not a scope) and is not a grant. A backticked token that is
-    neither shape is a spec error rather than something to skip quietly.
+    prose in that cell names no enforcement scope and is not a grant. A
+    backticked token that is neither shape is a spec error rather than something
+    to skip quietly — a restricted external such as ``psycopg`` is declared by
+    the restricted-external table (:func:`parse_restricted_external_table`),
+    never as a first-party grant.
 
     :data:`_NO_GRANTS` is the one unbackticked token that carries meaning here —
     it is how this column spells an empty grant — so naming it beside a real
@@ -848,7 +906,7 @@ def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
     by that exact marker, not by shape.
     """
     declared: dict[str, frozenset[str]] = {}
-    for module, owner, scope_cell, deps_cell, _rule in _table_rows(text):
+    for module, owner, scope_cell, deps_cell, _rule in _topology_rows(text):
         if _SUPPORT_ROW not in module:
             continue
         if scope_cell == _APPLICATION_OWNED:
@@ -878,7 +936,7 @@ def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
     contradiction the comparison exists to catch.
     """
     marked: dict[str, dict[str, str]] = {mark: {} for mark in ("isolated", "sealed")}
-    for module, owner, scope_cell, _deps, _rule in _table_rows(text):
+    for module, owner, scope_cell, _deps, _rule in _topology_rows(text):
         if scope_cell == _APPLICATION_OWNED:
             continue
         matches = tuple(_CHILD_MARK.finditer(module))
@@ -897,14 +955,75 @@ def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
     return marked
 
 
+def _grantable_external_owners() -> frozenset[str]:
+    """The scopes a restricted external may be granted to: every declared
+    production scope, plus the conformance root as one development-only grant."""
+    declared = frozenset(MODULE_SCOPE.values()) | frozenset(SUPPORT_SCOPE_DEPS)
+    return (declared - CONFORMANCE_SCOPES) | {CONFORMANCE_ROOT}
+
+
+def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
+    """The restricted-external ownership §7 declares: top-level import name to
+    the scopes granted a direct import of it.
+
+    The package cell holds exactly one backticked top-level identifier, because
+    that is the only granularity import-linter forbids an external at; a dotted
+    submodule is rejected rather than silently widened to its root. The owners
+    cell holds one or more backticked scopes, each a declared production scope
+    or :data:`CONFORMANCE_ROOT`: an empty cell would declare a package nobody
+    may import — a grant table states permissions, and a package with none
+    belongs off the table — and an undeclared owner would grant nothing. One
+    row per package, so a second row is a contradiction rather than a wider
+    grant.
+    """
+    owners_universe = _grantable_external_owners()
+    namespaces = frozenset(root.split(".", 1)[0] for root in ROOT_PACKAGES)
+    declared: dict[str, frozenset[str]] = {}
+    for package_cell, owners_cell in _table_rows(
+        text, _RESTRICTED_EXTERNAL_HEADER, 2, "restricted-external"
+    ):
+        names = _BACKTICKED.findall(package_cell)
+        if len(names) != 1 or not _TOP_LEVEL_PACKAGE.fullmatch(names[0]):
+            raise ValueError(
+                "§7 restricted-external table: the package cell must hold exactly one "
+                f"backticked top-level import name, got {package_cell!r}"
+            )
+        package = names[0]
+        if package in namespaces:
+            raise ValueError(
+                f"§7 restricted-external table: {package!r} is the first-party namespace, "
+                "not an external package"
+            )
+        if package in declared:
+            raise ValueError(
+                f"§7 restricted-external table declares {package!r} more than once; a second "
+                "row would replace the first before parity compares it"
+            )
+        owners = _BACKTICKED.findall(owners_cell)
+        if not owners:
+            raise ValueError(
+                f"§7 restricted-external table row for {package!r}: the owners cell grants "
+                f"no enforcement scope: {owners_cell!r}"
+            )
+        for owner in owners:
+            if owner not in owners_universe:
+                raise ValueError(
+                    f"§7 restricted-external table row for {package!r} grants {owner!r}, "
+                    f"which is neither a declared production scope nor {CONFORMANCE_ROOT!r}"
+                )
+        declared[package] = frozenset(owners)
+    return declared
+
+
 def _compare_declarations(
     left_name: str,
     left: Mapping[str, frozenset[str]],
     right_name: str,
     right: Mapping[str, frozenset[str]],
     subject: str,
+    kind: str = "support scope",
 ) -> None:
-    """Fail when two declarations of the support-scope graph disagree."""
+    """Fail when two declarations of one key-to-grants relation disagree."""
     left_only = sorted(set(left) - set(right))
     right_only = sorted(set(right) - set(left))
     if left_only or right_only:
@@ -912,12 +1031,12 @@ def _compare_declarations(
             f"{subject}: declared only in {left_name} {left_only}, "
             f"declared only in {right_name} {right_only}"
         )
-    for scope in sorted(left):
-        if left[scope] != right[scope]:
+    for key in sorted(left):
+        if left[key] != right[key]:
             raise ValueError(
-                f"support scope {scope!r} has drifted between {left_name} and "
-                f"{right_name}: {left_name} grants {sorted(left[scope])}, "
-                f"{right_name} grants {sorted(right[scope])}"
+                f"{kind} {key!r} has drifted between {left_name} and "
+                f"{right_name}: {left_name} grants {sorted(left[key])}, "
+                f"{right_name} grants {sorted(right[key])}"
             )
 
 
@@ -948,6 +1067,25 @@ def check_support_scope_parity(
         "the tool",
         SUPPORT_SCOPE_DEPS,
         "SUPPORT_SCOPE_DEPS has drifted from the spec/python.md §7 support-scope-graph block",
+    )
+
+
+def check_restricted_external_parity(declared: Mapping[str, frozenset[str]]) -> None:
+    """Fail when §7's restricted-external table and :data:`RESTRICTED_EXTERNAL_GRANTS`
+    disagree, spec-relative, because the spec is authoritative.
+
+    A one-sided edit — a package or an owner added to the table alone, or to the
+    tool alone — fails here before anything is rendered, so ``--write`` cannot
+    regenerate a contract the spec does not state.
+    """
+    _compare_declarations(
+        "the spec",
+        declared,
+        "the tool",
+        RESTRICTED_EXTERNAL_GRANTS,
+        "RESTRICTED_EXTERNAL_GRANTS has drifted from the spec/python.md §7 "
+        "restricted-external table",
+        kind="restricted external package",
     )
 
 
@@ -1071,6 +1209,75 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
         for grant in adjacency.get(child, frozenset())
         if grant not in reachable and not (scope_ancestors(grant) & (reachable | {scope}))
     )
+
+
+def minimal_scope_roots(scopes: Iterable[str]) -> tuple[str, ...]:
+    """``scopes`` with every member that a member's package already covers dropped.
+
+    A ``forbidden`` contract source is package-scoped, so a scope beneath another
+    source adds nothing the ancestor's entry does not already govern.
+    """
+    members = frozenset(scopes)
+    return tuple(scope for scope in sorted(members) if not (scope_ancestors(scope) & members))
+
+
+def external_contract_sources(
+    granted_scopes: AbstractSet[str], production: AbstractSet[str]
+) -> tuple[str, ...]:
+    """The minimal blocked roots for one restricted external: every production
+    scope not granted it, less those a blocked ancestor's package covers.
+
+    A blocked child of a GRANTED parent stays: its parent's package does not
+    cover it as a source, and the child's own row is what keeps the grant from
+    flowing down.
+    """
+    return minimal_scope_roots(production - granted_scopes)
+
+
+def external_child_grant_exceptions(
+    *,
+    sources: Iterable[str],
+    external: str,
+    granted_scopes: AbstractSet[str],
+) -> tuple[str, ...]:
+    """``ignore_imports`` expressions delegating ``external`` to each granted child
+    a blocked source's package covers.
+
+    Two expressions per child — the module itself and ``child.**`` — cover a
+    module-shaped child and a package-shaped one alike, together with any
+    undeclared module beneath it, without scanning source to learn which shape it
+    has. That second expression is also why the child must be a leaf of the child
+    topology: a declared scope nested beneath it could carry its own policy, and
+    import-linter has no expression for "this package and its undeclared
+    descendants, excluding declared child packages", so generation fails rather
+    than widening the grant.
+    """
+    delegated = {
+        child
+        for source in sources
+        for child in scope_descendants(source)
+        if child in granted_scopes
+    }
+    non_leaf = sorted(child for child in delegated if scope_descendants(child))
+    if non_leaf:
+        raise ValueError(
+            f"restricted external {external!r} is granted beneath a blocked ancestor to "
+            f"child scopes that are not leaves of the child topology: {non_leaf}"
+        )
+    return tuple(
+        expression
+        for child in sorted(delegated)
+        for expression in (f"{child} -> {external}", f"{child}.** -> {external}")
+    )
+
+
+def unowned_production_interfaces(
+    production: AbstractSet[str], roots: Iterable[str]
+) -> frozenset[str]:
+    """The import-linter roots outside the conformance tree that no production
+    scope owns: package interfaces whose one module every package-scoped contract
+    misses, and so the exact-module sources of their own external contract."""
+    return frozenset(roots) - {CONFORMANCE_ROOT} - production
 
 
 def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str]]:
@@ -1198,26 +1405,105 @@ def _toml_str_list(values: Iterable[str], indent: str = "    ") -> str:
     return f"[\n{body}]"
 
 
-def render_block(forbidden: Mapping[str, list[str]], exceptions: Mapping[str, list[str]]) -> str:
-    """Render the ``[tool.importlinter]`` section (one contract per scope, sorted)."""
+def _toml_sources(values: Iterable[str]) -> str:
+    items = list(values)
+    if len(items) == 1:
+        return f'["{items[0]}"]'
+    return _toml_str_list(items)
+
+
+def _render_forbidden_contract(
+    *,
+    name: str,
+    sources: Iterable[str],
+    forbidden: Iterable[str],
+    ignore_imports: Iterable[str] = (),
+    unmatched_ignore_imports_alerting: str | None = None,
+    allow_indirect_imports: bool = False,
+    as_packages: bool = True,
+) -> list[str]:
+    """One ``forbidden`` contract as TOML lines, in import-linter's field order.
+
+    Formatting only: which sources, targets, exceptions, and flags a contract
+    carries is the caller's policy.
+    """
+    lines = [
+        "",
+        "[[tool.importlinter.contracts]]",
+        f'name = "{name}"',
+        'type = "forbidden"',
+        f"source_modules = {_toml_sources(sources)}",
+    ]
+    ignored = list(ignore_imports)
+    if ignored:
+        lines.append(f"ignore_imports = {_toml_str_list(ignored)}")
+    if unmatched_ignore_imports_alerting is not None:
+        lines.append(f'unmatched_ignore_imports_alerting = "{unmatched_ignore_imports_alerting}"')
+    lines.append(f"forbidden_modules = {_toml_str_list(forbidden)}")
+    if not as_packages:
+        lines.append("as_packages = false")
+    if allow_indirect_imports:
+        lines.append("allow_indirect_imports = true")
+    return lines
+
+
+def render_block(
+    forbidden: Mapping[str, list[str]],
+    exceptions: Mapping[str, list[str]],
+    production: AbstractSet[str],
+) -> str:
+    """Render the ``[tool.importlinter]`` section: one first-party contract per
+    production scope, one direct-only contract per restricted external, and one
+    exact-module contract over the unowned package interfaces, each family sorted.
+
+    ``include_external_packages`` is what lets a contract name an external at
+    all; grimp then records each imported external as one squashed node and
+    reads none of its source, so the option costs the graph only those nodes.
+    """
     lines: list[str] = [
         f"# Generated by {_TOOL} from core/spec/modules.md and spec/python.md §7"
         " — do not edit by hand.",
         f"# Regenerate with: uv run python {_TOOL} --write",
         "[tool.importlinter]",
         f"root_packages = {_toml_str_list(ROOT_PACKAGES)}",
+        "include_external_packages = true",
     ]
     for scope in sorted(forbidden):
-        blocked = forbidden[scope]
-        lines.append("")
-        lines.append("[[tool.importlinter.contracts]]")
-        lines.append(f'name = "{scope} may import only its permitted dependencies"')
-        lines.append('type = "forbidden"')
-        lines.append(f'source_modules = ["{scope}"]')
-        ignored = exceptions.get(scope, [])
-        if ignored:
-            lines.append(f"ignore_imports = {_toml_str_list(ignored)}")
-        lines.append(f"forbidden_modules = {_toml_str_list(blocked)}")
+        lines.extend(
+            _render_forbidden_contract(
+                name=f"{scope} may import only its permitted dependencies",
+                sources=[scope],
+                forbidden=forbidden[scope],
+                ignore_imports=exceptions.get(scope, []),
+            )
+        )
+    for package in sorted(RESTRICTED_EXTERNAL_GRANTS):
+        granted = RESTRICTED_EXTERNAL_GRANTS[package]
+        sources = external_contract_sources(granted, production)
+        delegated = external_child_grant_exceptions(
+            sources=sources, external=package, granted_scopes=granted
+        )
+        lines.extend(
+            _render_forbidden_contract(
+                name=f"Direct imports of {package} require an explicit §7 grant",
+                sources=sources,
+                forbidden=[package],
+                ignore_imports=delegated,
+                unmatched_ignore_imports_alerting="none" if delegated else None,
+                allow_indirect_imports=True,
+            )
+        )
+    interfaces = unowned_production_interfaces(production, ROOT_PACKAGES)
+    if interfaces:
+        lines.extend(
+            _render_forbidden_contract(
+                name="Unowned production interfaces import no restricted externals directly",
+                sources=sorted(interfaces),
+                forbidden=sorted(RESTRICTED_EXTERNAL_GRANTS),
+                allow_indirect_imports=True,
+                as_packages=False,
+            )
+        )
     return "\n".join(lines)
 
 
@@ -1239,11 +1525,12 @@ def generate() -> str:
     )
     check_child_scope_marks(parse_child_scope_marks(python_md))
     check_child_scopes()
+    check_restricted_external_parity(parse_restricted_external_table(python_md))
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)
     forbidden = compute_forbidden(adjacency)
     exceptions = {scope: child_grant_exceptions(adjacency, scope) for scope in forbidden}
-    return render_block(forbidden, exceptions)
+    return render_block(forbidden, exceptions, frozenset(forbidden))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1261,7 +1548,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    block = generate()
+    try:
+        block = generate()
+    except ValueError as error:
+        print(f"{_TOOL}: {error}", file=sys.stderr)
+        return 1
     current = PYPROJECT.read_text()
     expected = splice(current, block)
 
