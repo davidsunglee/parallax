@@ -6003,14 +6003,17 @@ fails the sync check.
 The relations this section declares are stated as four strict tables, each the
 whole of one relation and each read back by `tools/check_dag_sync.py` and
 compared with the one declaration the tool holds of it: the behavioral mapping
-with `MODULE_SCOPE`, the first-party support relation with
-`PYTHON_FIRST_PARTY_GRANTS`, the restricted-external ownership with
-`RESTRICTED_EXTERNAL_GRANTS`, and the child topology with `CHILD_SCOPES`. A
-table edited alone, or a declaration edited alone, fails the sync check before
-anything is generated, and `--write` regenerates nothing past a disagreement. A
-cell declares only what it spells in backticks; source paths, enforcement-tool
-names, and descriptive labels stay out of the tables and are stated once in
-prose after them.
+with `MODULE_SCOPE` and the `PYTEST_BOUNDED_SCOPES` row beside it, the
+first-party support relation with `PYTHON_FIRST_PARTY_GRANTS`, the
+restricted-external ownership with `RESTRICTED_EXTERNAL_GRANTS`, and the child
+topology with `CHILD_SCOPES`. A table edited alone, or a declaration edited
+alone, fails the sync check before anything is generated, and `--write`
+regenerates nothing past a disagreement. A cell declares only what it spells
+in backticks, and a cell holding anything beside its backticked names is
+rejected rather than read around; the two bare spellings are `(none)` as the
+whole of an empty grant and the import policy word, each stated by the table
+that uses it. Source paths, enforcement-tool names, and descriptive labels
+stay out of the tables and are stated once in prose after them.
 
 The first table maps every behavioral module — each claimed module and each
 unclaimed transitive prerequisite — to the enforcement scope that owns it. A
@@ -6019,8 +6022,11 @@ behavioral module's allowed direct dependencies are its edges in the fenced
 and are restated nowhere here. `m-api-conformance` is the one module whose
 scope is not a `parallax` package: `tests.api` is a pytest collection boundary,
 which is what enforces it, so its row satisfies the core template's
-row-per-module rule and is the one row `tools/check_dag_sync.py` sets aside
-rather than comparing with `MODULE_SCOPE`.
+row-per-module rule and is the one row `tools/check_dag_sync.py` compares with
+its `PYTEST_BOUNDED_SCOPES` declaration rather than with `MODULE_SCOPE`, which
+holds only the scopes contracts are sourced from; the row is required as that
+declaration spells it, so dropping it or mapping the module into the package
+tree fails the sync check.
 
 | Behavioral module | Enforcement scope |
 |---|---|

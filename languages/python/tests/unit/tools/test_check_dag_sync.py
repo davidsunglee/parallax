@@ -9,8 +9,8 @@ plus generator correctness (DAG parsing, closure, and the conformance-family
 importer exemption), and the four §7 relations:
 
 * the behavioral mapping §7 declares as one table — module tag to enforcement
-  scope — the table grammar, the one pytest-bounded row set aside, and parity
-  with ``MODULE_SCOPE``, with a drift canary per side;
+  scope — the table grammar, the one pytest-bounded row required as the tool
+  spells it, and parity with ``MODULE_SCOPE``, with a drift canary per side;
 * the first-party support relation §7 declares as one table — enforcement scope
   to its allowed direct first-party dependencies — the strict cell grammar, the
   write-lowering group row naming its three scopes, and parity with
@@ -267,16 +267,31 @@ def test_the_spec_and_the_tool_agree_on_the_behavioral_mapping() -> None:
     assert declared == {**dag.MODULE_SCOPE, **dag.PYTEST_BOUNDED_SCOPES}
 
 
-def test_the_pytest_bounded_row_is_read_once_and_set_aside_from_parity() -> None:
+def test_the_pytest_bounded_row_is_required_by_parity() -> None:
     # The core template demands a row per claimed module, so the row exists;
-    # import-linter grades no test package, so MODULE_SCOPE omits it and parity
-    # must neither report it as spec-only nor require the tool to carry it.
+    # import-linter grades no test package, so MODULE_SCOPE omits it. Parity
+    # must neither report the row as spec-only nor let the table drop it.
     declared = dag.parse_behavioral_scope_table(dag.PYTHON_MD.read_text())
     assert declared["m-api-conformance"] == "tests.api"
     assert "m-api-conformance" not in dag.MODULE_SCOPE
     dag.check_behavioral_scope_parity(declared)
     del declared["m-api-conformance"]
-    dag.check_behavioral_scope_parity(declared)
+    with pytest.raises(ValueError, match=r"declared only in the tool \['m-api-conformance'\]"):
+        dag.check_behavioral_scope_parity(declared)
+
+
+def test_a_behavioral_cell_carrying_text_beside_its_name_is_refused() -> None:
+    # A bare token beside the backticked name declares nothing here, while a
+    # reader counting bare tokens would take it for a row of its own; refusing
+    # it keeps the row-per-module rule from being satisfied by smuggled text.
+    with pytest.raises(ValueError, match="module cell must hold exactly one backticked name"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`m-core` m-api-conformance", "`parallax.core.base`"))
+        )
+    with pytest.raises(ValueError, match="scope cell must hold exactly one backticked name"):
+        dag.parse_behavioral_scope_table(
+            _behavioral_table(("`m-core`", "`parallax.core.base` (generated)"))
+        )
 
 
 def test_parse_behavioral_scope_table_reads_module_to_scope() -> None:
@@ -373,14 +388,26 @@ def test_a_behavioral_row_added_to_the_spec_alone_fails_generation(
         dag.generate()
 
 
-def test_the_pytest_bounded_module_given_a_parallax_scope_fails_parity() -> None:
+def test_the_pytest_bounded_module_given_a_parallax_scope_fails_parity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A row mapping it into the package tree would claim a contract source the
-    # tool never generates; parity sees it as a module the tool does not model.
-    declared = dag.parse_behavioral_scope_table(
-        _behavioral_table(("`m-api-conformance`", "`parallax.tests.api`"))
+    # tool never generates; parity reports the disagreement with the tool's
+    # pytest-bounded declaration rather than a module it does not model.
+    _spec_with(
+        tmp_path,
+        monkeypatch,
+        "| `m-api-conformance` | `tests.api` |",
+        "| `m-api-conformance` | `parallax.tests.api` |",
     )
-    with pytest.raises(ValueError, match=r"declared only in the spec \['m-api-conformance'\]"):
-        dag.check_behavioral_scope_parity(declared)
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "behavioral module 'm-api-conformance' has drifted between the spec and the "
+            "tool: the spec maps it to 'parallax.tests.api', the tool maps it to 'tests.api'"
+        ),
+    ):
+        dag.generate()
 
 
 def test_a_behavioral_module_remapped_by_the_tool_alone_fails_generation(
@@ -1642,6 +1669,19 @@ def test_parse_restricted_external_table_rejects_a_cell_naming_two_packages() ->
 def test_parse_restricted_external_table_rejects_an_unbackticked_package() -> None:
     with pytest.raises(ValueError, match="exactly one backticked top-level import name"):
         dag.parse_restricted_external_table(_external_table("pydantic", "`parallax.core.entity`"))
+
+
+def test_parse_restricted_external_table_rejects_text_beside_a_name() -> None:
+    # Either cell is a relation's column, not prose: a label beside the package
+    # or an unbackticked owner is refused rather than skipped.
+    with pytest.raises(ValueError, match="exactly one backticked top-level import name"):
+        dag.parse_restricted_external_table(
+            _external_table("`pydantic` (v2)", "`parallax.core.entity`")
+        )
+    with pytest.raises(ValueError, match="owners cell must hold comma-separated backticked"):
+        dag.parse_restricted_external_table(
+            _external_table("`pydantic`", "`parallax.core.entity`, parallax.postgres")
+        )
 
 
 def test_parse_restricted_external_table_rejects_the_first_party_namespace() -> None:

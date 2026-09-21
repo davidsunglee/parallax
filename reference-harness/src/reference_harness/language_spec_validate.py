@@ -32,8 +32,11 @@ from reference_harness.schema_validate import validation_error
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 # The canonical module-slug body lives in dep_graph_check; wrap it in word
-# boundaries here to extract module tokens embedded in prose and table cells.
+# boundaries here to extract module tokens embedded in prose.
 _MODULE_RE = re.compile(rf"\b{MODULE_SLUG}\b")
+# A §7 table cell declares only what it spells in backticks, so a bare module
+# token in a cell is prose and counts for no row.
+_BACKTICKED_MODULE_RE = re.compile(rf"`({MODULE_SLUG})`")
 _UNRESOLVED_RE = re.compile(
     r"\(decide and record\b|\b(?:TBD|TODO|FIXME|UNRESOLVED)\b|\?\?\?",
     re.IGNORECASE,
@@ -354,7 +357,9 @@ def _check_topologies(
     claimed = {module for module in capabilities.get("modules", []) if isinstance(module, str)}
     required_modules = claimed | set(transitive_prerequisites(claimed, edges))
     if source is not None:
-        row_modules = [set(_MODULE_RE.findall(row[0])) for _line, row in source.rows if row]
+        row_modules = [
+            set(_BACKTICKED_MODULE_RE.findall(row[0])) for _line, row in source.rows if row
+        ]
         for module in sorted(required_modules):
             occurrences = sum(module in modules for modules in row_modules)
             if occurrences == 0:
