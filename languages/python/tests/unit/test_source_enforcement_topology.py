@@ -202,7 +202,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "ABSENT_DECLARED_VALUE",
             "declared_values",
             "is_published",
-            "named_state",
             "plan_of",
             "relationship",
         }

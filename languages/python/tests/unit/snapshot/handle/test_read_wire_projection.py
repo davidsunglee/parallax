@@ -153,6 +153,8 @@ def test_projection_does_not_serialize_or_reclassify(
         del args, kwargs
         raise AssertionError("projection crossed a forbidden publication seam")
 
+    monkeypatch.setattr(wire_materialize, "named_state", forbidden, raising=False)
+
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
     monkeypatch.setattr(preflight_module, "preflight", forbidden)
@@ -172,13 +174,14 @@ def test_whole_result_projection_preserves_root_order() -> None:
 
 def test_element_projection_accepts_an_external_published_node_without_membership() -> None:
     root, db = _database(Read(rows=[]), Read(rows=[_customer_row()]))
-    empty = db.find(vo.Customer.where(vo.Customer.id == 99))
+    empty = db.find(vo.Customer.where(vo.Customer.id == 99).include(vo.Customer.locations))
     external = db.find(vo.Customer.where(vo.Customer.id == 1)).result()
     root.close()
 
     projected = empty.wire(external)
 
     assert projected["id"] == 1
+    assert "locations" not in projected
     state = snapshot_state_of(external)
     assert state is not None
     assert read_origin_of(projected) is state.source

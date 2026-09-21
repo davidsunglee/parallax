@@ -31,6 +31,7 @@ from parallax.conformance.read_models import (
     Receipt,
 )
 from parallax.conformance.snapshot_recipes import (
+    publish_typed_read_as_wire,
     read_a_table_per_concrete_subtype_family,
     read_a_table_per_hierarchy_family,
     read_to_one_relationship_states,
@@ -204,6 +205,21 @@ def _seed_streamed_orders(db: ScopedDatabase, count: int) -> None:
                 )
 
     db.transact(load)
+
+
+def test_an_eager_typed_read_projects_to_canonical_wire_form(profile_run: Any) -> None:
+    profile_run.reset(model_of(_ACCOUNT), {})
+    db = own_root(connect(profile_run.port, _ACCOUNT)).using_database_login()
+    db.transact(lambda tx: tx.insert(Account(id=1, owner="Ada", balance=Decimal("100.00"))))
+
+    projected = publish_typed_read_as_wire(db)
+
+    assert projected.result() == {
+        "id": 1,
+        "owner": "Ada",
+        "balance": "100.00",
+        "version": 1,
+    }
 
 
 def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
@@ -393,6 +409,7 @@ class _CannedOrderPort(ConnectsAsItself):
             _CannedPort,
             id="table-per-concrete-subtype",
         ),
+        pytest.param(publish_typed_read_as_wire, "account", _CannedAccountPort, id="typed-to-wire"),
         pytest.param(
             _streamed_delivery_at_page_two, "orders", _CannedOrderPort, id="streamed-delivery"
         ),
@@ -413,6 +430,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
         for recipe in (
             read_to_one_relationship_states,
             read_a_table_per_hierarchy_family,
+            publish_typed_read_as_wire,
             read_a_table_per_concrete_subtype_family,
             stream_a_result_one_root_at_a_time,
             stream_and_write_inside_one_transaction,
