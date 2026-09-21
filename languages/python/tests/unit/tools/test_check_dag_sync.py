@@ -1755,8 +1755,8 @@ def test_a_restricted_import_in_an_unowned_interface_fails_lint_imports(
 # Canary 12: every owner's own import is kept, and the indirect reach stays legal.
 # --------------------------------------------------------------------------
 def test_the_untouched_copy_keeps_every_contract(linted_copy: Path) -> None:
-    # Snapshot reaches Pydantic through the Entity frontend today, and the
-    # direct-only shape is what keeps that chain unreported.
+    # An import of the Entity frontend reaches Pydantic only indirectly; the
+    # direct-only shape of the contract is what keeps that chain unreported.
     reported = kept_with(
         linted_copy,
         "parallax.snapshot._inspection",
