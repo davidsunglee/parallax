@@ -4759,7 +4759,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   `prepare_model` (§2) and carried by the selection's write projection, is what
   turns an Entity value into a canonical row. The framework asks it for a row
   and learns nothing about Pydantic, private provenance storage, physical column
-  names, temporal planning, or Audit Provenance:
+  names, temporal planning, or Audit Provenance — §7's generated import
+  contracts enforce the Pydantic boundary for the framework's own scopes rather
+  than leaving it to review:
 
   ```text
   EntityRowCodec(cataloged: CatalogedModel)  # model-bound; every Entity's facts
@@ -4923,7 +4925,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   Subject Identity, Session, Clock Strategy, Transaction Instant, Audit
   Metadata, AuditFacet, audit enablement policy, temporal topology planning,
   Write Planner, SQL, or Storage Layout, and §7's generated import contracts
-  enforce that rather than leaving it to review. Future Audit Provenance is
+  enforce that — and the Pydantic boundary with it, for the framework's own
+  scopes — rather than leaving either to review. Future Audit Provenance is
   applied to typed Planned Writes inside the Write Planner (ADR 0037) and is
   never a codec extension point.
 
@@ -6058,7 +6061,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Concrete Postgres adapter and its owned runtime (support) | `parallax.postgres.adapter`, `._options`, `._runtime`, `._context`, `._connection` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg, psycopg_pool | generated forbidden contracts + cross-package contract |
+| Concrete Postgres adapter and its owned runtime (support) | `parallax.postgres.adapter`, `._options`, `._runtime`, `._context`, `._connection` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
 Behavioral modules carry a module tag, so their allowed direct dependencies are
@@ -6081,7 +6084,9 @@ section and no single representation can be edited alone. Each support scope is
 declared by exactly one prose row, and a second row for a support scope already
 declared fails rather than replacing the first. In the rows, only a
 backticked module tag or `parallax.*` scope declares a grant; unbackticked
-prose (`psycopg`) names no enforcement scope. A scope granting nothing has no
+prose names no enforcement scope, and a third-party package is never a grant
+here — a restricted external package is declared by its own table below. A
+scope granting nothing has no
 edge to write and must still be declared, because its emptiness is what it
 enforces: both representations spell it `(none)` — the dependency column
 outright, the block as the edge target — and naming `(none)` beside a real
@@ -6264,6 +6269,64 @@ parallax.postgres --> parallax.core.db_port
 parallax.postgres --> parallax.core.db_error
 parallax.postgres --> parallax.core.dialect
 ```
+
+Third-party packages are outside every scope, and a first-party grant says
+nothing about them. A **restricted external package** is one the framework
+confines to the scopes that own the substrate it provides — the Pydantic
+packages beneath an Entity value and the Psycopg packages beneath the Postgres
+adapter — and the table below is the whole of who may import each one
+**directly**. The package column names the top-level import name, never a
+distribution or a submodule: import-linter forbids an external only as one
+top-level node and folds every submodule import into it, so `pydantic` covers
+`pydantic.fields` and `pydantic_core` is a package of its own.
+`tools/check_dag_sync.py` parses the table, requires each owner to be a
+declared production scope or `parallax.conformance`, compares it with its own
+`RESTRICTED_EXTERNAL_GRANTS` table — a package or an owner added to either
+alone fails the sync check before anything is generated — and emits one
+`forbidden` contract per package, sourced from every production scope the row
+does not grant and confined to **direct** imports (`allow_indirect_imports`).
+A blocked scope inside a blocked ancestor's package is left to the ancestor's
+entry. A granted child inside a blocked ancestor's package is delegated back to
+the child by two `ignore_imports` expressions, the module and its undeclared
+descendants, and such a child must be a leaf of the child topology: import-linter
+has no expression for a package less a declared child beneath it, so generation
+refuses rather than widening the grant. The three package interfaces no scope
+owns — `parallax.core`, `parallax.evolution`, `parallax.snapshot` — are sourced
+exactly, as modules rather than packages, in one further contract over every
+restricted package. The direct-only shape is what lets the first-party closure
+stay deep: a scope granted `parallax.core.entity` reaches Pydantic through the
+Entity frontend and never names it, so Snapshot reaches an Entity value's
+substrate without importing it, and a Snapshot module that imports `pydantic`
+fails `just python-check-imports` on the `pydantic` contract.
+
+A grant here is a permission to name the package, and nothing else carries one.
+It enters no closure, so first-party reachability confers nothing:
+`parallax.core.entity._pydantic_storage` owns `pydantic` while its first-party
+row grants `(none)`. A parent's grant does not carry its declared children:
+every Entity child that imports the substrate is granted it by name, and
+`._construction_input`, `._expressions`, and `._layout`, which do not, are
+contract sources of their own. Ownership is independent of §8's manifests both
+ways: a manifest dependency never grants source permission —
+`parallax-snapshot` installs Pydantic through `parallax-core` and may not import
+it — and a source grant needs no direct manifest declaration.
+
+`parallax.conformance` is granted `pydantic` and `psycopg`. Its edit-model
+fixtures (`edit_models.py`, `edit_runner.py`) are deliberately native Pydantic
+models that witness the Entity frontend from outside it, so rewriting them over
+the frontend — the alternative considered — would weaken what they witness, and
+was rejected. Its Postgres control seam imports the driver for the sessions the
+harness opens that no application would (*the conformance family's accepted
+private reaches*, below). Both grants are parity-checked documentation and
+generate no contract, because no contract is sourced from a conformance scope.
+The contracts therefore enforce the Pydantic and Psycopg boundaries for the
+framework's own scopes.
+
+| Restricted external package | Granted enforcement scopes |
+|---|---|
+| `pydantic` | `parallax.core.entity`, `parallax.core.entity._edit`, `parallax.core.entity._instance_state`, `parallax.core.entity._pydantic_storage`, `parallax.conformance` |
+| `pydantic_core` | `parallax.core.entity._instance_state` |
+| `psycopg` | `parallax.postgres`, `parallax.conformance` |
+| `psycopg_pool` | `parallax.postgres` |
 
 - **Dependency-analysis tool.** import-linter; configuration in
   `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
@@ -6646,7 +6709,7 @@ locking unions retain the core refusal.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale, and the case where one support scope is declared by two prose rows; a child scope §7 marks isolated or sealed that `check_dag_sync.py`'s corresponding set does not name, the reverse, a mark naming a parent `check_dag_sync.CHILD_SCOPE_PARENT` does not declare for that scope, or the same mark declared twice for one scope, fails the same way; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement among the three declarations of the support-scope graph — `check_dag_sync.py`'s support-scope table, the §7 prose rows, and the §7 `support-scope-graph` block — including the case where two of the three are edited consistently and the third is left stale, and the case where one support scope is declared by two prose rows; a child scope §7 marks isolated or sealed that `check_dag_sync.py`'s corresponding set does not name, the reverse, a mark naming a parent `check_dag_sync.CHILD_SCOPE_PARENT` does not declare for that scope, or the same mark declared twice for one scope, fails the same way; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | CPython 3.14 `python-check-dbfree` leg with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
