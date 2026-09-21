@@ -9,7 +9,7 @@ with no database anywhere.
 
 The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
 helpers rather than copying them, so what it measures is the code a ``find``
-runs. What it cannot borrow is the interleaving — a child level's ``compile_read``
+runs. What it cannot borrow is the interleaving — a query fetch's ``compile_read``
 runs between gathering its parents' keys and converting its rows, so a repeated
 batch would compile once per repetition. Compilation and the binding that
 follows it therefore happen once, outside the batch, against the keys this
@@ -268,28 +268,34 @@ def fetch_plan(validated: ValidatedObjectQuery, model: Metamodel) -> deep_fetch.
 def compiled_levels(
     layout: Layout, plan: deep_fetch.ObjectQueryPlan, model: Metamodel
 ) -> tuple[CompiledRead | None, ...]:
-    """One compiled read per source level: the root at 0, plan level ``i`` at
+    """One compiled read per source position: the root at 0, fetch step ``i`` at
     ``i + 1``, and absence for the back-reference level, which issues no statement.
 
-    Each child level is compiled against the keys this module's fixture supplies,
+    Each query fetch is compiled against the keys this module's fixture supplies,
     which is what lets the batch be repeated without recompiling.
     """
     reads: list[CompiledRead | None] = [
         compile_read(plan.root, model, POSTGRES, result_form="instance")
     ]
-    for level in plan.levels:
-        if level.is_back_reference:
+    for step in plan.fetch_steps:
+        if isinstance(step, deep_fetch.BackReferenceFetchStep):
             reads.append(None)
             continue
         reads.append(
             compile_read(
-                level.query_for(_level_keys(layout, level.attach_key)),
+                step.query_for(_level_keys(layout, _attach_key(plan, step))),
                 model,
                 POSTGRES,
                 result_form="instance",
             )
         )
     return tuple(reads)
+
+
+def _attach_key(plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep) -> str:
+    view = plan.includes.position(step.position).view
+    assert view is not None
+    return view.narrowed_view or view.relationship.name
 
 
 def prepared_levels(
@@ -497,12 +503,12 @@ def rows_per_level(
     root = reads[0]
     assert root is not None
     rows: list[tuple[Row, ...]] = [tuple(driver_rows(layout, model, root, _ROOT, owners, first))]
-    for index, level in enumerate(plan.levels):
+    for index, step in enumerate(plan.fetch_steps):
         compiled = reads[index + 1]
         rows.append(
             ()
             if compiled is None
-            else tuple(driver_rows(layout, model, compiled, level.attach_key, owners, first))
+            else tuple(driver_rows(layout, model, compiled, _attach_key(plan, step), owners, first))
         )
     return tuple(rows)
 
@@ -548,17 +554,20 @@ def batch(
     observations = ObservedRows()
     root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
     level_refs: list[tuple[int, ...]] = []
-    for index, level in enumerate(plan.levels):
+    for index, step in enumerate(plan.fetch_steps):
         parents = _guarded_parents(
-            builder, level, _parent_refs(level.parent, root_refs, level_refs)
+            builder,
+            plan.includes,
+            step,
+            _parent_refs(step.parent, root_refs, level_refs),
         )
-        if level.is_back_reference:
-            _attach_back_reference(builder, meta, level, parents)
+        if isinstance(step, deep_fetch.BackReferenceFetchStep):
+            _attach_back_reference(builder, meta, plan.includes, step, parents)
             level_refs.append(())
             continue
-        keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
+        keys = _gather_keys(builder, parents, _correlation_member(meta, step.owner.identity))
         if not keys:
-            _attach_empty(builder, level, parents)
+            _attach_empty(builder, plan.includes, step, parents)
             level_refs.append(())
             continue
         level_read = prepared[index + 1]
@@ -570,7 +579,7 @@ def batch(
             rows[index + 1],
             observations,
         )
-        _attach_children(builder, meta, level, parents, child_refs)
+        _attach_children(builder, meta, plan.includes, step, parents, child_refs)
         level_refs.append(child_refs)
     return builder.finish(root_refs, _PIN)
 
@@ -644,7 +653,7 @@ def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, page: Page) 
     rows = page_rows(page)
     assert len(rows.layouts) == PROJECTIONS_PER_BATCH, len(rows.layouts)
     assert len(rows.roots) == OWNERS, len(rows.roots)
-    assert len(plan.levels) == 4, len(plan.levels)
+    assert len(plan.fetch_steps) == 4, len(plan.fetch_steps)
     for projection, member_row in enumerate(rows.member_rows):
         assert ABSENT not in member_row, rows.layouts[projection].concrete
         assert rows.issues[projection] == (), rows.layouts[projection].concrete

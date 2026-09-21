@@ -33,7 +33,7 @@ from parallax.core.sql_gen._compile import (
 from parallax.core.sql_gen._seek import null_pattern
 from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.materialize import PageBuilder, UnwindTree
+from parallax.snapshot.materialize import PageBuilder
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ViewSchema
 
@@ -71,7 +71,7 @@ class _ReadPlanCacheStatistics:
 
 
 @dataclass(frozen=True, slots=True)
-class _ReadPlanLevel:
+class _PreparedFetch:
     template: CompiledTemplate
     rows: PreparedRead
 
@@ -85,12 +85,11 @@ class ReadPlan:
     _root_rows: PreparedRead
     _schema: ViewSchema
     _correlations: tuple[tuple[AttributeIdentity, ...], ...]
-    _includes: UnwindTree
-    _children: tuple[_ReadPlanLevel | None, ...]
+    _fetches: tuple[_PreparedFetch | None, ...]
 
     @property
-    def level_count(self) -> int:
-        return len(self._query_plan.levels)
+    def fetch_count(self) -> int:
+        return len(self._query_plan.fetch_steps)
 
     def root_read(self) -> tuple[CompiledRead, PreparedRead]:
         return self._root, self._root_rows
@@ -98,28 +97,28 @@ class ReadPlan:
     def page_builder(self, observer: object | None) -> PageBuilder:
         return PageBuilder(self._schema, observer)
 
-    def ready_levels(self, completed: set[int]) -> tuple[int, ...]:
+    def ready_fetches(self, completed: set[int]) -> tuple[int, ...]:
         return tuple(
             index
-            for index, level in enumerate(self._query_plan.levels)
+            for index, step in enumerate(self._query_plan.fetch_steps)
             if index not in completed
-            and (isinstance(level.parent, deep_fetch.RootRef) or level.parent.index in completed)
+            and (isinstance(step.parent, deep_fetch.RootRef) or step.parent.index in completed)
         )
 
-    def level(self, index: int) -> deep_fetch.FetchLevel:
-        return self._query_plan.levels[index]
+    def fetch_step(self, index: int) -> deep_fetch.FetchStep:
+        return self._query_plan.fetch_steps[index]
 
     def correlation_members(self, source: int) -> tuple[AttributeIdentity, ...]:
         return self._correlations[source]
 
-    def child_read(self, index: int, keys: Sequence[object]) -> tuple[CompiledRead, PreparedRead]:
-        child = self._children[index]
-        if child is None:
-            raise ValueError("an executable child level requires a prepared template")
-        return child.template.render(keys), child.rows
+    def fetch_read(self, index: int, keys: Sequence[object]) -> tuple[CompiledRead, PreparedRead]:
+        fetch = self._fetches[index]
+        if fetch is None:
+            raise ValueError("an executable fetch step requires a prepared template")
+        return fetch.template.render(keys), fetch.rows
 
-    def include_tree(self) -> UnwindTree:
-        return self._includes
+    def include_tree(self) -> deep_fetch.IncludeTree:
+        return self._query_plan.includes
 
     def with_root(
         self,
@@ -330,9 +329,9 @@ def _plan_uncached(
             _read.entity_read_lock(model.meta, query.root.identity, preference),
             *(
                 None
-                if level.is_back_reference
-                else _read.entity_read_lock(model.meta, level.query_template().target, preference)
-                for level in planned.levels
+                if isinstance(step, deep_fetch.BackReferenceFetchStep)
+                else _read.entity_read_lock(model.meta, step.query_template().target, preference)
+                for step in planned.fetch_steps
             ),
         ),
     )
@@ -348,16 +347,16 @@ def _plan_uncached(
         result_form=result_form,
         lock=locks[0],
     )
-    children: tuple[_ReadPlanLevel | None, ...] = (
-        reusable._children  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
+    fetches: tuple[_PreparedFetch | None, ...] = (
+        reusable._fetches  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
         if reusable is not None
         else tuple(
             None
-            if level.is_back_reference
+            if isinstance(step, deep_fetch.BackReferenceFetchStep)
             else _prepared_level(
                 model,
                 compile_template(
-                    level.query_template(),
+                    step.query_template(),
                     model.meta,
                     dialect,
                     result_form=result_form,
@@ -365,7 +364,7 @@ def _plan_uncached(
                 ),
                 correlations[index + 1],
             )
-            for index, level in enumerate(planned.levels)
+            for index, step in enumerate(planned.fetch_steps)
         )
     )
     prepared = ReadPlan(
@@ -383,8 +382,7 @@ def _plan_uncached(
             else ViewSchema.of()
         ),
         correlations,
-        reusable.include_tree() if reusable is not None else _read.include_tree(planned.levels),
-        children,
+        fetches,
     )
     positions = tuple(
         (bind_index, carrier_index)
@@ -560,8 +558,8 @@ def _prepared_level(
     model: CatalogedModel,
     template: CompiledTemplate,
     correlations: tuple[AttributeIdentity, ...],
-) -> _ReadPlanLevel:
-    return _ReadPlanLevel(
+) -> _PreparedFetch:
+    return _PreparedFetch(
         template,
         bind(model, template.compiled, correlation_members=correlations),
     )

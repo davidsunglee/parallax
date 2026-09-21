@@ -40,7 +40,9 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, RelationshipPath
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -57,7 +59,6 @@ from parallax.snapshot.handle._materialization import RowPublication
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize import (
     InvalidRootInput,
-    RelationshipViewKey,
     RootView,
     SnapshotConsistencyError,
     StoredDataIssueInput,
@@ -75,6 +76,7 @@ from parallax.snapshot.materialize._page import (
 )
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
+from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
@@ -712,6 +714,17 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
     assert is_view_loaded(root, path) is True
     narrowed = cast("tuple[object, ...]", view(root, path))
     assert type(narrowed[0]) is sm.Dog
+    reader = EntityReader(CatalogedModel(model_of(_ANIMAL)))
+    assert (
+        reader.relationship(
+            root,
+            fixture.view_key(
+                "parallax.compatibility.AnimalOwner.pets",
+                narrowed="pets[Dog]",
+            ),
+        )
+        == narrowed
+    )
     with pytest.raises(SnapshotInspectionError) as unrelated:
         is_view_loaded(root, sm.SnapOrder.items)
     assert unrelated.value.code == "snapshot-view-owner-mismatch"

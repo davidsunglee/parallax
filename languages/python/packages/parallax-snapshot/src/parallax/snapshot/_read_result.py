@@ -26,14 +26,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from parallax.core.deep_fetch import IncludeTree
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import ReadOrigin
-from parallax.snapshot.materialize import (
-    EMPTY_UNWIND,
-    InvalidData,
-    Page,
-    UnwindTree,
-)
+from parallax.snapshot.materialize import InvalidData, Page
 
 __all__ = [
     "FindResult",
@@ -60,7 +56,7 @@ class FindResult:
     """
 
     page: Page
-    includes: UnwindTree = EMPTY_UNWIND
+    includes: IncludeTree
     sources: Mapping[int, ReadOrigin] = MappingProxyType({})
 
 
@@ -70,6 +66,7 @@ class HistoryFindResult:
 
     page: Page
     milestones: EntityMetadata
+    includes: IncludeTree
 
 
 type PublishedRow = Mapping[str, object] | InvalidData[Mapping[str, object]]

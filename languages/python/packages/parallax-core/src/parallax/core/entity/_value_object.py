@@ -20,14 +20,13 @@ from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core.base import FrozenMap, NeutralType, adopt_frozen_map
 from parallax.core.document_codec import (
-    NULL,
     MemberShape,
     Occurrence,
-    Presence,
-    Present,
-    encode_document,
-    encode_many,
+    OccurrenceCarrier,
+    encode_leaf,
+    encode_occurrence,
 )
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
@@ -64,7 +63,7 @@ from parallax.core.metamodel import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-__all__ = ["ValueObject", "ValueObjectMeta", "shape_of", "to_document"]
+__all__ = ["ValueObject", "ValueObjectMeta", "encode_value_object", "shape_of"]
 
 _EDIT_RESOLUTION_SLOT: Final = "__parallax_value_object_edit_resolution__"
 
@@ -338,8 +337,8 @@ def _member_metadata(
     return members
 
 
-def to_document(value: ValueObject | None) -> Mapping[str, object] | None:
-    """Serialize a Value Object to its canonical nested document.
+def encode_value_object(value: ValueObject | None) -> Mapping[str, object] | None:
+    """Encode a Value Object as its canonical nested document.
 
     ``None`` passes through unchanged (an absent occurrence). Filtered by member
     presence: a member the caller never populated is omitted rather than bound as
@@ -361,51 +360,59 @@ def to_document(value: ValueObject | None) -> Mapping[str, object] | None:
 
 def _document(value: ValueObject) -> Mapping[str, object]:
     shape = shape_of(type(value)).document_shape
-    return encode_document(shape, _presences(value, shape))
+    return cast(
+        "Mapping[str, object]",
+        encode_occurrence(
+            value,
+            shape,
+            Multiplicity.ONE,
+            _LIVE_VALUE_OBJECT,
+            encode_leaf=_encode_value_object_leaf,
+            build_object=_value_object_mapping,
+            build_array=_value_object_sequence,
+        ),
+    )
 
 
-def _presences(value: ValueObject, shape: MemberShape) -> dict[str, Presence]:
-    """One presence per populated member, keyed by canonical name.
+_ABSENT_VALUE_OBJECT_MEMBER: Final = object()
 
-    Presence is asked of the backing one member at a time
-    (:func:`~parallax.core.entity._instance_state.is_present`), because this walk
-    iterates the declaration anyway: a per-member predicate is proportional to
-    what it already visits and allocates nothing, where asking for the populated
-    set would synthesize one out of a published value's bitmap on every document
-    it renders.
 
-    An unpopulated member contributes no entry at all, so the codec classifies it
-    ``Missing`` — which is what omits an unset optional inner member rather than
-    writing an explicit null for it. A ``many`` occurrence is always contributed,
-    because its empty default is a value (``[]``) rather than an absence.
-
-    A nested occurrence's value is composed through the codec rather than assembled
-    here: a ``one`` carries that occurrence's own encoded object and a ``many`` its
-    ``encode_many`` array, so nothing in this frontend builds a JSON array or nests an
-    object of its own. A scalar leaf passes through as its managed value, which the
-    codec spells.
-    """
+def _value_object_values(record: object, shape: MemberShape) -> Iterable[object]:
+    value = cast("ValueObject", record)
     declared = shape_of(type(value))
     bits = plan_of(type(value)).bits
-    presences: dict[str, Presence] = {}
-    for py_name, canonical in declared.py_to_name.items():
-        if py_name not in declared.many_py and not is_present(value, bits[py_name]):
-            continue
-        raw = getattr(value, py_name)
-        member = shape.member(canonical)
-        if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
-            elements = cast("tuple[ValueObject, ...]", raw)
-            presences[canonical] = Present(
-                encode_many(
-                    member.shape, [_presences(element, member.shape) for element in elements]
-                )
-            )
-        elif raw is None:
-            presences[canonical] = NULL
-        elif isinstance(member, Occurrence):
-            presences[canonical] = Present(
-                encode_document(member.shape, _presences(cast("ValueObject", raw), member.shape))
-            )
+    for member in shape.members:
+        py_name = declared.name_to_py[member.name]
+        if (
+            isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+        ) or is_present(value, bits[py_name]):
+            yield getattr(value, py_name)
         else:
-            presences[canonical] = Present(raw)
-    return presences
+            yield _ABSENT_VALUE_OBJECT_MEMBER
+
+
+def _value_object_elements(value: object) -> Iterable[object]:
+    return cast("tuple[ValueObject, ...]", value)
+
+
+def _encode_value_object_leaf(neutral_type: NeutralType, value: object) -> object:
+    if value is None:
+        return None
+    return encode_leaf(neutral_type, value)
+
+
+def _value_object_mapping(
+    entries: Iterable[tuple[str, object]],
+) -> FrozenMap[str, object]:
+    return adopt_frozen_map(dict(entries))
+
+
+def _value_object_sequence(values: Iterable[object]) -> tuple[object, ...]:
+    return tuple(values)
+
+
+_LIVE_VALUE_OBJECT: Final = OccurrenceCarrier(
+    absent=_ABSENT_VALUE_OBJECT_MEMBER,
+    values=_value_object_values,
+    elements=_value_object_elements,
+)

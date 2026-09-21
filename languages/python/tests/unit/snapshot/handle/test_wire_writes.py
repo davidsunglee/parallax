@@ -36,7 +36,7 @@ from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
-from parallax.snapshot import InvalidData, connect
+from parallax.snapshot import InvalidData, Snapshot, connect
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,
@@ -989,6 +989,40 @@ def test_a_standalone_versioned_wire_source_supplies_its_own_gate() -> None:
             (Decimal("125.00"), 5, 1, 4),
         )
     ]
+
+
+def test_a_projected_standalone_source_uses_the_existing_wire_write_ingress() -> None:
+    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write()))
+    db = db_for(ACCOUNT, port)
+    projected = db.find(mm.Account.where(mm.Account.id == 1)).wire().result()
+
+    db.transact(lambda tx: tx.wire.update(projected, {"balance": "125.00"}))
+
+    assert len(_reads(port)) == 1
+    assert _writes(port) == [
+        WriteCall(
+            "update account set balance = %s, version = %s where id = %s and version = %s",
+            (Decimal("125.00"), 5, 1, 4),
+        )
+    ]
+
+
+def test_typed_update_does_not_detour_through_wire_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("Typed update entered Snapshot.wire")
+
+    monkeypatch.setattr(Snapshot, "wire", forbidden)
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
+
+    def update(tx: Transaction) -> None:
+        typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(typed.edit(balance=Decimal("125.00")))
+
+    db_for(ACCOUNT, port).transact(update)
+    assert len(_writes(port)) == 1
 
 
 def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:

@@ -28,6 +28,8 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import class_models, models
+from parallax.conformance.read_models import Animal, Cat, Dog, Pet
+from parallax.conformance.story_models import Order
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, STRING, TIMESTAMP, ManagedValue, PresentDocument
@@ -38,6 +40,8 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
+from parallax.core.deep_fetch import IncludeTree
+from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import _layout as entity_layout
 from parallax.core.entity._layout import CatalogedModel
@@ -77,7 +81,6 @@ from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
-    _stored_entries,  # pyright: ignore[reportPrivateUsage] - positional entry naming is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     shared_wire_encoder,
 )
@@ -98,6 +101,12 @@ from tests.unit.snapshot._snapshot_page_support import documents_of, identity_of
 _MODELS = models.load_domain_models()
 ORDERS = _MODELS["orders"]
 CUSTOMER = _MODELS["customer"]
+
+
+def _root_includes(identity: EntityIdentity) -> IncludeTree:
+    return build_include_tree(queried=identity, root=(identity,), positions=())
+
+
 CUSTOMER_META = model_of(CUSTOMER)
 
 
@@ -273,9 +282,10 @@ def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
     publication.release()
     publication.release()
     empty = PageBuilder(ViewSchema.of()).finish((), Pin())
+    includes = _root_includes(identity_of(CUSTOMER_META, "Customer"))
 
     with pytest.raises(RuntimeError, match="released Wire publication"):
-        list(publication.roots_of(empty))
+        list(publication.roots_of(empty, includes))
 
 
 def test_default_wire_encoding_preserves_temporal_infinity() -> None:
@@ -427,7 +437,11 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(
+        RootView(builder.finish((ref,), Pin())),
+        CUSTOMER_META,
+        _root_includes(identity),
+    )
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
 
@@ -445,28 +459,16 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(
+        RootView(builder.finish((ref,), Pin())),
+        CUSTOMER_META,
+        _root_includes(identity),
+    )
     node = _entity(published)
     assert "name" not in node
     assert "city" not in _mapping(node["address"])
     assert "elevation" not in _mapping(_mapping(node["address"])["geo"])
     assert _absent_free(node) == 0
-
-
-def test_stored_entry_names_include_held_nested_occurrences() -> None:
-    identity = identity_of(CUSTOMER_META, "Customer")
-    (address,) = documents_of(CUSTOMER_META, identity)
-    nested_values = [object() for _ in address.value_objects]
-    row = tuple([ABSENT] * len(address.attributes) + nested_values)
-    expected = dict(
-        zip(
-            (nested.identity.path[-1] for nested in address.value_objects),
-            nested_values,
-            strict=True,
-        )
-    )
-
-    assert _stored_entries(row, address) == expected
 
 
 def _absent_free(value: object) -> int:
@@ -549,6 +551,31 @@ def test_a_back_reference_unwinds_finitely_instead_of_stubbing() -> None:
     # The root is a different position: its subtree still carries `items`.
     assert back is not root
     assert len(port.executed) == 2
+
+
+def test_typed_projection_matches_direct_wire_alias_and_cycle_boundaries() -> None:
+    root_rows: list[MappingRow] = [_order_row()]
+    child_rows: list[MappingRow] = [
+        {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": None},
+        {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
+    ]
+    port = QueuePort([root_rows, child_rows, root_rows, child_rows])
+    query = Order.where(Order.id == 1).include(
+        Order.items.order,
+    )
+    database = own_root(
+        handle.Database.connect(port, class_models.MODELS["orders"])
+    ).using_database_login()
+
+    projected = _entity(database.find(query).wire().result())
+    direct = _entity(database.wire.find(query).result())
+
+    assert projected == direct
+    items = _sequence(projected["items"])
+    back = _mapping(_mapping(items[0])["order"])
+    assert _mapping(items[1])["order"] is back
+    assert back is not projected
+    assert "items" not in back
 
 
 # --------------------------------------------------------------------------- #
@@ -844,6 +871,101 @@ ANIMAL = _MODELS["animal"]
 INVOICE = _MODELS["invoice"]
 _UTC = dt.UTC
 
+_GUARDED_ANIMALS: list[MappingRow] = [
+    {
+        "id": 1,
+        "kind": "dog",
+        "name": "Rex",
+        "owner_id": 10,
+        "license_id": "L-100",
+        "bark_volume": 7,
+    },
+    {
+        "id": 2,
+        "kind": "dog",
+        "name": "Fido",
+        "owner_id": 11,
+        "license_id": "L-101",
+        "bark_volume": 3,
+    },
+    {
+        "id": 3,
+        "kind": "cat",
+        "name": "Whiskers",
+        "owner_id": 10,
+        "license_id": "L-200",
+        "indoor": True,
+    },
+    {
+        "id": 4,
+        "kind": "boar",
+        "name": "Tusker",
+        "owner_id": 12,
+        "tusk_length": Decimal("12.50"),
+    },
+]
+_GUARDED_OWNERS: list[MappingRow] = [
+    {"id": 10, "name": "Alice"},
+    {"id": 11, "name": "Bob"},
+    {"id": 12, "name": "Carol"},
+]
+
+
+def _guarded_publications(
+    query: object,
+    responses: Sequence[list[MappingRow]],
+) -> tuple[list[WireEntity], list[WireEntity]]:
+    port = QueuePort([*responses, *responses])
+    database = own_root(
+        handle.Database.connect(port, class_models.MODELS["animal"])
+    ).using_database_login()
+    projected = [_entity(root) for root in database.find(cast("Any", query)).wire().results()]
+    direct = [_entity(root) for root in database.wire.find(cast("Any", query)).results()]
+    assert len(port.executed) == 2 * len(responses)
+    return projected, direct
+
+
+def test_disjoint_guards_match_in_direct_wire_and_typed_projection() -> None:
+    query = Animal.where(Animal.all).include(Cat.owner, Dog.owner)
+    projected, direct = _guarded_publications(
+        query,
+        [
+            _GUARDED_ANIMALS,
+            [_GUARDED_OWNERS[0]],
+            _GUARDED_OWNERS[:2],
+        ],
+    )
+
+    assert projected == direct
+    by_name = {root["name"]: root for root in projected}
+    assert by_name["Rex"]["owner"] == {"id": 10, "name": "Alice"}
+    assert by_name["Whiskers"]["owner"] == {"id": 10, "name": "Alice"}
+    assert "owner" not in by_name["Tusker"]
+
+
+def test_overlapping_guards_preserve_continuations_and_mixed_many_values() -> None:
+    query = Animal.where(Animal.all).include(
+        Animal.owner.pets,
+        Pet.owner.pets.narrow(Dog),
+    )
+    projected, direct = _guarded_publications(
+        query,
+        [
+            _GUARDED_ANIMALS,
+            _GUARDED_OWNERS,
+            _GUARDED_OWNERS[:2],
+            _GUARDED_ANIMALS[:3],
+            _GUARDED_ANIMALS[:2],
+        ],
+    )
+
+    assert projected == direct
+    rex_owner = _mapping({root["name"]: root for root in projected}["Rex"]["owner"])
+    pets = [_mapping(value) for value in _sequence(rex_owner["pets"])]
+    dogs = [_mapping(value) for value in _sequence(rex_owner["pets[Dog]"])]
+    assert [pet["familyVariant"] for pet in pets] == ["Dog", "Cat"]
+    assert [dog["name"] for dog in dogs] == ["Rex"]
+
 
 def test_an_inheritance_participant_publishes_its_family_variant() -> None:
     port = QueuePort(
@@ -1092,7 +1214,11 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
         builder,
         source=ROOT_LEVEL,
     )
-    (root,) = wire_roots(RootView(builder.finish((ref,), Pin())), _VARIANT_MODEL)
+    (root,) = wire_roots(
+        RootView(builder.finish((ref,), Pin())),
+        _VARIANT_MODEL,
+        _root_includes(resolved),
+    )
     assert root == {
         "id": 1,
         "familyVariant": "SharedVariant",

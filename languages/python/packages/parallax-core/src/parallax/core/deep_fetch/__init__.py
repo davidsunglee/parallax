@@ -27,7 +27,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     NullPlacement,
-    RelationshipIdentity,
     SortDirection,
     TemporalDimension,
     ValueObjectMetadata,
@@ -59,13 +58,32 @@ from parallax.core.temporal_read import (
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite
 
+from ._include_tree import (
+    EMPTY_RENDER,
+    IncludePosition,
+    IncludeTree,
+    PositionId,
+    PositionSeed,
+    RelationshipViewKey,
+    RenderToken,
+    build_include_tree,
+)
+
 __all__ = [
+    "EMPTY_RENDER",
+    "BackReferenceFetchStep",
     "CorrelationMember",
     "DeepFetchError",
-    "FetchLevel",
+    "FetchStep",
+    "IncludePosition",
+    "IncludeTree",
     "LevelRef",
     "ObjectQueryPlan",
     "ParentRef",
+    "PositionId",
+    "QueryFetchStep",
+    "RelationshipViewKey",
+    "RenderToken",
     "RootRef",
     "plan",
 ]
@@ -144,65 +162,18 @@ class ValidatedEntityQuery:
 
 
 @dataclass(frozen=True, slots=True)
-class FetchLevel:
-    """One deep-fetch level: an attach point, plus how to build its child query.
+class QueryFetchStep:
+    """Execution instruction for one include position that issues a child query."""
 
-    ``attach_key`` is the relationship name, or — for a narrowed polymorphic hop
-    (``m-deep-fetch`` "Polymorphic and narrowed deep fetch") — the derived
-    narrowed-view key ``<rel>[<Concrete>,<Concrete>]``; ``relationship`` is the
-    same view's own direction as a structured Relationship Identity, so a caller
-    attaching this level names the modeled direction rather than re-resolving one
-    from the derived key. ``parent`` names which
-    already-fetched rows this level gathers its distinct keys from (the root, or
-    an earlier level), and ``owner`` is the :class:`CorrelationMember` on those
-    parent rows to gather — the relationship join's owner-side endpoint.
-
-    A **queryable** level (``is_back_reference`` false) additionally carries
-    ``child_target`` (the entity this level's own read compiles against — a
-    single concrete when the resolved position is exactly one, else the
-    relationship's own polymorphic target), ``related`` (the child-side
-    :class:`CorrelationMember` — what the ``IN`` membership binds against and what
-    the assembler groups the returned child rows by, fanning each back to its
-    parent), ``as_of_terms`` (the propagated per-axis as-of
-    predicate, already resolved), ``order_keys`` (the declared relationship
-    ``orderBy``, canonicalized to qualified `OrderKey`s), and ``narrow_to`` (the
-    segment's own authored narrow, carried only when the resolved position spans
-    2+ concretes — a single-concrete resolution bypasses narrowing entirely by
-    targeting that concrete directly, m-sql's existing inheritance-read
-    dispatch).
-
-    A **back-reference** level (``is_back_reference`` true) carries none of the
-    above — :meth:`query_for` is never called for it; ``back_reference_family``
-    names the family the assembler resolves through its identity map instead, as
-    that map keys a row on its family ROOT's declared name. Its own ``owner`` is
-    still carried: a back-reference level gathers the ancestor's key off the
-    parent row exactly as a queried one does, it just resolves that key in memory
-    rather than through SQL.
-
-    ``source_position`` is the path-root guard, and the one member of this class that
-    qualifies the level's PARENT rows rather than its children: the concrete subtypes
-    a guarded path admits, so the caller gathers keys from — and attaches this level
-    to — only those parents, leaving an excluded parent's ``attach_key`` UNSET rather
-    than empty. It is carried only on a level whose parent is the root (a deeper
-    level descends from already-guarded parents) and only when the guard admits fewer
-    than every root object, so a guard resolving to the whole position is
-    indistinguishable from an unguarded path here as well as in the trie key.
-    """
-
-    attach_key: str
-    relationship: RelationshipIdentity
-    to_many: bool
+    position: PositionId
     parent: ParentRef
     owner: CorrelationMember
-    is_back_reference: bool = False
-    back_reference_family: EntityIdentity | None = None
-    child_target: EntityIdentity | None = None
-    child: EntityMetadata | None = None
-    related: CorrelationMember | None = None
+    child_target: EntityIdentity
+    child: EntityMetadata
+    related: CorrelationMember
     as_of_terms: tuple[ValidatedPredicate, ...] = ()
     order_terms: tuple[ValidatedOrderTerm, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
-    source_position: tuple[EntityIdentity, ...] | None = None
     related_member: AttributeMetadata | None = None
 
     def query_for(self, parent_keys: Sequence[object]) -> ValidatedEntityQuery:
@@ -214,14 +185,12 @@ class FetchLevel:
         query fields rather than being manufactured as wrappers solely for SQL
         compilation. Raises for a back-reference level, which issues no child query.
         """
-        reference = None if self.related is None else self.related.reference
-        if self.is_back_reference or self.child_target is None or reference is None:
-            raise DeepFetchError(
-                f"{self.attach_key!r} is a back-reference level and issues no child query"
-            )
+        reference = self.related.reference
+        if reference is None:
+            raise DeepFetchError(f"position {self.position} carries no child reference")
         member = self.related_member
         if member is None:
-            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child member")
+            raise DeepFetchError(f"position {self.position} carries no resolved child member")
         values = cast("tuple[ManagedValue, ...]", tuple(dict.fromkeys(parent_keys)))
         membership = _managed_membership(
             attr=reference,
@@ -233,29 +202,23 @@ class FetchLevel:
             if not self.as_of_terms
             else _validated_conjunction(membership, *self.as_of_terms)
         )
-        target = self.child
-        if target is None:  # pragma: no cover - queryable levels carry exact Metadata
-            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child metadata")
         return ValidatedEntityQuery(
-            target=target.identity,
-            entity=target,
+            target=self.child.identity,
+            entity=self.child,
             validated_predicate=predicate,
             narrow_to=self.narrow_to,
             order_by=self.order_terms,
-            projection=_projection_for(target, None, ReadProjectionRequest("all", True)),
+            projection=_projection_for(self.child, None, ReadProjectionRequest("all", True)),
         )
 
     def query_template(self) -> ValidatedEntityQuery:
         """Build this level's child query with its gathered key set deferred."""
-        reference = None if self.related is None else self.related.reference
-        if self.is_back_reference or self.child_target is None or reference is None:
-            raise DeepFetchError(
-                f"{self.attach_key!r} is a back-reference level and issues no child query"
-            )
+        reference = self.related.reference
+        if reference is None:
+            raise DeepFetchError(f"position {self.position} carries no child reference")
         member = self.related_member
-        target = self.child
-        if member is None or target is None:
-            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child member")
+        if member is None:
+            raise DeepFetchError(f"position {self.position} carries no resolved child member")
         membership = _deferred_membership(attr=reference, member=member)
         predicate = (
             membership
@@ -263,21 +226,35 @@ class FetchLevel:
             else _validated_conjunction(membership, *self.as_of_terms)
         )
         return ValidatedEntityQuery(
-            target=target.identity,
-            entity=target,
+            target=self.child.identity,
+            entity=self.child,
             validated_predicate=predicate,
             narrow_to=self.narrow_to,
             order_by=self.order_terms,
-            projection=_projection_for(target, None, ReadProjectionRequest("all", True)),
+            projection=_projection_for(self.child, None, ReadProjectionRequest("all", True)),
         )
 
 
 @dataclass(frozen=True, slots=True)
+class BackReferenceFetchStep:
+    """Execution instruction resolving an already-fetched inverse-edge target."""
+
+    position: PositionId
+    parent: ParentRef
+    owner: CorrelationMember
+    family: EntityIdentity
+
+
+type FetchStep = QueryFetchStep | BackReferenceFetchStep
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectQueryPlan:
-    """A resolved flat root query plus dependency-ordered fetch levels."""
+    """A root query, one logical include tree, and execution-only fetch steps."""
 
     root: ValidatedEntityQuery
-    levels: tuple[FetchLevel, ...]
+    includes: IncludeTree
+    fetch_steps: tuple[FetchStep, ...]
 
 
 def plan(
@@ -311,7 +288,15 @@ def plan(
     builder.seed_root(entity)
     for path in query.includes:
         builder.add_path(path)
-    return ObjectQueryPlan(root=root, levels=tuple(builder.levels))
+    return ObjectQueryPlan(
+        root=root,
+        includes=build_include_tree(
+            queried=entity.identity,
+            root=builder.root_admission(narrow_to),
+            positions=builder.positions,
+        ),
+        fetch_steps=tuple(builder.steps),
+    )
 
 
 def plan_mutation_read(
@@ -359,7 +344,11 @@ def plan_mutation_read(
 _ROOT_ID = -1
 
 
-def _new_levels() -> list[FetchLevel]:
+def _new_steps() -> list[FetchStep]:
+    return []
+
+
+def _new_positions() -> list[PositionSeed]:
     return []
 
 
@@ -400,7 +389,8 @@ class _PlanBuilder:
     model: Metamodel
     families: InheritanceFacet
     root_pins: Mapping[TemporalDimension, ManagedValue]
-    levels: list[FetchLevel] = field(default_factory=_new_levels)
+    steps: list[FetchStep] = field(default_factory=_new_steps)
+    positions: list[PositionSeed] = field(default_factory=_new_positions)
     _children: dict[_TrieKey, int] = field(default_factory=_new_children)
     # The relationship direction each trie node was REACHED by, absent for the root:
     # a segment is a back-reference only against its parent's own arrival edge.
@@ -416,6 +406,11 @@ class _PlanBuilder:
         self._owners[_ROOT_ID] = root_entity
         self._root_position = _resolve_root_source(self.model, self.families, root_entity)
 
+    def root_admission(
+        self, narrowed: tuple[EntityIdentity, ...] | None
+    ) -> tuple[EntityIdentity, ...]:
+        return self._root_position if narrowed is None else narrowed
+
     def add_path(self, path: ValidatedIncludePath) -> None:
         source = path.source_position
         parent_id = _ROOT_ID
@@ -428,7 +423,7 @@ class _PlanBuilder:
         segment: ValidatedIncludeSegment,
         root_source: tuple[EntityIdentity, ...],
     ) -> int:
-        if parent_id != _ROOT_ID and self.levels[parent_id].is_back_reference:
+        if parent_id != _ROOT_ID and isinstance(self.steps[parent_id], BackReferenceFetchStep):
             raise DeepFetchError(
                 f"{segment.relationship!r}: a deep-fetch path cannot continue "
                 "past a back-reference "
@@ -462,6 +457,9 @@ class _PlanBuilder:
 
         rel_local = direction.identity.name
         attach_key = _view_key(rel_local, narrowed, position, self.families)
+        view = RelationshipViewKey(
+            direction.identity, None if attach_key == rel_local else attach_key
+        )
         owner = CorrelationMember(
             identity=direction.join.source,
             column=_attribute_column(self.families, direction.join.source),
@@ -469,28 +467,28 @@ class _PlanBuilder:
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
         # Only a PROPER guard restricts anything; one admitting the whole queried
         # position has already collapsed onto the broad path in the key above.
-        source_position = source if source is not None and source != self._root_position else None
+        source_position = (
+            (self._root_position if source is None else source)
+            if parent_id == _ROOT_ID
+            else self.positions[parent_id].target
+        )
+        position_id = len(self.steps) + 1
+        parent_position = 0 if parent_id == _ROOT_ID else parent_id + 1
 
         if is_back_reference:
-            level = FetchLevel(
-                attach_key=attach_key,
-                relationship=direction.identity,
-                to_many=to_many,
+            step: FetchStep = BackReferenceFetchStep(
+                position=position_id,
                 parent=parent_ref,
                 owner=owner,
-                is_back_reference=True,
-                back_reference_family=family,
-                source_position=source_position,
+                family=family,
             )
         else:
             child_target = position[0] if len(position) == 1 else direction.join.target.entity
             narrow_to = position if len(position) > 1 and narrowed else None
             child = _entity(self.model, child_target)
             related_member = _attribute_metadata(self.families, direction.join.target)
-            level = FetchLevel(
-                attach_key=attach_key,
-                relationship=direction.identity,
-                to_many=to_many,
+            step = QueryFetchStep(
+                position=position_id,
                 parent=parent_ref,
                 owner=owner,
                 child_target=child_target,
@@ -503,12 +501,20 @@ class _PlanBuilder:
                 as_of_terms=validated_hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_terms=_resolved_order_terms(direction, child, self.families),
                 narrow_to=narrow_to,
-                source_position=source_position,
                 related_member=related_member,
             )
 
-        index = len(self.levels)
-        self.levels.append(level)
+        index = len(self.steps)
+        self.steps.append(step)
+        self.positions.append(
+            PositionSeed(
+                parent=parent_position,
+                view=view,
+                source=source_position,
+                target=position,
+                to_many=to_many,
+            )
+        )
         self._children[key] = index
         self._arrivals[index] = direction
         self._owners[index] = related_entity

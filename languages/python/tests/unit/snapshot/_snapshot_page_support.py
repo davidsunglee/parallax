@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from parallax.core import DomainModel
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
@@ -39,7 +40,6 @@ from parallax.snapshot.materialize import (
     InvalidData,
     Page,
     PageBuilder,
-    RelationshipViewKey,
     RootView,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row

@@ -355,10 +355,10 @@ def test_concurrent_cold_callers_plan_one_shared_value(
 
 
 def test_a_back_reference_has_no_executable_child_read() -> None:
-    plan = replace(_plan(ReadPlanCache(), _query()), _children=(None,))
+    plan = replace(_plan(ReadPlanCache(), _query()), _fetches=(None,))
 
-    with pytest.raises(ValueError, match="executable child level"):
-        plan.child_read(0, ())
+    with pytest.raises(ValueError, match="executable fetch step"):
+        plan.fetch_read(0, ())
 
 
 def test_mixed_cold_keys_and_editions_build_without_global_lock_contention(
@@ -481,6 +481,7 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     warm = _plan(cache, _query())
 
     assert warm is cold
+    assert warm.include_tree() is cold.include_tree()
     assert calls == {"plan": 1, "compile": 1, "bind": 1}
 
 

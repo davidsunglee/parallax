@@ -77,9 +77,9 @@ failed-call rules.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import continuation, deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
@@ -88,7 +88,7 @@ from parallax.core.db_port import (
     Row,
 )
 from parallax.core.dialect import LockMode
-from parallax.core.entity import EntityGraphConstruction
+from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -102,9 +102,12 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
 )
+from parallax.core.object_query._nodes import IncludePath
 from parallax.core.object_query._validated import (
     ValidatedObjectQuery,
 )
+from parallax.core.object_query.validate import validate_include_path
+from parallax.core.predicate import root_position
 from parallax.core.temporal_read import (
     Edge,
     Pin,
@@ -115,7 +118,9 @@ from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
     from parallax.core.base import ManagedValue
+    from parallax.snapshot.materialize._wire import EntityReader
 
+from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._read_result import (
     FindResult,
     HistoryFindResult,
@@ -141,19 +146,15 @@ from parallax.snapshot.handle._retention import (
     ReadSources,
 )
 from parallax.snapshot.materialize import (
-    EMPTY_UNWIND,
     ClassifiedRoot,
     InvalidData,
     InvalidDataError,
     Page,
     PageBuilder,
-    RelationshipViewKey,
     RootView,
-    UnwindTree,
     classify_roots,
     page_edges,
     require_publishable,
-    unwind_tree,
     wire_roots,
 )
 from parallax.snapshot.materialize._page import ABSENT
@@ -164,6 +165,7 @@ from parallax.snapshot.materialize._views import (
     ChildSlot,
     SourceLevel,
 )
+from parallax.snapshot.materialize._wire import WireEntity
 
 __all__ = [
     "CheckedSnapshot",
@@ -223,6 +225,10 @@ def _invalid_records[T](
     )
 
 
+_WIRE_ALL = object()
+_WIRE_AT_OMITTED = object()
+
+
 class Snapshot[T]:
     """The Python reification of a core Snapshot Graph (spec §3): ``db.find`` /
     ``tx.find``'s result. The complete surface: :meth:`result`,
@@ -233,9 +239,10 @@ class Snapshot[T]:
     served under), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, any lazy
-    behavior, and every lifecycle accessor — whatever the read published, it
-    published while it ran, and the result retains nothing of it but the
-    edition it was read under.
+    behavior, and every lifecycle accessor. A Typed result retains the request's
+    canonical finite include shape and accepted model so :meth:`wire` can publish
+    the value in memory; it retains no execution scope, Page, Root View,
+    connection, authority, or other lifecycle of the read.
 
     A root whose stored state contradicted the model is held as its
     :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
@@ -247,18 +254,29 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_edition", "_invalid", "_pin", "_roots")
+    __slots__ = ("_edition", "_includes", "_invalid", "_pin", "_projection_model", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
     _edition: str
+    _includes: deep_fetch.IncludeTree | None
+    _projection_model: CatalogedModel | None
 
-    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin, edition: str) -> None:
+    def __init__(
+        self,
+        roots: tuple[T | InvalidData[T], ...],
+        pin: Pin,
+        edition: str,
+        includes: deep_fetch.IncludeTree | None = None,
+        projection_model: CatalogedModel | None = None,
+    ) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
         self._pin = pin
         self._edition = edition
+        self._includes = includes
+        self._projection_model = projection_model
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -292,6 +310,61 @@ class Snapshot[T]:
         """
         return CheckedSnapshot(self._roots, self._pin, self._edition)
 
+    @overload
+    def wire[R: Entity](self: Snapshot[R]) -> Snapshot[WireEntity]: ...
+
+    @overload
+    def wire[R: Entity](
+        self: Snapshot[R],
+        value: Entity,
+        *,
+        at: RelationshipPath[Entity, Any] | None = None,
+    ) -> WireEntity: ...
+
+    @overload
+    def wire[R: Entity, E: Entity](
+        self: Snapshot[R],
+        value: InvalidData[E],
+        *,
+        at: RelationshipPath[Entity, Any] | None = None,
+    ) -> InvalidData[WireEntity]: ...
+
+    def wire(
+        self,
+        value: object = _WIRE_ALL,
+        *,
+        at: RelationshipPath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
+    ) -> Snapshot[WireEntity] | WireEntity | InvalidData[WireEntity]:
+        """Publish this Typed result, or one eligible node, in canonical Wire form."""
+        model = self._projection_model
+        includes = self._includes
+        if model is None or includes is None:
+            raise SnapshotInspectionError(
+                code="snapshot-wire-envelope-ineligible",
+                message="Wire projection is available only on a Typed Snapshot",
+                operation="Snapshot.wire",
+            )
+        if value is _WIRE_ALL:
+            if at is not _WIRE_AT_OMITTED:
+                raise TypeError("whole-result Snapshot.wire() accepts no at= position")
+            values = self._roots
+            pin = self._pin
+            edition = self._edition
+            del self
+            try:
+                projected = _project_eager_values(values, includes, model, includes.root)
+                return Snapshot(projected, pin, edition)
+            finally:
+                values = ()
+        del self
+        reader = _require_projection_inputs((value,), model)
+        position = _wire_position(
+            includes,
+            model,
+            None if at is _WIRE_AT_OMITTED else cast("RelationshipPath[Entity, Any] | None", at),
+        )
+        return _project_eager_values((value,), includes, model, position, reader=reader)[0]
+
     @property
     def pin(self) -> Pin:
         """The query's OWN lowered as-of coordinates (spec §3): only
@@ -323,6 +396,154 @@ class Snapshot[T]:
         """
         if self._invalid:
             raise InvalidDataError(self._invalid, edition=self._edition)
+
+
+def _require_projection_inputs(values: tuple[object, ...], model: CatalogedModel) -> EntityReader:
+    """Validate explicit inputs before resolving a separately supplied position."""
+    from parallax.snapshot.materialize._wire import EntityReader, projection_entity
+
+    reader = EntityReader(model)
+    for value in values:
+        record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
+        node: object | None = record.data if record is not None else cast("object", value)
+        if node is None:
+            continue
+        concrete = projection_entity(node)
+        layout = reader.layout(node)
+        if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
+            raise SnapshotInspectionError(
+                code="snapshot-wire-input-incompatible",
+                message=(
+                    f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
+                    f"match retained layout {layout.concrete.canonical}"
+                ),
+                operation="Snapshot.wire",
+                entity=concrete,
+            )
+    return reader
+
+
+def _wire_position(
+    includes: deep_fetch.IncludeTree,
+    model: CatalogedModel,
+    path: RelationshipPath[Entity, Any] | None,
+) -> deep_fetch.PositionId:
+    if path is None:
+        return includes.root
+    root = model.meta.entity(includes.queried)
+    if root is None:  # pragma: no cover - the tree came from this exact model
+        raise SnapshotInspectionError(
+            code="snapshot-wire-at-unrequested",
+            message=f"the retained model declares no query root {includes.queried.canonical}",
+            operation="Snapshot.wire",
+        )
+    authored = IncludePath(
+        segments=path.segments,
+        applies_to=None
+        if path.source is None or path.source == includes.queried.canonical
+        else (path.source,),
+    )
+    try:
+        resolved = validate_include_path(authored, model.meta, root_position(model.meta, root))
+        position = includes.requested_position(resolved)
+    except Exception as error:
+        raise SnapshotInspectionError(
+            code="snapshot-wire-at-unrequested",
+            message=f"the requested projection position is not part of this read: {error}",
+            operation="Snapshot.wire",
+        ) from error
+    if position is None:
+        raise SnapshotInspectionError(
+            code="snapshot-wire-at-unrequested",
+            message="the requested projection position is not an exact prefix of this read",
+            operation="Snapshot.wire",
+        )
+    return position
+
+
+def _project_eager_values(
+    values: tuple[object, ...],
+    includes: deep_fetch.IncludeTree,
+    model: CatalogedModel,
+    position: deep_fetch.PositionId,
+    *,
+    reader: EntityReader | None = None,
+) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
+    from parallax.snapshot.materialize._wire import (
+        EntityReader,
+        WireWalk,
+        projection_entity,
+        shared_wire_encoder,
+    )
+    from parallax.snapshot.materialize._wire_memo import StrongIdentityMemo
+
+    walk: WireWalk[object] | None = None
+    encoder: _DeliveryWireEncoder | None = None
+    projected: list[WireEntity | InvalidData[WireEntity]] = []
+    value: object | None = None
+    record: InvalidData[object] | None = None
+    node: object | None = None
+    rendered: WireEntity | None = None
+    try:
+        for index in range(len(values)):
+            value = values[index]
+            record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
+            node = record.data if record is not None else cast("object", value)
+            if node is None:
+                projected.append(cast("InvalidData[WireEntity]", record))
+                continue
+            concrete = projection_entity(node)
+            if reader is None:
+                reader = EntityReader(model)
+            layout = reader.layout(node)
+            if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
+                raise SnapshotInspectionError(
+                    code="snapshot-wire-input-incompatible",
+                    message=(
+                        f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
+                        f"match retained layout {layout.concrete.canonical}"
+                    ),
+                    operation="Snapshot.wire",
+                    entity=concrete,
+                )
+            if not includes.admits(position, concrete):
+                raise SnapshotInspectionError(
+                    code="snapshot-wire-at-concrete-mismatch",
+                    message=(
+                        f"{concrete.canonical} is not admitted at requested position {position}"
+                    ),
+                    operation="Snapshot.wire",
+                    entity=concrete,
+                )
+            if walk is None:
+                encoder = shared_wire_encoder()
+                encoder.begin_page()
+                walk = WireWalk(
+                    reader,
+                    includes,
+                    encoder,
+                    memo=StrongIdentityMemo(),
+                )
+            rendered = walk.position(node, position)
+            projected.append(
+                rendered
+                if record is None
+                else cast("InvalidData[WireEntity]", replace(record, data=rendered))
+            )
+        return tuple(projected)
+    finally:
+        if walk is not None:
+            walk.clear()
+        if reader is not None:
+            reader.clear()
+        projected.clear()
+        values = ()
+        value = None
+        record = None
+        node = None
+        rendered = None
+        if encoder is not None:
+            encoder.release()
 
 
 class CheckedSnapshot[T]:
@@ -614,9 +835,9 @@ def find_history(
         result_form="instance",
         preference=preference,
     )
-    if plan.level_count:  # pragma: no cover - validated milestone queries cannot include
+    if plan.fetch_count:  # pragma: no cover - validated milestone queries cannot include
         # m-case-format: a v1 milestone-set read carries no includes.
-        raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
+        raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
     # `declaring_metadata` resolves the entity whose as-of axes are this target's
     # FAMILY's actual temporal declaration (the root, for a participant —
     # temporality is family-wide, `m-inheritance`); every
@@ -630,7 +851,7 @@ def find_history(
         FlatPageRead(model, compiled, lambda: execute_read(port, compiled, read), Pin(), prepared)
     )
 
-    return HistoryFindResult(page=stage.page, milestones=entity)
+    return HistoryFindResult(page=stage.page, milestones=entity, includes=plan.include_tree())
 
 
 def convert_rows(
@@ -679,53 +900,24 @@ def convert_rows(
     return tuple(refs)
 
 
-def include_tree(levels: Sequence[deep_fetch.FetchLevel]) -> UnwindTree:
-    """The planned levels as the include tree a wire unwind descends.
-
-    A level's own parent reference is what the tree is built from, so the tree
-    and the fan-out below attach through one derivation of the view key rather
-    than two spellings of it.
-    """
-    if not levels:
-        return EMPTY_UNWIND
-    return unwind_tree(
-        [
-            (
-                _view_key(level),
-                None if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index,
-            )
-            for level in levels
-        ]
-    )
-
-
-def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
-    """The view ``level`` attaches under: its declared direction, plus the derived
-    narrowed-view key when the level's attach key is not simply that direction's
-    own name."""
-    narrowed = None if level.attach_key == level.relationship.name else level.attach_key
-    return RelationshipViewKey(level.relationship, narrowed)
-
-
 def correlation_table(
     plan: deep_fetch.ObjectQueryPlan, meta: Metamodel
 ) -> tuple[tuple[AttributeIdentity, ...], ...]:
     """Correlation members decoded during the identity pass for each source level."""
-    table: list[list[AttributeIdentity]] = [[] for _ in range(len(plan.levels) + 1)]
-    for index, level in enumerate(plan.levels):
+    table: list[list[AttributeIdentity]] = [[] for _ in range(len(plan.fetch_steps) + 1)]
+    for index, step in enumerate(plan.fetch_steps):
         parent_source = (
-            ROOT_LEVEL if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index + 1
+            ROOT_LEVEL if isinstance(step.parent, deep_fetch.RootRef) else step.parent.index + 1
         )
-        table[parent_source].append(correlation_member(meta, level.owner.identity))
-        if not level.is_back_reference:
-            assert level.related is not None
-            table[index + 1].append(correlation_member(meta, level.related.identity))
+        table[parent_source].append(correlation_member(meta, step.owner.identity))
+        if isinstance(step, deep_fetch.QueryFetchStep):
+            table[index + 1].append(correlation_member(meta, step.related.identity))
     return tuple(tuple(dict.fromkeys(members)) for members in table)
 
 
 def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
     """Which view slots each source level's parents can receive, indexed by
-    source level: the root is 0 and plan level ``i`` is ``i + 1``.
+    source position: the root is 0 and fetch step ``i`` is ``i + 1``.
 
     A level contributes one slot to whichever source level its own PARENT rows
     came from, carrying that level's path-root guard as the concretes it admits.
@@ -737,15 +929,18 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
     This is where the plan vocabulary stops: what crosses into ``materialize`` is
     slots, so nothing there interprets a fetch plan.
     """
-    table: list[list[ChildSlot]] = [[] for _ in range(len(plan.levels) + 1)]
-    for level in plan.levels:
+    table: list[list[ChildSlot]] = [[] for _ in range(len(plan.fetch_steps) + 1)]
+    for step in plan.fetch_steps:
+        position = plan.includes.position(step.position)
+        assert position.view is not None
         parent = (
-            ROOT_LEVEL if isinstance(level.parent, deep_fetch.RootRef) else level.parent.index + 1
+            ROOT_LEVEL if isinstance(step.parent, deep_fetch.RootRef) else step.parent.index + 1
         )
+        parent_position = plan.includes.position(position.parent or plan.includes.root)
         table[parent].append(
             ChildSlot(
-                _view_key(level),
-                None if level.source_position is None else frozenset(level.source_position),
+                position.view,
+                None if position.source == parent_position.target else frozenset(position.source),
             )
         )
     return tuple(tuple(slots) for slots in table)
@@ -754,30 +949,34 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
 def attach_children(
     builder: PageBuilder,
     meta: Metamodel,
-    level: deep_fetch.FetchLevel,
+    tree: deep_fetch.IncludeTree,
+    step: deep_fetch.QueryFetchStep,
     parents: tuple[int, ...],
     children: tuple[int, ...],
 ) -> None:
     """Fan one level's converted children back to their parents in memory,
     preserving fetched order within each to-many bucket."""
-    assert level.related is not None
-    related = correlation_member(meta, level.related.identity)
-    owner = correlation_member(meta, level.owner.identity)
+    position = tree.position(step.position)
+    assert position.view is not None
+    related = correlation_member(meta, step.related.identity)
+    owner = correlation_member(meta, step.owner.identity)
     buckets: dict[object, list[int]] = {}
     for child in children:
         buckets.setdefault(builder.member_value(child, related), []).append(child)
-    view = _view_key(level)
     for parent in parents:
         matched = buckets.get(builder.member_value(parent, owner), [])
         builder.write_view(
             parent,
-            view,
-            tuple(matched) if level.to_many else (matched[0] if matched else None),
+            position.view,
+            tuple(matched) if position.to_many else (matched[0] if matched else None),
         )
 
 
 def attach_empty(
-    builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
+    builder: PageBuilder,
+    tree: deep_fetch.IncludeTree,
+    step: deep_fetch.QueryFetchStep,
+    parents: tuple[int, ...],
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
 
@@ -785,16 +984,18 @@ def attach_empty(
     and every parent still gets a LOADED view — empty or null — rather than an
     unset one.
     """
-    view = _view_key(level)
-    empty: tuple[int, ...] | None = () if level.to_many else None
+    position = tree.position(step.position)
+    assert position.view is not None
+    empty: tuple[int, ...] | None = () if position.to_many else None
     for parent in parents:
-        builder.write_view(parent, view, empty)
+        builder.write_view(parent, position.view, empty)
 
 
 def attach_back_reference(
     builder: PageBuilder,
     meta: Metamodel,
-    level: deep_fetch.FetchLevel,
+    tree: deep_fetch.IncludeTree,
+    step: deep_fetch.BackReferenceFetchStep,
     parents: tuple[int, ...],
 ) -> None:
     """Resolve an ancestor-revisit level against the scope's own identity map.
@@ -807,22 +1008,26 @@ def attach_back_reference(
     leave the loaded-empty or loaded-null result behind: a parent that names no
     ancestor reaches none whichever of the two its row holds.
     """
-    assert level.back_reference_family is not None
-    view = _view_key(level)
-    owner = correlation_member(meta, level.owner.identity)
+    position = tree.position(step.position)
+    assert position.view is not None
+    owner = correlation_member(meta, step.owner.identity)
     for parent in parents:
         key = builder.member_value(parent, owner)
         if key is None or key is ABSENT:
-            builder.write_view(parent, view, () if level.to_many else None)
+            builder.write_view(parent, position.view, () if position.to_many else None)
             continue
-        referenced = builder.resolve(level.back_reference_family, key)
+        referenced = builder.resolve(step.family, key)
         if referenced is None:  # pragma: no cover - guards a malformed plan
             raise ValueError(
-                f"back-reference {level.attach_key!r}: no already-converted "
-                f"{level.back_reference_family.canonical} node for key {key!r} (m-case-format "
+                f"back-reference {position.view.relationship.name!r}: no already-converted "
+                f"{step.family.canonical} node for key {key!r} (m-case-format "
                 "'Back-reference cycles' guarantees the ancestor is already known)"
             )
-        builder.write_view(parent, view, (referenced,) if level.to_many else referenced)
+        builder.write_view(
+            parent,
+            position.view,
+            (referenced,) if position.to_many else referenced,
+        )
 
 
 def correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
@@ -892,7 +1097,10 @@ def parent_refs(
 
 
 def guarded_parents(
-    builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
+    builder: PageBuilder,
+    tree: deep_fetch.IncludeTree,
+    step: deep_fetch.FetchStep,
+    parents: tuple[int, ...],
 ) -> tuple[int, ...]:
     """The parent nodes a path-root guard admits into ``level``
     (m-deep-fetch "Path-root guards").
@@ -905,9 +1113,11 @@ def guarded_parents(
     guard's resolved source set enumerates. An unguarded level returns the
     sequence unchanged.
     """
-    if level.source_position is None:
+    position = tree.position(step.position)
+    assert position.parent is not None
+    if position.source == tree.position(position.parent).target:
         return parents
-    admitted = frozenset(level.source_position)
+    admitted = frozenset(position.source)
     return tuple(parent for parent in parents if builder.concrete_of(parent) in admitted)
 
 
@@ -984,7 +1194,7 @@ class RootsOf(Protocol):
     def __call__(
         self,
         page: Page,
-        includes: UnwindTree = EMPTY_UNWIND,
+        includes: deep_fetch.IncludeTree,
         /,
         *,
         atomic: bool = False,
@@ -1040,6 +1250,7 @@ class ResultPublication:
     roots_of: RootsOf
     edition: str
     release: Callable[[], None]
+    projection_model: CatalogedModel | None = None
 
     def from_find(self, result: FindResult) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
@@ -1055,6 +1266,8 @@ class ResultPublication:
                 ),
                 result.page.pin,
                 self.edition,
+                result.includes if self.projection_model is not None else None,
+                self.projection_model,
             )
         finally:
             self.release()
@@ -1070,9 +1283,18 @@ class ResultPublication:
         """
         try:
             return Snapshot(
-                tuple(self.roots_of(result.page, atomic=True, milestones=result.milestones)),
+                tuple(
+                    self.roots_of(
+                        result.page,
+                        result.includes,
+                        atomic=True,
+                        milestones=result.milestones,
+                    )
+                ),
                 Pin(),
                 self.edition,
+                result.includes if self.projection_model is not None else None,
+                self.projection_model,
             )
         finally:
             self.release()
@@ -1083,13 +1305,13 @@ def _release_nothing() -> None:
 
 
 def typed_publication(
-    meta: Metamodel, construction: EntityGraphConstruction, edition: str
+    model: CatalogedModel, construction: EntityGraphConstruction, edition: str
 ) -> ResultPublication:
     """Publish through the typed materializer: frozen Entity instances."""
 
     def roots_of(
         page: Page,
-        includes: UnwindTree = EMPTY_UNWIND,
+        includes: deep_fetch.IncludeTree,
         /,
         *,
         atomic: bool = False,
@@ -1106,7 +1328,7 @@ def typed_publication(
         def publish(root: RootView, position: int) -> Iterator[object]:
             yield from _materialize_result_page(
                 root,
-                meta,
+                model.meta,
                 construction,
                 ordinal_offset=ordinal_offset + position,
                 sources=sources,
@@ -1125,7 +1347,7 @@ def typed_publication(
             prepare=lambda root: root.prime(sources),
         )
 
-    return ResultPublication("typed", roots_of, edition, _release_nothing)
+    return ResultPublication("typed", roots_of, edition, _release_nothing, model)
 
 
 def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
@@ -1152,7 +1374,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
 
     def roots_of(
         page: Page,
-        includes: UnwindTree = EMPTY_UNWIND,
+        includes: deep_fetch.IncludeTree,
         /,
         *,
         atomic: bool = False,

@@ -564,7 +564,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
 # m-value-object: Customer non-temporal value-object-owner write stories.     #
 # The recursive `address` composite (`CustomerGeo`                            #
 # declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
-# so these exercise `to_document`'s omission of unset optional inner members.#
+# so these exercise `encode_value_object`'s omission of unset optional inner members.#
 # --------------------------------------------------------------------------- #
 def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:

@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import pytest
 
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
     ChildSlot,
-    RelationshipViewKey,
     ViewSchema,
 )
 from tests.unit._corpus_model_support import model as corpus_model

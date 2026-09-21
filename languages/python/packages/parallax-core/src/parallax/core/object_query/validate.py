@@ -84,7 +84,7 @@ from parallax.core.predicate import (
 )
 from parallax.core.wire import WireDecodingError, decode_wire
 
-__all__ = ["query_entities", "validate_object_query"]
+__all__ = ["query_entities", "validate_include_path", "validate_object_query"]
 
 
 def validate_object_query(
@@ -108,7 +108,7 @@ def validate_object_query(
         if member is None:
             raise ValueError(f"{key.attr!r} names no declared ordering attribute")
         order_terms.append(ValidatedOrderTerm(member, key.direction or "asc", key.nulls or "last"))
-    includes = tuple(_validate_include_path(path, model, queried) for path in query.includes)
+    includes = tuple(validate_include_path(path, model, queried) for path in query.includes)
     narrowed = (
         None
         if query.narrow_to is None
@@ -157,7 +157,7 @@ def _narrowed_position(
     return validate_narrow(query.narrow_to, queried, model)
 
 
-def _validate_include_path(
+def validate_include_path(
     path: IncludePath, model: Metamodel, queried: PositionScope
 ) -> ValidatedIncludePath:
     source_scope = (

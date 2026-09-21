@@ -301,11 +301,13 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         includes=(IncludePath(segments=(IncludeSegment(rel="Den.beasts", narrow_to=("Wolf",)),)),),
     )
     validated_segment = validate_object_query(den, segment_narrow, model)
+    segment_plan = deep_fetch.plan(
+        validated_segment, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    )
     assert [
-        level.attach_key
-        for level in deep_fetch.plan(
-            validated_segment, model, projection=deep_fetch.ReadProjectionRequest("all", True)
-        ).levels
+        (position.view.narrowed_view or position.view.relationship.name)
+        for step in segment_plan.fetch_steps
+        if (position := segment_plan.includes.position(step.position)).view is not None
     ] == ["beasts[Wolf]"]
 
     root_guard = _query(
@@ -315,16 +317,20 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
     validated_guard = validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(
         validated_guard, model, projection=deep_fetch.ReadProjectionRequest("all", True)
-    ).levels
-    assert [level.source_position for level in guarded] == [(wolf.identity,)]
+    )
+    assert [guarded.includes.position(step.position).source for step in guarded.fetch_steps] == [
+        (wolf.identity,)
+    ]
 
     from_subtype = _query("Wolf", (IncludePath(segments=(IncludeSegment(rel="Beast.den"),)),))
     validated_subtype = validate_object_query(wolf, from_subtype, model)
+    subtype_plan = deep_fetch.plan(
+        validated_subtype, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    )
     assert [
-        level.attach_key
-        for level in deep_fetch.plan(
-            validated_subtype, model, projection=deep_fetch.ReadProjectionRequest("all", True)
-        ).levels
+        (position.view.narrowed_view or position.view.relationship.name)
+        for step in subtype_plan.fetch_steps
+        if (position := subtype_plan.includes.position(step.position)).view is not None
     ] == ["den"]
 
 
@@ -369,8 +375,10 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     validated_guard = validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(
         validated_guard, model, projection=deep_fetch.ReadProjectionRequest("all", True)
-    ).levels
-    assert [level.source_position for level in guarded] == [(wolf.identity,)]
+    )
+    assert [guarded.includes.position(step.position).source for step in guarded.fetch_steps] == [
+        (wolf.identity,)
+    ]
 
     navigation = oa.Exists(rel="zoo.Beast.den")
     validate_predicate(wolf, navigation, model)

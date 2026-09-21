@@ -22,7 +22,7 @@ why the published node and the hydrated Entity value observe one document.
 
 **The include tree bounds the walk, not Page identity.** A Root View node keeps
 every view any level loaded onto it, so following a node's own views would revisit
-an ancestor forever. The unwind instead descends an :class:`UnwindTree` — the
+an ancestor forever. The unwind instead descends an :class:`IncludeTree` — the
 requested Include Paths, realized as the views to follow — which strictly shrinks
 with depth, so a back-reference renders its target once, in full, and terminates.
 That is what replaces a primary-key stub: the tree, not a cycle detector, is what
@@ -51,36 +51,57 @@ from types import MappingProxyType
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
+from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey, RenderToken
+from parallax.core.document_codec import (
+    MemberShape,
+    OccurrenceCarrier,
+    encode_occurrence,
+    occurrence_shape,
+)
+from parallax.core.entity import UNLOADED, Entity
+from parallax.core.entity._declaration import wire_names_of
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
+from parallax.core.entity._graph_construction import require_correspondence
+from parallax.core.entity._instance_state import (
+    ABSENT_DECLARED_VALUE,
+    declared_values,
+    is_published,
+    named_state,
+    plan_of,
+)
+from parallax.core.entity._instance_state import (
+    relationship as relationship_state,
+)
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
-    Multiplicity,
     NestedValueObjectMetadata,
     ValueObjectMetadata,
 )
 from parallax.core.unit_work import ReadOrigin
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
+from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
 from parallax.snapshot.materialize._invalid import InvalidData
-from parallax.snapshot.materialize._page import ABSENT, RelationshipViewKey
+from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._root import RootView
+from parallax.snapshot.materialize._wire_memo import IndexMemo, WireMemo
 
 __all__ = [
-    "EMPTY_UNWIND",
     "FAMILY_VARIANT_KEY",
+    "EntityReader",
     "NodeReader",
     "RootViewReader",
-    "UnwindTree",
     "WireEntity",
     "WireValue",
     "WireWalk",
     "opened_wire_entity",
+    "projection_entity",
     "read_origin_of",
     "shared_wire_encoder",
-    "unwind_tree",
     "wire_roots",
 ]
 
@@ -291,7 +312,9 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     _source: ReadOrigin | None
 
 
-def _frozen_mapping[T: _FrozenMapping](cls: type[T], entries: Mapping[str, WireValue]) -> T:
+def _frozen_mapping[T: _FrozenMapping](
+    cls: type[T], entries: Mapping[str, WireValue] | Iterable[tuple[str, WireValue]]
+) -> T:
     """One frozen mapping of ``cls``, populated through ``dict``'s own writer.
 
     Construction cannot run through ``cls(entries)``: the refusing ``__init__``
@@ -331,28 +354,10 @@ included node alike, and naming the published union would read as a second
 public type for the root position where the contract has none."""
 
 
-@dataclass(frozen=True, slots=True, eq=False)
-class UnwindTree:
-    """The requested Include Paths, as the relationship views an unwind follows.
-
-    Identity-compared on purpose: it is the second half of the unwind's memo key,
-    and two positions in one tree are two positions however alike their subtrees
-    look. A node's children are keyed exactly as a Root View node keys its views, so
-    following the tree and reading the Root View need no translation between them.
-    """
-
-    children: Mapping[RelationshipViewKey, UnwindTree]
-
-
-EMPTY_UNWIND = UnwindTree(MappingProxyType({}))
-"""The tree of a read that requested no Include Path: every node renders its own
-members and no relationship at all."""
-
-
 def wire_roots(
     root_view: RootView,
     model: Metamodel,
-    includes: UnwindTree = EMPTY_UNWIND,
+    includes: IncludeTree,
     *,
     ordinal_offset: int = 0,
     sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
@@ -375,13 +380,13 @@ def wire_roots(
     retained: Mapping[int, ReadOrigin] = (
         sources if classification.conforming else MappingProxyType({})
     )
-    walk = WireWalk(RootViewReader(root_view, retained), encode)
+    walk = WireWalk(RootViewReader(root_view, retained), includes, encode)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
-            published.append(walk.node(verdict.node, includes))
+            published.append(walk.position(verdict.node, includes.root))
             continue
-        data = None if verdict.node is None else walk.node(verdict.node, includes)
+        data = None if verdict.node is None else walk.position(verdict.node, includes.root)
         published.append(cast("InvalidData[WireEntity]", verdict.published(data)))
     return tuple(published)
 
@@ -413,6 +418,10 @@ class NodeReader[Node](Protocol):
     def relationship(self, node: Node, view: RelationshipViewKey) -> object: ...
 
     def origin(self, node: Node) -> ReadOrigin | None: ...
+
+    def occurrence_carrier(self) -> OccurrenceCarrier: ...
+
+    def admission_error(self, concrete: EntityIdentity) -> Exception: ...
 
 
 class RootViewReader:
@@ -453,6 +462,122 @@ class RootViewReader:
     def origin(self, node: int) -> ReadOrigin | None:
         return self._root.projection_value(node, self._sources)
 
+    def occurrence_carrier(self) -> OccurrenceCarrier:
+        return _STORED
+
+    def admission_error(  # pragma: no cover - execution admits every stored position
+        self, concrete: EntityIdentity
+    ) -> Exception:
+        return ValueError(f"{concrete.canonical} is not admitted by the requested include position")
+
+
+class EntityReader:
+    """The native published-Entity adapter for the shared Wire walk."""
+
+    __slots__ = ("_checked", "_model")
+
+    def __init__(self, model: CatalogedModel) -> None:
+        self._model = model
+        self._checked: set[tuple[type, EntityIdentity]] = set()
+
+    def layout(self, node: object) -> EntityLayout:
+        state = self._required(node)
+        pair = (type(node), state.entity)
+        try:
+            layout = self._model.layouts.entity(state.entity)
+            if pair not in self._checked:
+                require_correspondence(
+                    layout,
+                    wire_names_of(type(node)),
+                    plan_of(type(node)),
+                )
+                self._checked.add(pair)
+        except Exception as error:
+            raise SnapshotInspectionError(
+                code="snapshot-wire-input-incompatible",
+                message=(
+                    f"{type(node).__name__} does not correspond to retained layout "
+                    f"{state.entity.canonical}: {error}"
+                ),
+                operation="Snapshot.wire",
+                entity=state.entity,
+            ) from error
+        return layout
+
+    def member_values(self, node: object) -> Iterable[object]:
+        self._required(node)
+        return (
+            ABSENT if value is ABSENT_DECLARED_VALUE else value
+            for value in declared_values(cast("Any", node))
+        )
+
+    def relationship(self, node: object, view: RelationshipViewKey) -> object:
+        state = self._required(node)
+        if view.narrowed_view is not None:
+            return state.views.get(view.narrowed_view, ABSENT)
+        py_name = wire_names_of(type(node)).relationship_py.get(view.relationship.name)
+        if py_name is None:  # pragma: no cover - correspondence checks every direction
+            raise SnapshotInspectionError(
+                code="snapshot-wire-input-incompatible",
+                message=(
+                    f"{type(node).__name__} declares no relationship position for "
+                    f"{view.relationship}"
+                ),
+                operation="Snapshot.wire",
+                entity=state.entity,
+            )
+        value = relationship_state(cast("Any", node), py_name)
+        return ABSENT if value is UNLOADED else value
+
+    def origin(self, node: object) -> ReadOrigin | None:
+        return self._required(node).source
+
+    def occurrence_carrier(self) -> OccurrenceCarrier:
+        return _LIVE
+
+    def clear(self) -> None:
+        self._checked.clear()
+
+    def admission_error(  # pragma: no cover - explicit callers check admission first
+        self, concrete: EntityIdentity
+    ) -> Exception:
+        return SnapshotInspectionError(
+            code="snapshot-wire-at-concrete-mismatch",
+            message=f"{concrete.canonical} is not admitted by the requested include position",
+            operation="Snapshot.wire",
+            entity=concrete,
+        )
+
+    @staticmethod
+    def _required(node: object):
+        projection_entity(node)
+        state = snapshot_state_of(node)
+        assert state is not None
+        return state
+
+
+def projection_entity(node: object) -> EntityIdentity:
+    """Require one eligible published Snapshot Entity and answer its concrete."""
+    if isinstance(node, Entity) and isinstance(
+        named_state(node).get(CHANGE_RECORD_SLOT), ChangeRecord
+    ):
+        state = snapshot_state_of(node)
+        raise SnapshotInspectionError(
+            code="snapshot-wire-input-edited",
+            message="an edited Entity cannot be projected as read Wire state",
+            operation="Snapshot.wire",
+            entity=None if state is None else state.entity,
+        )
+    state = snapshot_state_of(node)
+    if state is None or not is_published(node):
+        raise SnapshotInspectionError(
+            code="snapshot-node-required",
+            message="Wire projection requires a published Snapshot node",
+            operation="Snapshot.wire",
+            entity=None if state is None else state.entity,
+        )
+    return state.entity
+
 
 class WireWalk[Node]:
     """One materialization pass's walk over a reader's nodes, and the memo it
@@ -468,28 +593,43 @@ class WireWalk[Node]:
     The memo dies when the pass returns.
     """
 
-    __slots__ = ("_cache", "_encode", "_leaf_cache", "_reader", "_trusted")
+    __slots__ = ("_encode", "_includes", "_memo", "_reader", "_trusted")
 
-    def __init__(self, reader: NodeReader[Node], encode: _Encoder = encode_managed_wire) -> None:
+    def __init__(
+        self,
+        reader: NodeReader[Node],
+        includes: IncludeTree,
+        encode: _Encoder = encode_managed_wire,
+        *,
+        memo: WireMemo[Node] | None = None,
+    ) -> None:
         self._reader = reader
+        self._includes = includes
         self._encode = encode
         self._trusted = encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
-        self._cache: dict[tuple[Node, int], _WireEntityNode] = {}
-        self._leaf_cache: dict[Node, _WireEntityNode] = {}
+        self._memo = cast("WireMemo[Node]", IndexMemo()) if memo is None else memo
 
-    def node(self, node: Node, subtree: UnwindTree) -> _WireEntityNode:
-        leaf = subtree is EMPTY_UNWIND
-        key: Node | tuple[Node, int] = node if leaf else (node, id(subtree))
-        cache: dict[Any, _WireEntityNode] = self._leaf_cache if leaf else self._cache
-        cached = cache.get(key)
+    def node(self, node: Node, token: RenderToken) -> _WireEntityNode:
+        cached = self._memo.get(node, token)
         if cached is not None:
-            return cached
-        entity = self._build(node, subtree)
+            return cast("_WireEntityNode", cached)
+        entity = self._build(node, token)
         object.__setattr__(entity, "_source", self._reader.origin(node))
-        cache[key] = entity
+        self._memo.put(node, token, entity)
         return entity
 
-    def _build(self, node: Node, subtree: UnwindTree) -> _WireEntityNode:
+    def position(self, node: Node, position: int) -> _WireEntityNode:
+        """Render ``node`` at one admitted requested position."""
+        concrete = self._reader.layout(node).concrete
+        token = self._includes.render_token((position,), concrete)
+        if token is None:  # pragma: no cover - explicit projection checks admission first
+            raise self._reader.admission_error(concrete)
+        return self.node(node, token)
+
+    def clear(self) -> None:
+        self._memo.clear()
+
+    def _build(self, node: Node, token: RenderToken) -> _WireEntityNode:
         reader = self._reader
         layout = reader.layout(node)
         values = iter(reader.member_values(node))
@@ -508,16 +648,25 @@ class WireWalk[Node]:
         for occurrence, value in zip(layout.occurrences, values, strict=True):
             if value is not ABSENT:
                 rendered[occurrence.identity.path[-1]] = _occurrence(
-                    value, occurrence, _STORED, self._encode, trusted=self._trusted
+                    value,
+                    occurrence,
+                    reader.occurrence_carrier(),
+                    self._encode,
+                    trusted=self._trusted,
                 )
-        for view, child in subtree.children.items():
+        for view, grouped in self._includes.child_groups(token).items():
+            candidates = self._includes.admitted_children(grouped, layout.concrete)
+            if not candidates:
+                continue
             value = reader.relationship(node, view)
             if value is ABSENT:
                 continue
-            rendered[view.narrowed_view or view.relationship.name] = self._related(value, child)
+            rendered[view.narrowed_view or view.relationship.name] = self._related(
+                value, candidates
+            )
         return _frozen_mapping(_WireEntityNode, rendered)
 
-    def _related(self, value: object, subtree: UnwindTree) -> WireValue:
+    def _related(self, value: object, candidates: tuple[int, ...]) -> WireValue:
         """One loaded view's arm resolved against the reader's own nodes.
 
         The arm travels in the value's SHAPE: a tuple is loaded-many,
@@ -526,11 +675,18 @@ class WireWalk[Node]:
         if isinstance(value, tuple):
             sequence = list.__new__(_FrozenSequence)
             for element in cast("tuple[Node, ...]", value):
-                list[Any].append(sequence, self.node(element, subtree))
+                list[Any].append(sequence, self._admitted_node(element, candidates))
             return sequence
         if value is None:
             return None
-        return self.node(cast("Node", value), subtree)
+        return self._admitted_node(cast("Node", value), candidates)
+
+    def _admitted_node(self, node: Node, candidates: tuple[int, ...]) -> _WireEntityNode:
+        concrete = self._reader.layout(node).concrete
+        token = self._includes.render_token(candidates, concrete)
+        if token is None:  # pragma: no cover - fetched views hold admitted concretes
+            raise self._reader.admission_error(concrete)
+        return self.node(node, token)
 
 
 def _put(rendered: dict[str, WireValue], key: str, value: WireValue) -> None:
@@ -605,131 +761,81 @@ def shared_wire_encoder() -> _SharedWireEncoder:
     return _SharedWireEncoder()
 
 
-@dataclass(frozen=True, slots=True)
-class _Carrier:
-    """How one kind of occurrence carrier answers the two questions publication
-    asks of it: what a ``many`` value's elements are, and which members one record
-    holds, under their declared names.
-
-    A stored member row and an authored write document hold the same value
-    differently — a positional row against a plain mapping — and nothing else
-    about publication differs, so the walk is shared and only the lookup varies.
-    That is what keeps the node a Wire insert answers and the node a read
-    publishes describing one row the same way.
-    """
-
-    elements: Callable[[object], Sequence[object]]
-    entries: Callable[[object, _VoContainer], Mapping[str, object]]
+def _tuple_elements(value: object) -> Iterable[object]:
+    return cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
 
 
-def _stored_elements(value: object) -> Sequence[object]:
-    return cast("Sequence[object]", value) if isinstance(value, tuple) else ()
-
-
-def _stored_entries(record: object, declared: _VoContainer) -> Mapping[str, object]:
-    """One stored member row's members by declared name.
-
-    The row is positional against ``declared``'s own leaves and then its nested
-    occurrences, so a name is read off the declaration at the position it sits
-    at. An absent position contributes no name, which is what makes a member the
-    stored document did not carry absent from the published mapping too.
-    """
-    if not isinstance(record, tuple):  # pragma: no cover - a One slot is a row or null
-        return {}
-    row = cast("tuple[object, ...]", record)
-    held: dict[str, object] = {}
-    for position, leaf in enumerate(declared.attributes):
-        if row[position] is not ABSENT:
-            held[leaf.identity.name] = row[position]
-    for position, nested in enumerate(declared.value_objects, start=len(declared.attributes)):
-        if row[position] is not ABSENT:
-            held[nested.identity.path[-1]] = row[position]
-    return held
-
-
-def _authored_elements(value: object) -> Sequence[object]:
+def _authored_elements(value: object) -> Iterable[object]:
     return cast("Sequence[object]", value) if isinstance(value, list | tuple) else ()
 
 
-def _authored_entries(document: object, declared: _VoContainer) -> Mapping[str, object]:
-    del declared
-    return cast("Mapping[str, object]", document) if isinstance(document, Mapping) else {}
+def _stored_values(record: object, shape: MemberShape) -> Iterable[object]:
+    del shape
+    return cast("tuple[object, ...]", record)
 
 
-_STORED: Final = _Carrier(elements=_stored_elements, entries=_stored_entries)
-_AUTHORED: Final = _Carrier(elements=_authored_elements, entries=_authored_entries)
+_AUTHORED_ABSENT: Final = object()
+
+
+def _authored_values(record: object, shape: MemberShape) -> Iterable[object]:
+    document = cast("Mapping[str, object]", record)
+    return (document.get(member.name, _AUTHORED_ABSENT) for member in shape.members)
+
+
+def _live_values(record: object, shape: MemberShape) -> Iterable[object]:
+    del shape
+    return (
+        ABSENT if value is ABSENT_DECLARED_VALUE else value
+        for value in declared_values(cast("Any", record))
+    )
+
+
+_STORED: Final = OccurrenceCarrier(ABSENT, _stored_values, _tuple_elements)
+_AUTHORED: Final = OccurrenceCarrier(_AUTHORED_ABSENT, _authored_values, _authored_elements)
+_LIVE: Final = OccurrenceCarrier(ABSENT, _live_values, _tuple_elements)
+
+
+@dataclass(frozen=True, slots=True)
+class _OccurrenceLeafEncoder:
+    encode: _Encoder
+    trusted: bool
+
+    def __call__(self, neutral_type: NeutralType, value: object) -> WireValue:
+        return (
+            cast("WireValue", value)
+            if self.trusted and type(value) in (bool, int, str)
+            else _trusted_wire_scalar(neutral_type, value, self.encode)
+            if self.trusted
+            else _wire_scalar(neutral_type, value, self.encode)
+        )
+
+
+def _occurrence_mapping(entries: Iterable[tuple[str, WireValue]]) -> WireValue:
+    return _frozen_mapping(_FrozenMapping, entries)
+
+
+def _occurrence_sequence(values: Iterable[WireValue]) -> WireValue:
+    return _frozen_sequence(values)
 
 
 def _occurrence(
     value: object,
     declared: _VoContainer,
-    carrier: _Carrier,
+    carrier: OccurrenceCarrier,
     encode: _Encoder = encode_managed_wire,
     *,
     trusted: bool = False,
 ) -> WireValue:
     """One occurrence entry as the Wire value its carrier holds."""
-    if declared.multiplicity is Multiplicity.MANY:
-        return _frozen_sequence(
-            _held_members(record, declared, carrier, encode, trusted)
-            for record in carrier.elements(value)
-        )
-    return None if value is None else _held_members(value, declared, carrier, encode, trusted)
-
-
-def _held_members(
-    record: object,
-    declared: _VoContainer,
-    carrier: _Carrier,
-    encode: _Encoder,
-    trusted: bool,
-) -> WireValue:
-    """One occurrence record as the members its carrier HOLDS, in declared order.
-
-    The declared member lists supply the order and the per-position decoding, and
-    the carrier decides which of those positions become keys: a member it does not
-    hold is absent from the published mapping rather than filled with a value the
-    document never carried. Absence is therefore something a consumer reads.
-
-    Presence is the carrier's whole answer, so nothing here re-derives it and no
-    position needs a branch. A read's carrier is the record the read reduction
-    already built, so it states which members the value carries — including each
-    position where that differs from what the stored document held, which
-    `m-snapshot-read` *What a materialized value carries* fixes and this walk only
-    renders. An insert's carrier is its own opening row, complete by the rule
-    :func:`opened_wire_entity` states.
-    """
-    if carrier is _STORED and isinstance(record, tuple):
-        row = cast("tuple[object, ...]", record)
-        published: dict[str, WireValue] = {}
-        for leaf, value in zip(declared.attributes, row, strict=False):
-            if value is not ABSENT:
-                published[leaf.identity.name] = (
-                    cast("WireValue", value)
-                    if trusted and type(value) in (bool, int, str)
-                    else _trusted_wire_scalar(leaf.type, value, encode)
-                    if trusted
-                    else _wire_scalar(leaf.type, value, encode)
-                )
-        for occurrence, value in zip(
-            declared.value_objects, row[len(declared.attributes) :], strict=True
-        ):
-            if value is not ABSENT:
-                published[occurrence.identity.path[-1]] = _occurrence(
-                    value, occurrence, carrier, encode, trusted=trusted
-                )
-        return _frozen_mapping(_FrozenMapping, published)
-    held = carrier.entries(record, declared)
-    published: dict[str, WireValue] = {}
-    for leaf in declared.attributes:
-        name = leaf.identity.name
-        if name in held:
-            published[name] = _wire_scalar(leaf.type, held[name], encode)
-    for occurrence in declared.value_objects:
-        name = occurrence.identity.path[-1]
-        if name in held:
-            published[name] = _occurrence(held[name], occurrence, carrier, encode, trusted=trusted)
-    return _frozen_mapping(_FrozenMapping, published)
+    return encode_occurrence(
+        value,
+        occurrence_shape(declared),
+        declared.multiplicity,
+        carrier,
+        encode_leaf=_OccurrenceLeafEncoder(encode, trusted),
+        build_object=_occurrence_mapping,
+        build_array=_occurrence_sequence,
+    )
 
 
 def opened_wire_entity(
@@ -774,23 +880,3 @@ def opened_wire_entity(
     node = _frozen_mapping(_WireEntityNode, rendered)
     object.__setattr__(node, "_source", hint)
     return node
-
-
-def unwind_tree(
-    levels: Sequence[tuple[RelationshipViewKey, int | None]],
-) -> UnwindTree:
-    """The include tree for ``levels``, each a view key plus its parent's index.
-
-    ``None`` names the root as a level's parent. A level's parent is always an
-    EARLIER level (`m-deep-fetch` plans in trie order), so building from the last
-    level backwards fills each node's children before that node is frozen.
-    """
-    children: list[dict[RelationshipViewKey, UnwindTree]] = [{} for _ in levels]
-    root: dict[RelationshipViewKey, UnwindTree] = {}
-    for index in reversed(range(len(levels))):
-        view, parent = levels[index]
-        target = root if parent is None else children[parent]
-        target[view] = (
-            UnwindTree(MappingProxyType(children[index])) if children[index] else EMPTY_UNWIND
-        )
-    return UnwindTree(MappingProxyType(root))

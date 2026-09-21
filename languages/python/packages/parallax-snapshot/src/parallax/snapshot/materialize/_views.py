@@ -34,13 +34,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import EntityIdentity
 
 __all__ = [
     "ROOT_LEVEL",
     "ChildSlot",
-    "RelationshipViewKey",
     "RootViewLayout",
     "SourceLevel",
     "SourceViewLayout",
@@ -55,22 +55,6 @@ type SourceLevel = int
 ROOT_LEVEL: Final[SourceLevel] = 0
 """The source level of a root projection, and the only one a Page built from a
 plan carrying no levels has."""
-
-
-@dataclass(frozen=True, slots=True)
-class RelationshipViewKey:
-    """One relationship view a projection loaded.
-
-    ``relationship`` is the declared direction. ``narrowed_view`` is the derived
-    ``<rel>[<Concrete>,<Concrete>]`` key of a narrowed polymorphic hop, or
-    ``None`` for the broad view — the two are distinct views of one direction and
-    never merge into each other. The derived key is the plan's own canonical
-    spelling of the hop's effective concrete-identity set; deriving a second one
-    here would duplicate a decision deep-fetch planning already made.
-    """
-
-    relationship: RelationshipIdentity
-    narrowed_view: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +82,9 @@ class SourceViewLayout:
     is a level that gathered no parent at all.
 
     Two levels sharing one view key — a guarded path and its broad sibling are
-    distinct hops that attach under the same name — share the one slot, so a
-    parent both admit is written twice and retains what the later level found.
+    distinct hops that attach under the same name — share the one slot. A parent
+    both admit keeps the later level's delivered arm while the Page retains the
+    overwritten edge until its root-local continuations have been merged.
     """
 
     slots: tuple[RelationshipViewKey, ...]

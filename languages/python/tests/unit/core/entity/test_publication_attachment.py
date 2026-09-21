@@ -43,10 +43,10 @@ from parallax.core.entity import (
     TablePerHierarchy,
     ValueObject,
     attr,
+    encode_value_object,
     lifecycle_state_of,
     rel,
     relationship_value_of,
-    to_document,
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._errors import GraphConstructionError
@@ -314,7 +314,7 @@ def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
     codec = row_codec_for(PARCELS)
 
     assert codec.full_row(root)
-    assert to_document(root.tag)
+    assert encode_value_object(root.tag)
     assert root.model_dump() == {
         "id": 1,
         "label": "north",

@@ -399,6 +399,7 @@ class RootView:
         member_rows = cast("list[tuple[object, ...]]", rows.member_rows)
         keys = cast("list[LogicalKey | None]", rows.keys)
         view_rows = cast("list[Sequence[object]]", rows.view_rows)
+        overwritten_edges = cast("list[Sequence[object]]", rows.overwritten_edges)
         witnesses = cast("list[object]", rows.witnesses)
         logical_ids = cast("list[int]", rows.logical_ids)
         for projection in reached:
@@ -409,6 +410,7 @@ class RootView:
             rows.issues.release(projection)
             keys[projection] = None
             view_rows[projection] = ()
+            overwritten_edges[projection] = ()
             witnesses[projection] = None
             rows.decoders.release(projection)
             logical_ids[projection] = 0
@@ -473,12 +475,11 @@ class RootView:
     # ----------------------------------------------------------------------- #
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
-        """Projection preorder reachable from this view's roots alone."""
+        """Projection preorder from the roots through every reached logical
+        occurrence."""
         rows = self._rows
         if rows is None:  # pragma: no cover - construction owns a live Page
             raise ValueError("a completed Root View cannot rebuild reachability")
-        if len(roots) == 1 and not rows.view_rows[roots[0]]:
-            return (roots[0],)
         order: list[int] = []
         seen: set[int] = set()
         pending = list(reversed(roots))
@@ -488,7 +489,8 @@ class RootView:
                 continue
             seen.add(projection)
             order.append(projection)
-            for value in reversed(rows.view_rows[projection]):
+            edges = (*rows.view_rows[projection], *rows.overwritten_edges[projection])
+            for value in reversed(edges):
                 if isinstance(value, tuple):
                     pending.extend(reversed(cast("tuple[int, ...]", value)))
                 elif value is not None and value is not ABSENT:

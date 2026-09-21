@@ -3089,11 +3089,14 @@ of shared edition identity.
   derived view key; `is_view_loaded` accepts the same narrowed-path argument.
 - **Snapshot inspection failures.** `SnapshotInspectionError(RuntimeError)`
   names the inspection operation and, where one is known, the node's own
-  concrete Entity Identity. Its complete code set is these four:
+  concrete Entity Identity. Its complete code set is:
 
   ```text
-  snapshot-node-required        snapshot-pin-unavailable
-  snapshot-view-owner-mismatch  snapshot-edge-unavailable
+  snapshot-node-required                 snapshot-pin-unavailable
+  snapshot-view-owner-mismatch           snapshot-edge-unavailable
+  snapshot-wire-envelope-ineligible      snapshot-wire-input-edited
+  snapshot-wire-input-incompatible       snapshot-wire-at-unrequested
+  snapshot-wire-at-concrete-mismatch
   ```
 
   `snapshot-node-required` refuses a value that carries no `SnapshotNodeState`
@@ -3932,7 +3935,7 @@ of shared edition identity.
   contract does not carry is no key of it at all, rather than a key holding a
   `None` the document never stored. So a consumer reads presence off the node
   rather than assuming every declared name is there, and the node is exactly the
-  document `to_document` derives from the Typed value of the same row: one
+  document `encode_value_object` derives from the Typed value of the same row: one
   materialization published two ways, never two answers about one stored
   occurrence.
 - **Finite unwind.** Relationships render along the requested Include Paths
@@ -3965,6 +3968,48 @@ of shared edition identity.
   under exactly the rules §4 states for the Typed one, with the same default and
   checked accessors, and the same `edition` on the `Snapshot` envelope that
   carries it: the stamp is the envelope's, never a key of any `WireEntity`.
+- **Typed-to-Wire projection.** A Typed `Snapshot[T]`, where `T` is an Entity,
+  exposes `wire() -> Snapshot[WireEntity]`, `wire(value, *, at=None) ->
+  WireEntity`, and the corresponding `InvalidData[Entity]` element form. The
+  whole-result form traverses the envelope's canonical root sequence and
+  preserves root order, pin, edition, and every existing invalid-data verdict;
+  a hydrated invalid record projects only its data and retains its issues, key,
+  version, edge, and ordinal, while a non-hydrating record remains data-less.
+  Projection is an in-memory value operation: it performs no read, replanning,
+  reclassification, whole-query validation, connection acquisition, or
+  authority selection. A newly supplied `at` path alone undergoes focused
+  model-aware resolution against the retained request shape.
+  It reads published instance state through the canonical Wire codec, never
+  Pydantic or an authored serializer, so private, computed, cached, and
+  default-only values do not become Wire members. Every projected node carries
+  the exact Read Origin already attached to its Typed counterpart; structural
+  narrowed-view state can exist without such an origin and projection does not
+  create one.
+- **Projection capability and retained shape.** Typed eager publication retains
+  by reference the plan's canonical finite IncludeTree and its existing
+  `CatalogedModel`; direct and projected Wire envelopes carry no projection
+  capability. This nullable model reference is the constant-time runtime
+  eligibility check, including for an empty envelope, while Entity-bounded
+  receiver annotations reject Wire-valued receivers statically. A result retains
+  no execution plan, Page, Root View, construction carrier, connection, scope,
+  principal, or transaction runner, and it does not cache projected output.
+- **Projection positions and refusals.** Omitted `at` and explicit `None` select
+  the canonical query-root position. A supplied class-derived Relationship Path
+  is resolved against the retained original model and must identify an exact
+  requested prefix; equivalent subtype spellings resolve to the same position,
+  but broad, narrowed, and merely compatible subset positions remain distinct.
+  The selected position must admit the input node's concrete Entity. No graph
+  membership scan is performed, so a compatible published node the result did
+  not deliver is eligible. Entry checks precede rendering and memo insertion.
+  `snapshot-wire-envelope-ineligible` rejects a non-Typed receiver;
+  `snapshot-wire-input-edited` rejects any hydrated input carrying a Change
+  Record, including an empty edit, before the general published-node check;
+  `snapshot-node-required` rejects a value without published Snapshot lifecycle
+  state/backing; `snapshot-wire-input-incompatible` reports class/layout
+  disagreement; and `snapshot-wire-at-unrequested` and
+  `snapshot-wire-at-concrete-mismatch` report position failures. The element
+  `at` source type is independent of the result-root type. Whole-result
+  projection accepts no `at` override.
 
 ## 5. Transactions and writes
 

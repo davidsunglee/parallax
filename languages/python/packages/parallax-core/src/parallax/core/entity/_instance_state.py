@@ -103,6 +103,7 @@ __all__ = [
     "carry_presence",
     "carry_slots_beside_state",
     "declared",
+    "declared_values",
     "install",
     "is_present",
     "is_published",
@@ -670,6 +671,35 @@ def declared(value: BaseModel) -> dict[str, object]:
         state = instance_state(value)
         return {py_name: state[py_name] for py_name in plan.fields if py_name in state}
     return dict(zip(plan.fields, plan.field_values(row), strict=True))
+
+
+class _AbsentDeclaredValue:
+    __slots__ = ()
+
+
+ABSENT_DECLARED_VALUE: Final = _AbsentDeclaredValue()
+"""A declared position the value does not carry."""
+
+
+def declared_values(value: BaseModel) -> Generator[object]:
+    """Declared positions in model-fixed order, preserving member absence.
+
+    Published values are read straight from their compact row and ordinary
+    values consult their existing presence set one member at a time. The
+    iterator exposes neither the bitmap nor relationship positions and builds no
+    named-member mapping or populated-member set.
+    """
+    plan = plan_of(type(value))
+    row = _compact(value)
+    if row is not None:
+        bitmap = cast("int", row[0])
+        for bit, py_name in enumerate(plan.py_names):
+            yield row[plan.indexes[py_name]] if bitmap >> bit & 1 else ABSENT_DECLARED_VALUE
+        return
+    state = instance_state(value)
+    presence = instance_presence(value)
+    for py_name in plan.py_names:
+        yield state[py_name] if py_name in presence else ABSENT_DECLARED_VALUE
 
 
 def named_state(value: BaseModel) -> Mapping[str, object]:

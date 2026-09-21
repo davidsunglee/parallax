@@ -52,14 +52,18 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import to_document
+from parallax.core.entity import encode_value_object
 from parallax.core.entity._entity import (
     CHANGE_RECORD_SLOT,
     ChangeRecord,
     attach_lifecycle_state,
     lifecycle_state,
 )
-from parallax.core.entity._instance_state import is_published
+from parallax.core.entity._instance_state import (
+    ABSENT_DECLARED_VALUE,
+    declared_values,
+    is_published,
+)
 from parallax.core.entity._pydantic_storage import attach_instance_state
 from tests._support.model_capabilities import row_codec_for
 from tests.unit.core.entity._compact_support import (
@@ -189,6 +193,12 @@ def _site() -> Site:
 # --------------------------------------------------------------------------- #
 # The arms are twins before anything is asked of them
 # --------------------------------------------------------------------------- #
+
+
+def test_declared_values_preserve_absence_on_ordinary_backing() -> None:
+    value = _ordinary(Depot, id=1, label="A", capacity=None)
+
+    assert tuple(declared_values(value)) == (1, "A", None, ABSENT_DECLARED_VALUE)
 
 
 def test_the_two_arms_agree_about_what_the_value_holds_and_what_it_populated() -> None:
@@ -404,11 +414,14 @@ def test_a_document_omits_a_member_the_value_never_populated(build: Builder) -> 
     # `tags` is the one exception under either backing: a Many occurrence is
     # never nullable and its empty default IS a value, so it is contributed
     # whether or not the value populated it.
-    assert to_document(build(Site, city="Springfield")) == {"city": "Springfield", "tags": []}
+    assert encode_value_object(build(Site, city="Springfield")) == {
+        "city": "Springfield",
+        "tags": [],
+    }
 
 
 def test_a_document_spells_a_member_populated_as_null(build: Builder) -> None:
-    assert to_document(build(Site, city="Springfield", zip_code=None)) == {
+    assert encode_value_object(build(Site, city="Springfield", zip_code=None)) == {
         "city": "Springfield",
         "zipCode": None,
         "tags": [],
@@ -420,7 +433,7 @@ def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder)
     # occurrence, and an occurrence inside an element of a Many. Presence is
     # resolved at every depth against the value standing there, so the arms agree
     # about a leaf populated at depth two and one left absent there.
-    document = to_document(
+    document = encode_value_object(
         build(
             Site,
             city="Springfield",
@@ -438,7 +451,7 @@ def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder)
 def test_a_document_derived_from_a_published_value_creates_no_storage_for_it() -> None:
     value = published(Site, city="Springfield", point=published(Point, lat=1.0))
     assert value.shouted == "SPRINGFIELD"
-    to_document(value)
+    encode_value_object(value)
     assert not carries_instance_storage(value)
     assert not carries_instance_storage(cast("Any", value).point)
     # Read last, because reading it is what creates it.
@@ -459,7 +472,11 @@ def test_a_value_object_edit_of_either_backing_yields_an_ordinary_value(build: B
 def test_a_value_object_edit_carries_presence_forward_exactly(build: Builder) -> None:
     edited = build(Site, city="Springfield").edit(zip_code="49007")
     assert edited.model_fields_set == {"city", "zip_code"}
-    assert to_document(edited) == {"city": "Springfield", "zipCode": "49007", "tags": []}
+    assert encode_value_object(edited) == {
+        "city": "Springfield",
+        "zipCode": "49007",
+        "tags": [],
+    }
 
 
 def test_a_value_object_edit_that_authors_nothing_carries_presence_forward_too(
@@ -467,7 +484,7 @@ def test_a_value_object_edit_that_authors_nothing_carries_presence_forward_too(
 ) -> None:
     edited = build(Site, city="Springfield").edit()
     assert edited.model_fields_set == {"city"}
-    assert to_document(edited) == {"city": "Springfield", "tags": []}
+    assert encode_value_object(edited) == {"city": "Springfield", "tags": []}
 
 
 def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Builder) -> None:
@@ -480,7 +497,7 @@ def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Buil
     assert restored == value
     assert restored.model_fields_set == {"city", "zip_code"}
     assert raw_row(restored) is None
-    assert to_document(restored) == to_document(value)
+    assert encode_value_object(restored) == encode_value_object(value)
 
 
 # --------------------------------------------------------------------------- #

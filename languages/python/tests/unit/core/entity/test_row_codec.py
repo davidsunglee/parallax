@@ -30,7 +30,7 @@ from parallax.core.entity import (
     EntityDefinitionError,
     EntityRowCodec,
     EntityRowError,
-    to_document,
+    encode_value_object,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._layout import CatalogedModel
@@ -291,7 +291,7 @@ def test_full_row_borrows_a_value_object_without_rendering_its_containment_tree(
     profile = row_codec_for(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
     assert sample.profile is not None
     assert profile is sample.profile
-    document = to_document(sample.profile)
+    document = encode_value_object(sample.profile)
     assert document is not None
     assert document["day"] == "2026-01-01"
 

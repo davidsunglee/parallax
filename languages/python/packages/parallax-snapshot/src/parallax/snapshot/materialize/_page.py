@@ -5,7 +5,9 @@ positional Payload Witness, a deferred decoder, the managed correlation values
 needed by later levels, one relationship view row, the source level that produced
 it, one dense Page-local logical-node ID, and its identity findings. A Root View
 creates the decoded Entity State and remaining findings only when it reaches the
-projection. Nothing wraps a cell.
+projection. Member payload cells stay unwrapped; when overlapping fetch positions
+write one relationship slot, the Page retains those root-local edges until the
+Root View has merged their continuations.
 
 The view row is positional too, against the
 :class:`~parallax.snapshot.materialize._views.ViewSchema` the execution planned:
@@ -59,6 +61,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Final, Literal, NamedTuple, cast
 
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
@@ -71,12 +74,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge_of
-from parallax.snapshot.materialize._views import (
-    RelationshipViewKey,
-    SourceLevel,
-    SourceViewLayout,
-    ViewSchema,
-)
+from parallax.snapshot.materialize._views import SourceLevel, SourceViewLayout, ViewSchema
 
 __all__ = [
     "ABSENT",
@@ -320,6 +318,9 @@ class PageRows:
     laid out by the source layout its own ``sources[i]`` and layout resolve to,
     so a reader translating one into a Root View row asks the schema for the
     translation rather than carrying a key beside every value.
+    ``overwritten_edges`` keeps earlier arms from overlapping positions beside
+    the parent projection; they are traversed for root-local continuation merging
+    but never replace the last value retained in ``view_rows``.
 
     ``sources`` and ``source_ordinals`` retain each projection's physical
     provider position. Canonical witness selection may reorder projections for
@@ -336,6 +337,7 @@ class PageRows:
     keys: Sequence[LogicalKey | None]
     sources: Sequence[SourceLevel]
     view_rows: Sequence[Sequence[object]]
+    overwritten_edges: Sequence[Sequence[object]]
     schema: ViewSchema
     roots: tuple[int, ...]
     pin: Pin
@@ -411,6 +413,7 @@ def release_page_rows(page: Page) -> None:
         rows.keys,
         rows.sources,
         rows.view_rows,
+        rows.overwritten_edges,
         rows.witnesses,
     ):
         if isinstance(values, list):
@@ -441,7 +444,10 @@ def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
             if not isinstance(claim, int):
                 for witness in claim:
                     projection_last[witness] = position
-            for value in rows.view_rows[projection]:
+            for value in (
+                *rows.view_rows[projection],
+                *rows.overwritten_edges[projection],
+            ):
                 if isinstance(value, tuple):
                     pending.extend(cast("tuple[int, ...]", value))
                 elif value is not None and value is not ABSENT:
@@ -529,6 +535,7 @@ class PageBuilder:
         "_logical_ids",
         "_member_rows",
         "_observer",
+        "_overwritten_edges",
         "_schema",
         "_sealed",
         "_slots",
@@ -551,6 +558,7 @@ class PageBuilder:
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
+        self._overwritten_edges: list[list[object]] = []
         self._identity: dict[LogicalKey, int] = {}
         self._first: list[int] = []
         self._claims: list[int | list[int]] = []
@@ -653,6 +661,7 @@ class PageBuilder:
         self._views.append(
             cast("list[object]", [ABSENT] * len(slots.slots)) if slots.slots else _NO_VIEWS
         )
+        self._overwritten_edges.append([])
         self._logical_ids.append(logical)
         self._keys.append(key)
         self._witnesses.append(witness)
@@ -669,8 +678,9 @@ class PageBuilder:
         Named by view rather than by position, so a fan-back never learns about
         slots: the projection's own source layout resolves one. Two levels may
         legitimately write one view — a guarded path and its broad sibling are
-        distinct hops with the same view key — and the last write is the one the
-        slot retains, exactly as the fetch plan's own order decided.
+        distinct hops with the same view key. Delivery keeps the last write, as
+        the fetch plan ordered it, while earlier edges remain reachable so their
+        continuations can merge into the same root-local logical node.
 
         Raises :class:`ValueError` for a view no level below this projection's
         own source attaches, which is a fan-back writing against a plan the
@@ -688,6 +698,9 @@ class PageBuilder:
         row = self._views[projection]
         if isinstance(row, tuple):  # pragma: no cover - a resolved slot implies a nonempty row
             raise ValueError("a view slot cannot belong to an empty source layout")
+        existing = row[slot]
+        if existing is not ABSENT:
+            self._overwritten_edges[projection].append(existing)
         row[slot] = value
 
     def finish(self, roots: tuple[int, ...], pin: Pin) -> Page:
@@ -731,6 +744,7 @@ class PageBuilder:
             keys=self._keys,
             sources=self._sources,
             view_rows=self._views,
+            overwritten_edges=self._overwritten_edges,
             schema=self._schema,
             roots=roots,
             pin=pin,
@@ -752,6 +766,7 @@ class PageBuilder:
         self._sources = []
         self._slots = []
         self._views = []
+        self._overwritten_edges = []
         self._identity = {}
         self._first = []
         self._last_layout = None

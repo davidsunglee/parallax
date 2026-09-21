@@ -43,6 +43,7 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -76,7 +77,6 @@ from parallax.snapshot.materialize import (
     InvalidRootInput,
     Page,
     PageRows,
-    RelationshipViewKey,
     RootView,
     _convert,
     classify_roots,
@@ -1309,7 +1309,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
 
     Reached through the module rather than by name so the executor's own
     derivation is what is graded — this is the one place the plan vocabulary
-    stops, and nothing below it ever sees a `FetchLevel` again.
+    stops, and nothing below it ever sees a `FetchStep` again.
     """
     query = deserialize_query(document)
     entity = entity_by_name(model, cast("str", document["target"]))

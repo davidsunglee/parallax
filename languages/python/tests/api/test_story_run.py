@@ -51,7 +51,7 @@ from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import LATEST, DomainModel, ObjectQuery
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import UnloadedRelationshipError, ValueObject, to_document
+from parallax.core.entity import UnloadedRelationshipError, ValueObject, encode_value_object
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
@@ -461,7 +461,7 @@ def _serialize_value_object_members(node: dict[str, Any]) -> dict[str, Any]:
     for the published value.
     """
     return {
-        key: to_document(value) if isinstance(value, ValueObject) else value
+        key: encode_value_object(value) if isinstance(value, ValueObject) else value
         for key, value in node.items()
     }
 

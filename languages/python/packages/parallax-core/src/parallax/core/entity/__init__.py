@@ -101,7 +101,7 @@ from parallax.core.entity._members import (
 )
 from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.entity._row_codec import EntityRowCodec
-from parallax.core.entity._value_object import ValueObject, to_document
+from parallax.core.entity._value_object import ValueObject, encode_value_object
 from parallax.core.object_query._fluent import ObjectQuery
 
 __all__ = [
@@ -166,6 +166,7 @@ __all__ = [
     "asc",
     "attr",
     "desc",
+    "encode_value_object",
     "index",
     "lifecycle_state_of",
     "model_of",
@@ -173,5 +174,4 @@ __all__ = [
     "relationship_value_of",
     "shape_of",
     "snake_to_camel",
-    "to_document",
 ]

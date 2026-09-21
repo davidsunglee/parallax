@@ -20,7 +20,12 @@ from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
 from parallax.core.document_codec import shape_of_declaration
-from parallax.core.entity import ElementAttributeExpr, EntityDefinitionError, Predicate, to_document
+from parallax.core.entity import (
+    ElementAttributeExpr,
+    EntityDefinitionError,
+    Predicate,
+    encode_value_object,
+)
 from parallax.core.entity._declaration import shape_of
 from parallax.core.metamodel import (
     Column,
@@ -292,13 +297,17 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
 
 
 def test_the_document_omits_a_member_the_caller_never_set() -> None:
-    assert to_document(vm.Geo(country="DE")) == {"country": "DE"}
-    assert to_document(None) is None
+    assert encode_value_object(vm.Geo(country="DE")) == {"country": "DE"}
+    assert encode_value_object(None) is None
 
 
 def test_a_many_occurrence_always_renders_even_when_empty() -> None:
-    document = to_document(vm.Address(street="a", city="b"))
+    document = encode_value_object(vm.Address(street="a", city="b"))
     assert document == {"street": "a", "city": "b", "phones": []}
+
+    absent_many = vm.Address.model_construct(street="a", city="b")
+    absent_many.__pydantic_fields_set__.discard("phones")
+    assert encode_value_object(absent_many) == {"street": "a", "city": "b", "phones": []}
 
 
 def test_the_document_renders_nested_occurrences_recursively() -> None:
@@ -308,7 +317,7 @@ def test_the_document_renders_nested_occurrences_recursively() -> None:
         geo=vm.Geo(country="DE", point=vm.Point(lat=1.0, lon=2.0)),
         phones=(vm.Phone(type="home", number="1"),),
     )
-    assert to_document(address) == {
+    assert encode_value_object(address) == {
         "street": "a",
         "city": "b",
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},

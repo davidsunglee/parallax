@@ -7,7 +7,7 @@ composition (`in` membership + propagated as-of + declared relationship
 `orderBy`), narrowed view-key derivation, each level's correlation members
 beside their correlation columns, and back-reference (ancestor-revisit) cycle
 detection. The planner never compiles or executes anything — every assertion
-here is over the returned `ObjectQueryPlan` / `FetchLevel` shape alone.
+here is over the returned `ObjectQueryPlan` / `FetchStep` shape alone.
 """
 
 from __future__ import annotations
@@ -102,13 +102,56 @@ def _plan(
     )
 
 
-def test_fetch_level_refuses_a_queryable_product_without_its_child_member() -> None:
-    level = _plan(ORDERS, "Order", (_path(_seg("Order.items")),)).levels[0]
+def _query_step(plan: deep_fetch.ObjectQueryPlan, index: int = 0) -> deep_fetch.QueryFetchStep:
+    step = plan.fetch_steps[index]
+    assert isinstance(step, deep_fetch.QueryFetchStep)
+    return step
+
+
+def _back_reference_step(
+    plan: deep_fetch.ObjectQueryPlan, index: int
+) -> deep_fetch.BackReferenceFetchStep:
+    step = plan.fetch_steps[index]
+    assert isinstance(step, deep_fetch.BackReferenceFetchStep)
+    return step
+
+
+def _position(
+    plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep
+) -> deep_fetch.IncludePosition:
+    return plan.includes.position(step.position)
+
+
+def _attach_key(plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep) -> str:
+    view = _position(plan, step).view
+    assert view is not None
+    return view.narrowed_view or view.relationship.name
+
+
+def test_query_fetch_refuses_missing_child_reference_or_member() -> None:
+    step = _query_step(_plan(ORDERS, "Order", (_path(_seg("Order.items")),)))
 
     with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
-        dataclasses.replace(level, related_member=None).query_for((1,))
+        dataclasses.replace(step, related_member=None).query_for((1,))
     with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
-        dataclasses.replace(level, related_member=None).query_template()
+        dataclasses.replace(step, related_member=None).query_template()
+    without_reference = dataclasses.replace(
+        step,
+        related=dataclasses.replace(step.related, reference=None),
+    )
+    with pytest.raises(deep_fetch.DeepFetchError, match="no child reference"):
+        without_reference.query_for((1,))
+    with pytest.raises(deep_fetch.DeepFetchError, match="no child reference"):
+        without_reference.query_template()
+
+
+def test_include_tree_requires_a_root_and_refuses_an_unadmitted_render() -> None:
+    identity = EntityIdentity("parallax.compatibility", "Order")
+    with pytest.raises(ValueError, match="starts with its root"):
+        deep_fetch.IncludeTree(identity, ())
+
+    includes = _plan(ORDERS, "Order", ()).includes
+    assert includes.render_token((includes.root,), EntityIdentity("elsewhere", "Order")) is None
 
 
 def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
@@ -193,11 +236,11 @@ def test_shared_prefix_dedups_to_one_level() -> None:
         "Order",
         (_path(_seg("Order.items")), _path(_seg("Order.items"), _seg("OrderItem.statuses"))),
     )
-    assert len(plan.levels) == 2
-    items, statuses = plan.levels
-    assert items.attach_key == "items"
+    assert len(plan.fetch_steps) == 2
+    items, statuses = plan.fetch_steps
+    assert _attach_key(plan, items) == "items"
     assert isinstance(items.parent, deep_fetch.RootRef)
-    assert statuses.attach_key == "statuses"
+    assert _attach_key(plan, statuses) == "statuses"
     assert isinstance(statuses.parent, deep_fetch.LevelRef)
     assert statuses.parent.index == 0
 
@@ -211,16 +254,22 @@ def test_canonicalized_path_set_is_idempotent_and_plans_the_same_levels() -> Non
     canonical = canonical_includes(authored)
     assert canonical == (_path(_seg("Order.items"), _seg("OrderItem.statuses")),)
     assert canonical_includes(canonical) == canonical
-    assert _plan(ORDERS, "Order", authored).levels == _plan(ORDERS, "Order", canonical).levels
+    assert (
+        _plan(ORDERS, "Order", authored).fetch_steps
+        == _plan(ORDERS, "Order", canonical).fetch_steps
+    )
 
 
 def test_two_independent_paths_off_root_are_two_levels_both_rooted() -> None:
     plan = _plan(
         ORDERS, "Order", (_path(_seg("Order.items")), _path(_seg("Order.itemsByShipDate")))
     )
-    assert len(plan.levels) == 2
-    assert all(isinstance(level.parent, deep_fetch.RootRef) for level in plan.levels)
-    assert {level.attach_key for level in plan.levels} == {"items", "itemsByShipDate"}
+    assert len(plan.fetch_steps) == 2
+    assert all(isinstance(step.parent, deep_fetch.RootRef) for step in plan.fetch_steps)
+    assert {_attach_key(plan, step) for step in plan.fetch_steps} == {
+        "items",
+        "itemsByShipDate",
+    }
 
 
 def test_multi_hop_path_chains_levels_in_declared_order() -> None:
@@ -230,8 +279,8 @@ def test_multi_hop_path_chains_levels_in_declared_order() -> None:
         (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),),
         _BITEMPORAL_LATEST,
     )
-    assert [level.attach_key for level in plan.levels] == ["coverages", "claims"]
-    coverages, claims = plan.levels
+    assert [_attach_key(plan, step) for step in plan.fetch_steps] == ["coverages", "claims"]
+    coverages, claims = plan.fetch_steps
     assert isinstance(coverages.parent, deep_fetch.RootRef)
     assert isinstance(claims.parent, deep_fetch.LevelRef)
     assert claims.parent.index == 0
@@ -246,8 +295,8 @@ def test_broad_and_narrowed_over_the_same_relationship_are_distinct_levels() -> 
         "Person",
         (_path(_seg("Person.pets")), _path(_seg("Person.pets", ("Dog",)))),
     )
-    assert len(plan.levels) == 2
-    keys = {level.attach_key for level in plan.levels}
+    assert len(plan.fetch_steps) == 2
+    keys = {_attach_key(plan, step) for step in plan.fetch_steps}
     assert keys == {"pets", "pets[Dog]"}
 
 
@@ -259,8 +308,8 @@ def test_equivalent_narrowings_dedup_to_one_hop() -> None:
         "Person",
         (_path(_seg("Person.pets", ("Pet",))), _path(_seg("Person.pets", ("Cat", "Dog")))),
     )
-    assert len(plan.levels) == 1
-    assert plan.levels[0].attach_key == "pets[Cat,Dog]"
+    assert len(plan.fetch_steps) == 1
+    assert _attach_key(plan, plan.fetch_steps[0]) == "pets[Cat,Dog]"
 
 
 def test_broad_and_a_redundant_narrow_are_distinct_levels_filling_both_views() -> None:
@@ -272,13 +321,18 @@ def test_broad_and_a_redundant_narrow_are_distinct_levels_filling_both_views() -
     # unpopulated (m-deep-fetch, case m-inheritance-068).
     paths = (_path(_seg("Person.pets")), _path(_seg("Person.pets", ("Pet",))))
     plan = _plan(ANIMAL, "Person", paths)
-    assert [level.attach_key for level in plan.levels] == ["pets", "pets[Cat,Dog]"]
-    assert {level.child_target for level in plan.levels} == {
-        EntityIdentity("parallax.compatibility", "Pet")
-    }
+    assert [_attach_key(plan, step) for step in plan.fetch_steps] == ["pets", "pets[Cat,Dog]"]
+    assert {
+        step.child_target
+        for step in plan.fetch_steps
+        if isinstance(step, deep_fetch.QueryFetchStep)
+    } == {EntityIdentity("parallax.compatibility", "Pet")}
     # Canonical include order decides which view comes first, never how many hops.
     reversed_plan = _plan(ANIMAL, "Person", tuple(reversed(paths)))
-    assert [level.attach_key for level in reversed_plan.levels] == ["pets", "pets[Cat,Dog]"]
+    assert [_attach_key(reversed_plan, step) for step in reversed_plan.fetch_steps] == [
+        "pets",
+        "pets[Cat,Dog]",
+    ]
 
 
 def test_two_different_narrow_sets_are_distinct_levels() -> None:
@@ -287,13 +341,13 @@ def test_two_different_narrow_sets_are_distinct_levels() -> None:
         "Person",
         (_path(_seg("Person.pets", ("Dog",))), _path(_seg("Person.pets", ("Cat",)))),
     )
-    assert len(plan.levels) == 2
-    assert {level.attach_key for level in plan.levels} == {"pets[Dog]", "pets[Cat]"}
+    assert len(plan.fetch_steps) == 2
+    assert {_attach_key(plan, step) for step in plan.fetch_steps} == {"pets[Dog]", "pets[Cat]"}
 
 
 def test_narrowed_view_key_is_alphabetical_no_spaces() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog", "Cat"))),))
-    assert plan.levels[0].attach_key == "pets[Cat,Dog]"
+    assert _attach_key(plan, plan.fetch_steps[0]) == "pets[Cat,Dog]"
 
 
 def test_a_narrow_naming_an_undeclared_subtype_is_rejected() -> None:
@@ -320,14 +374,14 @@ def test_l_counts_distinct_hops_after_dedup() -> None:
             _path(_seg("Order.itemsByShipDate")),
         ),
     )
-    assert len(plan.levels) == 3
+    assert len(plan.fetch_steps) == 3
 
 
 def test_narrow_and_broad_both_count_toward_l() -> None:
     plan = _plan(
         ANIMAL, "Person", (_path(_seg("Person.animals")), _path(_seg("Person.pets", ("Dog",))))
     )
-    assert len(plan.levels) == 2
+    assert len(plan.fetch_steps) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -335,7 +389,7 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 # --------------------------------------------------------------------------- #
 def test_child_query_is_a_plain_in_membership() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
-    query = plan.levels[0].query_for([1, 2, 3])
+    query = _query_step(plan).query_for([1, 2, 3])
     assert query.target == EntityIdentity("parallax.compatibility", "OrderStatus")
     assert isinstance(query.validated_predicate.authored, Membership)
     assert query.validated_predicate.authored.op == "in"
@@ -344,7 +398,7 @@ def test_child_query_is_a_plain_in_membership() -> None:
 
 
 def test_child_query_deduplicates_and_freezes_keys_in_encounter_order() -> None:
-    level = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),)).levels[0]
+    level = _query_step(_plan(ORDERS, "Order", (_path(_seg("Order.statuses")),)))
     query = level.query_for([2, 1, 2, 3, 1])
     authored = query.validated_predicate.authored
     assert isinstance(authored, Membership)
@@ -354,7 +408,7 @@ def test_child_query_deduplicates_and_freezes_keys_in_encounter_order() -> None:
 
 def test_child_query_carries_declared_relationship_order_by() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    query = plan.levels[0].query_for([1])
+    query = _query_step(plan).query_for([1])
     assert query.target == EntityIdentity("parallax.compatibility", "OrderItem")
     assert _order_attr(query.order_by[0]) == "parallax.compatibility.OrderItem.id"
     assert query.order_by[0].direction == "desc"
@@ -363,7 +417,7 @@ def test_child_query_carries_declared_relationship_order_by() -> None:
 
 def test_child_query_multi_key_order_by_preserves_declared_sequence() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.tags")),))
-    query = plan.levels[0].query_for([1])
+    query = _query_step(plan).query_for([1])
     assert [(_order_attr(key), key.direction) for key in query.order_by] == [
         ("parallax.compatibility.OrderTag.priority", "desc"),
         ("parallax.compatibility.OrderTag.label", "asc"),
@@ -375,25 +429,25 @@ def test_child_query_carries_the_declared_null_placement_of_each_key() -> None:
     # authors `first` while `items` leaves placement unauthored, which the accepted
     # model has already normalized to `last`.
     placed = _plan(ORDERS, "Order", (_path(_seg("Order.notesDescNullsFirst")),))
-    query = placed.levels[0].query_for([1])
+    query = _query_step(placed).query_for([1])
     assert [(_order_attr(key), key.direction, key.nulls) for key in query.order_by] == [
         ("parallax.compatibility.OrderNote.resolvedOn", "desc", "first")
     ]
     defaulted = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    default_query = defaulted.levels[0].query_for([1])
+    default_query = _query_step(defaulted).query_for([1])
     assert default_query.order_by[0].nulls == "last"
 
 
 def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
-    query = plan.levels[0].query_for([1])
+    query = _query_step(plan).query_for([1])
     assert query.order_by == ()
     assert isinstance(query.validated_predicate.authored, Membership)
 
 
 def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
     plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _BITEMPORAL_LATEST)
-    child_query = plan.levels[0].query_for([1, 2])
+    child_query = _query_step(plan).query_for([1, 2])
     assert isinstance(child_query.validated_predicate.authored, And)
     membership, *as_of_terms = child_query.validated_predicate.authored.operands
     assert isinstance(membership, Membership)
@@ -401,14 +455,11 @@ def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
     assert len(as_of_terms) == 2  # Valid Time then Transaction Time (AXIS_ORDER)
 
 
-def test_child_query_raises_on_a_back_reference_level() -> None:
+def test_a_back_reference_step_exposes_no_query_construction() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
-    back_reference = plan.levels[1]
-    assert back_reference.is_back_reference
-    with pytest.raises(deep_fetch.DeepFetchError):
-        back_reference.query_for([1])
-    with pytest.raises(deep_fetch.DeepFetchError, match="back-reference level"):
-        back_reference.query_template()
+    back_reference = _back_reference_step(plan, 1)
+    assert not hasattr(back_reference, "query_for")
+    assert not hasattr(back_reference, "query_template")
 
 
 # --------------------------------------------------------------------------- #
@@ -418,7 +469,7 @@ def test_child_query_raises_on_a_back_reference_level() -> None:
 # --------------------------------------------------------------------------- #
 def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog",))),))
-    level = plan.levels[0]
+    level = _query_step(plan)
     assert level.child_target == EntityIdentity("parallax.compatibility", "Dog")
     assert level.narrow_to is None
     query = level.query_for([1])
@@ -428,7 +479,7 @@ def test_single_concrete_narrow_targets_the_concrete_directly_no_narrow_node() -
 
 def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Cat", "Dog"))),))
-    level = plan.levels[0]
+    level = _query_step(plan)
     assert level.child_target == EntityIdentity("parallax.compatibility", "Pet")
     assert level.narrow_to == (
         EntityIdentity("parallax.compatibility", "Cat"),
@@ -441,14 +492,14 @@ def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.animals")),))
-    level = plan.levels[0]
+    level = _query_step(plan)
     assert level.child_target == EntityIdentity("parallax.compatibility", "Animal")
     assert level.narrow_to is None
 
 
 def test_non_polymorphic_child_target_is_the_related_entity_itself() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    assert plan.levels[0].child_target == EntityIdentity("parallax.compatibility", "OrderItem")
+    assert _query_step(plan).child_target == EntityIdentity("parallax.compatibility", "OrderItem")
 
 
 # --------------------------------------------------------------------------- #
@@ -468,9 +519,10 @@ def test_equivalent_root_guards_dedup_to_one_hop() -> None:
             _path(_seg("Animal.owner"), narrow=_guard("Cat", "Dog")),
         ),
     )
-    assert len(plan.levels) == 1
-    assert plan.levels[0].attach_key == "owner"
-    assert plan.levels[0].source_position == (
+    assert len(plan.fetch_steps) == 1
+    step = plan.fetch_steps[0]
+    assert _attach_key(plan, step) == "owner"
+    assert _position(plan, step).source == (
         EntityIdentity("parallax.compatibility", "Cat"),
         EntityIdentity("parallax.compatibility", "Dog"),
     )
@@ -485,8 +537,9 @@ def test_a_root_guard_admitting_every_queried_object_is_the_broad_path() -> None
         "Animal",
         (_path(_seg("Animal.owner")), _path(_seg("Animal.owner"), narrow=_guard("Animal"))),
     )
-    assert len(plan.levels) == 1
-    assert plan.levels[0].source_position is None
+    assert len(plan.fetch_steps) == 1
+    step = plan.fetch_steps[0]
+    assert _position(plan, step).source == plan.includes.position(plan.includes.root).target
 
 
 def test_disjoint_overlapping_and_contained_root_guards_stay_distinct_hops() -> None:
@@ -503,8 +556,45 @@ def test_disjoint_overlapping_and_contained_root_guards_stay_distinct_hops() -> 
             "Animal",
             tuple(_path(_seg("Animal.owner"), narrow=guard) for guard in guards),
         )
-        assert len(plan.levels) == 2
-        assert {level.attach_key for level in plan.levels} == {"owner"}
+        assert len(plan.fetch_steps) == 2
+        assert {_attach_key(plan, step) for step in plan.fetch_steps} == {"owner"}
+
+
+def test_overlapping_guarded_positions_preserve_all_applicable_continuations() -> None:
+    plan = _plan(
+        ANIMAL,
+        "Animal",
+        (
+            _path(
+                _seg("Animal.owner"),
+                _seg("Person.pets", ("Dog",)),
+                narrow=_guard("Dog", "WildBoar"),
+            ),
+            _path(
+                _seg("Animal.owner"),
+                _seg("Person.pets", ("Cat",)),
+                narrow=_guard("Cat", "Dog"),
+            ),
+        ),
+    )
+    root = plan.includes.position(plan.includes.root)
+    owner_view, owner_positions = next(iter(root.children.items()))
+    assert owner_view.relationship.name == "owner"
+    assert len(owner_positions) == 2
+
+    dog = EntityIdentity("parallax.compatibility", "Dog")
+    cat = EntityIdentity("parallax.compatibility", "Cat")
+    person = EntityIdentity("parallax.compatibility", "Person")
+    dog_positions = plan.includes.admitted_children(owner_positions, dog)
+    cat_positions = plan.includes.admitted_children(owner_positions, cat)
+
+    assert len(dog_positions) == 2
+    assert len(cat_positions) == 1
+    token = plan.includes.render_token(dog_positions, person)
+    assert isinstance(token, tuple)
+    assert {
+        view.narrowed_view or view.relationship.name for view in plan.includes.child_groups(token)
+    } == {"pets[Cat]", "pets[Dog]"}
 
 
 def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
@@ -531,10 +621,12 @@ def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
             ),
         ),
     )
-    owner, pets = plan.levels
-    assert (owner.attach_key, pets.attach_key) == ("owner", "pets[Dog]")
-    assert owner.source_position is not None
-    assert pets.source_position is None
+    owner, pets = plan.fetch_steps
+    assert (_attach_key(plan, owner), _attach_key(plan, pets)) == ("owner", "pets[Dog]")
+    assert _position(plan, owner).source != plan.includes.position(plan.includes.root).target
+    owner_position = _position(plan, owner)
+    assert owner_position.parent is not None
+    assert _position(plan, pets).source == owner_position.target
 
 
 # --------------------------------------------------------------------------- #
@@ -543,12 +635,11 @@ def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_queried_level_carries_both_correlation_members_beside_their_columns() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
-    items = plan.levels[0]
+    items = _query_step(plan)
     assert items.owner.column == "id"
     assert items.owner.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Order"), "id"
     )
-    assert items.related is not None
     assert items.related.column == "order_id"
     assert items.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
@@ -561,13 +652,12 @@ def test_a_back_reference_level_carries_the_owner_side_member_and_no_child_side_
     # member is carried while the child side, which only a child query would need,
     # stays absent entirely.
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
-    order = plan.levels[1]
-    assert order.is_back_reference
+    order = _back_reference_step(plan, 1)
     assert order.owner.column == "order_id"
     assert order.owner.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
     )
-    assert order.related is None
+    assert not hasattr(order, "related")
 
 
 def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at() -> None:
@@ -576,8 +666,7 @@ def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at(
     # wrote while the column comes from the declaration that position inherits, so
     # an inherited member is reached without the join naming its declarer.
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets")),))
-    pets = plan.levels[0]
-    assert pets.related is not None
+    pets = _query_step(plan)
     assert pets.related.column == "owner_id"
     assert pets.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Pet"), "ownerId"
@@ -662,16 +751,14 @@ _SHELTER = models.accepted_model(_SHELTER_MODEL)
 
 def test_a_child_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
     plan = _plan(_SHELTER, "Keeper", (_path(_seg("Keeper.kennels")),))
-    kennels = plan.levels[0]
-    assert kennels.related is not None
+    kennels = _query_step(plan)
     assert kennels.related.identity == AttributeIdentity(EntityIdentity(None, "Kennel"), "keeperId")
     assert kennels.related.column == "kennel_keeper_id"
 
 
 def test_an_owner_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
     plan = _plan(_SHELTER, "Keeper", (_path(_seg("Keeper.kennels"), _seg("Kennel.keeper")),))
-    keeper = plan.levels[1]
-    assert keeper.is_back_reference
+    keeper = _back_reference_step(plan, 1)
     assert keeper.owner.identity == AttributeIdentity(EntityIdentity(None, "Kennel"), "keeperId")
     assert keeper.owner.column == "kennel_keeper_id"
 
@@ -682,18 +769,21 @@ def test_a_level_names_the_direction_it_attaches_under_beside_its_attach_key() -
     # the inversion the identity removes: the identity names the declaring
     # position and the declared direction, whatever the key spells.
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog",))),))
-    pets = plan.levels[0]
-    assert pets.attach_key == "pets[Dog]"
-    assert pets.relationship == RelationshipIdentity(
+    pets = plan.fetch_steps[0]
+    position = _position(plan, pets)
+    assert _attach_key(plan, pets) == "pets[Dog]"
+    assert position.view is not None
+    assert position.view.relationship == RelationshipIdentity(
         EntityIdentity("parallax.compatibility", "Person"), "pets"
     )
 
 
 def test_a_back_reference_level_names_its_direction_too() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
-    order = plan.levels[1]
-    assert order.is_back_reference
-    assert order.relationship == RelationshipIdentity(
+    order = _back_reference_step(plan, 1)
+    position = _position(plan, order)
+    assert position.view is not None
+    assert position.view.relationship == RelationshipIdentity(
         EntityIdentity("parallax.compatibility", "OrderItem"), "order"
     )
 
@@ -703,10 +793,10 @@ def test_a_back_reference_level_names_its_direction_too() -> None:
 # --------------------------------------------------------------------------- #
 def test_back_reference_hop_is_detected() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
-    items, order = plan.levels
-    assert not items.is_back_reference
-    assert order.is_back_reference
-    assert order.back_reference_family == EntityIdentity("parallax.compatibility", "Order")
+    items, order = plan.fetch_steps
+    assert isinstance(items, deep_fetch.QueryFetchStep)
+    assert isinstance(order, deep_fetch.BackReferenceFetchStep)
+    assert order.family == EntityIdentity("parallax.compatibility", "Order")
     assert order.owner.column == "order_id"
 
 
@@ -718,11 +808,11 @@ def test_the_inverse_edge_is_recognized_below_the_first_level_too() -> None:
         "Order",
         (_path(_seg("Order.items"), _seg("OrderItem.statuses"), _seg("OrderStatus.orderItem")),),
     )
-    items, statuses, order_item = plan.levels
-    assert not items.is_back_reference
-    assert not statuses.is_back_reference
-    assert order_item.is_back_reference
-    assert order_item.back_reference_family == EntityIdentity("parallax.compatibility", "OrderItem")
+    items, statuses, order_item = plan.fetch_steps
+    assert isinstance(items, deep_fetch.QueryFetchStep)
+    assert isinstance(statuses, deep_fetch.QueryFetchStep)
+    assert isinstance(order_item, deep_fetch.BackReferenceFetchStep)
+    assert order_item.family == EntityIdentity("parallax.compatibility", "OrderItem")
 
 
 def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level() -> None:
@@ -737,16 +827,15 @@ def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level(
         "Order",
         (_path(_seg("Order.items"), _seg("OrderItem.statuses"), _seg("OrderStatus.order")),),
     )
-    assert not any(level.is_back_reference for level in plan.levels)
-    order = plan.levels[2]
+    assert all(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps)
+    order = _query_step(plan, 2)
     assert order.child_target == EntityIdentity("parallax.compatibility", "Order")
-    assert order.related is not None
     assert order.related.reference == "parallax.compatibility.Order.id"
 
 
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.statuses")),))
-    assert not any(level.is_back_reference for level in plan.levels)
+    assert all(isinstance(step, deep_fetch.QueryFetchStep) for step in plan.fetch_steps)
 
 
 def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> None:
@@ -755,9 +844,9 @@ def test_a_to_many_hop_revisiting_a_family_is_an_ordinary_queried_level() -> Non
     # owner owns, not the animal the path arrived from — so the level is queried
     # rather than resolved from the graph-local identity map.
     plan = _plan(ANIMAL, "Animal", (_path(_seg("Animal.owner"), _seg("Person.pets")),))
-    owner, pets = plan.levels
-    assert not owner.is_back_reference
-    assert not pets.is_back_reference
+    owner, pets = plan.fetch_steps
+    assert isinstance(owner, deep_fetch.QueryFetchStep)
+    assert isinstance(pets, deep_fetch.QueryFetchStep)
     assert pets.child_target == EntityIdentity("parallax.compatibility", "Pet")
 
 
@@ -767,9 +856,9 @@ def test_a_to_one_revisit_of_a_one_way_arrival_is_an_ordinary_queried_level() ->
     # family. Nothing in the model pins its row to the person the path arrived from,
     # so the level is queried rather than shortcut.
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets"), _seg("Animal.owner")),))
-    pets, owner = plan.levels
-    assert not pets.is_back_reference
-    assert not owner.is_back_reference
+    pets, owner = plan.fetch_steps
+    assert isinstance(pets, deep_fetch.QueryFetchStep)
+    assert isinstance(owner, deep_fetch.QueryFetchStep)
 
 
 def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
@@ -787,7 +876,8 @@ def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
 # --------------------------------------------------------------------------- #
 def test_zero_paths_plans_zero_levels() -> None:
     plan = _plan(ORDERS, "Order", ())
-    assert plan.levels == ()
+    assert plan.fetch_steps == ()
+    assert len(plan.includes.positions) == 1
 
 
 def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() -> None:
@@ -795,7 +885,7 @@ def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() ->
     # find or a scenario's own read step needs.
     literal = Comparison(op="eq", attr="Order.id", value=1)
     plan = _plan(ORDERS, "Order", (), predicate=literal)
-    assert plan.levels == ()
+    assert plan.fetch_steps == ()
     assert plan.root.validated_predicate.authored == literal
 
 

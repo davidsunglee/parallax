@@ -54,6 +54,11 @@ SNAPSHOT_INSPECTION_CODES: Final[frozenset[str]] = frozenset(
         "snapshot-view-owner-mismatch",
         "snapshot-pin-unavailable",
         "snapshot-edge-unavailable",
+        "snapshot-wire-envelope-ineligible",
+        "snapshot-wire-input-edited",
+        "snapshot-wire-input-incompatible",
+        "snapshot-wire-at-unrequested",
+        "snapshot-wire-at-concrete-mismatch",
     }
 )
 """The complete Snapshot-inspection refusal vocabulary."""
