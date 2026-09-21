@@ -128,23 +128,6 @@ def _attach_key(plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep) ->
     return view.narrowed_view or view.relationship.name
 
 
-def test_query_fetch_refuses_missing_child_reference_or_member() -> None:
-    step = _query_step(_plan(ORDERS, "Order", (_path(_seg("Order.items")),)))
-
-    with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
-        dataclasses.replace(step, related_member=None).query_for((1,))
-    with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
-        dataclasses.replace(step, related_member=None).query_template()
-    without_reference = dataclasses.replace(
-        step,
-        related=dataclasses.replace(step.related, reference=None),
-    )
-    with pytest.raises(deep_fetch.DeepFetchError, match="no child reference"):
-        without_reference.query_for((1,))
-    with pytest.raises(deep_fetch.DeepFetchError, match="no child reference"):
-        without_reference.query_template()
-
-
 def test_include_tree_requires_a_root_and_refuses_an_unadmitted_render() -> None:
     identity = EntityIdentity("parallax.compatibility", "Order")
     with pytest.raises(ValueError, match="starts with its root"):

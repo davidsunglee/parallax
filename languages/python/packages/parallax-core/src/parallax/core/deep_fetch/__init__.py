@@ -81,6 +81,7 @@ __all__ = [
     "ObjectQueryPlan",
     "ParentRef",
     "PositionId",
+    "QueryCorrelationMember",
     "QueryFetchStep",
     "RelationshipViewKey",
     "RenderToken",
@@ -126,25 +127,25 @@ ParentRef = RootRef | LevelRef
 
 @dataclass(frozen=True, slots=True)
 class CorrelationMember:
-    """One endpoint of a level's correlation, in every spelling the level needs.
+    """One owner-side endpoint of a level's correlation.
 
     A level correlates on an Attribute (`m-deep-fetch` "A level names its
-    correlation members, not only their columns"), and the three spellings are one
-    fact: ``identity`` is the modeled member addressed at the position the join
-    names it at, ``column`` is the physical column it maps to, and ``reference``
-    is the `m-predicate` ``Class.attribute`` reference string the child query's
-    ``in`` membership binds against. Bundling them is what keeps them aligned:
-    they are derived together from one join endpoint and are never authored.
-
-    ``reference`` is carried only on the child side, whose reference names the
-    level's own ``child_target`` rather than the Entity the identity is declared
-    on; the owner side is read off already-converted parent rows and binds
-    nothing.
+    correlation members, not only their columns"). ``identity`` is the modeled
+    member addressed at the parent position and ``column`` is its physical column.
     """
 
     identity: AttributeIdentity
     column: str
-    reference: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QueryCorrelationMember:
+    """A child-side correlation with every input required to build its query."""
+
+    identity: AttributeIdentity
+    column: str
+    reference: str
+    member: AttributeMetadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,11 +171,10 @@ class QueryFetchStep:
     owner: CorrelationMember
     child_target: EntityIdentity
     child: EntityMetadata
-    related: CorrelationMember
+    related: QueryCorrelationMember
     as_of_terms: tuple[ValidatedPredicate, ...] = ()
     order_terms: tuple[ValidatedOrderTerm, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
-    related_member: AttributeMetadata | None = None
 
     def query_for(self, parent_keys: Sequence[object]) -> ValidatedEntityQuery:
         """Build this level's flat child query from gathered parent keys.
@@ -183,18 +183,12 @@ class QueryFetchStep:
         gathered sequence becomes a predicate product. The membership and
         propagated temporal terms form the predicate. Narrowing and ordering stay
         query fields rather than being manufactured as wrappers solely for SQL
-        compilation. Raises for a back-reference level, which issues no child query.
+        compilation.
         """
-        reference = self.related.reference
-        if reference is None:
-            raise DeepFetchError(f"position {self.position} carries no child reference")
-        member = self.related_member
-        if member is None:
-            raise DeepFetchError(f"position {self.position} carries no resolved child member")
         values = cast("tuple[ManagedValue, ...]", tuple(dict.fromkeys(parent_keys)))
         membership = _managed_membership(
-            attr=reference,
-            member=member,
+            attr=self.related.reference,
+            member=self.related.member,
             values=values,
         )
         predicate = (
@@ -213,13 +207,7 @@ class QueryFetchStep:
 
     def query_template(self) -> ValidatedEntityQuery:
         """Build this level's child query with its gathered key set deferred."""
-        reference = self.related.reference
-        if reference is None:
-            raise DeepFetchError(f"position {self.position} carries no child reference")
-        member = self.related_member
-        if member is None:
-            raise DeepFetchError(f"position {self.position} carries no resolved child member")
-        membership = _deferred_membership(attr=reference, member=member)
+        membership = _deferred_membership(attr=self.related.reference, member=self.related.member)
         predicate = (
             membership
             if not self.as_of_terms
@@ -486,22 +474,21 @@ class _PlanBuilder:
             child_target = position[0] if len(position) == 1 else direction.join.target.entity
             narrow_to = position if len(position) > 1 and narrowed else None
             child = _entity(self.model, child_target)
-            related_member = _attribute_metadata(self.families, direction.join.target)
             step = QueryFetchStep(
                 position=position_id,
                 parent=parent_ref,
                 owner=owner,
                 child_target=child_target,
                 child=child,
-                related=CorrelationMember(
+                related=QueryCorrelationMember(
                     identity=direction.join.target,
                     column=_attribute_column(self.families, direction.join.target),
                     reference=f"{child_target.canonical}.{direction.join.target.name}",
+                    member=_attribute_metadata(self.families, direction.join.target),
                 ),
                 as_of_terms=validated_hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_terms=_resolved_order_terms(direction, child, self.families),
                 narrow_to=narrow_to,
-                related_member=related_member,
             )
 
         index = len(self.steps)

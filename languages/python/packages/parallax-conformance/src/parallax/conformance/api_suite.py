@@ -37,7 +37,7 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
-from parallax.conformance.story_models import OrderStatus
+from parallax.conformance.story_models import Account, OrderStatus
 
 __all__ = [
     "CASE_SKIP_REASONS",
@@ -143,6 +143,25 @@ RECIPES: Final[list[Recipe]] = [
             + inspect.getsource(read_models.Memo)
             + "\n\n"
             + inspect.getsource(snapshot_recipes.read_a_table_per_concrete_subtype_family)
+        ),
+    ),
+    Recipe(
+        title="Publish an eager Typed read in canonical Wire form",
+        spec="`python.md` §4 (*Typed-to-Wire projection*)",
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: an eager Typed "
+            "Account result projects to the canonical Wire mapping through the shipped "
+            "Snapshot surface)"
+        ),
+        notes=(
+            "Projection is for a boundary that needs the result already in hand: it "
+            "performs no second read. If only Wire values are needed, begin with "
+            "`db.wire.find` instead."
+        ),
+        snippet=(
+            inspect.getsource(Account)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.publish_typed_read_as_wire)
         ),
     ),
     Recipe(

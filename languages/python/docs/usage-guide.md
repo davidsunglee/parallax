@@ -2126,6 +2126,40 @@ def read_a_table_per_concrete_subtype_family(db: ScopedDatabase) -> Snapshot[Any
     return db.find(Document.where(Document.all))
 ```
 
+### Publish an eager Typed read in canonical Wire form
+
+Spec: `python.md` §4 (*Typed-to-Wire projection*). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: an eager Typed Account result projects to the canonical Wire mapping through the shipped Snapshot surface).
+
+Projection is for a boundary that needs the result already in hand: it performs no second read. If only Wire values are needed, begin with `db.wire.find` instead.
+
+```python
+class Account(
+    Entity,
+    table="account",
+    namespace=_NS,
+    indices=(index("account_owner", "owner"),),
+):
+    """Mirror of ``models/account.yaml``."""
+
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
+    """Read typed domain values, then publish that exact result in Wire form.
+
+    ``Snapshot.wire()`` traverses the already-published eager result in memory. It
+    preserves the result envelope and canonical Wire encoding without issuing a
+    second read, acquiring a connection, or re-running query planning. Use it when
+    one caller needs domain objects and a later boundary needs their portable form;
+    start with ``db.wire.find`` when no caller needs the typed values.
+    """
+    typed = db.find(Account.where(Account.id == 1))
+    return typed.wire()
+```
+
 ### Streamed delivery — one root at a time, in either namespace
 
 Spec: `python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the scope-bound single-pass delivery, and `batch_size`) and `m-snapshot-read` *Streamed delivery* (the Continuation Order, the `1 + L` ceiling per page, and *What a delivery costs*). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: the same roots, the same order, and the same included children at three page sizes, in both namespaces). The memory bound the surface exists for is measured separately in `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns, and the page partition each delivery spells is graded against golden SQL by the corpus's streamed cases (`m-snapshot-read-027`, `-031` through `-037`).

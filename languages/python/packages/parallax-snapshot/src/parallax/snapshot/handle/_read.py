@@ -233,7 +233,7 @@ class Snapshot[T]:
     """The Python reification of a core Snapshot Graph (spec §3): ``db.find`` /
     ``tx.find``'s result. The complete surface: :meth:`result`,
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
-    :meth:`checked`,
+    :meth:`checked`, :meth:`wire`,
     :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
     scanned axis is absent), :attr:`edition` (the Model Edition the read was
     served under), and
@@ -400,7 +400,7 @@ class Snapshot[T]:
 
 def _require_projection_inputs(values: tuple[object, ...], model: CatalogedModel) -> EntityReader:
     """Validate explicit inputs before resolving a separately supplied position."""
-    from parallax.snapshot.materialize._wire import EntityReader, projection_entity
+    from parallax.snapshot.materialize._wire import EntityReader
 
     reader = EntityReader(model)
     for value in values:
@@ -408,19 +408,27 @@ def _require_projection_inputs(values: tuple[object, ...], model: CatalogedModel
         node: object | None = record.data if record is not None else cast("object", value)
         if node is None:
             continue
-        concrete = projection_entity(node)
-        layout = reader.layout(node)
-        if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
-            raise SnapshotInspectionError(
-                code="snapshot-wire-input-incompatible",
-                message=(
-                    f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
-                    f"match retained layout {layout.concrete.canonical}"
-                ),
-                operation="Snapshot.wire",
-                entity=concrete,
-            )
+        _projection_concrete(reader, node)
     return reader
+
+
+def _projection_concrete(reader: EntityReader, node: object) -> EntityIdentity:
+    """Require lifecycle identity and retained layout to describe one concrete."""
+    from parallax.snapshot.materialize._wire import projection_entity
+
+    concrete = projection_entity(node)
+    layout = reader.layout(node)
+    if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
+        raise SnapshotInspectionError(
+            code="snapshot-wire-input-incompatible",
+            message=(
+                f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
+                f"match retained layout {layout.concrete.canonical}"
+            ),
+            operation="Snapshot.wire",
+            entity=concrete,
+        )
+    return concrete
 
 
 def _wire_position(
@@ -472,7 +480,6 @@ def _project_eager_values(
     from parallax.snapshot.materialize._wire import (
         EntityReader,
         WireWalk,
-        projection_entity,
         shared_wire_encoder,
     )
     from parallax.snapshot.materialize._wire_memo import StrongIdentityMemo
@@ -492,20 +499,9 @@ def _project_eager_values(
             if node is None:
                 projected.append(cast("InvalidData[WireEntity]", record))
                 continue
-            concrete = projection_entity(node)
             if reader is None:
                 reader = EntityReader(model)
-            layout = reader.layout(node)
-            if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
-                raise SnapshotInspectionError(
-                    code="snapshot-wire-input-incompatible",
-                    message=(
-                        f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
-                        f"match retained layout {layout.concrete.canonical}"
-                    ),
-                    operation="Snapshot.wire",
-                    entity=concrete,
-                )
+            concrete = _projection_concrete(reader, node)
             if not includes.admits(position, concrete):
                 raise SnapshotInspectionError(
                     code="snapshot-wire-at-concrete-mismatch",

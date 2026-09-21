@@ -152,7 +152,6 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
             "ABSENT_DECLARED_VALUE",
             "declared_values",
             "is_published",
-            "named_state",
             "plan_of",
             "relationship",
         }

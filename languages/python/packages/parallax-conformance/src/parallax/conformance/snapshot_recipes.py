@@ -24,6 +24,7 @@ from parallax.conformance.story_models import Account, Order, OrderStatus
 from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction
 
 __all__ = [
+    "publish_typed_read_as_wire",
     "read_a_table_per_concrete_subtype_family",
     "read_a_table_per_hierarchy_family",
     "read_to_one_relationship_states",
@@ -70,6 +71,19 @@ def read_a_table_per_concrete_subtype_family(db: ScopedDatabase) -> Snapshot[Any
     through an intermediate abstract subtype (``Invoice``/``Receipt`` under
     ``FinancialDocument``) and one declared directly under the root (``Memo``)."""
     return db.find(Document.where(Document.all))
+
+
+def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
+    """Read typed domain values, then publish that exact result in Wire form.
+
+    ``Snapshot.wire()`` traverses the already-published eager result in memory. It
+    preserves the result envelope and canonical Wire encoding without issuing a
+    second read, acquiring a connection, or re-running query planning. Use it when
+    one caller needs domain objects and a later boundary needs their portable form;
+    start with ``db.wire.find`` when no caller needs the typed values.
+    """
+    typed = db.find(Account.where(Account.id == 1))
+    return typed.wire()
 
 
 def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[int, list[str]]:
