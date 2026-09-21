@@ -91,7 +91,8 @@ directories none of them contains, or that a `tools/` script imports, stays at
 the `tests/unit/` root —
 `_authored_storage_support.py`, `_contention_support.py`,
 `_corpus_identity_support.py`, `_corpus_model_support.py`,
-`_document_layout_support.py`, `_inheritance_family_support.py`,
+`_delivery_control_support.py`, `_document_layout_support.py`,
+`_inheritance_family_support.py`,
 `_instance_state_support.py`, `_memory_gate_support.py`, `_metamodel_support.py`,
 `_pool_source_support.py`, `_predicate_acquisition_support.py`,
 `_second_dialect.py`, `_snapshot_materialization_support.py`,
@@ -99,7 +100,7 @@ the `tests/unit/` root —
 `_structural_geometry_support.py`, `_transact_support.py`,
 `_write_lowering_support.py`, and `memory_instruments.py`.
 
-Seven of those serve the cost suites and split by subject:
+Eight of those serve the cost suites and split by subject:
 `memory_instruments.py` is what every cost suite measures WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with, and `_instance_state_support.py` and
@@ -114,11 +115,17 @@ same child drives to a buffered Materialized Write Group; and
 `_structural_geometry_support.py` declares the geometry levels both the
 write-lowering child inserts, the Snapshot reading child reads and, on a cold
 read plan cache, plans, and the
-Transaction-Time-Only twins its changed-ancestor successors write. The `report`
-tools under `tools/` reach them as `tests.unit.memory_instruments`,
+Transaction-Time-Only twins its changed-ancestor successors write;
+`_delivery_control_support.py` spells the Snapshot member's before/after
+control matrix — the Typed twins of the two provider-free catalog workloads,
+the guarded include workload under three group widths with its provider-free
+port, and the small and larger models an eager Typed result is held over —
+which the Snapshot report expands and the Snapshot reading child parses back.
+The `report` tools under `tools/` reach them as `tests.unit.memory_instruments`,
 `tests.unit._instance_state_support`,
-`tests.unit._snapshot_materialization_support`, and
-`tests.unit._structural_geometry_support`, and the write-lowering child reaches
+`tests.unit._snapshot_materialization_support`,
+`tests.unit._structural_geometry_support`, and
+`tests.unit._delivery_control_support`, and the write-lowering child reaches
 `tests.unit._write_lowering_support` and
 `tests.unit._predicate_acquisition_support`, by putting the workspace root on
 `sys.path` themselves. Each refuses any module that did not resolve to the file

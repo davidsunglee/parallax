@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -80,8 +80,21 @@ def _collaborators() -> tuple[EntityRowCodec, WritePlanner]:
 def test_the_matrix_names_every_keyed_acquisition_and_model_case_once() -> None:
     keyed = [case.name for case in lowering_support.CASES]
     acquisition = [case.name for case in acquisition_support.CASES]
-    assert (*keyed, *acquisition, report.MODEL_CASE) == report.CASE_NAMES
+    response = [case.name for case in lowering_support.RESPONSE_CASES]
+    assert (
+        *keyed,
+        *acquisition,
+        *response,
+        report.MODEL_CASE,
+        report.MODEL_FAMILY_CASE,
+    ) == report.CASE_NAMES
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
+    assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
+    assert (*keyed, *acquisition, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
+    assert report.CASE_COVERAGES == {
+        "current": report.CASE_NAMES,
+        "legacy": report.LEGACY_CASE_NAMES,
+    }
     assert len(supported_minors()) == 2
 
 
@@ -425,6 +438,7 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
     assert set(cast("Mapping[str, str]", envelope.provenance.sampling["windows"])) == {
         report.KEYED_WINDOW,
         report.ACQUISITION_WINDOW,
+        report.RESPONSE_WINDOW,
         report.MODEL_WINDOW,
     }
     addresses = {(reading.runtime, reading.workload, reading.cell) for reading in envelope.readings}
@@ -529,7 +543,11 @@ def test_a_diagnostic_run_answers_the_chosen_cases_and_is_no_envelope(
     assert document["runtimes"] == ["3.14"]
     readings = cast("list[dict[str, object]]", document["readings"])
     assert {r["workload"] for r in readings} == set(report.selected_cases(["plain.*"]))
-    assert document["unavailable"] == ["CPython 3.14, model.prepared: model.prepared refused"]
+    assert document["unavailable"] == [
+        f"CPython 3.14, {case}: {case} refused"
+        for case in report.CASE_NAMES
+        if case.startswith("model.")
+    ]
     assert "provenance" not in document
     with pytest.raises(Exception):  # noqa: B017 - any schema or semantic refusal proves it is no envelope
         validate(document)
@@ -696,3 +714,54 @@ def test_metadata_is_refused_beside_a_diagnostic(
     assert report.main(["--diagnostic", "--metadata", str(metadata)]) == 2
     assert "usage:" in capsys.readouterr().err
     assert not metadata.exists()
+
+
+# --------------------------------------------------------------------------- #
+# The controls beside the lowering matrix: the public insert and the family.   #
+# --------------------------------------------------------------------------- #
+def test_the_public_insert_answers_its_nested_polymorphic_node_inside_the_window() -> None:
+    (case,) = lowering_support.RESPONSE_CASES
+    assert case.entity is lowering_support.Dog
+    assert report.WINDOWS[case.name] == report.RESPONSE_WINDOW
+    assert report.unit_of(report.RESPONSE_WINDOW, "elapsedUs") == "us/row"
+    assert report.unit_of(report.RESPONSE_WINDOW, "retainedBytes") == "B/row"
+    marks: list[str] = []
+    with lowering_support.response_database(case) as handle:
+        node = lowering_support.insert_response(
+            handle,
+            case,
+            opened=lambda: marks.append("opened"),
+            closed=lambda: marks.append("closed"),
+        )
+        again = lowering_support.insert_response(handle, case)
+    assert marks == ["opened", "closed"]
+    assert dict(node) == dict(again)
+    assert node["familyVariant"] == "Dog"
+    address = cast("Mapping[str, Any]", node["address"])
+    assert cast("Mapping[str, Any]", address["geo"])["country"] == "country-response"
+    assert [
+        cast("Mapping[str, Any]", tag)["label"] for tag in cast("list[object]", node["tags"])
+    ] == [
+        "tag-response-a",
+        "tag-response-b",
+    ]
+    assert node["barkVolume"] == 3
+    assert lowering_support.response_case_named(case.name) is case
+    with pytest.raises(KeyError):
+        lowering_support.response_case_named("response.insert.plain.wire")
+
+
+def test_the_family_model_is_its_own_preparation_beside_the_structural_model() -> None:
+    assert report.WINDOWS[report.MODEL_FAMILY_CASE] == report.MODEL_WINDOW
+    assert not set(lowering_support.FAMILY_ENTITY_CLASSES) & set(lowering_support.ENTITY_CLASSES)
+    assert {cls.__name__ for cls in lowering_support.FAMILY_ENTITY_CLASSES} == {"Pet", "Dog", "Cat"}
+
+
+def test_the_control_cases_are_the_difference_between_the_two_case_coverages() -> None:
+    current = report.expected_addresses(("3.14",))
+    legacy = report.expected_addresses(("3.14",), report.CALL_NAMES, report.LEGACY_CASE_NAMES)
+    assert legacy < current
+    assert current - legacy == {
+        ("3.14", case, metric) for case in report.CONTROL_CASE_NAMES for metric in report.METRICS
+    }
+    assert all(not address[2].startswith("calls.") for address in current - legacy)

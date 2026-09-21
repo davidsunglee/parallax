@@ -10,9 +10,19 @@ outside reading never changes this command's exit status. Missing or malformed
 readings are explicit incompleteness and errors.
 
 ``--workload`` narrows the evidence path to named contract workloads and the
-``geometry`` and ``plan`` groups: the envelope keeps full provenance and
-completeness is judged over the addresses selected, so a slice of the matrix is
-evidence about that slice, never a diagnostic promoted to evidence.
+``geometry``, ``plan``, and ``control`` groups: the envelope keeps full
+provenance and completeness is judged over the addresses selected, so a slice
+of the matrix is evidence about that slice, never a diagnostic promoted to
+evidence.
+
+The ``control`` group is the before/after control matrix
+``tests/unit/_delivery_control_support.py`` spells: unprojected Typed delivery
+beside direct Wire delivery over the provider-free catalog workloads at each
+memory scaling arm, the guarded include workload planned cold and hit warm and
+delivered through both lanes at two root counts, and one eager Typed result held
+while its model is shared and after its root has closed. It joins the exact
+matrix a complete envelope carries; a capture taken before the group existed
+remains exact without it.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ import argparse
 import json
 import statistics
 import subprocess
+import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from fnmatch import fnmatchcase
@@ -62,16 +73,33 @@ from parallax.conformance.workloads import (
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
+CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
+sys.path.insert(0, str(WORKSPACE))
+
+# `sys.path` gains the workspace above, so this import cannot precede it; that is
+# what the E402 suppression records.
+from tests.unit import _delivery_control_support as control_support  # noqa: E402
+
+if Path(control_support.__file__ or "").resolve() != CONTROL_MODULE:
+    raise ImportError(
+        f"this report expands controls from {CONTROL_MODULE}, but "
+        f"'_delivery_control_support' resolved to {control_support.__file__}"
+    )
+
 SUBJECT: Final = "snapshot-delivery"
 ENVIRONMENT_NAMESPACE: Final = "snapshot-delivery"
 GEOMETRY_METRICS: Final = ("elapsedUsPerRoot", "peakKiB", "retainedKiB")
 PLAN_METRICS: Final = ("elapsedUs", "peakKiB", "retainedKiB")
 GEOMETRY_PREFIX: Final = "read-"
 PLAN_PREFIX: Final = "plan-"
+CONTROL_PREFIX: Final = control_support.CONTROL_PREFIX
 LIVE_WINDOW: Final = "live-delivery"
 PROVIDER_FREE_WINDOW: Final = "provider-free-delivery"
 STRESS_WINDOW: Final = "positional-materialization"
 PLAN_WINDOW: Final = "read-plan-compilation"
+WARM_PLAN_WINDOW: Final = "read-plan-reuse"
+CONTROL_DELIVERY_WINDOW: Final = "control-delivery"
+RESULT_HELD_WINDOW: Final = "result-held-metadata"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     LIVE_WINDOW: "a connected Wire find or stream against PostgreSQL, parsing included",
     PROVIDER_FREE_WINDOW: (
@@ -83,6 +111,20 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "one whole-table instance read planned into an already composed and empty read plan "
         "cache of production capacity; no cache construction, model preparation, query "
         "validation, execution, or materialization"
+    ),
+    WARM_PLAN_WINDOW: (
+        "one read looked up on the read plan cache already holding its compiled entry; no "
+        "planning, compilation, execution, or materialization"
+    ),
+    CONTROL_DELIVERY_WINDOW: (
+        "a Wire or Typed find or stream over already-parsed provider rows through production "
+        "planning, materialization, and publication, the root and port composed outside it; "
+        "the Typed result is never projected"
+    ),
+    RESULT_HELD_WINDOW: (
+        "the bytes one eager Typed result keeps reachable: with its root open and sharing "
+        "the prepared model, or with the root closed and the result the sole owner of "
+        "whatever it still reaches"
     ),
 }
 
@@ -144,6 +186,26 @@ def plan_cells() -> tuple[GeometryCell, ...]:
     )
 
 
+def control_cells(contract: BudgetContract) -> tuple[GeometryCell, ...]:
+    """Every before/after control address, the delivery controls at each of
+    ``contract``'s memory scaling arms."""
+    return tuple(
+        GeometryCell(workload, path)
+        for workload, path in control_support.control_cells(contract.memory_scaling_arms)
+    )
+
+
+def control_window(workload: str, path: str) -> str:
+    """The window one control address is read over."""
+    if workload == control_support.HELD_WORKLOAD:
+        return RESULT_HELD_WINDOW
+    if path.startswith("plan.cold."):
+        return PLAN_WINDOW
+    if path.startswith("plan.warm."):
+        return WARM_PLAN_WINDOW
+    return CONTROL_DELIVERY_WINDOW
+
+
 def is_memory_cell(path: str) -> bool:
     return path.startswith(("eagerMemory.", "streamedMemory.")) or path.endswith(
         (
@@ -169,6 +231,8 @@ def window_of(path: str, workload: str = "") -> str:
     """The window one cell is read over."""
     if workload.startswith(PLAN_PREFIX):
         return PLAN_WINDOW
+    if workload.startswith(CONTROL_PREFIX):
+        return control_window(workload, path)
     if needs_database(path):
         return LIVE_WINDOW
     if path.startswith("stress."):
@@ -320,21 +384,33 @@ def _reading(
     )
 
 
-def addresses(contract: BudgetContract, runtimes: Sequence[str]) -> tuple[Address, ...]:
-    """Every (runtime, workload, cell) address a complete envelope carries."""
-    return tuple(
-        (runtime, cell.workload, cell.path)
-        for runtime in runtimes
-        for cell in (*expanded_cells(contract), *geometry_cells(), *plan_cells())
+def addresses(
+    contract: BudgetContract, runtimes: Sequence[str], *, controls: bool = True
+) -> tuple[Address, ...]:
+    """Every (runtime, workload, cell) address a complete envelope carries;
+    without ``controls``, the matrix a capture taken before the control group
+    existed carries."""
+    cells = (
+        *expanded_cells(contract),
+        *geometry_cells(),
+        *plan_cells(),
+        *(control_cells(contract) if controls else ()),
     )
+    return tuple((runtime, cell.workload, cell.path) for runtime in runtimes for cell in cells)
 
 
 def selected_addresses(
-    contract: BudgetContract, runtimes: Sequence[str], selected: Selection
+    contract: BudgetContract,
+    runtimes: Sequence[str],
+    selected: Selection,
+    *,
+    controls: bool = True,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
     return tuple(
-        address for address in addresses(contract, runtimes) if selected(address[1], address[2])
+        address
+        for address in addresses(contract, runtimes, controls=controls)
+        if selected(address[1], address[2])
     )
 
 
@@ -474,20 +550,21 @@ def every_cell(_workload: str, _path: str) -> bool:
 
 GEOMETRY_GROUP: Final = "geometry"
 PLAN_GROUP: Final = "plan"
-WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, PLAN_GROUP)
+CONTROL_GROUP: Final = control_support.CONTROL_GROUP
+WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, PLAN_GROUP, CONTROL_GROUP)
 
 
 def workload_names(contract: BudgetContract) -> tuple[str, ...]:
     """Every name ``--workload`` accepts: the contract's workload ids, then the
-    two groups of cells outside the contract."""
+    three groups of cells outside the contract."""
     return (*contract.workload_ids, *WORKLOAD_GROUPS)
 
 
 def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
     """The addresses the exact workload ``names`` cover: a contract workload id
-    selects its cells, ``geometry`` and ``plan`` select the groups outside the
-    contract, and no name at all selects every cell. An unknown name is a
-    ``ValueError`` before any work starts."""
+    selects its cells, ``geometry``, ``plan``, and ``control`` select the groups
+    outside the contract, and no name at all selects every cell. An unknown
+    name is a ``ValueError`` before any work starts."""
     active = contract if contract is not None else BudgetContract.load()
     known = workload_names(active)
     chosen = frozenset(names)
@@ -502,6 +579,8 @@ def workload_selection(names: Iterable[str], contract: BudgetContract | None = N
             return GEOMETRY_GROUP in chosen
         if workload.startswith(PLAN_PREFIX):
             return PLAN_GROUP in chosen
+        if workload.startswith(CONTROL_PREFIX):
+            return CONTROL_GROUP in chosen
         return workload in chosen
 
     return selected
@@ -536,7 +615,11 @@ def _measure_runtime(
                 workload_cells,
                 recorder,
             )
-    for group, group_cells in ((GEOMETRY_GROUP, geometry_cells()), (PLAN_GROUP, plan_cells())):
+    for group, group_cells in (
+        (GEOMETRY_GROUP, geometry_cells()),
+        (PLAN_GROUP, plan_cells()),
+        (CONTROL_GROUP, control_cells(contract)),
+    ):
         chosen = [cell for cell in group_cells if selected(cell.workload, cell.path)]
         if not chosen:
             continue

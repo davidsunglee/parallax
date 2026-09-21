@@ -17,6 +17,14 @@ statement's binds cross the production PostgreSQL bind adaptation and are then
 dumped by psycopg's own transformer, which is the serialization
 ``cursor.execute`` performs. Database execution and network time are outside it.
 
+Beside the lowering matrix, one public Wire insert is measured through the
+shipped ``tx.wire.insert`` over a provider-free port: a nested, polymorphic
+Create Payload opens a row of a table-per-hierarchy family whose members nest a
+One inside a One beside a Many, and the window is the verb itself, from the
+payload arriving to the frozen node it answers, with the commit that follows
+outside it. The family is a model of its own, so its preparation prices the
+family variant beside the structural model's preparation rather than inside it.
+
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
 carried by this MODULE's underscore. Never imported by production code.
@@ -24,7 +32,8 @@ carried by this MODULE's underscore. Never imported by production code.
 
 import datetime as dt
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, cast
@@ -35,18 +44,22 @@ from psycopg.adapt import PyFormat, Transformer
 
 from parallax.conformance.workloads import GEOMETRY_LEVELS, structural_digest
 from parallax.core import (
+    AbstractRoot,
     Attr,
     Bitemporal,
+    ConcreteSubtype,
     Document,
     DomainModel,
     Entity,
+    TablePerHierarchy,
     TxTemporal,
     ValueObject,
     attr,
 )
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import detach_json_container
-from parallax.core.dialect import POSTGRES
+from parallax.core.db_port import DatabaseConnection, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -68,8 +81,15 @@ from parallax.core.unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.postgres._connection import adapt_binds
-from parallax.snapshot.handle import stream_lowered
+from parallax.snapshot.handle import (
+    Database,
+    ScopedDatabase,
+    Transaction,
+    WireEntity,
+    stream_lowered,
+)
 from tests._support.clock_probes import inert_instant
+from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit import _structural_geometry_support as geometry_support
@@ -79,14 +99,22 @@ __all__ = [
     "CASES",
     "CATALOG",
     "ENTITY_CLASSES",
+    "FAMILY_ENTITY_CLASSES",
+    "FAMILY_MODEL",
     "MODEL",
+    "RESPONSE_CASES",
+    "AcceptingPort",
     "Case",
     "Ingress",
     "Layout",
+    "ResponseCase",
     "Settled",
     "case_named",
+    "insert_response",
     "lower",
     "lowered",
+    "response_case_named",
+    "response_database",
     "serialize",
     "settle",
     "write_lowering_digest",
@@ -178,6 +206,32 @@ class BiDocument(
     address: Attr[Address]
     tags: Attr[tuple[Tag, ...]]
 
+
+class Pet(
+    Entity,
+    table="write_lowering_pet",
+    namespace=_NAMESPACE,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str]
+    address: Attr[Address]
+    tags: Attr[tuple[Tag, ...]]
+
+
+class Dog(Pet, namespace=_NAMESPACE, inheritance=ConcreteSubtype(tag_value="dog")):
+    bark_volume: Attr[int | None]
+
+
+class Cat(Pet, namespace=_NAMESPACE, inheritance=ConcreteSubtype(tag_value="cat")):
+    indoor: Attr[bool | None]
+
+
+FAMILY_ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = (Pet, Dog, Cat)
+"""The table-per-hierarchy family the public insert opens a row of, and the
+whole of the model its preparation is priced over."""
+
+FAMILY_MODEL: Final = DomainModel(*FAMILY_ENTITY_CLASSES)
 
 _CATEGORICAL: Final[Mapping[tuple[str, Layout], type[Entity]]] = {
     ("txtime", "columns"): TxColumns,
@@ -457,6 +511,106 @@ def case_named(name: str) -> Case:
         if case.name == name:
             return case
     raise KeyError(f"{name!r} is not a write-lowering case: {[case.name for case in CASES]}")
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseCase:
+    """One public Wire insert: the concrete Entity the row opens under and the
+    Create Payload in Wire spellings, composed outside the window exactly as a
+    caller's payload arrives."""
+
+    name: str
+    entity: type[Entity]
+    payload: Mapping[str, object]
+
+
+RESPONSE_CASES: Final[tuple[ResponseCase, ...]] = (
+    ResponseCase(
+        "response.insert.family.wire",
+        Dog,
+        {
+            "id": 1101,
+            "title": "title-response",
+            "address": {"city": "city-response", "geo": {"country": "country-response"}},
+            "tags": [{"label": "tag-response-a"}, {"label": "tag-response-b"}],
+            "barkVolume": 3,
+        },
+    ),
+)
+"""The public insert cases: one nested, polymorphic payload whose answered node
+carries a One inside a One, a Many, and the family variant."""
+
+
+def response_case_named(name: str) -> ResponseCase:
+    for case in RESPONSE_CASES:
+        if case.name == name:
+            return case
+    raise KeyError(
+        f"{name!r} is not a public insert case: {[case.name for case in RESPONSE_CASES]}"
+    )
+
+
+class AcceptingPort(ConnectsAsItself):
+    """A provider-free port that commits every transaction and counts each DML
+    statement as one affected row, so a buffered insert flushes without a
+    database and no read is ever answered."""
+
+    dialect: Dialect = POSTGRES
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> list[object]:
+        del binds, document_reads
+        raise NotImplementedError(sql)
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        del sql, binds
+        return 1
+
+    def transaction[T](
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: str | None = None,
+    ) -> TransactionOutcome[T]:
+        del isolation
+        return body_outcome(cast("DatabaseConnection", self), body)
+
+
+@contextmanager
+def response_database(case: ResponseCase) -> Generator[ScopedDatabase]:
+    """A login-scoped handle over the family model ``case`` opens a row of,
+    composed outside every window and closed after the last one."""
+    root = Database.connect(AcceptingPort(), FAMILY_MODEL)
+    try:
+        yield root.using_database_login()
+    finally:
+        root.close()
+
+
+def insert_response(
+    handle: ScopedDatabase,
+    case: ResponseCase,
+    *,
+    opened: Callable[[], None] | None = None,
+    closed: Callable[[], None] | None = None,
+) -> WireEntity:
+    """The public insert window: ``opened`` marks the moment before
+    ``tx.wire.insert`` receives the payload and ``closed`` the moment the frozen
+    node it answers is held, with the commit that flushes the row outside both."""
+
+    def body(tx: Transaction) -> WireEntity:
+        if opened is not None:
+            opened()
+        node = tx.wire.insert(case.entity.identity.name, case.payload)
+        if closed is not None:
+            closed()
+        return node
+
+    return handle.transact(body)
 
 
 def _instruction(case: Case, rows: tuple[Mapping[str, object], ...]) -> KeyedWrite:

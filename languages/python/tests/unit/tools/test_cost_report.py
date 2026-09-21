@@ -32,7 +32,14 @@ from cost_report import (
     verify,
 )
 from durations import SCHEMA_VERSION, Spans
-from interpreter_matrix import authority_minor, supported_minors
+from interpreter_matrix import (
+    RuntimeIdentity,
+    RuntimeStatus,
+    RuntimeUnavailable,
+    authority_minor,
+    supported_minors,
+    write_metadata,
+)
 from parallax.conformance.budget import BudgetContract, MemoryGate, MemoryGates
 from parallax.conformance.cost_envelope import CostReportEnvelope, validate
 from snapshot_delivery_overhead import (
@@ -45,6 +52,7 @@ from snapshot_delivery_overhead import (
     is_memory_cell,
     unit,
 )
+from tests.unit.tools._cost_report_support import complete_instance_state
 
 
 def _just_report_recipes() -> frozenset[str]:
@@ -180,6 +188,10 @@ def _unpublished(_commit: str) -> bool:
 
 
 def _no_validation(_document: object) -> None:
+    return None
+
+
+def _no_matrix_validation(*_arguments: object, **_options: object) -> None:
     return None
 
 
@@ -413,7 +425,13 @@ def test_written_output_keeps_the_legacy_portfolio_beside_the_durations_sidecar(
     out = tmp_path / "reports"
     assert cost_report.main(["--out", str(out)]) == 0
     assert sorted(path.name for path in out.iterdir()) == sorted(
-        ["portfolio.json", "summary.md", DURATIONS_FILE, *(f"{m.subject}.json" for m in MEMBERS)]
+        [
+            "portfolio.json",
+            "summary.md",
+            DURATIONS_FILE,
+            cost_report.CONDITIONS_FILE,
+            *(f"{m.subject}.json" for m in MEMBERS),
+        ]
     )
     portfolio = cast("dict[str, Any]", json.loads((out / "portfolio.json").read_text("utf-8")))
     assert set(portfolio) == {"schemaVersion", "members", "failures"}
@@ -517,8 +535,8 @@ def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
         (_forge_value, "disagrees with its sample median"),
         (
             _drop_a_runtime,
-            "reading matrix is not exact under any one counter vocabulary; "
-            "against the current vocabulary: missing CPython",
+            "reading matrix is not exact under any one case coverage and counter vocabulary; "
+            "against the current cases and current counters: missing CPython",
         ),
         (_add_comparison, "declares no comparisons"),
     ],
@@ -611,13 +629,15 @@ def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture
     validate_write_lowering_matrix(legacy)
     runtimes = supported_minors()
     keyed = next(case for case, window in write_report.WINDOWS.items() if window == "keyed-write")
-    refused = "not exact under any one counter vocabulary"
+    refused = "not exact under any one case coverage and counter vocabulary"
 
     one_case_legacy = deepcopy(current)
     _rename_counters(
         one_case_legacy, {new: old for old, new in _RENAMED_COUNTERS.items()}, workload=keyed
     )
-    with pytest.raises(ValueError, match=f"{refused}; against the current vocabulary"):
+    with pytest.raises(
+        ValueError, match=f"{refused}; against the current cases and current counters"
+    ):
         validate_write_lowering_matrix(one_case_legacy)
 
     one_runtime_legacy = deepcopy(current)
@@ -650,7 +670,7 @@ def test_a_complete_matrix_verifies_under_either_whole_vocabulary_and_no_mixture
     ]
     with pytest.raises(
         ValueError,
-        match=f"{refused}; against the current vocabulary: "
+        match=f"{refused}; against the current cases and current counters: "
         f"missing CPython {runtimes[0]} {keyed}.calls.encodeManagedMany$",
     ):
         validate_write_lowering_matrix(one_counter_short)
@@ -1240,3 +1260,506 @@ def test_diagnostic_options_are_fenced_from_verification_and_collection(
             cost_report.main(arguments)
         assert error.value.code == 2
     assert "diagnostic" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# Required members: a member held to the exact matrix its owner declares      #
+# --------------------------------------------------------------------------- #
+def _without_controls(snapshot: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", snapshot["readings"])
+    readings[:] = [r for r in readings if not str(r["workload"]).startswith("control-")]
+
+
+def _without_control_cases(write: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", write["readings"])
+    readings[:] = [r for r in readings if r["workload"] not in write_report.CONTROL_CASE_NAMES]
+
+
+def _with_instance_state(document: dict[str, Any], contract: BudgetContract) -> dict[str, Any]:
+    member = complete_instance_state(contract)
+    _clean(member, contract, authoritative=False)
+    member["provenance"]["commit"] = _snapshot_of(document)["provenance"]["commit"]
+    cast("list[dict[str, Any]]", document["members"]).append(member)
+    return member
+
+
+def _instance_of(document: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        m for m in document["members"] if m["subject"] == cost_report.INSTANCE_STATE_SUBJECT
+    )
+
+
+def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    assert verify(document, required=["snapshot-delivery", write_report.SUBJECT]) == []
+    _without_controls(_snapshot_of(document))
+    _without_control_cases(_write_of(document))
+    assert verify(document) == []
+    (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
+    assert snapshot_failure.startswith(
+        "the snapshot-delivery envelope is invalid: Snapshot reading matrix is not exact: "
+        "missing CPython"
+    )
+    assert "control-" in snapshot_failure
+    (write_failure,) = verify(document, required=[write_report.SUBJECT])
+    assert write_failure.startswith(
+        "the write-lowering envelope is invalid: write-lowering reading matrix is not exact "
+        "under any one case coverage and counter vocabulary; against the current cases and "
+        "current counters: missing CPython"
+    )
+    assert write_report.MODEL_FAMILY_CASE in write_failure
+
+
+def test_requiring_instance_state_holds_it_to_its_owners_complete_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    assert verify(document) == []
+    assert verify(document, required=["instance-state"]) == [
+        "the portfolio has no required instance-state envelope"
+    ]
+    member = _with_instance_state(document, contract)
+    assert verify(document, required=["instance-state"]) == []
+    assert verify(document) == []
+
+    member["provenance"]["dirty"] = True
+    member["provenance"]["workloadDigest"] = "0" * 64
+    monkeypatch.setattr(cost_report, "validate", _no_validation)
+    assert verify(document, required=["instance-state"]) == [
+        "the instance-state envelope was not produced from a clean tree",
+        "the instance-state envelope's workload digest is stale",
+    ]
+    member["provenance"]["dirty"] = False
+    member["provenance"]["workloadDigest"] = _snapshot_of(document)["provenance"]["workloadDigest"]
+    member["provenance"]["commit"] = "f" * 40
+    member["incomplete"] = [{"code": "unavailable", "message": "one scenario"}]
+    assert verify(document, required=["instance-state"]) == [
+        "the instance-state envelope is incomplete",
+        "the instance-state envelope names a different commit from the required members",
+    ]
+    del cast("list[object]", member["readings"])[0]
+    (failure,) = verify(document, required=["instance-state"])
+    assert failure.startswith("the instance-state envelope is invalid: instance-state reading")
+    with pytest.raises(ValueError, match="requirable members are"):
+        verify(document, required=["lifecycle-overhead"])
+
+
+def _instance_add_window(document: dict[str, Any]) -> None:
+    cast("list[dict[str, object]]", document["readings"])[0]["window"] = "elsewhere"
+
+
+def _instance_add_samples(document: dict[str, Any]) -> None:
+    cast("list[dict[str, object]]", document["readings"])[0]["samples"] = [1.0]
+
+
+def _instance_drop_runtime(document: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, object]]", document["readings"])
+    readings[:] = [r for r in readings if not str(r["workload"]).startswith("cpython-3.13")]
+
+
+def _instance_add_reading(document: dict[str, Any]) -> None:
+    cast("list[dict[str, object]]", document["readings"]).append(
+        {
+            "workload": "cpython-3.14/shallow",
+            "cell": "compact.projectionNs",
+            "value": 1,
+            "unit": "ns",
+            "samples": [],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (_clear_readings, "instance-state reading matrix is not exact"),
+        (_clear_comparisons, "instance-state comparison matrix is not exact"),
+        (_duplicate_reading, "duplicate instance-state reading"),
+        (_wrong_reading_unit, "reading unit"),
+        (_instance_add_window, "names a window"),
+        (_instance_add_samples, "carries samples"),
+        (_forge_outcome, "comparison outcome"),
+        (_instance_drop_runtime, "reading matrix is not exact: missing cpython-3.13"),
+        (_instance_add_reading, "unexpected cpython-3.14/shallow.compact.projectionNs"),
+    ],
+)
+def test_instance_state_matrix_validation_rejects_semantic_forgeries(
+    mutate: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    document = complete_instance_state(BudgetContract.load())
+    cost_report.validate_instance_state_matrix(document)
+    mutate(document)
+    with pytest.raises(ValueError, match=message):
+        cost_report.validate_instance_state_matrix(document)
+
+
+def test_require_member_is_a_verify_or_compare_option_over_requirable_subjects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for arguments in (
+        ["--require-member", "instance-state"],
+        ["--verify", "portfolio.json", "--require-member", "lifecycle-overhead"],
+        ["--require-compatible"],
+        ["--verify", "portfolio.json", "--require-compatible"],
+    ):
+        with pytest.raises(SystemExit) as error:
+            cost_report.main(arguments)
+        assert error.value.code == 2
+        assert "require" in capsys.readouterr().err
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    portfolio = tmp_path / "portfolio.json"
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
+    assert cost_report.main(["--verify", str(portfolio), "--require-member", "instance-state"]) == 1
+    assert "no required instance-state envelope" in capsys.readouterr().err
+    _with_instance_state(document, contract)
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
+    assert cost_report.main(["--verify", str(portfolio), "--require-member", "instance-state"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+# --------------------------------------------------------------------------- #
+# Conditions: what the envelopes cannot carry, written beside them            #
+# --------------------------------------------------------------------------- #
+def _identities(version: str = "3.14.7") -> dict[str, dict[str, RuntimeStatus]]:
+    return {
+        member.subject: {
+            minor: RuntimeIdentity("CPython", f"{minor}.1" if minor != "3.14" else version, "/p")
+            for minor in supported_minors()
+        }
+        for member in MEMBERS
+    }
+
+
+def test_conditions_record_every_members_sources_and_runtimes_and_round_trip(
+    tmp_path: Path,
+) -> None:
+    document = cost_report.conditions_document(_identities())
+    assert document["schemaVersion"] == cost_report.CONDITIONS_VERSION
+    members = cast("dict[str, dict[str, Any]]", document["members"])
+    assert list(members) == [member.subject for member in MEMBERS]
+    for subject, recorded in members.items():
+        sources = cost_report.MEMBER_SOURCES[subject]
+        assert set(recorded["sources"]) == set(sources.instruments) | set(sources.controls)
+        assert all(
+            hashlib.sha256((cost_report.WORKSPACE / path).read_bytes()).hexdigest() == digest
+            for path, digest in recorded["sources"].items()
+        )
+        assert set(recorded["runtimes"]) == set(supported_minors())
+    assert "tests/unit/_delivery_control_support.py" in members["snapshot-delivery"]["sources"]
+    assert "tests/unit/_write_lowering_support.py" in members[write_report.SUBJECT]["sources"]
+    path = tmp_path / cost_report.CONDITIONS_FILE
+    path.write_text(json.dumps(document), encoding="utf-8")
+    loaded = cost_report.load_conditions(path)
+    assert set(loaded) == set(members)
+    assert loaded["snapshot-delivery"].sources == members["snapshot-delivery"]["sources"]
+    assert loaded["snapshot-delivery"].runtimes["3.14"] == RuntimeIdentity(
+        "CPython", "3.14.7", "/p"
+    )
+    members["snapshot-delivery"]["sources"]["tools/snapshot_delivery_reading.py"] = "not a digest"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="not all digests"):
+        cost_report.load_conditions(path)
+    path.write_text(json.dumps({"schemaVersion": 2, "members": {}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="schemaVersion"):
+        cost_report.load_conditions(path)
+
+
+def test_collection_writes_the_conditions_it_recorded_beside_the_portfolio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    snapshot = _complete_snapshot(contract)
+    write = _complete_write(contract)
+
+    def run(member: Member, arguments: Sequence[str]) -> tuple[int, str, str]:
+        sidecar = _sidecar_path(arguments)
+        sidecar.write_text(_member_sidecar(), encoding="utf-8")
+        if member.subject == "snapshot-delivery":
+            write_metadata(
+                Path(arguments[3]),
+                member.subject,
+                {
+                    minor: RuntimeIdentity("CPython", f"{minor}.9", "/p")
+                    for minor in supported_minors()
+                },
+            )
+        document = (
+            snapshot
+            if member.subject == "snapshot-delivery"
+            else write
+            if member.subject == write_report.SUBJECT
+            else _optional_document(member)
+        )
+        return (0, json.dumps(document), "")
+
+    monkeypatch.setattr(cost_report, "run_member", run)
+    out = tmp_path / "reports"
+    assert cost_report.main(["--out", str(out)]) == 0
+    capsys.readouterr()
+    loaded = cost_report.load_conditions(out / cost_report.CONDITIONS_FILE)
+    assert set(loaded) == {member.subject for member in MEMBERS}
+    assert loaded["snapshot-delivery"].runtimes == {
+        minor: RuntimeIdentity("CPython", f"{minor}.9", "/p") for minor in supported_minors()
+    }
+    assert all(
+        isinstance(status, RuntimeUnavailable)
+        for status in loaded[write_report.SUBJECT].runtimes.values()
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Required compatibility: no arithmetic until the two captures are matched    #
+# --------------------------------------------------------------------------- #
+def _capture(
+    root: Path,
+    name: str,
+    document: dict[str, Any],
+    conditions: dict[str, object] | None,
+) -> Path:
+    directory = root / name
+    directory.mkdir(parents=True)
+    portfolio = directory / "portfolio.json"
+    portfolio.write_text(json.dumps(document), encoding="utf-8")
+    if conditions is not None:
+        (directory / cost_report.CONDITIONS_FILE).write_text(
+            json.dumps(conditions), encoding="utf-8"
+        )
+    return portfolio
+
+
+def _pair(
+    tmp_path: Path, contract: BudgetContract, *, with_instance_state: bool = False
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    base = _verifiable(contract)
+    head = deepcopy(base)
+    if with_instance_state:
+        _with_instance_state(base, contract)
+        _with_instance_state(head, contract)
+    base_conditions = cost_report.conditions_document(_identities())
+    head_conditions = deepcopy(base_conditions)
+    return (
+        _capture(tmp_path, "before", base, base_conditions),
+        _capture(tmp_path, "after", head, head_conditions),
+        base,
+        head,
+        base_conditions,
+        head_conditions,
+    )
+
+
+def _rewrite(path: Path, document: dict[str, Any]) -> None:
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_a_matched_pair_is_compared_with_its_compatibility_stated_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    base, head, *_rest = _pair(tmp_path, contract, with_instance_state=True)
+    assert (
+        cost_report.main(
+            [
+                "--compare",
+                str(base),
+                str(head),
+                "--require-compatible",
+                "--require-member",
+                "instance-state",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.startswith("# Python cost report comparison\n")
+    assert (
+        "Compatibility established over snapshot-delivery, write-lowering, instance-state: "
+        in captured.out
+    )
+    assert "## snapshot-delivery" in captured.out and "## instance-state" in captured.out
+    assert "| missing on " not in captured.out and "incomparable:" not in captured.out
+    assert cost_report.main(["--compare", str(base), str(head)]) == 0
+    assert "Compatibility established" not in capsys.readouterr().out
+
+
+def test_an_unmatched_pair_is_refused_before_any_arithmetic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    base, head, base_document, head_document, base_conditions, head_conditions = _pair(
+        tmp_path, contract
+    )
+
+    def refused(*extra: str) -> list[str]:
+        assert (
+            cost_report.main(["--compare", str(base), str(head), "--require-compatible", *extra])
+            == 1
+        )
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        lines = captured.err.splitlines()
+        assert lines[0].startswith("the captures are not comparable over ")
+        return lines[1:]
+
+    members = cast("dict[str, dict[str, Any]]", head_conditions["members"])
+    members["snapshot-delivery"]["sources"]["tests/unit/_delivery_control_support.py"] = "0" * 64
+    members[write_report.SUBJECT]["sources"]["tools/write_lowering_reading.py"] = "0" * 64
+    members[write_report.SUBJECT]["runtimes"]["3.14"] = {
+        "status": "available",
+        "implementation": "CPython",
+        "version": "3.14.8",
+        "executable": "/p",
+    }
+    members["snapshot-delivery"]["runtimes"]["3.13"] = {
+        "status": "unavailable",
+        "reason": "the identity probe exited 1",
+    }
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    assert refused() == [
+        "the snapshot-delivery control source tests/unit/_delivery_control_support.py differs "
+        "between the captures",
+        "snapshot-delivery CPython 3.13 identity is unknown on head (the identity probe exited 1)",
+        "the write-lowering instrument tools/write_lowering_reading.py differs between the "
+        "captures",
+        "write-lowering CPython 3.14 is CPython 3.14.7 on base and CPython 3.14.8 on head",
+    ]
+
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, base_conditions)
+    snapshot = _snapshot_of(head_document)
+    write = _write_of(head_document)
+    dropped = cast("list[dict[str, Any]]", snapshot["readings"]).pop()
+    cast("list[dict[str, Any]]", write["readings"]).append(
+        {**deepcopy(cast("list[dict[str, Any]]", write["readings"])[0]), "cell": "projectionUs"}
+    )
+    changed = cast("list[dict[str, Any]]", write["readings"])[1]
+    original_unit = changed["unit"]
+    changed["unit"] = "ms/row"
+    shortened = next(
+        r for r in cast("list[dict[str, Any]]", write["readings"]) if len(r["samples"]) > 1
+    )
+    original_samples = len(shortened["samples"])
+    shortened["samples"] = shortened["samples"][:-1]
+    write["provenance"]["dirty"] = True
+    write["provenance"]["lockDigest"] = "1" * 64
+    monkeypatch.setattr(cost_report, "validate", _no_validation)
+    monkeypatch.setattr(cost_report, "validate_matrix", _no_matrix_validation)
+    _rewrite(head, head_document)
+    failures = refused()
+    assert any(
+        f"snapshot-delivery {dropped['runtime']}" in line
+        and dropped["cell"] in line
+        and "missing on head" in line
+        for line in failures
+    )
+    assert "head: the write-lowering envelope was not produced from a clean tree" in failures
+    assert any(
+        line.startswith("the write-lowering envelopes disagree on lockDigest") for line in failures
+    )
+    assert any(
+        "projectionUs is present on head alone and not declared head-only" in line
+        for line in failures
+    )
+    assert any(
+        f"is read in {original_unit} on base and ms/row on head" in line for line in failures
+    )
+    assert any(
+        f"carries {original_samples} samples on base and {original_samples - 1} on head" in line
+        for line in failures
+    )
+
+    (head.parent / cost_report.CONDITIONS_FILE).unlink()
+    failures = refused()
+    assert failures[:1] == [
+        "head: no recorded conditions for snapshot-delivery, so its sources and interpreter "
+        "identities are unknown"
+    ]
+    _rewrite(head, base_document)
+    assert refused("--require-member", "instance-state")[-1] == (
+        "head: expected one instance-state envelope, found 0"
+    )
+
+
+def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    base, head, _base_document, head_document, _base_conditions, head_conditions = _pair(
+        tmp_path, contract, with_instance_state=True
+    )
+    instance = _instance_of(head_document)
+    cast("list[dict[str, Any]]", instance["readings"]).append(
+        {
+            "workload": "cpython-3.14/shallow",
+            "cell": "compact.projectionNs",
+            "value": 1.0,
+            "unit": "ns",
+            "samples": [],
+        }
+    )
+    members = cast("dict[str, dict[str, Any]]", head_conditions["members"])
+    members["instance-state"]["sources"]["tools/instance_state_reading.py"] = "0" * 64
+    _rewrite(head, head_document)
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    monkeypatch.setattr(cost_report, "validate", _no_validation)
+    monkeypatch.setattr(cost_report, "validate_instance_state_matrix", _no_validation)
+    arguments = [
+        "--compare",
+        str(base),
+        str(head),
+        "--require-compatible",
+        "--require-member",
+        "instance-state",
+    ]
+    assert cost_report.main(arguments) == 1
+    refused = capsys.readouterr().err.splitlines()
+    assert refused[1:] == [
+        "the instance-state instrument tools/instance_state_reading.py differs between the "
+        "captures",
+        "instance-state - | - | cpython-3.14/shallow | compact.projectionNs is present on head "
+        "alone and not declared head-only",
+    ]
+    monkeypatch.setitem(
+        cost_report.HEAD_ONLY, "instance-state", frozenset({"compact.projectionNs"})
+    )
+    assert cost_report.main(arguments) == 0
+    printed = capsys.readouterr()
+    assert printed.err == ""
+    assert (
+        "- the instance-state instrument tools/instance_state_reading.py differs between the "
+        "captures; permitted because the member declares head-only cells" in printed.out
+    )
+    assert (
+        "- instance-state - | - | cpython-3.14/shallow | compact.projectionNs is head-only"
+        in printed.out
+    )
+    members["instance-state"]["sources"]["tests/unit/_instance_state_support.py"] = "0" * 64
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    assert cost_report.main(arguments) == 1
+    assert (
+        "the instance-state control source tests/unit/_instance_state_support.py differs"
+        in capsys.readouterr().err
+    )
+
+
+def test_a_malformed_conditions_sidecar_is_a_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    base, head, *_rest = _pair(tmp_path, contract)
+    (head.parent / cost_report.CONDITIONS_FILE).write_text("[]", encoding="utf-8")
+    with pytest.raises(SystemExit) as error:
+        cost_report.main(["--compare", str(base), str(head), "--require-compatible"])
+    assert error.value.code == 2
+    assert "does not decode" in capsys.readouterr().err

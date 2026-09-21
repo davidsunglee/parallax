@@ -19,6 +19,7 @@ from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.provision import Provisioner
 from parallax.core.metamodel import Metamodel
 from snapshot_delivery_overhead import (
+    CONTROL_GROUP,
     GEOMETRY_GROUP,
     GEOMETRY_METRICS,
     LIVE_WINDOW,
@@ -33,6 +34,7 @@ from snapshot_delivery_overhead import (
     addresses,
     build_envelope,
     canary,
+    control_cells,
     diagnostic,
     expanded_cells,
     expected_readings,
@@ -44,6 +46,7 @@ from snapshot_delivery_overhead import (
     window_of,
     workload_selection,
 )
+from tests.unit import _delivery_control_support as control_support
 
 
 def test_child_command_carries_the_contract_sampling_counts_and_its_runtime() -> None:
@@ -95,9 +98,16 @@ def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> Non
     contract = BudgetContract.load()
     expected = addresses(contract, ("3.13", "3.14"))
     assert len(expected) == 2 * (
-        len(expanded_cells(contract)) + len(geometry_cells()) + len(plan_cells())
+        len(expanded_cells(contract))
+        + len(geometry_cells())
+        + len(plan_cells())
+        + len(control_cells(contract))
     )
     assert len(set(expected)) == len(expected)
+    without = addresses(contract, ("3.13", "3.14"), controls=False)
+    assert set(without) == set(expected) - {
+        address for address in expected if address[1].startswith(report.CONTROL_PREFIX)
+    }
     assert window_of("live.eager.maxMs") == LIVE_WINDOW
     assert window_of("providerFreeCpu.eager.maxMs") == PROVIDER_FREE_WINDOW
     assert window_of("stress.maxUsPerProjection") == STRESS_WINDOW
@@ -302,7 +312,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     assert [(span.name, span.labels["runtime"]) for span in workload_spans] == [
         (name, runtime)
         for runtime in ("3.13", "3.14")
-        for name in (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP)
+        for name in (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP, CONTROL_GROUP)
     ]
     assert all(span.labels["member"] == report.SUBJECT for span in spans.spans)
     setup_spans = [span for span in spans.spans if span.scope == "setup"]
@@ -336,7 +346,7 @@ def test_durations_are_recorded_for_a_measurement_and_refused_beside_a_diagnosti
 # --------------------------------------------------------------------------- #
 # Workload selection: a slice of the matrix as evidence, never a diagnostic    #
 # --------------------------------------------------------------------------- #
-def test_workload_selection_names_exact_contract_ids_and_the_two_groups() -> None:
+def test_workload_selection_names_exact_contract_ids_and_the_three_groups() -> None:
     contract = BudgetContract.load()
     assert workload_selection([], contract) is report.every_cell
     first = contract.workload_ids[0]
@@ -345,12 +355,21 @@ def test_workload_selection_names_exact_contract_ids_and_the_two_groups() -> Non
     assert not chosen(contract.workload_ids[1], "live.eager.maxMs")
     assert all(chosen(cell.workload, cell.path) for cell in plan_cells())
     assert not any(chosen(cell.workload, cell.path) for cell in geometry_cells())
+    assert not any(chosen(cell.workload, cell.path) for cell in control_cells(contract))
+    controls = workload_selection([CONTROL_GROUP], contract)
+    assert all(controls(cell.workload, cell.path) for cell in control_cells(contract))
+    assert not any(controls(cell.workload, cell.path) for cell in plan_cells())
     geometry = workload_selection([GEOMETRY_GROUP], contract)
     assert all(geometry(cell.workload, cell.path) for cell in geometry_cells())
     assert not geometry(first, "live.eager.maxMs")
     with pytest.raises(ValueError, match="unknown workload read-depth-1, unknown"):
         workload_selection(["unknown", "read-depth-1", first], contract)
-    assert report.workload_names(contract) == (*contract.workload_ids, GEOMETRY_GROUP, PLAN_GROUP)
+    assert report.workload_names(contract) == (
+        *contract.workload_ids,
+        GEOMETRY_GROUP,
+        PLAN_GROUP,
+        CONTROL_GROUP,
+    )
 
 
 def _measured_selection(
@@ -549,3 +568,49 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
         "identity"
     ] * len(probes)
     assert {span.name for span in spans.spans if span.scope == "workload"} == {PLAN_GROUP}
+
+
+# --------------------------------------------------------------------------- #
+# The control group: the before/after matrix, spelled once and expanded here   #
+# --------------------------------------------------------------------------- #
+def test_control_cells_expand_the_control_matrix_in_their_windows_and_units() -> None:
+    contract = BudgetContract.load()
+    cells = control_cells(contract)
+    arms = len(contract.memory_scaling_arms)
+    delivery = len(control_support.DELIVERY_WORKLOAD_IDS) * 2 * 2 * arms * 3
+    guarded = len(control_support.GUARD_WIDTHS) * (
+        3 + 2 + 2 * len(control_support.GUARDED_ROOTS) * 3
+    )
+    held = len(control_support.HELD_MODELS) * len(control_support.HELD_STATES)
+    assert len(cells) == delivery + guarded + held
+    assert len({(cell.workload, cell.path) for cell in cells}) == len(cells)
+    assert all(cell.workload.startswith(report.CONTROL_PREFIX) for cell in cells)
+    assert {cell.workload for cell in cells} == {
+        *(f"control-delivery-{name}" for name in control_support.DELIVERY_WORKLOAD_IDS),
+        *(f"control-guarded-{width}" for width in control_support.GUARD_WIDTHS),
+        control_support.HELD_WORKLOAD,
+    }
+    for cell in cells:
+        assert not report.needs_database(cell.path)
+        assert unit(cell.path) == ("us" if cell.path.endswith(".elapsedUs") else "KiB")
+        assert is_memory_cell(cell.path) == (not cell.path.endswith(".elapsedUs"))
+        assert expected_readings(contract, cell.path) == (
+            1 if cell.path.endswith(".elapsedUs") else contract.memory_children
+        )
+        window = window_of(cell.path, cell.workload)
+        if cell.workload == control_support.HELD_WORKLOAD:
+            assert window == report.RESULT_HELD_WINDOW
+        elif cell.path.startswith("plan.cold."):
+            assert window == report.PLAN_WINDOW
+        elif cell.path.startswith("plan.warm."):
+            assert window == report.WARM_PLAN_WINDOW
+        else:
+            assert window == report.CONTROL_DELIVERY_WINDOW
+    assert {
+        cell.path.split(".")[2] for cell in cells if cell.workload.startswith("control-delivery-")
+    } == {f"roots{arm}" for arm in contract.memory_scaling_arms}
+    assert set(report.WINDOW_DESCRIPTIONS) >= {
+        report.WARM_PLAN_WINDOW,
+        report.CONTROL_DELIVERY_WINDOW,
+        report.RESULT_HELD_WINDOW,
+    }

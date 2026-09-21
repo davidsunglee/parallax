@@ -1041,6 +1041,25 @@ _ARM_METRICS: Final = (
     ("read_ns", "ns"),
     ("dump_ns", "ns"),
 )
+ARM_NAMES: Final = ("ordinary", "legacy", "compact")
+SCENARIO_COUNT_CELLS: Final = ("fields", "warmups")
+SCENARIO_RATIO_CELLS: Final = (
+    "vsLegacy.retainedReduction",
+    "vsLegacy.bareReduction",
+    "vsOrdinary.retainedReduction",
+    "vsOrdinary.bareReduction",
+)
+AGGREGATE_NAMES: Final = ("aggregate.retained", "aggregate.bare", "vsOrdinary.retained")
+AGGREGATE_CELLS: Final = ("before", "after", "reduction")
+OPERATION_CELLS: Final = ("armAgainstArm", "likeForLike", "vsOrdinary")
+AGGREGATE_COMPARISON: Final = "aggregate.retained.reduction"
+OPERATION_COMPARISON: Final = "armAgainstArm"
+
+HEAD_ONLY_CELLS: Final[frozenset[str]] = frozenset()
+"""The cells a comparison accepts on its head side alone: an operation that has
+no before implementation is measured on the head and compared against nothing.
+Every cell the matrix carries today is measured on both sides, so this is
+empty; a projection column joins the matrix by being named here."""
 
 
 def _metric_name(name: str) -> str:
@@ -1050,6 +1069,67 @@ def _metric_name(name: str) -> str:
 
 def _operation_name(operation: Operation) -> str:
     return operation.name.replace(" ", "-")
+
+
+def scenario_workload(runtime: str, scenario: str) -> str:
+    return f"cpython-{runtime}/{scenario}"
+
+
+def runtime_workload(runtime: str) -> str:
+    return f"cpython-{runtime}"
+
+
+def expected_addresses(runtimes: Sequence[str]) -> frozenset[tuple[str, str]]:
+    """Every (workload, cell) reading address a complete envelope over
+    ``runtimes`` carries."""
+    addresses: set[tuple[str, str]] = set()
+    for runtime in runtimes:
+        for scenario in REPORTED:
+            workload = scenario_workload(runtime, scenario.name)
+            addresses.update((workload, cell) for cell in SCENARIO_COUNT_CELLS)
+            addresses.update(
+                (workload, f"{arm}.{_metric_name(metric)}")
+                for arm in ARM_NAMES
+                for metric, _unit in _ARM_METRICS
+            )
+            addresses.update((workload, cell) for cell in SCENARIO_RATIO_CELLS)
+        workload = runtime_workload(runtime)
+        addresses.update(
+            (workload, f"{name}.{cell}") for name in AGGREGATE_NAMES for cell in AGGREGATE_CELLS
+        )
+        addresses.update(
+            (workload, f"operation.{_operation_name(operation)}.{cell}")
+            for operation in OPERATIONS
+            for cell in OPERATION_CELLS
+        )
+    return frozenset(addresses)
+
+
+def expected_comparisons(runtimes: Sequence[str]) -> frozenset[tuple[str, str]]:
+    """Every (workload, cell) comparison address a complete envelope carries."""
+    return frozenset(
+        (runtime_workload(runtime), cell)
+        for runtime in runtimes
+        for cell in (
+            AGGREGATE_COMPARISON,
+            *(
+                f"operation.{_operation_name(operation)}.{OPERATION_COMPARISON}"
+                for operation in OPERATIONS
+            ),
+        )
+    )
+
+
+def unit_of(cell: str) -> str:
+    """The unit one reading cell is reported in."""
+    if cell in SCENARIO_COUNT_CELLS:
+        return "count"
+    arm, _separator, metric = cell.partition(".")
+    if arm in ARM_NAMES:
+        return next(unit for name, unit in _ARM_METRICS if _metric_name(name) == metric)
+    if cell.endswith((".before", ".after")):
+        return "B"
+    return "ratio"
 
 
 def _comparison(
@@ -1082,14 +1162,13 @@ def build_envelope(
             cell = cells.get(scenario.name)
             if not isinstance(cell, Reading):
                 raise ValueError(f"CPython {runtime}, {scenario.name} has no reading")
-            workload = f"cpython-{runtime}/{scenario.name}"
+            workload = scenario_workload(runtime, scenario.name)
+            counts = {"fields": float(cell.fields), "warmups": float(cell.warmup)}
             readings.extend(
-                (
-                    EnvelopeReading(workload, "fields", float(cell.fields), "count"),
-                    EnvelopeReading(workload, "warmups", float(cell.warmup), "count"),
-                )
+                EnvelopeReading(workload, name, counts[name], unit_of(name))
+                for name in SCENARIO_COUNT_CELLS
             )
-            for arm_name in ("ordinary", "legacy", "compact"):
+            for arm_name in ARM_NAMES:
                 arm = cast("ArmReading", getattr(cell, arm_name))
                 readings.extend(
                     EnvelopeReading(
@@ -1100,38 +1179,22 @@ def build_envelope(
                     )
                     for metric, unit in _ARM_METRICS
                 )
+            ratios = {
+                "vsLegacy.retainedReduction": cell.reduction,
+                "vsLegacy.bareReduction": cell.bare_reduction,
+                "vsOrdinary.retainedReduction": cell.ordinary_reduction,
+                "vsOrdinary.bareReduction": cell.ordinary_bare_reduction,
+            }
             readings.extend(
-                (
-                    EnvelopeReading(
-                        workload, "vsLegacy.retainedReduction", cell.reduction, "ratio"
-                    ),
-                    EnvelopeReading(
-                        workload, "vsLegacy.bareReduction", cell.bare_reduction, "ratio"
-                    ),
-                    EnvelopeReading(
-                        workload,
-                        "vsOrdinary.retainedReduction",
-                        cell.ordinary_reduction,
-                        "ratio",
-                    ),
-                    EnvelopeReading(
-                        workload,
-                        "vsOrdinary.bareReduction",
-                        cell.ordinary_bare_reduction,
-                        "ratio",
-                    ),
-                )
+                EnvelopeReading(workload, name, ratios[name], unit_of(name))
+                for name in SCENARIO_RATIO_CELLS
             )
 
-        workload = f"cpython-{runtime}"
+        workload = runtime_workload(runtime)
         mix = canonical(cells)
         primary, secondary = aggregates(mix)
         ordinary = against_ordinary(mix)
-        for name, aggregate in (
-            ("aggregate.retained", primary),
-            ("aggregate.bare", secondary),
-            ("vsOrdinary.retained", ordinary),
-        ):
+        for name, aggregate in zip(AGGREGATE_NAMES, (primary, secondary, ordinary), strict=True):
             readings.extend(
                 (
                     EnvelopeReading(workload, f"{name}.before", float(aggregate.before), "B"),
@@ -1141,11 +1204,7 @@ def build_envelope(
             )
         comparisons.append(
             _comparison(
-                workload,
-                "aggregate.retained.reduction",
-                primary.reduction,
-                "at-least",
-                AGGREGATE_TARGET,
+                workload, AGGREGATE_COMPARISON, primary.reduction, "at-least", AGGREGATE_TARGET
             )
         )
         for operation in OPERATIONS:
@@ -1171,7 +1230,7 @@ def build_envelope(
             comparisons.append(
                 _comparison(
                     workload,
-                    f"{name}.armAgainstArm",
+                    f"{name}.{OPERATION_COMPARISON}",
                     arm_ratio,
                     "at-most",
                     REGRESSION_LIMIT,
