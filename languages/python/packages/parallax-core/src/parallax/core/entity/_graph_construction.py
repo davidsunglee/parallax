@@ -174,7 +174,7 @@ def _entity_facts(
     layout = cataloged.layouts.entity(identity)
     names = wire_names_of(cls)
     plan = plan_of(cls)
-    _require_correspondence(layout, names, plan)
+    require_correspondence(layout, names, plan)
     return _EntityFacts(
         layout=layout,
         cls=cls,
@@ -186,7 +186,7 @@ def _entity_facts(
     )
 
 
-def _require_correspondence(layout: EntityLayout, names: WireNames, plan: PublicationPlan) -> None:
+def require_correspondence(layout: EntityLayout, names: WireNames, plan: PublicationPlan) -> None:
     """Refuse unless the model lays this Entity out the way its class is laid out.
 
     Two derivations reach one order from different material and neither is

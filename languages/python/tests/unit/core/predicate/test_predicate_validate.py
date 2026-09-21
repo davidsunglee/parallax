@@ -336,7 +336,7 @@ def test_include_validation_rejects_a_relationship_with_no_declaring_entity(
     )
 
     with pytest.raises(ValueError, match="no resolved relationship direction"):
-        query_validation._validate_include_path(  # pyright: ignore[reportPrivateUsage]
+        query_validation.validate_include_path(
             IncludePath(segments=(IncludeSegment(rel="Missing.items"),)),
             model,
             predicate_validation.root_position(model, root),

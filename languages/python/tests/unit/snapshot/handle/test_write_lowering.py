@@ -262,7 +262,7 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
     # The document is COMPOSED through the codec rather than bound as the write
     # input carried it, so presence is the codec's answer: `phones` is a `many`
     # occurrence and always contributes its array, the sole zero-element
-    # representation, exactly as the developer path's `to_document` already did.
+    # representation, exactly as the developer path's `encode_value_object` already did.
     statement = _lower(
         KeyedWrite(
             "insert",

@@ -5,7 +5,7 @@ executor sits a page loop that says where the delivery stands and gets back a
 page; below it sits publication, which walks the Page through one Root View per
 root at a time. :meth:`~parallax.snapshot.handle._materialization.Materializer.read_page` between
 them plans, issues its `1 + L` statements, and seals one Page exactly as an
-eager read does — so a page's child levels are the same ``IN (gathered keys)``
+eager read does — so a page's query fetches are the same ``IN (gathered keys)``
 lookups, and only the root statement differs.
 
 The loop holds a position and nothing else. How large a page is, which node

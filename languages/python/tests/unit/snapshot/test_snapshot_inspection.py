@@ -363,6 +363,11 @@ def test_the_inspection_code_set_is_closed_against_an_unlisted_code() -> None:
         "snapshot-view-owner-mismatch",
         "snapshot-pin-unavailable",
         "snapshot-edge-unavailable",
+        "snapshot-wire-envelope-ineligible",
+        "snapshot-wire-input-edited",
+        "snapshot-wire-input-incompatible",
+        "snapshot-wire-at-unrequested",
+        "snapshot-wire-at-concrete-mismatch",
     } == SNAPSHOT_INSPECTION_CODES
     with pytest.raises(ValueError, match="not a snapshot inspection code"):
         SnapshotInspectionError(

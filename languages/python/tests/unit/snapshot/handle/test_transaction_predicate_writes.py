@@ -76,7 +76,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.write_settlement import assigned_many_path
-from parallax.snapshot import QueryTargetError
+from parallax.snapshot import QueryTargetError, Snapshot
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.handle._predicate_writes import (
@@ -588,7 +588,14 @@ def test_non_temporal_where_verb_forbids_valid_from() -> None:
         ).using_database_login().transact(fn)
 
 
-def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> None:
+def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("predicate write entered Snapshot.wire")
+
+    monkeypatch.setattr(Snapshot, "wire", forbidden)
     # m-opt-lock-014's own shape: TWO resolved rows, one already equal to the
     # assigned value (skipped: no DML, no version advance), one genuinely
     # changed (one gated per-row UPDATE).

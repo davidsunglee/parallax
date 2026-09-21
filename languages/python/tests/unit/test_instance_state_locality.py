@@ -100,7 +100,9 @@ MODULES_NAMING_THE_POPULATED_SET: dict[str, frozenset[str]] = {
 # members, fresh each time and memoized nowhere. `is_present` reaches the state
 # without building anything — for a published value it tests one bit, and for an
 # ordinary one it tests membership of the set the value already holds.
-# `carry_presence` is the one caller that needs the whole set, because what it
+# `declared_values` consults an ordinary value's existing set one member at a
+# time; compact publication stays on bitmap tests. `carry_presence` is the one
+# caller that needs the whole set, because what it
 # builds is ordinary backing, which has nowhere but a `set[str]` to keep presence
 # in. Module scope carries the imports, the descriptor's own binding, and the
 # slot classification beside it, so what this pins is which DEFINITIONS reach the
@@ -118,12 +120,13 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
     ),
     "_PopulatedMembers": frozenset({"MODEL_PRESENCE", "replace_instance_presence"}),
     "carry_presence": frozenset({"_PopulatedState", "replace_instance_presence"}),
+    "declared_values": frozenset({"instance_presence"}),
     "is_present": frozenset({"instance_presence"}),
 }
 
 # What would have to learn the backing again if `_instance_state` were deleted.
 #
-# Seven sites, each taking exactly what it takes. `_declaration` builds every
+# Eight sites, each taking exactly what it takes. `_declaration` builds every
 # class's plan and hands each descriptor its ordinal; `_members` addresses the
 # row from those ordinals; both frontends extend the root that answers Pydantic
 # for a value's state; `_edit` partitions state and derives edited copies;
@@ -131,7 +134,7 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 # slot; `_graph_construction` allocates a shell, attaches one whole row to it,
 # reads a relationship position back, and checks the class's own plan against the
 # model's layout. Delete the Module and the tuple, the bitmap, and the ordinal
-# arithmetic reappear at all seven.
+# arithmetic reappear at all eight.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
     "parallax.core.entity._edit": frozenset(
@@ -144,6 +147,16 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
     "parallax.core.entity._row_codec": frozenset({"is_present", "named_state", "plan_of"}),
     "parallax.core.entity._value_object": frozenset({"BackedModel", "is_present", "plan_of"}),
+    "parallax.snapshot.materialize._wire": frozenset(
+        {
+            "ABSENT_DECLARED_VALUE",
+            "declared_values",
+            "is_published",
+            "named_state",
+            "plan_of",
+            "relationship",
+        }
+    ),
 }
 
 _INSTANCE_STATE = f"{ENTITY_PACKAGE}._instance_state"
@@ -315,13 +328,13 @@ def test_that_inventory_names_a_second_function_reaching_the_same_state() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_the_sites_backing_logic_would_return_to_are_exactly_these_seven() -> None:
+def test_the_sites_backing_logic_would_return_to_are_exactly_these_eight() -> None:
     # Read over every shipped distribution rather than over the package alone,
     # which is what makes this the Module's whole consumer set rather than the
     # part of it that happens to live nearby.
     consumers = _consumers(production_sources())
     assert consumers == {importer: names for importer, names in INSTANCE_STATE_CONSUMERS.items()}
-    assert len(consumers) == 7
+    assert len(consumers) == 8
     assert _naming_the_module_as_text(production_sources()) == []
 
 

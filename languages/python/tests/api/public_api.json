@@ -239,14 +239,14 @@
     "asc",
     "attr",
     "desc",
+    "encode_value_object",
     "index",
     "lifecycle_state_of",
     "model_of",
     "rel",
     "relationship_value_of",
     "shape_of",
-    "snake_to_camel",
-    "to_document"
+    "snake_to_camel"
   ],
   "parallax.core.wire": [
     "WireDecodingError",
@@ -433,6 +433,7 @@
     "Missing",
     "NULL",
     "Occurrence",
+    "OccurrenceCarrier",
     "Presence",
     "Present",
     "RawLocatedMemberInput",
@@ -452,6 +453,7 @@
     "encode_document",
     "encode_leaf",
     "encode_many",
+    "encode_occurrence",
     "entity_shape",
     "is_text_compared",
     "locate_entity_member",
@@ -554,7 +556,6 @@
   "parallax.snapshot.materialize": [
     "ClassifiedRoot",
     "ConformingRoot",
-    "EMPTY_UNWIND",
     "FAMILY_VARIANT_KEY",
     "InvalidData",
     "InvalidDataError",
@@ -563,7 +564,6 @@
     "Page",
     "PageBuilder",
     "PageRows",
-    "RelationshipViewKey",
     "RootClassification",
     "RootClassifications",
     "RootView",
@@ -574,7 +574,6 @@
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
-    "UnwindTree",
     "WireEntity",
     "WireValue",
     "classify_roots",
@@ -585,7 +584,6 @@
     "read_origin_of",
     "require_publishable",
     "root_last_uses",
-    "unwind_tree",
     "wire_roots"
   ],
   "parallax.snapshot.handle": [

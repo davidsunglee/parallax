@@ -40,10 +40,10 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
             projection=deep_fetch.ReadProjectionRequest("all", True),
         )
         compile_read(plan.root, workload.model, POSTGRES, result_form="instance")
-        for level in plan.levels:
-            if level.is_back_reference:
+        for step in plan.fetch_steps:
+            if isinstance(step, deep_fetch.BackReferenceFetchStep):
                 continue
-            compile_read(level.query_for([0]), workload.model, POSTGRES, result_form="instance")
+            compile_read(step.query_for([0]), workload.model, POSTGRES, result_form="instance")
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:

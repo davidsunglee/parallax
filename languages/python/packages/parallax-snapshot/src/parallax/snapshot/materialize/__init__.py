@@ -80,7 +80,6 @@ from parallax.snapshot.materialize._page import (
     Page,
     PageBuilder,
     PageRows,
-    RelationshipViewKey,
     StoredDataIssueCode,
     StoredDataIssueInput,
     page_edges,
@@ -96,19 +95,15 @@ from parallax.snapshot.materialize._root import (
     SnapshotConsistencyError,
 )
 from parallax.snapshot.materialize._wire import (
-    EMPTY_UNWIND,
     FAMILY_VARIANT_KEY,
-    UnwindTree,
     WireEntity,
     WireValue,
     opened_wire_entity,
     read_origin_of,
-    unwind_tree,
     wire_roots,
 )
 
 __all__ = [
-    "EMPTY_UNWIND",
     "FAMILY_VARIANT_KEY",
     "MISSING_STORED_VALUE",
     "SNAPSHOT_DECODING_FAILED",
@@ -121,7 +116,6 @@ __all__ = [
     "Page",
     "PageBuilder",
     "PageRows",
-    "RelationshipViewKey",
     "RootClassification",
     "RootClassifications",
     "RootView",
@@ -130,7 +124,6 @@ __all__ = [
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
-    "UnwindTree",
     "WireEntity",
     "WireValue",
     "classify_roots",
@@ -141,6 +134,5 @@ __all__ = [
     "read_origin_of",
     "require_publishable",
     "root_last_uses",
-    "unwind_tree",
     "wire_roots",
 ]

@@ -37,7 +37,6 @@ from parallax.snapshot.materialize import (
     Page,
     PageBuilder,
     RootView,
-    UnwindTree,
     hydrates,
     page_rows,
     root_last_uses,
@@ -167,7 +166,7 @@ class DeliveryPage:
     """One streamed Page and the minimal state needed to continue its delivery."""
 
     page: Page
-    includes: UnwindTree
+    includes: deep_fetch.IncludeTree
     sources: ReadSources
     delivered: int
     resume_from: ContinuationCoordinate | None
@@ -330,7 +329,7 @@ class Materializer:
                 preference=preference,
             )
         compiled_read, prepared_rows = plan.root_read()
-        self.observer.prepared(plan.level_count + 1)
+        self.observer.prepared(plan.fetch_count + 1)
         self.observer.statement_rendered(ROOT_LEVEL)
         driver_rows = execute_read(port, compiled_read, calls)
         self.observer.statement_executed(ROOT_LEVEL, len(driver_rows))
@@ -360,11 +359,12 @@ class Materializer:
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope,
     ) -> FindResult:
-        """Convert roots and execute every reachable child level into one Page."""
+        """Convert roots and execute every reachable fetch step into one Page."""
         from parallax.snapshot.handle import _read
 
         meta = model.meta
         plan = root_read.plan
+        includes = plan.include_tree()
         builder = plan.page_builder(None if root_read.observer is INERT else root_read.observer)
         observations = ObservedRows()
         root_rows = root_read.take_rows()
@@ -378,45 +378,46 @@ class Materializer:
         )
         del root_rows
 
-        level_refs: list[tuple[int, ...]] = [()] * plan.level_count
+        fetch_refs: list[tuple[int, ...]] = [()] * plan.fetch_count
         completed: set[int] = set()
-        while len(completed) < plan.level_count:
-            ready = plan.ready_levels(completed)
+        while len(completed) < plan.fetch_count:
+            ready = plan.ready_fetches(completed)
             pending: list[
                 tuple[
                     int,
-                    deep_fetch.FetchLevel,
+                    deep_fetch.QueryFetchStep,
                     tuple[int, ...],
                     CompiledRead,
                     PreparedRead,
                 ]
             ] = []
             for index in ready:
-                level = plan.level(index)
+                step = plan.fetch_step(index)
                 parents = _read.guarded_parents(
                     builder,
-                    level,
-                    _read.parent_refs(level.parent, root_refs, level_refs),
+                    includes,
+                    step,
+                    _read.parent_refs(step.parent, root_refs, fetch_refs),
                 )
-                if level.is_back_reference:
-                    _read.attach_back_reference(builder, meta, level, parents)
+                if isinstance(step, deep_fetch.BackReferenceFetchStep):
+                    _read.attach_back_reference(builder, meta, includes, step, parents)
                     completed.add(index)
                     continue
                 keys = _read.gather_keys(
                     builder,
                     parents,
-                    _read.correlation_member(meta, level.owner.identity),
+                    _read.correlation_member(meta, step.owner.identity),
                 )
                 if not keys:
-                    _read.attach_empty(builder, level, parents)
+                    _read.attach_empty(builder, includes, step, parents)
                     completed.add(index)
                     continue
-                compiled, prepared = plan.child_read(index, keys)
+                compiled, prepared = plan.fetch_read(index, keys)
                 root_read.observer.statement_rendered(index + 1)
-                pending.append((index, level, parents, compiled, prepared))
+                pending.append((index, step, parents, compiled, prepared))
 
             if len(pending) == 1:
-                for index, level, parents, compiled, prepared in pending:
+                for index, step, parents, compiled, prepared in pending:
                     rows = _read.execute_read(port, compiled, calls)
                     root_read.observer.statement_executed(index + 1, len(rows))
                     child_refs = _read.convert_rows(
@@ -427,13 +428,13 @@ class Materializer:
                         observations,
                         plan.correlation_members(index + 1),
                     )
-                    _read.attach_children(builder, meta, level, parents, child_refs)
-                    level_refs[index] = child_refs
+                    _read.attach_children(builder, meta, includes, step, parents, child_refs)
+                    fetch_refs[index] = child_refs
                     completed.add(index)
             elif pending:
                 with ExitStack() as stack:
                     call_contexts: list[DatabaseCallActivity] = []
-                    for _index, _level, _parents, compiled, _prepared in pending:
+                    for _index, _step, _parents, compiled, _prepared in pending:
                         context = calls.database_call(compiled.statement, "read", compiled.target)
                         call_contexts.append(context.__enter__())
                         stack.push(context.__exit__)
@@ -444,12 +445,12 @@ class Materializer:
                                 compiled.statement.binds,
                                 compiled.document_reads,
                             )
-                            for _index, _level, _parents, compiled, _prepared in pending
+                            for _index, _step, _parents, compiled, _prepared in pending
                         )
                     )
                     for call, rows in zip(call_contexts, batches, strict=True):
                         call.read_completed(rows)
-                for (index, level, parents, _compiled, prepared), rows in zip(
+                for (index, step, parents, _compiled, prepared), rows in zip(
                     pending, batches, strict=True
                 ):
                     root_read.observer.statement_executed(index + 1, len(rows))
@@ -461,8 +462,8 @@ class Materializer:
                         observations,
                         plan.correlation_members(index + 1),
                     )
-                    _read.attach_children(builder, meta, level, parents, child_refs)
-                    level_refs[index] = child_refs
+                    _read.attach_children(builder, meta, includes, step, parents, child_refs)
+                    fetch_refs[index] = child_refs
                     completed.add(index)
 
         pin = validated_query_pin(root_read.temporal)

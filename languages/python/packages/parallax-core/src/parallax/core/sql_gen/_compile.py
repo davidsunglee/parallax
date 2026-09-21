@@ -361,7 +361,7 @@ class CompiledRead:
     no `familyVariant` column at all, so this is what lets
     :meth:`row_identity` still names the row's own concrete identity. A deep-fetch
     CHILD level takes its narrow from its own
-    ``FetchLevel.narrow_to`` instead.
+    ``QueryFetchStep.narrow_to`` instead.
 
     ``documents`` is the top-level Value Object occurrences the resolved position
     can carry, in Position Layout order — the scalar/document provenance a

@@ -87,6 +87,12 @@ def _published(model: DomainModel, row: MappingRow, query: dict[str, object]) ->
     return db_for(model, port).wire.find(query).result()
 
 
+def _projected_account() -> WireEntity:
+    port = ScriptedAdapter(Read(rows=[dict(_ACCOUNT_ROW)]))
+    snapshot = db_for(ACCOUNT, port).find(mm.Account.where(mm.Account.id == 1))
+    return snapshot.wire().result()
+
+
 def _account_node() -> WireEntity:
     return _published(ACCOUNT, _ACCOUNT_ROW, _query(_ACCOUNT, 1))
 
@@ -139,6 +145,20 @@ def test_a_published_node_answers_the_facts_its_own_read_filed() -> None:
     assert resolved.hint is not None
     assert resolved.hint.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
     assert resolved.pin is None
+
+
+def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
+    node = _projected_account()
+    source = WireKeyedWriteSource(node, {"balance": "125.00"})
+    source.capture("update")
+
+    resolved = source.resolve(_meta(ACCOUNT), "update")
+    prepared = source.prepare(resolved, _UNBOUNDED)
+
+    assert resolved.provenance == "this"
+    assert resolved.representation == "wire"
+    assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert prepared.originals == {"balance": Decimal("100.00")}
 
 
 def test_a_node_a_pinned_read_published_answers_the_instant_it_stands_at() -> None:

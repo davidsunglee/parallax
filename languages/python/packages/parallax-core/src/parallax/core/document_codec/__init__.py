@@ -52,6 +52,7 @@ from parallax.core.document_codec._managed import (
     canonical_managed_document,
     classify_effective_change,
 )
+from parallax.core.document_codec._occurrence import OccurrenceCarrier, encode_occurrence
 from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
@@ -86,6 +87,7 @@ __all__ = [
     "MemberShape",
     "Missing",
     "Occurrence",
+    "OccurrenceCarrier",
     "Presence",
     "Present",
     "RawLocatedMemberInput",
@@ -104,6 +106,7 @@ __all__ = [
     "encode_document",
     "encode_leaf",
     "encode_many",
+    "encode_occurrence",
     "entity_shape",
     "is_text_compared",
     "locate_entity_member",

@@ -27,6 +27,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import class_models, models
+from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity._layout import (
     CatalogedModel,
@@ -55,7 +56,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import PageBuilder, RelationshipViewKey, RootView
+from parallax.snapshot.materialize import PageBuilder, RootView
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model

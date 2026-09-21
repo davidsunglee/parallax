@@ -1263,7 +1263,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
 # --------------------------------------------------------------------------- #
 # `CompiledRead.narrow_to`: the root-level authored-narrow a converted row     #
 # resolves its own concrete identity through, where a deep-fetch child level   #
-# takes its own `FetchLevel.narrow_to` instead. It reports the AUTHORED        #
+# takes its own `QueryFetchStep.narrow_to` instead. It reports the AUTHORED   #
 # selection, not the resolved effective set — resolution belongs to            #
 # materialization, which knows the row.                                        #
 # --------------------------------------------------------------------------- #

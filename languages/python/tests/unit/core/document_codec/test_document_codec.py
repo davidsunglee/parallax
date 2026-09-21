@@ -47,6 +47,7 @@ from parallax.core.document_codec import (
     LeafEncodingError,
     MemberShape,
     Occurrence,
+    OccurrenceCarrier,
     Present,
     SetLeaf,
     SetValue,
@@ -60,6 +61,7 @@ from parallax.core.document_codec import (
     encode_document,
     encode_leaf,
     encode_many,
+    encode_occurrence,
     entity_shape,
     is_text_compared,
     locate_raw_entity_member,
@@ -688,6 +690,28 @@ def test_encode_emits_the_presence_table() -> None:
     # absent, and a `many` given nothing at all — which still stores `[]`, its sole
     # zero-element representation.
     assert document == {"flag": None, "day": "2026-01-15", "entries": []}
+
+
+def test_occurrence_encoding_gives_an_absent_many_its_zero_value() -> None:
+    absent = object()
+    shape = MemberShape((Occurrence("many", Multiplicity.MANY, False, MemberShape(())),))
+    carrier = OccurrenceCarrier(
+        absent,
+        lambda _record, _shape: (absent,),
+        lambda _value: (),
+    )
+
+    encoded = encode_occurrence(
+        {},
+        shape,
+        Multiplicity.ONE,
+        carrier,
+        encode_leaf=lambda _type, value: value,
+        build_object=lambda entries: dict(entries),
+        build_array=lambda elements: list(elements),
+    )
+
+    assert encoded == {"many": []}
 
 
 def test_a_many_member_stores_the_empty_array_for_every_zero_state() -> None:
