@@ -159,7 +159,7 @@ EXEMPTIONS: Mapping[str, str] = {
 
 def declared_scopes() -> frozenset[str]:
     """Every enforcement scope §7 declares, as imported from ``check_dag_sync``."""
-    return frozenset(dag.MODULE_SCOPE.values()) | frozenset(dag.SUPPORT_SCOPE_DEPS)
+    return frozenset(dag.MODULE_SCOPE.values()) | frozenset(dag.PYTHON_FIRST_PARTY_GRANTS)
 
 
 def module_path(relative_path: str) -> str:
@@ -356,7 +356,7 @@ def zero_grant_scopes() -> Mapping[str, str]:
     return {
         scope: declared.parent
         for scope, declared in dag.CHILD_SCOPES.items()
-        if scope in dag.SUPPORT_SCOPE_DEPS and not dag.SUPPORT_SCOPE_DEPS[scope]
+        if scope in dag.PYTHON_FIRST_PARTY_GRANTS and not dag.PYTHON_FIRST_PARTY_GRANTS[scope]
     }
 
 

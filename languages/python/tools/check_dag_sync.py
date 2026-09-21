@@ -3,20 +3,26 @@
 Parallax enforces the module dependency DAG in Python with import-linter
 ``forbidden`` contracts. Rather than hand-maintain them, this tool derives them
 from the single source of truth — the fenced ``dependency-graph`` block in
-``core/spec/modules.md`` — plus the declared support-scope edges from the
-``spec/python.md`` §7 table, computes each production scope's transitive
-dependency closure, and emits the *complement*: every production scope pair the
-closure does not permit becomes a forbidden import. This rejects illegal
-non-edges, not merely wrong-direction edges (a ``layers`` contract cannot).
+``core/spec/modules.md`` — mapped onto Python enforcement scopes and joined with
+the Python-only first-party grants ``spec/python.md`` §7 declares, computes each
+production scope's transitive dependency closure, and emits the *complement*:
+every production scope pair the closure does not permit becomes a forbidden
+import. This rejects illegal non-edges, not merely wrong-direction edges (a
+``layers`` contract cannot).
 
-Support-scope edges carry no module tag, so §7 is their only declaration, and
-§7 states them **twice** — once in the prose table's "Allowed direct
-dependencies" column and once in the fenced ``support-scope-graph`` block —
-requiring that "the prose rows and the block MUST agree". All three
-representations are therefore parity-checked against each other on every run:
-the §7 prose rows, the §7 fence, and :data:`SUPPORT_SCOPE_DEPS`. Editing any one
-of them alone fails generation, and so does editing two of them consistently
-while the third disagrees.
+§7 states its side of that derivation as four strict tables, one per relation,
+and this tool restates each relation once so that the two can be compared:
+
+* behavioral module to enforcement scope — :data:`MODULE_SCOPE`;
+* enforcement scope to its allowed direct first-party dependencies, the edges
+  no module tag carries — :data:`PYTHON_FIRST_PARTY_GRANTS`;
+* restricted external package to the scopes that may import it directly —
+  :data:`RESTRICTED_EXTERNAL_GRANTS`;
+* child scope to its parent and import policy — :data:`CHILD_SCOPES`.
+
+Every run parses all four tables and compares each with its declaration before
+anything is derived. Editing a table alone, or a declaration alone, fails
+generation, so ``--write`` can never regenerate past a disagreement with §7.
 
 §7 declares the child topology as a relation of its own — each child scope's
 parent and its import policy, ``ordinary``, ``sealed``, or ``isolated`` —
@@ -43,14 +49,13 @@ conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
 side (they may harness any behavioural scope), while every production scope is
 forbidden from importing any conformance scope.
 
-§7 also declares which scopes may import a *restricted external* package
-directly — the Pydantic substrate beneath an Entity value and the Psycopg driver
-beneath the Postgres adapter — as a relation of its own, restated here as
-:data:`RESTRICTED_EXTERNAL_GRANTS` and parity-checked the same way. Each such
-package becomes one ``forbidden`` contract sourced from every ungranted
-production scope, direct imports only: a scope granted a first-party scope that
-itself imports the package reaches it through that scope and never names it,
-which is what keeps Snapshot free of Pydantic while it reaches Entity values.
+A *restricted external* package — the Pydantic substrate beneath an Entity
+value, the Psycopg driver beneath the Postgres adapter — becomes one
+``forbidden`` contract sourced from every production scope
+:data:`RESTRICTED_EXTERNAL_GRANTS` does not grant it, direct imports only: a
+scope granted a first-party scope that itself imports the package reaches it
+through that scope and never names it, which is what keeps Snapshot free of
+Pydantic while it reaches Entity values.
 
 Usage
 -----
@@ -85,9 +90,8 @@ PYPROJECT = _PY_ROOT / "pyproject.toml"
 _BEGIN = "# >>> check_dag_sync.py: BEGIN GENERATED IMPORT-LINTER CONTRACTS >>>"
 _END = "# <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<"
 
-# Behavioural / support module tag -> Python enforcement scope (spec/python.md §7).
-# `m-api-conformance` maps to the pytest-bounded `tests.api` and is
-# enforced by the pytest collection boundary, not import-linter, so it is absent.
+# Behavioural module tag -> Python enforcement scope (spec/python.md §7's
+# behavioral-scope table, less the one pytest-bounded row below).
 MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
     "m-wire": "parallax.core.wire",
@@ -131,14 +135,20 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-conformance-adapter": "parallax.conformance.cli",
 }
 
+# The behavioral modules whose enforcement scope is a pytest collection boundary
+# rather than a `parallax` package. import-linter grades none of them, so
+# MODULE_SCOPE omits them; §7 still carries a row for each, because the core
+# template requires a row per claimed module, and parity skips exactly these.
+PYTEST_BOUNDED_SCOPES: Mapping[str, str] = {"m-api-conformance": "tests.api"}
+
 # The write-execution child cluster (`_family`, `_keyed_sql`, `_write_lowering`)
-# is enforced as ONE group: the three
-# modules share this grant row rather than each declaring its own. Grouping
-# is deliberate — helpers move between the cluster's modules as the lowering
-# pipeline evolves, and a per-module row would turn every such internal move
-# into a spec edit. The group boundary is what carries the enforcement value:
-# none of the three may reach the read side (`m-snapshot-read`, `m-deep-fetch`,
-# `m-navigate`, `parallax.core.entity`).
+# is enforced as ONE group: the three modules share one §7 row, which names all
+# three, rather than each declaring its own. Grouping is deliberate — helpers
+# move between the cluster's modules as the lowering pipeline evolves, and a
+# per-module row would turn every such internal move into a spec edit. The
+# group boundary is what carries the enforcement value: none of the three may
+# reach the read side (`m-snapshot-read`, `m-deep-fetch`, `m-navigate`,
+# `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
         "parallax.core.base",
@@ -158,12 +168,15 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     }
 )
 
-# Support scopes carry no module tag in modules.md; their permitted direct
-# dependencies come from the spec/python.md §7 table. Both of that section's
-# representations — the prose rows and the fenced `support-scope-graph` block —
-# are read back and compared against this table by
-# :func:`check_support_scope_parity`.
-SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
+# Enforcement scope -> the first-party scopes it may import directly beyond
+# whatever its module tag's `modules.md` edges already carry: every support
+# scope, which has no tag and so no edge anywhere else, and each behavioural
+# scope that needs a Python-only edge no language-neutral tag can state. A
+# behavioural scope with no such supplement is absent; an empty value is kept
+# only where the emptiness is itself enforced. spec/python.md §7's first-party
+# support table is read back and compared with this by
+# :func:`check_first_party_support_parity`.
+PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # The standard-library-only projection three scopes share. It grants
     # nothing, which is the whole of what it enforces: a detached diagnostic
     # value must be reachable from the database port, the execution lifecycle,
@@ -612,12 +625,12 @@ class ChildScope:
 #   neither way, which is what lets a scope granted nothing forbid it.
 # * ``tools/check_scope_ownership.py`` allows a production file to resolve to
 #   more than one scope only along a chain declared here. A nested scope added
-#   to :data:`SUPPORT_SCOPE_DEPS` but not registered here therefore fails the
-#   ownership check instead of silently producing that skipped contract. That
-#   tool also reads this table to find the siblings a zero-grant row names, and
-#   fails when a module beside one is import-free and undeclared — a sibling
-#   shape such a row cannot reach — and takes from it the scopes whose sealed or
-#   isolated half it grades over the files.
+#   to :data:`PYTHON_FIRST_PARTY_GRANTS` but not registered here therefore
+#   fails the ownership check instead of silently producing that skipped
+#   contract. That tool also reads this table to find the siblings a zero-grant
+#   row names, and fails when a module beside one is import-free and undeclared
+#   — a sibling shape such a row cannot reach — and takes from it the scopes
+#   whose sealed or isolated half it grades over the files.
 CHILD_SCOPES: Mapping[str, ChildScope] = {
     # The four publication-side children of the Entity frontend are sealed
     # because their whole reason to exist is what they cannot reach: the
@@ -769,22 +782,12 @@ RESTRICTED_EXTERNAL_GRANTS: Mapping[str, frozenset[str]] = {
 
 _EDGE = re.compile(r"(\S+)\s*-->\s*(\S+)")
 
-# How both §7 representations spell "this scope may depend on nothing": the
-# prose table's dependency column, and — as an edge target — the fence.
-_NO_GRANTS = "(none)"
 
-
-def _parse_edge_fence(text: str, fence: str, source: str) -> list[tuple[str, str]]:
-    """Extract the ``A --> B`` edges from the fenced ``fence`` block in ``text``.
-
-    The single owner of the fence grammar. ``dependency-graph`` (module tags,
-    from ``modules.md``) and ``support-scope-graph`` (enforcement scopes, from
-    ``spec/python.md`` §7) are the same notation over different vocabularies,
-    so they differ only in fence name and in how the caller shapes the result.
-    """
-    match = re.search(rf"```{re.escape(fence)}\n(.*?)\n```", text, re.DOTALL)
+def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
+    """Extract ``A --> B`` edges from the fenced ``dependency-graph`` block."""
+    match = re.search(r"```dependency-graph\n(.*?)\n```", text, re.DOTALL)
     if match is None:
-        raise ValueError(f"no fenced ```{fence}``` block found in {source}")
+        raise ValueError("no fenced ```dependency-graph``` block found in modules.md")
     edges: list[tuple[str, str]] = []
     for line in match.group(1).splitlines():
         stripped = line.strip()
@@ -792,61 +795,31 @@ def _parse_edge_fence(text: str, fence: str, source: str) -> list[tuple[str, str
             continue
         edge = _EDGE.fullmatch(stripped)
         if edge is None:
-            raise ValueError(f"unparseable {fence} line: {line!r}")
+            raise ValueError(f"unparseable dependency-graph line: {line!r}")
         edges.append((edge.group(1), edge.group(2)))
     return edges
 
 
-def parse_dependency_graph(text: str) -> list[tuple[str, str]]:
-    """Extract ``A --> B`` edges from the fenced ``dependency-graph`` block."""
-    return _parse_edge_fence(text, "dependency-graph", "modules.md")
-
-
-def parse_support_scope_graph(text: str) -> dict[str, frozenset[str]]:
-    """Extract the declared support-scope edges from ``spec/python.md`` §7.
-
-    Same ``A --> B`` grammar as the ``dependency-graph`` fence, but both sides
-    name Python enforcement scopes rather than module tags, because support
-    scopes carry no tag in ``modules.md``.
-
-    A scope granting nothing has no edge to write, and the fence must still
-    declare it — its emptiness is the whole enforcement. It is written with the
-    :data:`_NO_GRANTS` target the prose table's dependency column already spells
-    an empty grant with, and naming that target beside a real one is a
-    contradiction rather than a wider grant.
-    """
-    declared: dict[str, set[str]] = {}
-    empty: set[str] = set()
-    for importer, imported in _parse_edge_fence(text, "support-scope-graph", "spec/python.md"):
-        if imported == _NO_GRANTS:
-            empty.add(importer)
-        else:
-            declared.setdefault(importer, set()).add(imported)
-    contradictory = sorted(empty & set(declared))
-    if contradictory:
-        raise ValueError(
-            f"support-scope-graph scopes declare {_NO_GRANTS} beside a real grant: {contradictory}"
-        )
-    for scope in empty:
-        declared[scope] = set()
-    return {scope: frozenset(deps) for scope, deps in declared.items()}
-
-
-# The §7 prose table. `_TABLE_HEADER` opens it; contiguous `|`-prefixed lines
-# are its rows. A support-scope row is marked by "(support" in its first cell —
-# behavioural rows carry an `m-…` module tag there instead and take their edges
-# from `modules.md`, not from §7.
-_TABLE_HEADER = "| Behavioral/support module |"
-_SUPPORT_ROW = "(support"
-_APPLICATION_OWNED = "(application-owned)"
+# The four §7 tables, each opened by its header line; contiguous `|`-prefixed
+# lines are its rows. A cell declares only what it spells in backticks.
 _BACKTICKED = re.compile(r"`([^`]+)`")
-# The §7 restricted-external table: one row per top-level import name, owners in
+_BACKTICKED_ONLY = re.compile(r"`[^`]+`")
+# The behavioral-scope table: one row per behavioral module, the module tag in
+# the first cell and the enforcement scope owning it in the second.
+_BEHAVIORAL_HEADER = "| Behavioral module |"
+# The first-party support table: one row per enforcement scope — or per group of
+# scopes sharing one grant, every member named in the first cell — and its
+# allowed direct first-party dependencies in the second, as module tags or
+# scopes. An empty grant is spelled `_NO_GRANTS`, alone.
+_FIRST_PARTY_HEADER = "| Enforcement scope |"
+_NO_GRANTS = "(none)"
+# The restricted-external table: one row per top-level import name, owners in
 # the second cell. import-linter forbids an external only as its top-level
 # package and squashes every submodule import into that one node, so a dotted
 # name would declare a grant nothing could enforce.
 _RESTRICTED_EXTERNAL_HEADER = "| Restricted external package |"
 _TOP_LEVEL_PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# The §7 child-scope table: one row per child, its parent in the second cell and
+# The child-scope table: one row per child, its parent in the second cell and
 # its policy, unbackticked, in the third. Parent and policy are properties of one
 # declared relationship, which is why the row carries both.
 _CHILD_SCOPE_HEADER = "| Child enforcement scope |"
@@ -873,118 +846,146 @@ def _table_rows(text: str, header: str, cells: int, label: str) -> list[list[str
     return rows
 
 
-def _topology_rows(text: str) -> list[list[str]]:
-    return _table_rows(text, _TABLE_HEADER, 5, "enforcement-topology")
+def _one_backticked(cell: str, label: str, field: str) -> str:
+    names = _BACKTICKED.findall(cell)
+    if len(names) != 1:
+        raise ValueError(
+            f"§7 {label} table: the {field} cell must hold exactly one backticked name, "
+            f"got {cell!r}"
+        )
+    return names[0]
 
 
-def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
-    """The enforcement scopes a §7 row declares.
+def _backticked_list(cell: str, label: str, field: str) -> list[str]:
+    """The comma-separated backticked names a cell holds, and nothing else.
 
-    Normally the "Enforcement scope" cell names them. The write-execution child
-    group states "those three scopes, sharing one grant row" there and enumerates
-    them in the "Source owner/path" cell instead, so a scope cell naming none
-    falls back to the owner cell. Within a cell, a backticked token starting
-    with a dot (``._write_lowering``) abbreviates a sibling of the preceding full
-    name and is expanded against it.
+    A cell is a relation's column, not prose: a token that is not backticked
+    would be read by nobody and enforced by nothing, so it is refused rather
+    than skipped, and an empty cell declares nothing rather than something.
     """
-    for cell in (scope_cell, owner_cell):
-        names: list[str] = []
-        for token in _BACKTICKED.findall(cell):
-            if token.startswith("."):
-                if not names:
-                    raise ValueError(f"abbreviated §7 scope {token!r} has no preceding full name")
-                names.append(f"{names[-1].rsplit('.', 1)[0]}{token}")
-            elif token.startswith("parallax."):
-                names.append(token)
-        if names:
-            return names
-    raise ValueError(f"§7 support row names no enforcement scope: {scope_cell!r}")
+    tokens = [token.strip() for token in cell.split(",")]
+    if not all(_BACKTICKED_ONLY.fullmatch(token) for token in tokens):
+        raise ValueError(
+            f"§7 {label} table: the {field} cell must hold comma-separated backticked "
+            f"names, got {cell!r}"
+        )
+    return [token.strip("`") for token in tokens]
 
 
-def _row_grants(cell: str, scope: str) -> frozenset[str]:
-    """The scopes a §7 row's "Allowed direct dependencies" cell grants.
+def parse_behavioral_scope_table(text: str) -> dict[str, str]:
+    """The behavioral mapping §7 declares: module tag to the enforcement scope
+    that owns it, one row per module.
 
-    Only backticked tokens declare a grant: a module tag resolved through
-    :data:`MODULE_SCOPE`, or a ``parallax.*`` scope named outright. Unbackticked
-    prose in that cell names no enforcement scope and is not a grant. A
-    backticked token that is neither shape is a spec error rather than something
-    to skip quietly — a restricted external such as ``psycopg`` is declared by
-    the restricted-external table (:func:`parse_restricted_external_table`),
-    never as a first-party grant.
-
-    :data:`_NO_GRANTS` is the one unbackticked token that carries meaning here —
-    it is how this column spells an empty grant — so naming it beside a real
-    grant is the same contradiction the fence rejects, and is rejected the same
-    way. Both representations must refuse it, or §7 could state the
-    contradiction in one of them and still pass parity. What contradicts
-    :data:`_NO_GRANTS` is a *grant*, not any surviving text: unbackticked prose
-    declares nothing, so it may sit beside :data:`_NO_GRANTS` exactly as it may
-    sit beside a real grant. The contradiction is therefore tested against the
-    parsed grants rather than against the leftover characters.
+    A scope outside the ``parallax`` namespace is accepted on exactly the rows
+    :data:`PYTEST_BOUNDED_SCOPES` names, spelled as it names them: those modules
+    are enforced by a pytest collection boundary rather than by import-linter,
+    and their rows exist for the core template's row-per-module rule, not for
+    generation.
     """
+    declared: dict[str, str] = {}
+    for module_cell, scope_cell in _table_rows(text, _BEHAVIORAL_HEADER, 2, "behavioral-scope"):
+        module = _one_backticked(module_cell, "behavioral-scope", "module")
+        scope = _one_backticked(scope_cell, "behavioral-scope", "scope")
+        if not module.startswith("m-"):
+            raise ValueError(
+                f"§7 behavioral-scope table: {module!r} is not a behavioral module tag"
+            )
+        if module in declared:
+            raise ValueError(
+                f"§7 behavioral-scope table declares {module!r} more than once; a second "
+                "row would replace the first before parity compares it"
+            )
+        if not scope.startswith("parallax.") and PYTEST_BOUNDED_SCOPES.get(module) != scope:
+            raise ValueError(
+                f"§7 behavioral-scope table maps {module!r} to {scope!r}, which is neither "
+                "a `parallax.*` enforcement scope nor that module's pytest-bounded scope"
+            )
+        declared[module] = scope
+    return declared
+
+
+def _grants(cell: str, scope: str) -> frozenset[str]:
+    """The scopes a first-party support row's dependency cell grants.
+
+    :data:`_NO_GRANTS` alone spells an empty grant; every other token is a
+    backticked module tag resolved through :data:`MODULE_SCOPE` or a backticked
+    ``parallax.*`` scope. Naming :data:`_NO_GRANTS` beside a real grant is a
+    contradiction rather than a wider grant, and a backticked token of neither
+    shape is a spec error rather than something to skip — a restricted external
+    such as ``psycopg`` is declared by the restricted-external table, never as a
+    first-party grant.
+    """
+    tokens = [token.strip() for token in cell.split(",")]
+    if _NO_GRANTS in tokens:
+        if len(tokens) == 1:
+            return frozenset()
+        rest = ", ".join(token for token in tokens if token != _NO_GRANTS)
+        _backticked_list(rest, "first-party support", "dependencies")
+        raise ValueError(
+            f"§7 first-party support row for {scope!r} declares {_NO_GRANTS} beside a real "
+            f"grant: {cell!r}"
+        )
     grants: set[str] = set()
-    for token in _BACKTICKED.findall(cell):
+    for token in _backticked_list(cell, "first-party support", "dependencies"):
         if token.startswith("parallax."):
             grants.add(token)
         elif token.startswith("m-"):
             mapped = MODULE_SCOPE.get(token)
             if mapped is None:
                 raise ValueError(
-                    f"§7 prose row for {scope!r} grants module tag {token!r}, which "
-                    "MODULE_SCOPE does not model"
+                    f"§7 first-party support row for {scope!r} grants module tag "
+                    f"{token!r}, which MODULE_SCOPE does not model"
                 )
             grants.add(mapped)
         else:
             raise ValueError(
-                f"§7 prose row for {scope!r} grants {token!r}, which is neither a "
-                "module tag nor a `parallax.*` enforcement scope"
+                f"§7 first-party support row for {scope!r} grants {token!r}, which is "
+                "neither a module tag nor a `parallax.*` enforcement scope"
             )
-    if _NO_GRANTS in cell and grants:
-        raise ValueError(
-            f"§7 prose row for {scope!r} declares {_NO_GRANTS} beside a real grant: {cell!r}"
-        )
     return frozenset(grants)
 
 
-def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
-    """Extract the declared support-scope edges from ``spec/python.md`` §7's prose rows.
+def parse_first_party_support_table(text: str) -> dict[str, frozenset[str]]:
+    """The first-party support relation §7 declares: enforcement scope to the
+    scopes it may import directly beyond its module tag's ``modules.md`` edges.
 
-    §7 states support-scope grants twice and requires the two to agree, so the
-    prose rows are a first-class input rather than commentary on the fence. The
-    composition-root row is the one support row that declares no enforcement
-    scope — it is application-owned code, outside every scope — and is skipped
-    by that exact marker, not by shape.
+    A row's scope cell names one or more ``parallax.*`` scopes outright — a
+    group sharing one grant names every member — and each scope is declared by
+    one row, a second being a contradiction to reject rather than a later
+    reading to keep. Every scope a row grants must be one the behavioral mapping
+    or this table declares, so a grant can never name a scope no contract is
+    sourced from.
     """
     declared: dict[str, frozenset[str]] = {}
-    for module, owner, scope_cell, deps_cell, _rule in _topology_rows(text):
-        if _SUPPORT_ROW not in module:
-            continue
-        if scope_cell == _APPLICATION_OWNED:
-            continue
-        scopes = _row_scopes(scope_cell, owner)
-        grants = _row_grants(deps_cell, scopes[0])
+    for scope_cell, deps_cell in _table_rows(text, _FIRST_PARTY_HEADER, 2, "first-party support"):
+        scopes = _backticked_list(scope_cell, "first-party support", "scope")
         for scope in scopes:
+            if not scope.startswith("parallax."):
+                raise ValueError(
+                    f"§7 first-party support table: {scope!r} is not a `parallax.*` "
+                    "enforcement scope"
+                )
             if scope in declared:
                 raise ValueError(
-                    f"§7's prose rows declare support scope {scope!r} more than once; "
-                    "a second row would replace the first before parity compares it"
+                    f"§7 first-party support table declares {scope!r} more than once; a "
+                    "second row would replace the first before parity compares it"
                 )
+        grants = _grants(deps_cell, scopes[0])
+        for scope in scopes:
             declared[scope] = grants
+    known = frozenset(MODULE_SCOPE.values()) | frozenset(declared)
+    for scope in sorted(declared):
+        unknown = sorted(declared[scope] - known)
+        if unknown:
+            raise ValueError(
+                f"§7 first-party support row for {scope!r} grants scopes no §7 row "
+                f"declares: {unknown}"
+            )
     return declared
 
 
 def _declared_scopes() -> frozenset[str]:
-    return frozenset(MODULE_SCOPE.values()) | frozenset(SUPPORT_SCOPE_DEPS)
-
-
-def _child_table_scope(cell: str, field: str) -> str:
-    names = _BACKTICKED.findall(cell)
-    if len(names) != 1:
-        raise ValueError(
-            f"§7 child-scope table: the {field} cell must hold exactly one backticked "
-            f"enforcement scope, got {cell!r}"
-        )
-    return names[0]
+    return frozenset(MODULE_SCOPE.values()) | frozenset(PYTHON_FIRST_PARTY_GRANTS)
 
 
 def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
@@ -1004,8 +1005,8 @@ def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
     scopes = _declared_scopes()
     declared: dict[str, ChildScope] = {}
     for child_cell, parent_cell, policy in _table_rows(text, _CHILD_SCOPE_HEADER, 3, "child-scope"):
-        child = _child_table_scope(child_cell, "child")
-        parent = _child_table_scope(parent_cell, "parent")
+        child = _one_backticked(child_cell, "child-scope", "child")
+        parent = _one_backticked(parent_cell, "child-scope", "parent")
         if child in declared:
             raise ValueError(
                 f"§7 child-scope table declares {child!r} more than once; a second row "
@@ -1100,7 +1101,7 @@ def _compare_declarations(
     right_name: str,
     right: Mapping[str, frozenset[str]],
     subject: str,
-    kind: str = "support scope",
+    kind: str,
 ) -> None:
     """Fail when two declarations of one key-to-grants relation disagree."""
     left_only = sorted(set(left) - set(right))
@@ -1119,33 +1120,55 @@ def _compare_declarations(
             )
 
 
-def check_support_scope_parity(
-    declared: Mapping[str, frozenset[str]],
-    prose: Mapping[str, frozenset[str]],
-) -> None:
-    """Fail when §7's prose rows, §7's fence, and :data:`SUPPORT_SCOPE_DEPS` disagree.
+def check_behavioral_scope_parity(declared: Mapping[str, str]) -> None:
+    """Fail when §7's behavioral-scope table and :data:`MODULE_SCOPE` disagree,
+    spec-relative, because the spec is authoritative.
 
-    Three declarations of one graph, so two comparisons. §7 itself requires
-    that "the prose rows and the block MUST agree", so that arm runs first and
-    reports a spec-internal inconsistency; only then is the spec compared
-    against the tool's table, spec-relative, because the spec is authoritative.
-    Checking both arms is what makes editing any single representation — or two
-    of the three consistently — fail rather than pass.
+    The pytest-bounded rows are the ones :data:`MODULE_SCOPE` deliberately
+    omits, so a row spelled exactly as :data:`PYTEST_BOUNDED_SCOPES` names it is
+    set aside rather than reported as spec-only. Every other row — one of those
+    modules remapped into the package tree included — must map its module to
+    the scope the tool maps it to, or the generated contracts would be sourced
+    from a scope §7 no longer names.
     """
-    _compare_declarations(
-        "the spec/python.md §7 prose table",
-        prose,
-        "the spec/python.md §7 support-scope-graph block",
-        declared,
-        "spec/python.md §7 is internally inconsistent: its prose rows and its "
-        "support-scope-graph block declare different support scopes",
-    )
+    compared = {
+        module: scope
+        for module, scope in declared.items()
+        if PYTEST_BOUNDED_SCOPES.get(module) != scope
+    }
+    spec_only = sorted(set(compared) - set(MODULE_SCOPE))
+    tool_only = sorted(set(MODULE_SCOPE) - set(compared))
+    if spec_only or tool_only:
+        raise ValueError(
+            "MODULE_SCOPE has drifted from the spec/python.md §7 behavioral-scope table: "
+            f"declared only in the spec {spec_only}, declared only in the tool {tool_only}"
+        )
+    for module in sorted(compared):
+        if compared[module] != MODULE_SCOPE[module]:
+            raise ValueError(
+                f"behavioral module {module!r} has drifted between the spec and the tool: "
+                f"the spec maps it to {compared[module]!r}, the tool maps it to "
+                f"{MODULE_SCOPE[module]!r}"
+            )
+
+
+def check_first_party_support_parity(declared: Mapping[str, frozenset[str]]) -> None:
+    """Fail when §7's first-party support table and
+    :data:`PYTHON_FIRST_PARTY_GRANTS` disagree, spec-relative, because the spec
+    is authoritative.
+
+    A one-sided edit — a scope or a grant added to the table alone, or to the
+    tool alone — fails here before anything is rendered, so ``--write`` cannot
+    regenerate a contract the spec does not state.
+    """
     _compare_declarations(
         "the spec",
         declared,
         "the tool",
-        SUPPORT_SCOPE_DEPS,
-        "SUPPORT_SCOPE_DEPS has drifted from the spec/python.md §7 support-scope-graph block",
+        PYTHON_FIRST_PARTY_GRANTS,
+        "PYTHON_FIRST_PARTY_GRANTS has drifted from the spec/python.md §7 first-party "
+        "support table",
+        kind="first-party support scope",
     )
 
 
@@ -1345,16 +1368,16 @@ def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str
     (one in ``MODULE_SCOPE``) depends on a core-DAG module that ``MODULE_SCOPE``
     does not model, the §7 enforcement map is stale and generation aborts. Edges
     whose *importer* is unmapped (a deferred / out-of-slice module the Python
-    target does not enforce) are skipped. Support-scope dependency targets are
-    likewise checked against the known scope set.
+    target does not enforce) are skipped. First-party grant targets are likewise
+    checked against the known scope set.
     """
-    nodes = set(MODULE_SCOPE.values()) | set(SUPPORT_SCOPE_DEPS)
-    for scope, deps in SUPPORT_SCOPE_DEPS.items():
+    nodes = set(MODULE_SCOPE.values()) | set(PYTHON_FIRST_PARTY_GRANTS)
+    for scope, deps in PYTHON_FIRST_PARTY_GRANTS.items():
         unknown = deps - nodes
         if unknown:
             raise ValueError(
-                f"support scope {scope!r} depends on scopes absent from the §7 "
-                f"enforcement map: {sorted(unknown)}"
+                f"first-party support scope {scope!r} depends on scopes absent from the "
+                f"§7 enforcement map: {sorted(unknown)}"
             )
     direct: dict[str, set[str]] = {node: set() for node in nodes}
     for importer, imported in edges:
@@ -1366,7 +1389,7 @@ def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str
                 "MODULE_SCOPE does not model — the §7 enforcement map is stale"
             )
         direct[MODULE_SCOPE[importer]].add(MODULE_SCOPE[imported])
-    for scope, deps in SUPPORT_SCOPE_DEPS.items():
+    for scope, deps in PYTHON_FIRST_PARTY_GRANTS.items():
         direct[scope].update(deps)
     return {node: frozenset(deps) for node, deps in direct.items()}
 
@@ -1578,11 +1601,10 @@ def splice(current: str, block: str) -> str:
 
 def generate() -> str:
     python_md = PYTHON_MD.read_text()
-    check_child_scope_parity(parse_child_scope_table(python_md))
-    check_support_scope_parity(
-        parse_support_scope_graph(python_md), parse_support_scope_table(python_md)
-    )
+    check_behavioral_scope_parity(parse_behavioral_scope_table(python_md))
+    check_first_party_support_parity(parse_first_party_support_table(python_md))
     check_restricted_external_parity(parse_restricted_external_table(python_md))
+    check_child_scope_parity(parse_child_scope_table(python_md))
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)
     forbidden = compute_forbidden(adjacency)

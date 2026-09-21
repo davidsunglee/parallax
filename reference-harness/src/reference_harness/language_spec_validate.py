@@ -55,8 +55,6 @@ _COMPLETE_AGGREGATE_RE = re.compile(r"^\*\*Complete verification command\.\*\*")
 
 # Section titles that mirror the numbered headings in language-spec-template.md.
 _SECTION_SOURCE_TOPOLOGY = "7. Source-enforcement topology"
-# The §7 column in which a row restates its module's outgoing DAG edges.
-_SOURCE_DEPENDENCY_COLUMN = "Allowed direct dependencies"
 _SECTION_ARTIFACT_TOPOLOGY = "8. Deployable artifact topology"
 _SECTION_CONDITIONALS = "9. Conditional capability decisions"
 _SECTION_QUALITY = "10. Mandatory quality toolchain"
@@ -344,91 +342,6 @@ def _check_table_shape(
     return table
 
 
-def _check_source_dependencies(
-    table: _Table,
-    edges: list[tuple[str, str]],
-    issues: list[Diagnostic],
-) -> None:
-    """Check each behavioral §7 row's allowed dependencies against the module DAG.
-
-    A row whose first column names one behavioral module restates that module's
-    outgoing edges in the language's own enforcement-scope vocabulary, so the
-    module tags in its "Allowed direct dependencies" cell MUST be exactly the
-    module's direct edges in modules.md. A cell breaks that three ways, and each
-    is reported under its own code because each is a different defect:
-
-    * it names a dependency the DAG runs the other way, which modules.md calls a
-      wrong-direction edge and a spec violation;
-    * it names a dependency the DAG does not declare in either direction, which
-      grants an enforcement scope reach no behavioral module owns;
-    * it omits a declared edge, which forbids a collaboration the core
-      specification assigns to that module.
-
-    Only module tags are read, so prose, an empty-grant spelling, and a named
-    source scope in that cell declare nothing here. Rows for support scopes and
-    language-only seams carry no module tag in their first column and are
-    outside the rule; so is the conformance family's reach over whatever it
-    harnesses, which modules.md grants by construction rather than as edges a
-    row could enumerate.
-
-    A row naming SEVERAL behavioral modules is rejected outright rather than
-    checked. One dependency cell cannot restate two modules' outgoing edges
-    unless those edge sets are identical, so a combined row would otherwise
-    satisfy the presence rule for each of its subjects while its cell was
-    validated against none of them.
-    """
-    header = [_normalize(cell) for cell in table.header]
-    normalized_column = _normalize(_SOURCE_DEPENDENCY_COLUMN)
-    if normalized_column not in header:
-        return
-    column = header.index(normalized_column)
-
-    declared: dict[str, set[str]] = {}
-    for module, dependency in edges:
-        declared.setdefault(module, set()).add(dependency)
-        declared.setdefault(dependency, set())
-
-    for _line, row in table.rows:
-        if not row or column >= len(row):
-            continue
-        subjects = [subject for subject in _MODULE_RE.findall(row[0]) if subject in declared]
-        if len(subjects) > 1:
-            issues.append(
-                Diagnostic(
-                    "combined-source-module-row",
-                    "source-enforcement topology combines "
-                    f"{', '.join(sorted(subjects))} in one row, so no dependency cell "
-                    "states either module's own allowed direct dependencies",
-                )
-            )
-            continue
-        if not subjects:
-            continue
-        module = subjects[0]
-        stated = set(_MODULE_RE.findall(row[column]))
-        for dependency in sorted(stated - declared[module]):
-            reversed_edge = module in transitive_prerequisites({dependency}, edges)
-            code, fault = (
-                ("reversed-source-dependency", "the module DAG runs the other way")
-                if reversed_edge
-                else ("undeclared-source-dependency", "the module DAG does not declare")
-            )
-            issues.append(
-                Diagnostic(
-                    code,
-                    f"source-enforcement topology allows {module} --> {dependency}, which {fault}",
-                )
-            )
-        for dependency in sorted(declared[module] - stated):
-            issues.append(
-                Diagnostic(
-                    "missing-source-dependency",
-                    f"source-enforcement topology omits the declared dependency "
-                    f"{module} --> {dependency}",
-                )
-            )
-
-
 def _check_topologies(
     markdown: str,
     template: str,
@@ -458,7 +371,6 @@ def _check_topologies(
                         f"source-enforcement topology repeats {module}",
                     )
                 )
-        _check_source_dependencies(source, edges, issues)
 
     artifacts = _check_table_shape(markdown, template, _SECTION_ARTIFACT_TOPOLOGY, issues)
     if artifacts is None:

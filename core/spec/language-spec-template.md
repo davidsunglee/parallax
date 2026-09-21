@@ -291,18 +291,56 @@ caller observes, or record it here.
 
 The behavioral-module DAG governs dependencies between source enforcement
 scopes even when many scopes live in one source tree or common-runtime artifact.
-Complete a row for every claimed module, every unclaimed transitive prerequisite,
-and every language support scope. Do not use this table as a deployable-artifact
-list.
+Record the source-enforcement map as four relations, each one strict table
+whose cells declare only what they spell in backticks. Source paths, tool
+names, and descriptive labels belong in prose beside the tables, not in them,
+so that each table can be read back mechanically and compared with the one
+declaration the enforcement tooling holds of the same relation. Do not use
+these tables as a deployable-artifact list.
 
-| Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
-|---|---|---|---|---|
-| **(decide and record — All slices)** | | | | |
+The first table maps every claimed module and every unclaimed transitive
+prerequisite to the enforcement scope that owns it, one row per module. A
+behavioral module's allowed direct dependencies are its edges in
+[`modules.md`](modules.md) and are not restated here.
+
+| Behavioral module | Enforcement scope |
+|---|---|
+| **(decide and record — All slices)** | |
+
+The second table declares every edge no module tag carries: for each language
+support scope, its allowed direct first-party dependencies; for a behavioral
+scope, only the language-specific supplement to its tagged edges. A scope
+granting nothing states so explicitly, since the empty grant is what it
+enforces.
+
+| Enforcement scope | Allowed direct first-party dependencies |
+|---|---|
+| **(decide and record — All slices)** | |
+
+The third table names each third-party package the implementation confines to
+the scopes that own the substrate it provides, by exact top-level import name,
+and the scopes granted a direct import of it. A grant here is independent of
+first-party reachability and of any artifact manifest.
+
+| Restricted external package | Granted enforcement scopes |
+|---|---|
+| **(decide and record — All slices)** | |
+
+The fourth table declares every enforcement scope nested inside another: its
+parent, and the import policy that says which half of its boundary the
+generated contracts grade and which half a complementary check must.
+
+| Child enforcement scope | Parent enforcement scope | Import policy |
+|---|---|---|
+| **(decide and record — All slices)** | | |
 
 - **(decide and record — All slices)** The dependency-analysis tool, exact
   configuration path, local command, and blocking CI command. State how the
-  configuration is checked against the complete DAG in [`modules.md`](modules.md)
-  and how a forbidden direction fails.
+  configuration is derived from the complete DAG in [`modules.md`](modules.md)
+  and from the tables above, how each table is checked against the tool's own
+  declaration of that relation so that neither can be edited alone, and how a
+  forbidden direction, an illegal non-edge, and a direct import of a
+  restricted external package each fail.
 - **(decide and record — All slices)** If several enforcement scopes live inside
   one source tree or deployable artifact, the import/namespace/internal-package
   boundaries that keep their directions mechanically distinguishable. Artifact
