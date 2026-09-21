@@ -63,6 +63,7 @@ from parallax.core.entity._instance_state import (
     ABSENT_DECLARED_VALUE,
     declared_values,
     is_published,
+    named_state_value,
 )
 from parallax.core.entity._pydantic_storage import attach_instance_state
 from tests._support.model_capabilities import row_codec_for
@@ -325,6 +326,25 @@ def test_an_edit_of_either_backing_carries_private_state_and_derives_again(
 def test_an_unedited_value_of_either_backing_carries_no_record(build: Builder) -> None:
     value = build(Depot, id=1, label="north")
     assert CHANGE_RECORD_SLOT not in real_storage(value)
+
+
+def test_one_named_state_value_is_read_from_either_backing_without_allocation() -> None:
+    relationships: dict[str, object] = {"crates": ()}
+    ordinary = _ordinary(Depot, relationships, id=1, label="north")
+    compact = published(Depot, relationships, id=1, label="north")
+    missing = object()
+
+    for value in (ordinary, compact):
+        assert named_state_value(value, "label", missing) == "north"
+        assert named_state_value(value, "crates", missing) == ()
+        assert value.shouted == "NORTH"
+        assert named_state_value(value, "shouted", missing) == "NORTH"
+        assert named_state_value(value, "unknown", missing) is missing
+
+    unloaded = published(Depot, id=2, label="south")
+    assert named_state_value(unloaded, "crates", missing) is missing
+    assert not carries_instance_storage(compact)
+    assert not carries_instance_storage(unloaded)
 
 
 # --------------------------------------------------------------------------- #

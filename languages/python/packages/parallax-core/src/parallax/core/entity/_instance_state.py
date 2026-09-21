@@ -109,6 +109,7 @@ __all__ = [
     "is_published",
     "iterate",
     "named_state",
+    "named_state_value",
     "plan_of",
     "publish",
     "relationship",
@@ -741,6 +742,30 @@ def named_state(value: BaseModel) -> Mapping[str, object]:
     if warmed:
         state.update(warmed)
     return state
+
+
+def named_state_value(value: BaseModel, name: str, default: object = None) -> object:
+    """One name-keyed value without synthesizing the whole named state.
+
+    Ordinary backing answers from its existing storage. Published backing
+    addresses the compact row or auxiliary state directly, so a caller asking
+    for one framework name neither constructs the declared-member mapping nor
+    creates instance storage. The lookup preserves :func:`named_state`'s
+    precedence when author-owned state shadows another name.
+    """
+    row = _compact(value)
+    if row is None:
+        return instance_state(value).get(name, default)
+    plan = plan_of(type(value))
+    warmed = _auxiliary(value) if plan.has_auxiliary else None
+    if warmed is not None and name in warmed:
+        return warmed[name]
+    relationship_index = plan.relationships.get(name)
+    if relationship_index is not None:
+        related = row[relationship_index]
+        return default if related is UNLOADED else related
+    member_index = plan.indexes.get(name)
+    return default if member_index is None else row[member_index]
 
 
 def is_present(value: BaseModel, bit: int) -> bool:
