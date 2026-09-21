@@ -79,7 +79,7 @@ jobs:
           COST_REPORT_REQUEST_ID: ${{ inputs.request-id }}
         run: uv run python tools/cost_report_adapter.py plan --out "$RUNNER_TEMP/cost-report/request" >> "$GITHUB_OUTPUT"
       - name: Upload the request
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cost-report-request-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cost-report/request/
@@ -122,7 +122,7 @@ jobs:
         run: uv run python tools/cost_report.py --shard "$SHARD" --request "$RUNNER_TEMP/cost-report/request/request.json" --out "$RUNNER_TEMP/cost-report/reports"
       - name: Upload the shard
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cost-report-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cost-report/reports/
@@ -190,7 +190,7 @@ jobs:
         run: cat "$RUNNER_TEMP/cost-report/assembled/summary.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the assembly
         if: always() && needs.plan.result == 'success'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: cost-report-assembled-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cost-report/assembled/
