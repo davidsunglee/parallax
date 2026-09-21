@@ -66,6 +66,7 @@ from parallax.core.entity._instance_state import (
     ABSENT_DECLARED_VALUE,
     declared_values,
     is_published,
+    named_state_value,
     plan_of,
 )
 from parallax.core.entity._instance_state import (
@@ -557,11 +558,8 @@ class EntityReader:
 
 def projection_entity(node: object) -> EntityIdentity:
     """Require one eligible published Snapshot Entity and answer its concrete."""
-    published = is_published(node)
-    if (
-        isinstance(node, Entity)
-        and not published
-        and isinstance(node.__dict__.get(CHANGE_RECORD_SLOT), ChangeRecord)
+    if isinstance(node, Entity) and isinstance(
+        named_state_value(node, CHANGE_RECORD_SLOT), ChangeRecord
     ):
         state = snapshot_state_of(node)
         raise SnapshotInspectionError(
@@ -570,6 +568,7 @@ def projection_entity(node: object) -> EntityIdentity:
             operation="Snapshot.wire",
             entity=None if state is None else state.entity,
         )
+    published = is_published(node)
     state = snapshot_state_of(node)
     if state is None or not published:
         raise SnapshotInspectionError(

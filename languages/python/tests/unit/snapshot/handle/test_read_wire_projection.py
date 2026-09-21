@@ -153,7 +153,15 @@ def test_projection_does_not_serialize_or_reclassify(
         del args, kwargs
         raise AssertionError("projection crossed a forbidden publication seam")
 
-    monkeypatch.setattr(wire_materialize, "named_state", forbidden, raising=False)
+    original_named_state_value = cast("Any", wire_materialize).named_state_value
+    named_state_reads = 0
+
+    def observed_named_state_value(value: object, name: str, default: object = None) -> object:
+        nonlocal named_state_reads
+        named_state_reads += 1
+        return original_named_state_value(cast("Any", value), name, default)
+
+    monkeypatch.setattr(wire_materialize, "named_state_value", observed_named_state_value)
 
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
@@ -161,6 +169,7 @@ def test_projection_does_not_serialize_or_reclassify(
     monkeypatch.setattr(wire_materialize, "classify_roots", forbidden)
 
     assert typed.wire().result()["name"] == "Ada"
+    assert named_state_reads > 0
 
 
 def test_whole_result_projection_preserves_root_order() -> None:
