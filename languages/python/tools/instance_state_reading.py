@@ -289,15 +289,13 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         assert projected.result() is not None
 
     def direct_wire() -> None:
-        encoder = shared_wire_encoder()
-        try:
-            encoder.begin_page()
-            projected = wire_roots(RootView(page), model.meta, includes, encode=encoder)
-            assert len(projected) == 1
-        finally:
-            encoder.release()
+        projected = direct_wire_result(page, model.meta, includes, one.pin, one.edition)
+        assert projected.result() is not None
 
-    assert one.wire().results() == list(direct_wire_result(page, model.meta, includes))
+    assert (
+        one.wire().results()
+        == direct_wire_result(page, model.meta, includes, one.pin, one.edition).results()
+    )
     tracemalloc.start()
     try:
         retained_bytes = retained(held_projection)
@@ -315,20 +313,24 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
     )
 
 
-def direct_wire_result(page: object, model: object, includes: object) -> tuple[object, ...]:
-    """One untimed direct publication used to establish the measurement twin."""
+def direct_wire_result(
+    page: object,
+    model: object,
+    includes: object,
+    pin: Pin,
+    edition: str,
+) -> Snapshot[Any]:
+    """One direct publication as the public envelope both callers inspect."""
     encoder = shared_wire_encoder()
     try:
         encoder.begin_page()
-        return cast(
-            "tuple[object, ...]",
-            wire_roots(
-                RootView(cast("Any", page)),
-                cast("Any", model),
-                cast("Any", includes),
-                encode=encoder,
-            ),
+        roots = wire_roots(
+            RootView(cast("Any", page)),
+            cast("Any", model),
+            cast("Any", includes),
+            encode=encoder,
         )
+        return Snapshot(cast("Any", roots), pin, edition)
     finally:
         encoder.release()
 

@@ -81,20 +81,22 @@ from __future__ import annotations
 
 import gc
 import sys
+from collections import Counter
 from collections.abc import Callable, Sequence
 from typing import Any, Final, cast
 
 from parallax.core.db_port import Row
+from parallax.core.entity import UNLOADED, Entity
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.temporal_read import Pin
+from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot import ModelSelection, Snapshot, prepare_model
-from parallax.snapshot.handle import Database, ScopedDatabase
-from parallax.snapshot.handle._execution_authority import LoginExecution, PrincipalExecution
+from parallax.snapshot._inspection import SnapshotNodeState
+from parallax.snapshot.handle import Database
 from parallax.snapshot.handle._publication import read_projection
-from parallax.snapshot.handle._read_plan import ReadPlan
-from parallax.snapshot.handle._read_scope import ReadScope
-from parallax.snapshot.handle._transaction_runner import TransactionRunner
-from parallax.snapshot.materialize import Page, RootView
 from tests.unit import _delivery_control_support as control_support
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
@@ -320,23 +322,6 @@ def _region_added_nothing(span: Span, where: str) -> None:
     assert closed.held <= opened.held, (where, opened, closed)
 
 
-def _reachable(value: object) -> tuple[object, ...]:
-    seen: set[int] = set()
-    reached: list[object] = []
-    pending = [value]
-    while pending:
-        held = pending.pop()
-        identity = id(held)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        reached.append(held)
-        if isinstance(held, type):
-            continue
-        pending.extend(gc.get_referents(held))
-    return tuple(reached)
-
-
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
@@ -401,29 +386,56 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     assert any(value is model for value in direct)
     assert any(value is includes for value in direct)
 
-    reached = _reachable(result)
-    forbidden = cast(
-        "tuple[type[object], ...]",
-        (
-            Database,
-            ScopedDatabase,
-            ReadScope,
-            LoginExecution,
-            PrincipalExecution,
-            TransactionRunner,
-            ReadPlan,
-            Page,
-            RootView,
-            type(port),
-        ),
-    )
-    retained = [
-        f"{type(value).__module__}.{type(value).__qualname__}"
-        for value in reached
-        if isinstance(value, forbidden)
-    ]
-    assert retained == []
-    assert isinstance(result, Snapshot)
+    reached = reachable_objects(result, boundaries=(model, includes))
+
+    def category(value: object) -> str:
+        if value is model:
+            return "model"
+        if value is includes:
+            return "includes"
+        if value is UNLOADED:
+            return "unloaded"
+        if isinstance(value, Snapshot):
+            return "snapshot"
+        if isinstance(value, Entity):
+            return "entity"
+        if isinstance(value, SnapshotNodeState):
+            return "node-state"
+        if isinstance(value, ReadOrigin):
+            return "origin"
+        if isinstance(value, EntityIdentity):
+            return "entity-identity"
+        if isinstance(value, Pin):
+            return "pin"
+        if isinstance(value, type):
+            return "shared"
+        if type(value) is dict:
+            return "views"
+        if type(value) is tuple:
+            return "tuple"
+        if type(value) in (type(None), bool, int, str):
+            return "shared"
+        return f"unexpected:{type(value).__module__}.{type(value).__qualname__}"
+
+    inventory = Counter(category(value) for value in reached)
+    del inventory["shared"]
+    unexpected = {
+        name: count for name, count in inventory.items() if name.startswith("unexpected:")
+    }
+    assert unexpected == {}
+    assert inventory == {
+        "snapshot": 1,
+        "model": 1,
+        "includes": 1,
+        "entity": 97,
+        "node-state": 97,
+        "origin": 84,
+        "entity-identity": 4,
+        "pin": 1,
+        "unloaded": 1,
+        "views": 97,
+        "tuple": 215,
+    }
 
 
 if __name__ == "__main__":

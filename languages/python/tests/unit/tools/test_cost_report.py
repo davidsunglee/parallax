@@ -1705,21 +1705,27 @@ def test_an_unmatched_pair_is_refused_before_any_arithmetic(
     )
 
 
-def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refused(
+def test_only_the_exact_head_only_source_transitions_are_noted_rather_than_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     contract = BudgetContract.load()
     monkeypatch.setattr(cost_report, "is_published", _published)
-    base, head, _base_document, head_document, _base_conditions, head_conditions = _pair(
+    base, head, _base_document, head_document, base_conditions, head_conditions = _pair(
         tmp_path, contract, with_instance_state=True
     )
     members = cast("dict[str, dict[str, Any]]", head_conditions["members"])
-    members["instance-state"]["sources"]["tools/instance_state_reading.py"] = "0" * 64
+    base_members = cast("dict[str, dict[str, Any]]", base_conditions["members"])
+    transitions = cost_report.HEAD_ONLY_SOURCE_TRANSITIONS["instance-state"]
+    for path, (before, after) in transitions.items():
+        base_members["instance-state"]["sources"][path] = before
+        members["instance-state"]["sources"][path] = after
+    _rewrite(base.parent / cost_report.CONDITIONS_FILE, base_conditions)
     _rewrite(head, head_document)
     _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
     monkeypatch.setattr(cost_report, "validate", _no_validation)
     declared = cost_report.HEAD_ONLY["instance-state"]
     monkeypatch.setitem(cost_report.HEAD_ONLY, "instance-state", frozenset())
+    monkeypatch.setitem(cost_report.HEAD_ONLY_SOURCE_TRANSITIONS, "instance-state", {})
     arguments = [
         "--compare",
         str(base),
@@ -1730,22 +1736,27 @@ def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refu
     ]
     assert cost_report.main(arguments) == 1
     refused = capsys.readouterr().err.splitlines()
-    assert refused[1] == (
-        "the instance-state instrument tools/instance_state_reading.py differs between the captures"
-    )
-    undeclared = refused[2:]
+    assert set(refused[1:3]) == {
+        "the instance-state instrument tools/instance_state_overhead.py differs between the "
+        "captures",
+        "the instance-state instrument tools/instance_state_reading.py differs between the "
+        "captures",
+    }
+    undeclared = refused[3:]
     assert len(undeclared) == len(supported_minors()) * len(instance_report.SCENARIOS) * len(
         declared
     )
     assert all("is present on head alone and not declared head-only" in line for line in undeclared)
     assert any("compact.projectionNs" in line for line in undeclared)
     monkeypatch.setitem(cost_report.HEAD_ONLY, "instance-state", declared)
+    monkeypatch.setitem(cost_report.HEAD_ONLY_SOURCE_TRANSITIONS, "instance-state", transitions)
     assert cost_report.main(arguments) == 0
     printed = capsys.readouterr()
     assert printed.err == ""
     assert (
         "- the instance-state instrument tools/instance_state_reading.py differs between the "
-        "captures; permitted because the member declares head-only cells" in printed.out
+        "captures; permitted because this exact source transition introduces its declared "
+        "head-only cells" in printed.out
     )
     assert (
         "- instance-state - | - | cpython-3.14/wide | compact.projectionTransientBytes is head-only"
@@ -1756,6 +1767,26 @@ def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refu
     assert cost_report.main(arguments) == 1
     assert (
         "the instance-state control source tests/unit/_instance_state_support.py differs"
+        in capsys.readouterr().err
+    )
+    members["instance-state"]["sources"]["tests/unit/_instance_state_support.py"] = base_members[
+        "instance-state"
+    ]["sources"]["tests/unit/_instance_state_support.py"]
+    members["instance-state"]["sources"]["tests/unit/memory_instruments.py"] = "0" * 64
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    assert cost_report.main(arguments) == 1
+    assert (
+        "the instance-state instrument tests/unit/memory_instruments.py differs"
+        in capsys.readouterr().err
+    )
+    members["instance-state"]["sources"]["tests/unit/memory_instruments.py"] = base_members[
+        "instance-state"
+    ]["sources"]["tests/unit/memory_instruments.py"]
+    members["instance-state"]["sources"]["tools/instance_state_reading.py"] = "f" * 64
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    assert cost_report.main(arguments) == 1
+    assert (
+        "the instance-state instrument tools/instance_state_reading.py differs"
         in capsys.readouterr().err
     )
 

@@ -244,6 +244,21 @@ HEAD_ONLY: Final[Mapping[str, frozenset[str]]] = {
 """The cells each report owner declares as measured on a comparison's head
 side alone; a subject absent here declares none."""
 
+HEAD_ONLY_SOURCE_TRANSITIONS: Final[Mapping[str, Mapping[str, tuple[str, str]]]] = {
+    INSTANCE_STATE_SUBJECT: {
+        "tools/instance_state_overhead.py": (
+            "0018771c970a1fc376be8034f31dbc442df8cda9a89c0f11d84dce786e7c44e1",
+            "f32bc540af6d8be02d46a2ebbbbdd47b9cf8347fd7a282b656fdedb02a81339b",
+        ),
+        "tools/instance_state_reading.py": (
+            "d69dae5771c70eefb13d4e4385b25254b004a090ea036afb747158778c805d1b",
+            "52423172aecbbef289fc090e5015f292b95709708c05df094f9902b9913a1855",
+        ),
+    }
+}
+"""Exact source revisions permitted to differ because they introduce the
+declared head-only cells. Every other instrument remains byte-comparable."""
+
 
 @dataclass(frozen=True, slots=True)
 class MemberResult:
@@ -1385,14 +1400,16 @@ def _source_differences(
     for path in sources.controls:
         if base.sources.get(path) != head.sources.get(path):
             failures.append(f"the {subject} control source {path} differs between the captures")
-    permitted = bool(HEAD_ONLY.get(subject))
+    permitted = HEAD_ONLY_SOURCE_TRANSITIONS.get(subject, {})
     for path in sources.instruments:
-        if base.sources.get(path) == head.sources.get(path):
+        before = base.sources.get(path)
+        after = head.sources.get(path)
+        if before == after:
             continue
-        if permitted:
+        if permitted.get(path) == (before, after):
             notes.append(
                 f"the {subject} instrument {path} differs between the captures; permitted "
-                "because the member declares head-only cells"
+                "because this exact source transition introduces its declared head-only cells"
             )
         else:
             failures.append(f"the {subject} instrument {path} differs between the captures")
