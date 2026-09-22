@@ -1127,10 +1127,28 @@ def _compare_declarations(
             )
 
 
+def declared_behavioral_scopes() -> dict[str, str]:
+    """The tool's one declaration of §7's behavioral mapping: :data:`MODULE_SCOPE`
+    with :data:`PYTEST_BOUNDED_SCOPES` beside it.
+
+    A module named by both would be two declarations of one row — a contract
+    source and a pytest boundary — and a merge would keep whichever came last,
+    so parity could pass on the spelling the spec carries while ``generate()``
+    sourced a contract from the other. Such a module is refused instead.
+    """
+    both = sorted(set(MODULE_SCOPE) & set(PYTEST_BOUNDED_SCOPES))
+    if both:
+        raise ValueError(
+            f"MODULE_SCOPE and PYTEST_BOUNDED_SCOPES both declare {both}; a behavioral "
+            "module is a contract source or a pytest boundary, not both"
+        )
+    return {**MODULE_SCOPE, **PYTEST_BOUNDED_SCOPES}
+
+
 def check_behavioral_scope_parity(declared: Mapping[str, str]) -> None:
     """Fail when §7's behavioral-scope table and the tool's declaration of the
-    mapping — :data:`MODULE_SCOPE` with :data:`PYTEST_BOUNDED_SCOPES` beside it —
-    disagree, spec-relative, because the spec is authoritative.
+    mapping — :func:`declared_behavioral_scopes` — disagree, spec-relative,
+    because the spec is authoritative.
 
     The pytest-bounded rows source no contract, which is why
     :data:`MODULE_SCOPE` omits them; they are compared all the same, so the
@@ -1140,7 +1158,7 @@ def check_behavioral_scope_parity(declared: Mapping[str, str]) -> None:
     maps it to, or the generated contracts would be sourced from a scope §7 no
     longer names.
     """
-    expected = {**MODULE_SCOPE, **PYTEST_BOUNDED_SCOPES}
+    expected = declared_behavioral_scopes()
     spec_only = sorted(set(declared) - set(expected))
     tool_only = sorted(set(expected) - set(declared))
     if spec_only or tool_only:

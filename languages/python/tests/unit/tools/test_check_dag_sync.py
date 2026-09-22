@@ -264,7 +264,26 @@ def test_parse_dependency_graph_rejects_a_malformed_line() -> None:
 def test_the_spec_and_the_tool_agree_on_the_behavioral_mapping() -> None:
     declared = dag.parse_behavioral_scope_table(dag.PYTHON_MD.read_text())
     dag.check_behavioral_scope_parity(declared)
-    assert declared == {**dag.MODULE_SCOPE, **dag.PYTEST_BOUNDED_SCOPES}
+    assert declared == dag.declared_behavioral_scopes()
+
+
+def test_a_module_declared_as_both_contract_source_and_pytest_boundary_fails_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Adding the module to MODULE_SCOPE while its pytest-bounded entry stays
+    # is the half-finished ownership migration; a merge of the two would keep
+    # the entry the spec still carries and let parity pass on it while
+    # generation sourced a contract from the other.
+    monkeypatch.setattr(
+        dag, "MODULE_SCOPE", {**dag.MODULE_SCOPE, "m-api-conformance": "parallax.tests.api"}
+    )
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "MODULE_SCOPE and PYTEST_BOUNDED_SCOPES both declare ['m-api-conformance']"
+        ),
+    ):
+        dag.generate()
 
 
 def test_the_pytest_bounded_row_is_required_by_parity() -> None:
