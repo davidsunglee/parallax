@@ -1107,10 +1107,12 @@ threshold; no exception was requested, and none applies.
 
 ### Provenance
 
-Produced from clean commit `5a5e312e155978c4c7e47be74c5b3bd9c5ff425d`
+Produced from clean commit `b40912042df68beaa01eaa717665e9fe1c2b1b5c`
 (`feat(cost): observe managed encoders and rehearse recovery integration`, the
 reviewed endpoint carrying every phase of the recovery and the current counter
-vocabulary) by `uv run --project languages/python python
+vocabulary; the capture ran at the branch commit `5a5e312e`, which was
+squash-merged as `b4091204` with an identical tree, and the envelopes name the
+merged commit so every clone can resolve it) by `uv run --project languages/python python
 languages/python/tools/cost_report.py --out
 languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-18
 04:31–05:25 EDT (08:31–09:25 UTC, 55 minutes; collector exit 0), on the same

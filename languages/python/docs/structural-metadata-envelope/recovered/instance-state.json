@@ -70,7 +70,7 @@
   "incomplete": [],
   "provenance": {
     "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
-    "commit": "5a5e312e155978c4c7e47be74c5b3bd9c5ff425d",
+    "commit": "b40912042df68beaa01eaa717665e9fe1c2b1b5c",
     "cores": 10,
     "cpu": "Apple M5",
     "cpython": "3.14.7",
