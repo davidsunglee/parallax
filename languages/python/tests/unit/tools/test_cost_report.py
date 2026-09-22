@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 
 import cost_report
+import instance_state_overhead as instance_report
 import write_lowering_overhead as write_report
 from cost_report import (
     COLLECTION_SPAN,
@@ -1289,6 +1290,15 @@ def _instance_of(document: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _without_instance_head_only(document: dict[str, Any]) -> None:
+    readings = cast("list[dict[str, Any]]", _instance_of(document)["readings"])
+    readings[:] = [
+        reading
+        for reading in readings
+        if cast("str", reading["cell"]) not in cost_report.HEAD_ONLY["instance-state"]
+    ]
+
+
 def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_current(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1367,7 +1377,7 @@ def _instance_add_reading(document: dict[str, Any]) -> None:
     cast("list[dict[str, object]]", document["readings"]).append(
         {
             "workload": "cpython-3.14/shallow",
-            "cell": "compact.projectionNs",
+            "cell": "compact.unknownProjectionNs",
             "value": 1,
             "unit": "ns",
             "samples": [],
@@ -1386,7 +1396,7 @@ def _instance_add_reading(document: dict[str, Any]) -> None:
         (_instance_add_samples, "carries samples"),
         (_forge_outcome, "comparison outcome"),
         (_instance_drop_runtime, "reading matrix is not exact: missing cpython-3.13"),
-        (_instance_add_reading, "unexpected cpython-3.14/shallow.compact.projectionNs"),
+        (_instance_add_reading, "unexpected cpython-3.14/shallow.compact.unknownProjectionNs"),
     ],
 )
 def test_instance_state_matrix_validation_rejects_semantic_forgeries(
@@ -1543,6 +1553,7 @@ def _pair(
     if with_instance_state:
         _with_instance_state(base, contract)
         _with_instance_state(head, contract)
+        _without_instance_head_only(base)
     base_conditions = cost_report.conditions_document(_identities())
     head_conditions = deepcopy(base_conditions)
     return (
@@ -1586,7 +1597,12 @@ def test_a_matched_pair_is_compared_with_its_compatibility_stated_first(
         in captured.out
     )
     assert "## snapshot-delivery" in captured.out and "## instance-state" in captured.out
-    assert "| missing on " not in captured.out and "incomparable:" not in captured.out
+    assert "incomparable:" not in captured.out
+    assert captured.out.count("missing on base") == (
+        len(supported_minors())
+        * len(instance_report.SCENARIOS)
+        * len(cost_report.HEAD_ONLY["instance-state"])
+    )
     assert cost_report.main(["--compare", str(base), str(head)]) == 0
     assert "Compatibility established" not in capsys.readouterr().out
 
@@ -1697,22 +1713,13 @@ def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refu
     base, head, _base_document, head_document, _base_conditions, head_conditions = _pair(
         tmp_path, contract, with_instance_state=True
     )
-    instance = _instance_of(head_document)
-    cast("list[dict[str, Any]]", instance["readings"]).append(
-        {
-            "workload": "cpython-3.14/shallow",
-            "cell": "compact.projectionNs",
-            "value": 1.0,
-            "unit": "ns",
-            "samples": [],
-        }
-    )
     members = cast("dict[str, dict[str, Any]]", head_conditions["members"])
     members["instance-state"]["sources"]["tools/instance_state_reading.py"] = "0" * 64
     _rewrite(head, head_document)
     _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
     monkeypatch.setattr(cost_report, "validate", _no_validation)
-    monkeypatch.setattr(cost_report, "validate_instance_state_matrix", _no_validation)
+    declared = cost_report.HEAD_ONLY["instance-state"]
+    monkeypatch.setitem(cost_report.HEAD_ONLY, "instance-state", frozenset())
     arguments = [
         "--compare",
         str(base),
@@ -1723,15 +1730,16 @@ def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refu
     ]
     assert cost_report.main(arguments) == 1
     refused = capsys.readouterr().err.splitlines()
-    assert refused[1:] == [
-        "the instance-state instrument tools/instance_state_reading.py differs between the "
-        "captures",
-        "instance-state - | - | cpython-3.14/shallow | compact.projectionNs is present on head "
-        "alone and not declared head-only",
-    ]
-    monkeypatch.setitem(
-        cost_report.HEAD_ONLY, "instance-state", frozenset({"compact.projectionNs"})
+    assert refused[1] == (
+        "the instance-state instrument tools/instance_state_reading.py differs between the captures"
     )
+    undeclared = refused[2:]
+    assert len(undeclared) == len(supported_minors()) * len(instance_report.SCENARIOS) * len(
+        declared
+    )
+    assert all("is present on head alone and not declared head-only" in line for line in undeclared)
+    assert any("compact.projectionNs" in line for line in undeclared)
+    monkeypatch.setitem(cost_report.HEAD_ONLY, "instance-state", declared)
     assert cost_report.main(arguments) == 0
     printed = capsys.readouterr()
     assert printed.err == ""
@@ -1740,7 +1748,7 @@ def test_a_declared_head_only_cell_and_its_instrument_are_noted_rather_than_refu
         "captures; permitted because the member declares head-only cells" in printed.out
     )
     assert (
-        "- instance-state - | - | cpython-3.14/shallow | compact.projectionNs is head-only"
+        "- instance-state - | - | cpython-3.14/wide | compact.projectionTransientBytes is head-only"
         in printed.out
     )
     members["instance-state"]["sources"]["tests/unit/_instance_state_support.py"] = "0" * 64

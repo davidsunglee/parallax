@@ -38,6 +38,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Final, cast
 
+from parallax.core.deep_fetch._include_tree import build_include_tree
+from parallax.core.temporal_read import Pin
+from parallax.snapshot import Snapshot
+from parallax.snapshot.materialize import PageBuilder, RootView, wire_roots
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize._wire import shared_wire_encoder
+
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 
@@ -55,14 +62,17 @@ from instance_state_overhead import (  # noqa: E402
     MARGINAL_NODES,
     REPETITIONS,
     ArmReading,
+    ProjectionReading,
     Reading,
     marginal,
     payload,
 )
+from tests._support.model_capabilities import cataloged_for  # noqa: E402
 from tests.unit._instance_state_support import (  # noqa: E402
     COMPACT,
     LEGACY,
     ORDINARY,
+    SCENARIOS,
     Arm,
     Scenario,
     scenario_named,
@@ -239,6 +249,90 @@ def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> A
     )
 
 
+def _projection_reading(scenario: Scenario) -> ProjectionReading:
+    """A fresh eager call and same-call reuse beside direct Wire publication."""
+    model = cataloged_for(scenario.model)
+    includes = build_include_tree(
+        queried=scenario.entity,
+        root=(scenario.entity,),
+        positions=(),
+    )
+    one = Snapshot(
+        (cast("Any", COMPACT.node(scenario, scenario.state())),),
+        Pin(),
+        "instance-state",
+        includes,
+        model,
+    )
+    many = Snapshot(
+        cast("Any", COMPACT.graph(scenario, MARGINAL_NODES)),
+        Pin(),
+        "instance-state",
+        includes,
+        model,
+    )
+    builder = PageBuilder(ViewSchema.of())
+    root = builder.add(ROOT_LEVEL, scenario.layout, scenario.values)
+    page = builder.finish((root,), Pin())
+
+    def project() -> None:
+        projected = one.wire()
+        assert projected.result() is not None
+
+    def project_many() -> None:
+        projected = many.wire()
+        assert len(projected.results()) == MARGINAL_NODES
+
+    def held_projection(sample: Callable[[], None]) -> None:
+        projected = one.wire()
+        sample()
+        assert projected.result() is not None
+
+    def direct_wire() -> None:
+        encoder = shared_wire_encoder()
+        try:
+            encoder.begin_page()
+            projected = wire_roots(RootView(page), model.meta, includes, encode=encoder)
+            assert len(projected) == 1
+        finally:
+            encoder.release()
+
+    assert one.wire().results() == list(direct_wire_result(page, model.meta, includes))
+    tracemalloc.start()
+    try:
+        retained_bytes = retained(held_projection)
+        peak_bytes = peak(held_projection)
+    finally:
+        tracemalloc.stop()
+    projection_ns = _elapsed_ns(project)
+    projection_reuse_ns, _call_ns = marginal(projection_ns, _elapsed_ns(project_many))
+    return ProjectionReading(
+        retained_bytes=retained_bytes,
+        peak_bytes=peak_bytes,
+        projection_ns=projection_ns,
+        projection_reuse_ns=projection_reuse_ns,
+        direct_wire_ns=_elapsed_ns(direct_wire),
+    )
+
+
+def direct_wire_result(page: object, model: object, includes: object) -> tuple[object, ...]:
+    """One untimed direct publication used to establish the measurement twin."""
+    encoder = shared_wire_encoder()
+    try:
+        encoder.begin_page()
+        return cast(
+            "tuple[object, ...]",
+            wire_roots(
+                RootView(cast("Any", page)),
+                cast("Any", model),
+                cast("Any", includes),
+                encode=encoder,
+            ),
+        )
+    finally:
+        encoder.release()
+
+
 def measure(scenario: Scenario) -> Reading:
     """``scenario``'s reading under every arm, taken in this interpreter."""
     field_names = tuple(cast("Any", scenario.cls).__pydantic_fields__)
@@ -250,6 +344,7 @@ def measure(scenario: Scenario) -> Reading:
         ordinary=measure_arm(scenario, ORDINARY, field_names),
         legacy=measure_arm(scenario, LEGACY, field_names),
         compact=measure_arm(scenario, COMPACT, field_names),
+        projection=_projection_reading(scenario) if scenario in SCENARIOS else None,
     )
 
 

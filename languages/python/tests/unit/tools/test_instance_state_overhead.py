@@ -131,6 +131,8 @@ def _expected_addresses(runtimes: tuple[str, ...]) -> set[tuple[str, str]]:
                     "vsOrdinary.bareReduction",
                 )
             )
+            if scenario in report.SCENARIOS:
+                expected.update((workload, cell) for cell in report.HEAD_ONLY_CELLS)
         workload = f"cpython-{runtime}"
         expected.update(
             (workload, f"{aggregate}.{metric}")
@@ -193,6 +195,15 @@ def _reading(
             compact_operation_ratio,
             legacy=False,
         ),
+        report.ProjectionReading(
+            retained_bytes=scale * 10,
+            peak_bytes=scale * 20,
+            projection_ns=scale * 100.0,
+            projection_reuse_ns=scale * 80.0,
+            direct_wire_ns=scale * 90.0,
+        )
+        if scenario in report.SCENARIOS
+        else None,
     )
 
 
@@ -355,4 +366,16 @@ def test_the_report_declares_the_matrix_its_envelope_carries() -> None:
     assert {(comparison.workload, comparison.cell) for comparison in envelope.comparisons} == (
         report.expected_comparisons(tuple(matrix))
     )
-    assert frozenset() == report.HEAD_ONLY_CELLS
+    assert (
+        frozenset(
+            {
+                "compact.projectionRetainedBytes",
+                "compact.projectionTransientBytes",
+                "compact.projectionPeakBytes",
+                "compact.projectionNs",
+                "compact.projectionReuseNs",
+                "compact.directWireNs",
+            }
+        )
+        == report.HEAD_ONLY_CELLS
+    )

@@ -82,12 +82,19 @@ from __future__ import annotations
 import gc
 import sys
 from collections.abc import Callable, Sequence
-from typing import Final
+from typing import Any, Final, cast
 
 from parallax.core.db_port import Row
 from parallax.core.entity._layout import CatalogedModel
-from parallax.snapshot import ModelSelection, prepare_model
+from parallax.snapshot import ModelSelection, Snapshot, prepare_model
+from parallax.snapshot.handle import Database, ScopedDatabase
+from parallax.snapshot.handle._execution_authority import LoginExecution, PrincipalExecution
 from parallax.snapshot.handle._publication import read_projection
+from parallax.snapshot.handle._read_plan import ReadPlan
+from parallax.snapshot.handle._read_scope import ReadScope
+from parallax.snapshot.handle._transaction_runner import TransactionRunner
+from parallax.snapshot.materialize import Page, RootView
+from tests.unit import _delivery_control_support as control_support
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
@@ -313,6 +320,23 @@ def _region_added_nothing(span: Span, where: str) -> None:
     assert closed.held <= opened.held, (where, opened, closed)
 
 
+def _reachable(value: object) -> tuple[object, ...]:
+    seen: set[int] = set()
+    reached: list[object] = []
+    pending = [value]
+    while pending:
+        held = pending.pop()
+        identity = id(held)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        reached.append(held)
+        if isinstance(held, type):
+            continue
+        pending.extend(gc.get_referents(held))
+    return tuple(reached)
+
+
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
@@ -356,6 +380,50 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
         assert once == often, layout
     for layout in LAYOUTS:
         _region_added_nothing(_unseen_executions(layout), layout)
+
+
+@in_a_child_interpreter
+def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execution() -> None:
+    port = control_support.GuardedPort(control_support.GUARDED_ROOTS[0])
+    root = Database(port.open(), control_support.GUARDED_MODEL)
+    scope = root.using_database_login()
+    result = scope.find(control_support.guarded_query(control_support.GUARD_WIDTHS[-1]))
+    held = cast("Any", result)
+    model = held._projection_model
+    includes = held._includes
+    root.close()
+    del root, scope
+    gc.collect()
+    gc.collect()
+
+    assert model is not None and includes is not None
+    direct = gc.get_referents(result)
+    assert any(value is model for value in direct)
+    assert any(value is includes for value in direct)
+
+    reached = _reachable(result)
+    forbidden = cast(
+        "tuple[type[object], ...]",
+        (
+            Database,
+            ScopedDatabase,
+            ReadScope,
+            LoginExecution,
+            PrincipalExecution,
+            TransactionRunner,
+            ReadPlan,
+            Page,
+            RootView,
+            type(port),
+        ),
+    )
+    retained = [
+        f"{type(value).__module__}.{type(value).__qualname__}"
+        for value in reached
+        if isinstance(value, forbidden)
+    ]
+    assert retained == []
+    assert isinstance(result, Snapshot)
 
 
 if __name__ == "__main__":

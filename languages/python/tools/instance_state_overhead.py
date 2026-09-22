@@ -307,6 +307,21 @@ class ArmReading(NamedTuple):
         return self.peak_bytes - self.retained_bytes
 
 
+class ProjectionReading(NamedTuple):
+    """One canonical scenario projected from a completed Typed envelope."""
+
+    retained_bytes: int
+    peak_bytes: int
+    projection_ns: float
+    projection_reuse_ns: float
+    direct_wire_ns: float
+
+    @property
+    def transient_bytes(self) -> int:
+        """Working allocation released before the projected envelope returns."""
+        return max(self.peak_bytes - self.retained_bytes, 0)
+
+
 def marginal(one_node_ns: float, many_nodes_ns: float) -> tuple[float, float]:
     """What one more node costs, and what one call costs besides its nodes.
 
@@ -338,6 +353,8 @@ class Reading(NamedTuple):
     ordinary: ArmReading
     legacy: ArmReading
     compact: ArmReading
+    projection: ProjectionReading | None = None
+    """Typed-envelope projection for canonical scenarios; absent for ``warmed``."""
 
     @property
     def reduction(self) -> float:
@@ -555,6 +572,11 @@ def _decoded(output: str) -> Cell:
             ordinary=ArmReading(**cast("dict[str, Any]", decoded["ordinary"])),
             legacy=ArmReading(**cast("dict[str, Any]", decoded["legacy"])),
             compact=ArmReading(**cast("dict[str, Any]", decoded["compact"])),
+            projection=(
+                None
+                if decoded.get("projection") is None
+                else ProjectionReading(**cast("dict[str, Any]", decoded["projection"]))
+            ),
         )
     except (ValueError, KeyError, TypeError) as error:
         return f"the child's reading did not decode: {error}"
@@ -572,6 +594,7 @@ def payload(reading: Reading) -> str:
             "ordinary": reading.ordinary._asdict(),
             "legacy": reading.legacy._asdict(),
             "compact": reading.compact._asdict(),
+            "projection": (None if reading.projection is None else reading.projection._asdict()),
         }
     )
 
@@ -929,6 +952,29 @@ def _runtime_section(runtime: str, cells: Mapping[str, Cell]) -> list[str]:
         lines.append(
             f"    {operation.name:<42} {ordinary_ratio(readings, operation):>21.2f}x over the mix"
         )
+    lines += ["", *_projection_lines(readings)]
+    return lines
+
+
+_PROJECTION_HEADER: Final = (
+    f"{'scenario':<12} {'retained B':>11} {'transient B':>12} {'peak B':>9} "
+    f"{'projection us':>13} {'reuse us':>10} {'direct Wire us':>14} {'model_dump us':>13}"
+)
+
+
+def _projection_lines(readings: Sequence[Reading]) -> list[str]:
+    lines = ["  Typed-envelope Wire projection — canonical scenarios", _PROJECTION_HEADER]
+    for reading in readings:
+        projection = reading.projection
+        assert projection is not None, reading.scenario
+        lines.append(
+            f"{reading.scenario:<12} {projection.retained_bytes:>11,} "
+            f"{projection.transient_bytes:>12,} {projection.peak_bytes:>9,} "
+            f"{projection.projection_ns / 1e3:>13.2f} "
+            f"{projection.projection_reuse_ns / 1e3:>10.2f} "
+            f"{projection.direct_wire_ns / 1e3:>14.2f} "
+            f"{reading.compact.dump_ns / 1e3:>13.2f}"
+        )
     return lines
 
 
@@ -1055,11 +1101,21 @@ OPERATION_CELLS: Final = ("armAgainstArm", "likeForLike", "vsOrdinary")
 AGGREGATE_COMPARISON: Final = "aggregate.retained.reduction"
 OPERATION_COMPARISON: Final = "armAgainstArm"
 
-HEAD_ONLY_CELLS: Final[frozenset[str]] = frozenset()
+_PROJECTION_METRICS: Final = (
+    ("compact.projectionRetainedBytes", "B"),
+    ("compact.projectionTransientBytes", "B"),
+    ("compact.projectionPeakBytes", "B"),
+    ("compact.projectionNs", "ns"),
+    ("compact.projectionReuseNs", "ns"),
+    ("compact.directWireNs", "ns"),
+)
+
+HEAD_ONLY_CELLS: Final[frozenset[str]] = frozenset(cell for cell, _unit in _PROJECTION_METRICS)
 """The cells a comparison accepts on its head side alone: an operation that has
 no before implementation is measured on the head and compared against nothing.
-Every cell the matrix carries today is measured on both sides, so this is
-empty; a projection column joins the matrix by being named here."""
+The projection operation and its same-page control join the matrix only after
+the before capture, so their columns are named explicitly rather than inferred
+from whichever cells happen to be present."""
 
 
 def _metric_name(name: str) -> str:
@@ -1093,6 +1149,8 @@ def expected_addresses(runtimes: Sequence[str]) -> frozenset[tuple[str, str]]:
                 for metric, _unit in _ARM_METRICS
             )
             addresses.update((workload, cell) for cell in SCENARIO_RATIO_CELLS)
+            if scenario in SCENARIOS:
+                addresses.update((workload, cell) for cell in HEAD_ONLY_CELLS)
         workload = runtime_workload(runtime)
         addresses.update(
             (workload, f"{name}.{cell}") for name in AGGREGATE_NAMES for cell in AGGREGATE_CELLS
@@ -1124,6 +1182,9 @@ def unit_of(cell: str) -> str:
     """The unit one reading cell is reported in."""
     if cell in SCENARIO_COUNT_CELLS:
         return "count"
+    projection_units = dict(_PROJECTION_METRICS)
+    if cell in projection_units:
+        return projection_units[cell]
     arm, _separator, metric = cell.partition(".")
     if arm in ARM_NAMES:
         return next(unit for name, unit in _ARM_METRICS if _metric_name(name) == metric)
@@ -1189,6 +1250,24 @@ def build_envelope(
                 EnvelopeReading(workload, name, ratios[name], unit_of(name))
                 for name in SCENARIO_RATIO_CELLS
             )
+            if scenario in SCENARIOS:
+                projection = cell.projection
+                if projection is None:
+                    raise ValueError(
+                        f"CPython {runtime}, {scenario.name} has no projection reading"
+                    )
+                projection_values = {
+                    "compact.projectionRetainedBytes": projection.retained_bytes,
+                    "compact.projectionTransientBytes": projection.transient_bytes,
+                    "compact.projectionPeakBytes": projection.peak_bytes,
+                    "compact.projectionNs": projection.projection_ns,
+                    "compact.projectionReuseNs": projection.projection_reuse_ns,
+                    "compact.directWireNs": projection.direct_wire_ns,
+                }
+                readings.extend(
+                    EnvelopeReading(workload, name, float(projection_values[name]), unit)
+                    for name, unit in _PROJECTION_METRICS
+                )
 
         workload = runtime_workload(runtime)
         mix = canonical(cells)

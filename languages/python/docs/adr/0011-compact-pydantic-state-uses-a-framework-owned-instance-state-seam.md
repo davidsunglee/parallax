@@ -48,8 +48,9 @@ computed-field restatement, both owned schema hooks, and the Parallax
 reimplementations of equality, hashing, repr, and the populated-member set that
 existed to work around not having the descriptors.
 `__get_pydantic_core_schema__` stays reserved although the framework installs
-none, because a later claim may install a Parallax-owned serializer and needs
-that seam unambiguously the framework's.
+none, because an authored hook can rebuild a published value as an ordinary
+instance without its Snapshot lifecycle state. The reservation protects that
+state boundary; it does not reserve a future serializer door.
 
 **The proof passed.** On pydantic 2.13.0 with pydantic-core 2.46.0 (the declared
 floor) and on the repository lock, on CPython 3.13 and 3.14, three arms —

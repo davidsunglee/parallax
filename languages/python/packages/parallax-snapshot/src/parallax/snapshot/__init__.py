@@ -28,6 +28,11 @@ issue's evidence spells a genuinely absent stored member with), and the
 deliberately absent: a result carries no lifecycle record, and an application
 reaches that vocabulary through :mod:`parallax.core.execution_lifecycle` and
 ``connect``'s own ``lifecycle_provider`` seam instead.
+An Entity-valued Typed Snapshot's ``wire()`` publishes the canonical frozen
+Wire result from the completed envelope without another read or Pydantic
+serialization; its element forms render one eligible published node at the
+root or an exact requested include position. Direct and projected Wire
+Snapshots are defensively ineligible for another projection.
 :class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
 own arity errors. The refusals are :class:`QueryTargetError`, of a query

@@ -108,6 +108,10 @@ live:
   (:class:`Snapshot`, :class:`CheckedSnapshot`, :class:`FindResult`,
   :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`).
+  An Entity-valued Typed ``Snapshot`` also publishes its whole canonical Wire
+  result, or one eligible published element at an exact requested position,
+  entirely from the completed envelope. Direct and projected Wire results are
+  not projection-capable receivers.
   :class:`RowsResult` is what the values lane answers, and
   :data:`PublishedRow` is the element it publishes per result position.
 

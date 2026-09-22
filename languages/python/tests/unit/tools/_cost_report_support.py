@@ -124,6 +124,15 @@ def _instance_reading(scenario: Scenario, contract: BudgetContract) -> instance_
         _instance_arm(scenario, legacy * 2, 1.0),
         _instance_arm(scenario, legacy, 1.0),
         _instance_arm(scenario, legacy // 2, 1.0),
+        instance_report.ProjectionReading(
+            retained_bytes=scale * 10,
+            peak_bytes=scale * 20,
+            projection_ns=scale * 100.0,
+            projection_reuse_ns=scale * 80.0,
+            direct_wire_ns=scale * 90.0,
+        )
+        if scenario in instance_report.SCENARIOS
+        else None,
     )
 
 
