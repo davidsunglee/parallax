@@ -308,10 +308,11 @@ class _StreamWireProjection:
         )
         node: object | None = record.data if record is not None else cast("object", value)
         concrete = None
-        candidate_reader: EntityReader | None = None
+        reader = self._reader
         if node is not None:
-            candidate_reader = EntityReader(self._model, operation="SnapshotStream.wire")
-            concrete = projection_concrete(candidate_reader, node, operation="SnapshotStream.wire")
+            if reader is None:
+                reader = EntityReader(self._model, operation="SnapshotStream.wire")
+            concrete = projection_concrete(reader, node, operation="SnapshotStream.wire")
         position = wire_position(
             self._includes,
             self._model,
@@ -331,8 +332,8 @@ class _StreamWireProjection:
                 entity=concrete,
             )
         if self._reader is None:
-            assert candidate_reader is not None
-            self._reader = candidate_reader
+            assert reader is not None
+            self._reader = reader
         if self._walk is None:
             if self._encoder is None:
                 self._encoder = wire_materialize.shared_wire_encoder()

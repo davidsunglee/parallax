@@ -18,6 +18,10 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from tests._support.corpus import CollectionKinds, case_document, compare_graph
+from tests._support.graph_residuals import (
+    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
+    classify_child_graph_shape_residuals,
+)
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -105,3 +109,44 @@ def test_a_step_graph_rejects_a_missing_node() -> None:
     observed = {"OrderItem": cast("list[Any]", expected["OrderItem"])[:1]}
     with pytest.raises(AssertionError):
         compare_graph(observed, expected, kinds)
+
+
+def _snapshot_residual_graphs() -> tuple[dict[str, Any], dict[str, Any], CollectionKinds]:
+    expected, kinds = _authored_graph("m-snapshot-read-012")
+    observed = copy.deepcopy(expected)
+    person = cast("dict[str, Any]", observed["Person"][0])
+    for animal in cast("list[dict[str, Any]]", person["animals"]):
+        sibling_fields = (
+            ("indoor", "tuskLength")
+            if animal["familyVariant"] == "Dog"
+            else ("barkVolume", "tuskLength")
+        )
+        for field in sibling_fields:
+            animal.pop(field)
+    cast("dict[str, Any]", person["pets[Dog]"][0])["familyVariant"] = "Dog"
+    return observed, expected, kinds
+
+
+def test_recorded_child_graph_residuals_have_one_exact_explanation() -> None:
+    observed, expected, kinds = _snapshot_residual_graphs()
+    assert (
+        classify_child_graph_shape_residuals(observed, expected, kinds)
+        == (CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS["m-snapshot-read-012"])
+    )
+
+
+def test_child_graph_residuals_do_not_hide_an_applicable_null_member() -> None:
+    observed, expected, kinds = _snapshot_residual_graphs()
+    observed_dog = cast("dict[str, Any]", observed["Person"][0]["animals"][0])
+    expected_dog = cast("dict[str, Any]", expected["Person"][0]["animals"][0])
+    observed_dog.pop("licenseId")
+    expected_dog["licenseId"] = None
+    with pytest.raises(AssertionError, match="not uniquely explained"):
+        classify_child_graph_shape_residuals(observed, expected, kinds)
+
+
+def test_child_graph_residuals_do_not_hide_a_broad_view_variant() -> None:
+    observed, expected, kinds = _snapshot_residual_graphs()
+    cast("dict[str, Any]", observed["Person"][0]["animals"][0]).pop("familyVariant")
+    with pytest.raises(AssertionError, match="not uniquely explained"):
+        classify_child_graph_shape_residuals(observed, expected, kinds)
