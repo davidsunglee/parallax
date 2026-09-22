@@ -26,7 +26,7 @@ pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -34,7 +34,9 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, engine
+from parallax.conformance._lanes import scenario as scenario_lane
 from parallax.conformance._lifecycle_observation import LifecycleObservation
+from parallax.conformance._mechanism import envelope
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
@@ -51,10 +53,10 @@ from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import LATEST, DomainModel, ObjectQuery
 from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import UnloadedRelationshipError, ValueObject, encode_value_object
+from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot import InvalidData, connect, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
@@ -71,7 +73,6 @@ from tests._support.corpus import (
     compare_binds,
     compare_graph,
     compare_rows,
-    instance_graph_node,
     instance_row,
 )
 from tests._support.db_port import ConnectsAsItself
@@ -449,68 +450,67 @@ def _access_expect_graph(case_id: str) -> dict[str, Any]:
     return cast("dict[str, Any]", graphs[0])
 
 
-def _serialize_value_object_members(node: dict[str, Any]) -> dict[str, Any]:
-    """``node`` with every Value Object member serialized to its canonical document.
-
-    A `then.graph` / `expectRows` leaf is the document the read published, and
-    canonical serialization is presence-filtered the same way: a member the
-    stored document omitted is absent from both sides, and one it stored as JSON
-    null is null on both. Rendering by GETTER instead would report what an absent
-    member READS as — the absence collapse `m-predicate` fixes — which is a
-    different observation and the one thing this comparison must not substitute
-    for the published value.
-    """
-    return {
-        key: encode_value_object(value) if isinstance(value, ValueObject) else value
-        for key, value in node.items()
-    }
+def _projected_roots(snapshot: Snapshot[Any]) -> list[object]:
+    return cast("list[object]", snapshot.wire().checked().results())
 
 
-def _assert_surviving_view(case_id: str, entity: str, instances: Sequence[Any]) -> None:
+def _projected_nodes(snapshot: Snapshot[Any]) -> list[Mapping[str, object] | None]:
+    return [envelope.graph_root(root) for root in _projected_roots(snapshot)]
+
+
+def _wire_path(snapshot: Snapshot[Any], path: str) -> list[object]:
+    current: list[object] = cast("list[object]", _projected_nodes(snapshot))
+    for segment in path.split("."):
+        reached: list[object] = []
+        for node in current:
+            if not isinstance(node, Mapping):
+                continue
+            value = cast("Mapping[str, object]", node).get(segment)
+            if isinstance(value, list):
+                reached.extend(cast("list[object]", value))
+            elif value is not None:
+                reached.append(value)
+        current = reached
+    return current
+
+
+def _assert_surviving_view(case_id: str, entity: str, nodes: Sequence[object]) -> None:
     """Grade a composition story's surviving relationship view against the whole
     ``expectGraph`` its access step authors, through the SAME model-driven
     comparator the wire lane grades that step by — so every leaf the case states
     is asserted here rather than the handful an assertion happens to name."""
     compare_graph(
-        {
-            entity: [
-                _serialize_value_object_members(instance_graph_node(instance))
-                for instance in instances
-            ]
-        },
+        {entity: list(nodes)},
         _access_expect_graph(case_id),
         CollectionKinds(engine.load_case_metamodel(_CASES[case_id])),
     )
 
 
-def _assert_read_step_graph(
-    case_id: str, index: int, entity: str, member: str, snapshot: Any
-) -> None:
+def _assert_read_step_graph(case_id: str, index: int, snapshot: Snapshot[Any]) -> None:
     """Grade one of a story's own finds against the whole ``expectGraph`` the
     scenario's step at ``index`` authors — the observable's READ placement.
 
     The graded value is the whole graph that find materialized: each root's own
     members, plus the ``member`` relationship its Include Path populated, read
     off the typed nodes the story holds and compared through the SAME
-    model-driven comparator the wire lane grades the step by. `instance_graph_node`
-    renders scalar and value-object members alone, so a loaded arm is attached
-    here from the developer surface — which is what makes this the typed lane's
-    answer to the same authored expectation rather than a second rendering of the
-    wire's.
+    model-driven comparator the wire lane grades the step by. The observation is
+    read from the source envelope's public Wire projection, so no test-owned
+    traversal of Typed fields participates.
     """
     step = _scenario_steps(case_id)[index]
-    expected = cast("dict[str, list[dict[str, Any]]]", step["expectGraph"])
-    observed = {
-        entity: [
-            _vo_owner_row(root)
-            | {member: [_vo_owner_row(child) for child in getattr(root, member)]}
-            for root in snapshot.results()
-        ]
-    }
-    compare_graph(observed, expected, CollectionKinds(engine.load_case_metamodel(_CASES[case_id])))
+    case = _CASES[case_id]
+    model = engine.load_case_metamodel(case)
+    query = scenario_lane.step_query(step, model)
+    observed = scenario_lane.read_step_graph(case, model, index, step, query, snapshot.wire())
+    assert observed is not None
+    compare_graph(
+        cast("dict[str, Any]", observed["graph"]),
+        cast("dict[str, Any]", step["expectGraph"]),
+        CollectionKinds(model),
+    )
 
 
-def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
+def _assert_find_step_rows(case_id: str, index: int, snapshot: Snapshot[Any]) -> None:
     """Grade one of a composition story's own finds against the ``expectRows``
     the scenario's find at ``index`` states.
 
@@ -519,12 +519,13 @@ def _assert_find_step_rows(case_id: str, index: int, snapshot: Any) -> None:
     another row — or whose read-back reached rows the case does not state —
     fails on the step it mirrors rather than on the relationship view alone.
     """
+    case = _CASES[case_id]
+    model = engine.load_case_metamodel(case)
+    step = _scenario_finds(case_id)[index]
+    query = scenario_lane.step_query(step, model)
     compare_rows(
-        [
-            _serialize_value_object_members(instance_row(instance))
-            for instance in snapshot.results()
-        ],
-        cast("list[dict[str, Any]]", _scenario_finds(case_id)[index]["expectRows"]),
+        [dict(row) for row in scenario_lane.graph_rows(model, query, _projected_roots(snapshot))],
+        cast("list[dict[str, Any]]", step["expectRows"]),
     )
 
 
@@ -564,7 +565,7 @@ def test_a_delete_keeps_a_loaded_relationship_view(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot, loaded_items, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
-    _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
+    _assert_surviving_view(story.case_id, "OrderItem", _wire_path(snapshot, "items"))
     # The multiset comparison above cannot see order; the relationship declares
     # `id desc`, and the destroyed row is still in its declared position.
     assert [item.id for item in loaded_items] == [12, 11]
@@ -587,7 +588,7 @@ def test_a_rectangle_split_keeps_a_loaded_relationship_view(profile_run: Any) ->
     db = _counting_connect(profile_run.port, meta, clock=clock)
     snapshot, loaded_coverages, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
-    _assert_surviving_view(story.case_id, "Coverage", loaded_coverages)
+    _assert_surviving_view(story.case_id, "Coverage", _wire_path(snapshot, "coverages"))
     assert snapshot.result().coverages[0] is loaded_coverages[0]
     # The re-read takes the SAME pin and answers the middle rectangle the split
     # chained, so the two disagree by construction — which is what a bitemporal
@@ -605,12 +606,11 @@ def test_an_edit_chain_keeps_a_loaded_relationship_view(profile_run: Any) -> Non
     _assert_find_step_rows(story.case_id, 0, snapshot)
     # The case's own access names step 0, so its `expectGraph` is the SOURCE's
     # view — graded here through the same comparator the wire lane uses.
-    _assert_surviving_view(story.case_id, "OrderItem", order.items)
+    _assert_surviving_view(story.case_id, "OrderItem", _wire_path(snapshot, "items"))
     # What only this lane holds: the copies themselves. Each hop of the chain
     # answers the SAME materialized children, which is what makes the chain a
     # chain of copies rather than one dict written twice — and the change-free
     # hop carries the authored one's assignment while the source keeps its own.
-    _assert_surviving_view(story.case_id, "OrderItem", restated.items)
     assert (order.name, renamed.name, restated.name) == ("Ada", "Mutant", "Mutant")
     assert [copy.items[0] is order.items[0] for copy in (renamed, restated)] == [True, True]
     assert [copy.items[1] is order.items[1] for copy in (renamed, restated)] == [True, True]
@@ -623,7 +623,7 @@ def test_a_write_keeps_a_loaded_value_object_document(profile_run: Any) -> None:
     db = _counting_connect(profile_run.port, meta)
     snapshot, loaded_customer, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
-    _assert_surviving_view(story.case_id, "Customer", [loaded_customer])
+    _assert_surviving_view(story.case_id, "Customer", _wire_path(snapshot, "customer"))
     # The comparator above already grades `phones` POSITIONALLY (a
     # `multiplicity: many` Value Object); this states the order in the open, so a
     # reader can see that the surviving document and the written one are the same
@@ -648,7 +648,7 @@ def test_a_write_keeps_a_view_over_freshly_inserted_rows(profile_run: Any) -> No
     db = _counting_connect(profile_run.port, meta)
     _created, snapshot, loaded_items, _committed, reread = story.run(db)
     _assert_find_step_rows(story.case_id, 0, snapshot)
-    _assert_surviving_view(story.case_id, "OrderItem", loaded_items)
+    _assert_surviving_view(story.case_id, "OrderItem", _wire_path(snapshot, "items"))
     # What only this lane can show: it is the SAME object, not an equal-valued
     # rebuild the case's contents comparison would also accept.
     assert snapshot.result().items[0] is loaded_items[0]
@@ -670,7 +670,7 @@ def test_a_multi_hop_access_drops_its_null_branches(profile_run: Any) -> None:
     # own `order_item` view, in traversal order, with the order-level status's
     # loaded-NULL branch dropped.
     reached = [status.order_item for status in order.statuses if status.order_item is not None]
-    _assert_surviving_view(story.case_id, "OrderItem", reached)
+    _assert_surviving_view(story.case_id, "OrderItem", _wire_path(snapshot, "statuses.orderItem"))
     assert sorted(item.id for item in reached) == [11, 11, 12]
     # What only this lane can show: the two statuses reaching item 11 reach the
     # SAME node, so the repeat in the contents is one object named twice rather
@@ -693,8 +693,8 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
     before, after = story.run(db)
     # Both finds, against the graph each of them authors: step 0's two fixture
     # items and step 2's three, with the group's own insert and update in them.
-    _assert_read_step_graph(story.case_id, 0, "Order", "items", before)
-    _assert_read_step_graph(story.case_id, 2, "Order", "items", after)
+    _assert_read_step_graph(story.case_id, 0, before)
+    _assert_read_step_graph(story.case_id, 2, after)
     # The two reads are separate materializations of one relationship, so the
     # second answers NEW nodes rather than the first's — the half a contents
     # comparison cannot see, and the opposite of what a surviving-view story
@@ -938,27 +938,40 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(profile_run: Any) -> No
     assert db.round_trips == [3]
 
 
-def _vo_owner_row(instance: Any) -> dict[str, Any]:
-    """A materialized VO-bearing owner's own graph node, DECLARED-member-keyed
-    (``instance_graph_node``), with its value-object members serialized to their
-    canonical documents (:func:`_serialize_value_object_members`) so
-    ``compare_graph`` can recurse into them exactly like the wire-level engine's
-    own `then.graph` grading."""
-    return _serialize_value_object_members(instance_graph_node(instance))
+def _read_case_query(case_id: str) -> tuple[Any, Any]:
+    case = _CASES[case_id]
+    model = engine.load_case_metamodel(case)
+    when = cast("dict[str, object]", case_document(case)["when"])
+    return model, scenario_lane.step_query({"objectQuery": when["objectQuery"]}, model)
+
+
+def _projected_graph(case_id: str, snapshot: Snapshot[Any]) -> dict[str, list[object]]:
+    model, query = _read_case_query(case_id)
+    return {
+        envelope.graph_root_key(query.target.canonical, model): cast(
+            "list[object]", _projected_nodes(snapshot)
+        )
+    }
+
+
+def _assert_projected_graph(case_id: str, snapshot: Snapshot[Any]) -> None:
+    case = _CASES[case_id]
+    model = engine.load_case_metamodel(case)
+    compare_graph(
+        _projected_graph(case_id, snapshot),
+        cast("dict[str, Any]", case_document(case)["then"]["graph"]),
+        CollectionKinds(model),
+    )
+
+
+def _projected_rows(case_id: str, snapshot: Snapshot[Any]) -> list[dict[str, object]]:
+    model, query = _read_case_query(case_id)
+    return [dict(row) for row in scenario_lane.graph_rows(model, query, _projected_roots(snapshot))]
 
 
 def _assert_vo_owner_graph(case_id: str, snapshot: Any, entity_name: str, pk_member: str) -> None:
-    expected_by_pk = {
-        row[pk_member]: row
-        for row in cast(
-            "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
-        )
-    }
-    kinds = CollectionKinds(engine.load_case_metamodel(_CASES[case_id]), entity_name)
-    observed = [_hydrated(root) for root in snapshot.checked().results()]
-    assert {instance.id for instance in observed} == set(expected_by_pk)
-    for instance in observed:
-        compare_graph(_vo_owner_row(instance), expected_by_pk[instance.id], kinds)
+    del entity_name, pk_member
+    _assert_projected_graph(case_id, snapshot)
 
 
 def test_transaction_time_only_vo_owner_as_of_latest(profile_run: Any) -> None:
@@ -998,19 +1011,8 @@ def test_bitemporal_vo_owner_as_of_a_past_audit_point(profile_run: Any) -> None:
 
 
 def _assert_typed_per_variant_graph(case_id: str, snapshot: Any, entity_name: str) -> None:
-    """Render each instance with its concrete class's declared members.
-
-    ``instance_graph_node`` also includes ``familyVariant`` for the
-    declared-member-keyed node (spec §4 "observable as `type(node)`") — never a
-    sibling's null-padded column, matching the case's own per-variant
-    `then.graph` exactly (order-insensitive, `compare_rows`)."""
-    expected = cast(
-        "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"][entity_name]
-    )
-    observed = [
-        instance_graph_node(instance, family_variant=True) for instance in snapshot.results()
-    ]
-    compare_rows(observed, expected)
+    del entity_name
+    _assert_projected_graph(case_id, snapshot)
 
 
 def test_tph_abstract_root_read_materializes_typed_per_variant_instances(profile_run: Any) -> None:
@@ -1055,18 +1057,6 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
     assert db.round_trips == [1]
 
 
-def _hydrated(root: Any) -> Any:
-    """One published result position as the Entity a `then` oracle grades.
-
-    The Customer fixture carries stored states that contradict the model on
-    purpose, so a read over it publishes `InvalidData` records beside its
-    conforming roots. The checked view is what a caller reading such a model uses;
-    the classification itself is graded by the corpus (`then.storedDataIssues`),
-    and what these stories grade is that the hydrated value is unchanged by it.
-    """
-    return cast("Any", root).data if isinstance(root, InvalidData) else root
-
-
 def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     """The row-form predicate original's own ``then.rows`` oracle — id/name
     only, never the exact SQL the corpus's row-form classification would
@@ -1075,8 +1065,8 @@ def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
     byte-exact generic runner)."""
     expected = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["rows"])
     observed = [
-        {"id": customer.id, "name": customer.name}
-        for customer in map(_hydrated, snapshot.checked().results())
+        {field: row[field] for field in ("id", "name")}
+        for row in _projected_rows(case_id, snapshot)
     ]
     compare_rows(observed, expected)
 
@@ -1129,19 +1119,7 @@ def test_customer_owner_materializes_its_composite(case_id: str, profile_run: An
 
 
 def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
-    expected_by_id = {
-        row["id"]: row
-        for row in cast(
-            "list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["graph"]["Customer"]
-        )
-    }
-    kinds = CollectionKinds(engine.load_case_metamodel(_CASES[case_id]), "Customer")
-    observed = [_hydrated(root) for root in snapshot.checked().results()]
-    assert {customer.id for customer in observed} == set(expected_by_id)
-    for customer in observed:
-        row = _vo_owner_row(customer)
-        row["locations"] = [_vo_owner_row(location) for location in customer.locations]
-        compare_graph(row, expected_by_id[customer.id], kinds)
+    _assert_projected_graph(case_id, snapshot)
 
 
 def test_customer_locations_deep_fetch_materializes_the_child_document_too(

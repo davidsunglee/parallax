@@ -539,9 +539,8 @@ def test_a_discriminated_union_serializes_all_three_arms_alike(option: str) -> N
 
 def test_a_runtime_subtype_dumped_through_a_base_adapter_agrees_across_arms() -> None:
     # With `polymorphic_serialization` off, the BASE's schema serializes the
-    # subtype, so a presence filter holding the base's ordinals would test them
-    # against the subtype's row — which is why the filter resolves the plan from
-    # the value rather than capturing it when the schema was built.
+    # subtype. The descriptor-backed presentation therefore resolves the plan
+    # from the runtime value rather than interpreting its row with base ordinals.
     parallax: TypeAdapter[Any] = TypeAdapter(Animal)
     compact = published(Cat, id=9, name="mog", indoor=True)
     ordinary = Cat(id=9, name="mog", indoor=True)

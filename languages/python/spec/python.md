@@ -3625,8 +3625,9 @@ of shared edition identity.
   accepts exactly the query spellings its `find` peer accepts and crosses the
   same read gate, at context entry rather than at the call.
 - **`SnapshotStream[T]` is deliberately not a `Snapshot[T]`.** Its whole
-  surface is `__enter__` / `__exit__`, `__iter__`, `checked()`, `pin`,
-  `edition`, and `__repr__`. There is no `results()`, no arity accessor, and no
+  surface is `__enter__` / `__exit__`, `__iter__`, `checked()`, the Typed
+  stream's element-taking `wire(...)`, `pin`, `edition`, and `__repr__`. There
+  is no `results()`, no arity accessor, no whole-stream Wire projection, and no
   way to re-read what already went past — a caller holding one holds a
   position in a delivery rather than a value. Iterating is the default view
   and raises `InvalidDataError` at a root whose stored state contradicted the
@@ -4010,6 +4011,39 @@ of shared edition identity.
   `snapshot-wire-at-concrete-mismatch` report position failures. The element
   `at` source type is independent of the result-root type. Whole-result
   projection accepts no `at` override.
+- **Stream projection is page-scoped and element-only.** A Typed
+  `SnapshotStream[T]`, where `T` is an Entity, exposes
+  `wire(value, *, at=None) -> WireEntity` and the corresponding
+  `InvalidData[Entity]` element form; it exposes no zero-argument or
+  whole-delivery form. Entering a stream does not make a projection position
+  available. The method becomes available only after one root has been yielded
+  and while iteration is paused at that root, including the last yielded root
+  of a page or of the delivery until the caller advances again. Before the
+  first root, while an advance is in progress, and after exhaustion, failure,
+  or scope exit it raises `SnapshotStreamStateError`; this is a stream-state
+  refusal rather than a Snapshot inspection code. It never starts or advances
+  iteration, acquires a page, issues SQL, or checks whether the supplied node
+  was delivered by the stream. A non-hydrating `InvalidData` still requires an
+  active page and a requested position, but creates no renderer or memo entry.
+  Receiver, input, compatibility, and position refusals otherwise use the same
+  closed `SnapshotInspectionError` vocabulary and precedence as eager
+  projection. A caught caller refusal leaves delivery and successful
+  projection entries usable; arbitrary renderer failures gain no recovery or
+  rollback contract.
+- **Stream projection working state follows actual delivery pages.** The first
+  successful rendering on a page lazily creates the Entity reader, an
+  identity-only weak-input memo, and the canonical scalar encoder. Repeated
+  calls with the identical published node at the identical rendering token on
+  that page answer the identical completed Wire node; equal Object Keys or
+  equal values on distinct Entity instances do not coalesce. The memo holds
+  outputs strongly but its owners weakly, invokes neither Entity hashing nor
+  equality, and removes an entry when its exact weak owner is collected. Every
+  actual page transition clears Entity outputs and successful class/layout
+  checks and rotates the scalar encoder, including a page on which projection
+  is never called. Exhaustion, failure, and close clear the current tree and
+  Entity state and release both scalar generations. An unused Typed delivery
+  creates no reader, memo, compatibility table, or encoder; its fixed retained
+  model supplies eligibility independently of whether a current page exists.
 
 ## 5. Transactions and writes
 

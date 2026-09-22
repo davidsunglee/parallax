@@ -219,27 +219,6 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     return row
 
 
-def instance_graph_node(instance: Entity, *, family_variant: bool = False) -> dict[str, Any]:
-    """Render one materialized entity instance's OWN scalar/value-object
-    members to a DECLARED-MEMBER-keyed node — the key convention
-    ``then.graph`` / ``then.graphs`` use (`m-case-format` "Graph keys": a graph
-    leaf is keyed by the name the model declares, e.g. ``orderedOn``, never the
-    physical column ``ordered_on`` a `then.rows` oracle spells).
-    ``family_variant=True`` additionally reports ``familyVariant`` as
-    ``type(instance).__name__`` — the API-suite's own observation of
-    polymorphism (`python.md` §4: "every materialized node is an instance of its
-    concrete entity class, so the corpus's `familyVariant` is observable as
-    `type(node)`").
-    """
-    from parallax.core.entity._declaration import wire_names_of
-
-    names = wire_names_of(type(instance))
-    node = {name: getattr(instance, py_name) for py_name, name in names.py_to_name.items()}
-    if family_variant:
-        node["familyVariant"] = type(instance).__name__
-    return node
-
-
 # --------------------------------------------------------------------------- #
 # Graph comparison (m-case-format `then.graph` / `then.graphs` leaves): a      #
 # recursive structural comparison over nested dicts/lists, sharing the same   #

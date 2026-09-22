@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
@@ -46,7 +47,6 @@ from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     Bind,
-    DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
     MappingRow,
@@ -60,9 +60,11 @@ from parallax.snapshot import is_view_loaded
 from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
+    ServingModel,
     Snapshot,
     Transaction,
     TransactionTimePinReadOnlyError,
+    prepare_model,
 )
 from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
@@ -212,12 +214,21 @@ class _CannedPort(ConnectsAsItself):
 
     def __init__(self, responses: Sequence[list[MappingRow]] = ()) -> None:
         self._responses = list(responses)
+        self.delivered: list[list[MappingRow]] = []
         self.writes: list[tuple[str, list[Bind]]] = []
 
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return fold_mapping_rows(self._responses.pop(0), document_reads) if self._responses else []
+        response = self._responses.pop(0) if self._responses else []
+        self.delivered.append(response)
+        return fold_mapping_rows(response, document_reads)
+
+    def mark(self) -> int:
+        return len(self.delivered)
+
+    def since(self, mark: int) -> tuple[list[MappingRow], ...]:
+        return tuple(self.delivered[mark:])
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
         raise AssertionError("a read-only graph story issues no DML")
@@ -549,6 +560,14 @@ def test_the_read_your_own_writes_story_addresses_the_relationships_own_row() ->
     assert [item.id for item in before.result().items] == [12, 11]
 
 
+@dataclass(frozen=True, slots=True)
+class _CapturedRead:
+    query: ObjectQuery[Any, Any]
+    snapshot: Snapshot[Any]
+    responses: tuple[list[MappingRow], ...]
+    participating: bool
+
+
 class _RecordingTransaction:
     """A ``Transaction`` façade recording the Object Query each ``find`` receives.
 
@@ -560,15 +579,14 @@ class _RecordingTransaction:
     no find step at all.
     """
 
-    __slots__ = ("_queries", "_tx")
+    __slots__ = ("_owner", "_tx")
 
-    def __init__(self, tx: Transaction, queries: list[ObjectQuery[Any, Any]]) -> None:
+    def __init__(self, tx: Transaction, owner: _RecordingDatabase) -> None:
         self._tx = tx
-        self._queries = queries
+        self._owner = owner
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
-        self._queries.append(query)
-        return self._tx.find(query)
+        return self._owner.record_find(query, self._tx.find, participating=True)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._tx, name)
@@ -587,29 +605,50 @@ class _RecordingDatabase(ScopedDatabase):
     authored step.
     """
 
-    __slots__ = ("_group_finds", "_root", "queries")
+    __slots__ = ("_group_finds", "_port", "_root", "queries", "reads")
 
     def __init__(
         self,
-        adapter: DatabaseAdapter,
+        port: _CannedPort,
         model: DomainModel,
         *,
         clock: Clock | None = None,
         group_finds: bool = False,
     ) -> None:
-        root = Database(adapter.open(), model, clock=clock)
+        root = Database(port.open(), model, clock=clock)
         scoped = cast("Any", root.using_database_login())
         object.__setattr__(self, "_transaction_runner", scoped._transaction_runner)
         object.__setattr__(self, "_capture", scoped._capture)
         object.__setattr__(self, "_options", scoped._options)
         object.__setattr__(self, "_reads", scoped._reads)
         object.__setattr__(self, "_root", root)
+        object.__setattr__(self, "_port", port)
         object.__setattr__(self, "queries", [])
+        object.__setattr__(self, "reads", [])
         object.__setattr__(self, "_group_finds", group_finds)
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
+        return self.record_find(query, super().find, participating=False)
+
+    def record_find[S](
+        self,
+        query: ObjectQuery[Any, S],
+        find: Callable[[ObjectQuery[Any, S]], Snapshot[S]],
+        *,
+        participating: bool,
+    ) -> Snapshot[S]:
+        mark = self._port.mark()
+        snapshot = find(query)
         self.queries.append(query)
-        return super().find(query)
+        self.reads.append(
+            _CapturedRead(
+                cast("ObjectQuery[Any, Any]", query),
+                cast("Snapshot[Any]", snapshot),
+                self._port.since(mark),
+                participating,
+            )
+        )
+        return snapshot
 
     def transact[T](
         self,
@@ -621,7 +660,7 @@ class _RecordingDatabase(ScopedDatabase):
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> T:
         def recording(tx: Transaction) -> T:
-            return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))
+            return fn(cast("Transaction", _RecordingTransaction(tx, self)))
 
         body: Callable[[Transaction], T] = recording if self._group_finds else fn
         return super().transact(
@@ -640,12 +679,76 @@ _GROUPED_FIND_STORIES = frozenset({"m-unit-work-029"})
 
 def _recording_db(story: graph_stories.GraphStory) -> _RecordingDatabase:
     clock = story.clock() if story.clock is not None else None
+    port = _port_for(story.run, _responses_for(story.run))
     return _RecordingDatabase(
-        _port_for(story.run, _responses_for(story.run)),
+        port,
         MODELS[story.model],
         clock=clock,
         group_finds=story.case_id in _GROUPED_FIND_STORIES,
     )
+
+
+_D67_STORY_RESIDUALS = frozenset(
+    {
+        "m-inheritance-065",
+        "m-inheritance-066",
+        "m-inheritance-067",
+        "m-inheritance-068",
+        "m-inheritance-074",
+        "m-inheritance-075",
+        "m-inheritance-076",
+        "m-inheritance-078",
+        "m-snapshot-read-012",
+    }
+)
+
+
+def _wire_twin(story: graph_stories.GraphStory, captured: _CapturedRead) -> Snapshot[Any]:
+    port = _port_for(story.run, captured.responses)
+    clock = story.clock() if story.clock is not None else None
+    model = ServingModel(prepare_model(MODELS[story.model], edition=captured.snapshot.edition))
+    db = own_root(Database.connect(port, model, clock=clock)).using_database_login()
+    if captured.participating:
+        return cast(
+            "Snapshot[Any]",
+            db.transact(lambda tx: tx.wire.find(captured.query)),
+        )
+    return cast("Snapshot[Any]", db.wire.find(captured.query))
+
+
+@pytest.mark.parametrize(
+    "story", graph_stories.GRAPH_STORIES, ids=[s.case_id for s in graph_stories.GRAPH_STORIES]
+)
+def test_every_graph_story_read_projects_like_a_direct_wire_twin(
+    story: graph_stories.GraphStory,
+) -> None:
+    db = _recording_db(story)
+    story.run(db)
+    assert db.reads, story.case_id
+    for captured in db.reads:
+        projected = captured.snapshot.wire()
+        direct = _wire_twin(story, captured)
+        assert projected.checked().results() == direct.checked().results(), story.case_id
+        assert projected.pin == direct.pin, story.case_id
+        assert projected.edition == direct.edition, story.case_id
+
+
+def test_every_graph_story_and_d67_case_has_one_audit_partition() -> None:
+    story_ids = {story.case_id for story in graph_stories.GRAPH_STORIES}
+    assert story_ids >= _D67_STORY_RESIDUALS
+    assert {
+        case_id for case_id in _D67_STORY_RESIDUALS if _CASES[case_id].shape == "read"
+    } == _D67_STORY_RESIDUALS
+    assert {"m-inheritance-073", "m-inheritance-077"}.isdisjoint(story_ids)
+    assert {
+        story.case_id
+        for story in graph_stories.GRAPH_STORIES
+        if _CASES[story.case_id].shape == "read"
+    } | {
+        story.case_id
+        for story in graph_stories.GRAPH_STORIES
+        if _CASES[story.case_id].shape == "scenario"
+    } == story_ids
 
 
 def _scenario_object_queries(case_id: str) -> list[dict[str, Any]]:

@@ -27,11 +27,13 @@ import datetime as dt
 import gc
 import weakref
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Final, cast
 
 import pytest
 
+from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import (
     ORDERS_MODEL,
@@ -49,8 +51,10 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.core.wire import encode_wire
 from parallax.snapshot import (
     DeferredFeatureError,
+    InvalidData,
     QueryTargetError,
     ServingModel,
+    SnapshotInspectionError,
     SnapshotStreamContinuationError,
     SnapshotStreamStateError,
     WireEntity,
@@ -66,6 +70,7 @@ from parallax.snapshot.handle import (
     _materialization,
     _read_plan,
 )
+from parallax.snapshot.handle import _stream as stream_module
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize import read_origin_of
 from tests._support.adoption import raises_contextualized
@@ -404,6 +409,187 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     assert len(_reads(port)) == 4
 
 
+# --------------------------------------------------------------------------- #
+# Typed-to-Wire projection: current-page availability and working-state scope. #
+# --------------------------------------------------------------------------- #
+def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -> None:
+    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
+    stream = _orders(port).stream(_all_orders(), batch_size=2)
+
+    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+        stream.wire(cast("Any", object()))
+
+    with stream:
+        with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+            stream.wire(cast("Any", object()))
+        roots = iter(stream)
+        order = next(roots)
+        calls = len(port.calls)
+
+        projected = stream.wire(order)
+        state = snapshot_state_of(order)
+        assert state is not None
+        assert projected == {
+            "id": 1,
+            "name": "order-1",
+            "sku": "A-100",
+            "qty": 5,
+            "price": "10.50",
+            "active": True,
+            "orderedOn": "2024-01-05",
+        }
+        assert read_origin_of(projected) is state.source
+        assert stream.wire(order) is projected
+        assert len(port.calls) == calls
+
+        with pytest.raises(StopIteration):
+            next(roots)
+        with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+            stream.wire(order)
+
+    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+        stream.wire(order)
+
+
+def test_projection_refusals_are_recoverable_and_preserve_same_page_entries() -> None:
+    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
+    with _orders(port).stream(_all_orders(), batch_size=2) as stream:
+        roots = iter(stream)
+        order = next(roots)
+        projected = stream.wire(order)
+
+        with pytest.raises(SnapshotInspectionError) as edited:
+            stream.wire(order.edit(name="changed"), at=Order.items)
+        assert edited.value.code == "snapshot-wire-input-edited"
+
+        with pytest.raises(SnapshotInspectionError) as unrequested:
+            stream.wire(order, at=Order.items)
+        assert unrequested.value.code == "snapshot-wire-at-unrequested"
+        assert stream.wire(order) is projected
+        assert list(roots) == []
+
+
+def test_projection_refuses_a_concrete_at_the_wrong_requested_position() -> None:
+    port = ScriptedAdapter(
+        Read(rows=[_order_row(1)]),
+        Read(rows=[_item_row(10, 1)]),
+    )
+    with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
+        roots = iter(stream)
+        order = next(roots)
+        item = order.items[0]
+
+        with pytest.raises(SnapshotInspectionError) as mismatch:
+            stream.wire(item)
+        assert mismatch.value.code == "snapshot-wire-at-concrete-mismatch"
+        assert stream.wire(item, at=Order.items)["id"] == 10
+        assert list(roots) == []
+
+
+def test_projection_identity_resets_at_an_actual_page_transition() -> None:
+    port = ScriptedAdapter(*paged_reads([_order_row(1), _order_row(2)], size=1))
+    with _orders(port).stream(_all_orders(), batch_size=1) as stream:
+        roots = iter(stream)
+        first = next(roots)
+        first_page = stream.wire(first)
+        assert stream.wire(first) is first_page
+
+        second = next(roots)
+        after_transition = stream.wire(first)
+        assert after_transition == first_page
+        assert after_transition is not first_page
+        assert stream.wire(second)["id"] == 2
+
+
+def test_a_wire_stream_is_not_a_projection_receiver() -> None:
+    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
+    stream = _orders(port).wire.stream(_all_orders(), batch_size=2)
+    with pytest.raises(SnapshotStreamStateError, match="paused at a root"):
+        cast("Any", stream).wire(cast("Any", object()))
+
+    with stream:
+        root = next(iter(stream))
+        with pytest.raises(SnapshotInspectionError) as refusal:
+            cast("Any", stream).wire(root)
+        assert refusal.value.code == "snapshot-wire-envelope-ineligible"
+
+
+def test_unused_typed_delivery_constructs_no_projection_working_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("unused Typed delivery constructed projection state")
+
+    monkeypatch.setattr(wire_materialize, "EntityReader", forbidden)
+    monkeypatch.setattr(wire_materialize, "shared_wire_encoder", forbidden)
+    monkeypatch.setattr(stream_module, "WeakIdentityMemo", forbidden)
+
+    with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).stream(
+        _all_orders(), batch_size=2
+    ) as stream:
+        assert _ids(iter(stream)) == [1]
+
+
+def test_projection_scalar_reuse_rotates_on_unprojected_delivery_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded: list[object] = []
+
+    def counting_encode(neutral_type: NeutralType, value: ManagedValue) -> object:
+        encoded.append(value)
+        return encode_wire(neutral_type, value)
+
+    monkeypatch.setattr(wire_materialize, "encode_managed_wire", counting_encode)
+    rows = [_order_row(index) for index in range(1, 4)]
+    with _orders(ScriptedAdapter(*paged_reads(rows, size=1))).stream(
+        _all_orders(), batch_size=1
+    ) as stream:
+        roots = iter(stream)
+        stream.wire(next(roots))
+        next(roots)
+        stream.wire(next(roots))
+        assert list(roots) == []
+
+    assert encoded.count(Decimal("10.50")) == 2
+    assert encoded.count(dt.date(2024, 1, 5)) == 2
+
+
+def test_checked_stream_projection_preserves_both_invalid_record_forms() -> None:
+    hydrating: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"city": "Oslo", "phones": []},
+    }
+    nonhydrating: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"city": 7},
+    }
+    database = db_for(
+        vo.CUSTOMER_MODEL,
+        ScriptedAdapter(Read(rows=[hydrating]), Read(rows=[nonhydrating])),
+    )
+    query = vo.Customer.where(vo.Customer.id == 1)
+
+    with database.stream(query, batch_size=2) as stream:
+        hydrated = cast("InvalidData[vo.Customer]", next(stream.checked()))
+        projected = stream.wire(hydrated)
+        assert isinstance(projected, InvalidData)
+        assert projected.data == {
+            "id": 1,
+            "name": "Ada",
+            "address": {"city": "Oslo", "phones": []},
+        }
+        assert replace(projected, data=hydrated.data) == hydrated
+
+    with database.stream(query, batch_size=2) as stream:
+        nonhydrated = cast("InvalidData[vo.Customer]", next(stream.checked()))
+        projected = stream.wire(nonhydrated)
+        assert projected == nonhydrated
+        assert projected.data is None
+
+
 def test_one_wire_encoder_reuses_equal_expensive_values_across_pages_and_not_deliveries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -498,6 +684,76 @@ def test_closing_a_wire_stream_early_releases_its_encoder(
 
     assert len(created) == 1
     assert created[0]() is None
+
+
+def test_typed_projection_releases_its_encoder_on_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).stream(
+        _all_orders(), batch_size=1
+    ) as stream:
+        roots = iter(stream)
+        stream.wire(next(roots))
+        assert list(roots) == []
+        gc.collect()
+        assert len(created) == 1
+        assert created[0]() is None
+
+
+def test_typed_projection_releases_its_encoder_on_delivery_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    failure = DatabaseError(category=None, native_code=None, message="the later page failed")
+    port = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]), Read(raises=failure))
+
+    with (
+        _orders(port).stream(_all_orders(), batch_size=1) as stream,
+        raises_contextualized(DatabaseError),
+    ):
+        roots = iter(stream)
+        stream.wire(next(roots))
+        next(roots)
+    gc.collect()
+
+    assert len(created) == 1
+    assert created[0]() is None
+
+
+def test_closing_a_typed_stream_early_releases_projection_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _observe_wire_encoders(monkeypatch)
+    stream = _orders(ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))).stream(
+        _all_orders(), batch_size=1
+    )
+    with stream:
+        root = next(iter(stream))
+        stream.wire(root)
+    gc.collect()
+
+    assert len(created) == 1
+    assert created[0]() is None
+
+
+def test_page_projection_does_not_retain_an_external_typed_graph() -> None:
+    external_snapshot = _orders(
+        ScriptedAdapter(Read(rows=[_order_row(7)]), Read(rows=[_item_row(70, 7)]))
+    ).find(_all_orders().include(Order.items))
+    external = external_snapshot.result()
+    external_ref = weakref.ref(external)
+
+    with _orders(ScriptedAdapter(Read(rows=[_order_row(1)]))).stream(
+        _all_orders(), batch_size=2
+    ) as stream:
+        current = next(iter(stream))
+        projected = stream.wire(external)
+        assert projected["id"] == 7
+        del projected, external, external_snapshot
+        gc.collect()
+        assert external_ref() is None
+        assert stream.wire(current)["id"] == 1
 
 
 def test_a_provider_failure_on_a_later_page_preserves_the_published_prefix() -> None:

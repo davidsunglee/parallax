@@ -32,9 +32,13 @@ first, in the discipline the unit of work's own scope flag already uses.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
-from typing import Any, Final, Literal, Protocol, cast
+from dataclasses import replace
+from typing import Any, Final, Literal, Protocol, cast, overload
 
-from parallax.core import continuation
+from parallax.core import continuation, deep_fetch
+from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.entity import Entity, RelationshipPath
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -54,9 +58,17 @@ from parallax.snapshot.handle._materialization import DeliveryPage, DeliveryPlan
 from parallax.snapshot.handle._paging import At, PagePlan
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import SelectedReadModel
-from parallax.snapshot.handle._read import ResultPublication, declaring_metadata
-from parallax.snapshot.materialize import InvalidData, InvalidDataError
+from parallax.snapshot.handle._read import (
+    ResultPublication,
+    declaring_metadata,
+    projection_concrete,
+    wire_position,
+)
+from parallax.snapshot.materialize import InvalidData, InvalidDataError, WireEntity
+from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize._invalid import EXCEPTION_MACHINERY
+from parallax.snapshot.materialize._wire import EntityReader, WireWalk
+from parallax.snapshot.materialize._wire_memo import WeakIdentityMemo
 
 __all__ = [
     "SnapshotStream",
@@ -64,6 +76,14 @@ __all__ = [
     "SnapshotStreamStateError",
     "check_batch_size",
 ]
+
+
+class _PageWireEncoder(Protocol):
+    def begin_page(self) -> None: ...
+
+    def __call__(self, neutral_type: NeutralType, value: ManagedValue) -> object: ...
+
+    def release(self) -> None: ...
 
 
 class StreamRead(Protocol):
@@ -151,6 +171,9 @@ _SINGLE_PASS: Final = (
     "inside its scope, and to no second view and no second pass"
 )
 _IN_SCOPE: Final = "a Snapshot Stream answers only inside its own scope"
+_CURRENT_PROJECTION_PAGE: Final = (
+    "SnapshotStream.wire answers only while delivery is paused at a root of its current Page"
+)
 
 _END: Final = object()
 """What one advance answers when the delivery ran out, so exhaustion crosses the
@@ -259,6 +282,88 @@ class SnapshotStreamContinuationError(RuntimeError):
         return self._ordinal
 
 
+class _StreamWireProjection:
+    __slots__ = ("_encoder", "_includes", "_model", "_reader", "_walk")
+
+    def __init__(self, model: CatalogedModel, includes: deep_fetch.IncludeTree) -> None:
+        self._model = model
+        self._includes = includes
+        self._reader: EntityReader | None = None
+        self._walk: WireWalk[object] | None = None
+        self._encoder: _PageWireEncoder | None = None
+
+    def begin_page(self, includes: deep_fetch.IncludeTree) -> None:
+        self._clear_entities()
+        self._includes = includes
+        if self._encoder is not None:
+            self._encoder.begin_page()
+
+    def project(
+        self,
+        value: object,
+        at: RelationshipPath[Entity, Any] | None,
+    ) -> WireEntity | InvalidData[WireEntity]:
+        record: InvalidData[object] | None = (
+            cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
+        )
+        node: object | None = record.data if record is not None else cast("object", value)
+        concrete = None
+        if node is not None:
+            if self._reader is None:
+                self._reader = EntityReader(self._model, operation="SnapshotStream.wire")
+            concrete = projection_concrete(self._reader, node, operation="SnapshotStream.wire")
+        position = wire_position(
+            self._includes,
+            self._model,
+            at,
+            operation="SnapshotStream.wire",
+        )
+        if node is None:
+            return cast("InvalidData[WireEntity]", record)
+        assert concrete is not None
+        if not self._includes.admits(position, concrete):
+            from parallax.snapshot._inspection import SnapshotInspectionError
+
+            raise SnapshotInspectionError(
+                code="snapshot-wire-at-concrete-mismatch",
+                message=f"{concrete.canonical} is not admitted at requested position {position}",
+                operation="SnapshotStream.wire",
+                entity=concrete,
+            )
+        if self._walk is None:
+            if self._encoder is None:
+                self._encoder = wire_materialize.shared_wire_encoder()
+                self._encoder.begin_page()
+            reader = self._reader
+            assert reader is not None
+            self._walk = WireWalk(
+                reader,
+                self._includes,
+                self._encoder,
+                memo=WeakIdentityMemo[object](),
+            )
+        rendered = cast("WireEntity", self._walk.position(node, position))
+        return (
+            rendered
+            if record is None
+            else cast("InvalidData[WireEntity]", replace(record, data=rendered))
+        )
+
+    def release(self) -> None:
+        self._clear_entities()
+        if self._encoder is not None:
+            self._encoder.release()
+            self._encoder = None
+
+    def _clear_entities(self) -> None:
+        if self._walk is not None:
+            self._walk.clear()
+            self._walk = None
+        if self._reader is not None:
+            self._reader.clear()
+            self._reader = None
+
+
 class SnapshotStream[T]:
     """``db.stream`` / ``db.wire.stream``'s result: a scope-bound, single-pass
     delivery of roots in the Continuation Order.
@@ -287,6 +392,14 @@ class SnapshotStream[T]:
     contextualized under the stream's edition, while the stream's own state
     refusals are judged before the bracket and keep their type.
 
+    A Typed delivery also projects one supplied published Entity through
+    :meth:`wire` while iteration is paused at a delivered root. Projection uses
+    that Page's canonical IncludeTree, never advances the delivery, and retains
+    completed output only through a weak-input memo cleared at the next Page.
+    Before the first root and after the next advance begins there is no current
+    projection Page, so the method raises :class:`SnapshotStreamStateError`.
+    There is no whole-stream projection form.
+
     ``batch_size`` counts ROOT positions and, over storage the model describes,
     is a performance dial alone: it changes neither the order roots arrive in,
     nor which roots arrive, nor what each carries. Invalid stored data included:
@@ -310,6 +423,9 @@ class SnapshotStream[T]:
         "_page_plan",
         "_pages",
         "_pin",
+        "_projection_includes",
+        "_projection_model",
+        "_projection_state",
         "_publication",
         "_read",
         "_scope",
@@ -331,6 +447,9 @@ class SnapshotStream[T]:
         self._state: _State = _CREATED
         self._read: StreamRead | None = None
         self._publication: ResultPublication | None = None
+        self._projection_model: CatalogedModel | None = None
+        self._projection_includes: deep_fetch.IncludeTree | None = None
+        self._projection_state: _StreamWireProjection | None = None
         self._page_plan: DeliveryPlan | None = None
         self._pages: Generator[object] | None = None
         self._pin: Pin = Pin()
@@ -379,6 +498,7 @@ class SnapshotStream[T]:
         except BaseException:
             self._release_publication()
             raise
+        self._projection_model = publication.projection_model
         self._state = _OPEN
         return self
 
@@ -400,6 +520,7 @@ class SnapshotStream[T]:
         self._state = _CLOSED
         failure = self._failure
         self._failure = None
+        self._release_projection()
         self._release_pages()
         self._release_publication()
         # Settle lane-owned resources before the observed stream finishes. Page
@@ -432,6 +553,49 @@ class SnapshotStream[T]:
         self._require(_SINGLE_PASS, _OPEN)
         self._state = _DRAINING
         return cast("Iterator[T | InvalidData[T]]", self._drain(checked=True))
+
+    @overload
+    def wire[R: Entity](
+        self: SnapshotStream[R],
+        value: Entity,
+        *,
+        at: RelationshipPath[Entity, Any] | None = None,
+    ) -> WireEntity: ...
+
+    @overload
+    def wire[R: Entity, E: Entity](
+        self: SnapshotStream[R],
+        value: InvalidData[E],
+        *,
+        at: RelationshipPath[Entity, Any] | None = None,
+    ) -> InvalidData[WireEntity]: ...
+
+    def wire(
+        self,
+        value: object,
+        *,
+        at: RelationshipPath[Entity, Any] | None = None,
+    ) -> WireEntity | InvalidData[WireEntity]:
+        """Publish one eligible node under the current delivery Page's request shape."""
+        model = self._projection_model
+        if model is None:
+            if self._state != _CREATED:
+                from parallax.snapshot._inspection import SnapshotInspectionError
+
+                raise SnapshotInspectionError(
+                    code="snapshot-wire-envelope-ineligible",
+                    message="Wire projection is available only on a Typed Snapshot Stream",
+                    operation="SnapshotStream.wire",
+                )
+            raise SnapshotStreamStateError(_CURRENT_PROJECTION_PAGE)
+        includes = self._projection_includes
+        if includes is None:
+            raise SnapshotStreamStateError(_CURRENT_PROJECTION_PAGE)
+        projection = self._projection_state
+        if projection is None:
+            projection = _StreamWireProjection(model, includes)
+            self._projection_state = projection
+        return projection.project(value, at)
 
     @property
     def pin(self) -> Pin:
@@ -536,6 +700,7 @@ class SnapshotStream[T]:
         read = self._read
         if read is not None:
             read.release(failure)
+        self._release_projection()
         self._release_pages()
         self._release_publication()
         if terminal == _EXHAUSTED:
@@ -554,6 +719,27 @@ class SnapshotStream[T]:
         self._pages = None
         if pages is not None:
             pages.close()
+
+    def _release_projection(self) -> None:
+        self._projection_includes = None
+        projection = self._projection_state
+        self._projection_state = None
+        if projection is not None:
+            projection.release()
+
+    def _begin_projection_page(self, includes: deep_fetch.IncludeTree) -> None:
+        self._projection_includes = None
+        if self._projection_state is not None:
+            self._projection_state.begin_page(includes)
+
+    def _projection_roots(
+        self, roots: Iterator[object], includes: deep_fetch.IncludeTree
+    ) -> Iterator[object]:
+        self._begin_projection_page(includes)
+        for root in roots:
+            self._projection_includes = includes
+            yield root
+            self._projection_includes = None
 
     def _drain(self, *, checked: bool) -> Iterator[object]:
         pages = self._roots(checked=checked)
@@ -591,13 +777,16 @@ class SnapshotStream[T]:
             page = self._scope.page(
                 read, page_plan, At(coordinate, emitted), self._activity.batch()
             )
-            for root in publication.roots_of(
+            roots = publication.roots_of(
                 page.page,
                 page.includes,
                 ordinal_offset=emitted,
                 sources=page.sources,
                 milestones=self._milestones,
-            ):
+            )
+            if self._projection_model is not None:
+                roots = self._projection_roots(roots, page.includes)
+            for root in roots:
                 if not checked and isinstance(root, InvalidData):
                     raise InvalidDataError(
                         (cast("InvalidData[object]", root),), edition=publication.edition
