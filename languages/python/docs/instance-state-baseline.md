@@ -432,10 +432,17 @@ about 7.6 to 8.1 ms for Wire and 7.4 to 8.2 ms for Typed; eager two-point
 intercepts straddle zero and therefore do not support a fixed-cost claim. The
 per-root slopes and exact retained figures are the useful scaling observations.
 
-The direct-Wire whole-process cost proof retains its accepted pre-existing
-result: exactly 20 additional objects and 40 additional references with zero
-additional held bytes. The same result predates COR-112, so it is baseline noise
-rather than a COR-112 regression; its test and threshold remain unchanged.
+The direct-Wire whole-process cost proof read exactly 20 additional objects and
+40 additional references with zero additional held bytes at the later delivery
+position, and that reading was an artifact of the instrument rather than of what
+the delivery holds. The mark collected once, and the collector untracks a tuple
+only when every item in it is already untracked, so a read-plan key built from
+the query's own dataclasses stayed listed for as many collections as it is deep;
+which pass a sample landed after followed the process's allocation history. The
+mark now collects until the listing stops moving, which makes the arms exactly
+equal over a heap whose held bytes never differed. No threshold was weakened and
+the captured readings above are unaffected: the whole-heap mark serves the cost
+proofs alone and no reported figure is taken through it.
 
 ## What the escalation block said
 
