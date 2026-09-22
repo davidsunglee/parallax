@@ -399,12 +399,15 @@ The controls show these directions:
 - Existing instance-state retained and bare bytes are identical before and
   after in every scenario on both runtimes. The changed wall-clock readings are
   report-only variation around an unchanged representation matrix.
-- Unused Typed eager/stream retained memory is unchanged. Its median timing
-  change is -2.5% for eager and +1.2% for page-32 delivery; its peak allocation
-  rises by medians of 5.9% and 5.3%.
-- Direct Wire retained memory is unchanged. Direct Wire timing rises by a median
-  9.4% for eager and 7.8% for page-32 delivery across runtime/workload/root-count
-  cells; peak allocation rises by medians of 9.0% and 6.8%. The two-point
+- Unused Typed retained memory rises by a fixed 0.016 KiB (16 B) in every eager
+  cell, including the guarded controls, and is exactly unchanged for page-32
+  delivery. Its median timing change is -2.5% for eager and +1.2% for page-32
+  delivery; its peak allocation rises by medians of 5.9% and 5.3%.
+- Direct Wire retained memory likewise rises by 0.016 KiB (16 B) in every eager
+  cell, including the guarded controls, and is exactly unchanged for page-32
+  delivery. Direct Wire timing rises by a median 9.4% for eager and 7.8% for
+  page-32 delivery across runtime/workload/root-count cells; peak allocation
+  rises by medians of 9.0% and 6.8%. The two-point
   200-to-2,000-root slopes move from a median 60.0 to 65.6 us/root eager and
   63.8 to 69.4 us/root page-32. These are directional one-run timing and peak
   observations, not gates; they do not hide retained growth or repeated
@@ -428,6 +431,11 @@ The delivery slope fit is descriptive only. Page-32 fixed intercepts move from
 about 7.6 to 8.1 ms for Wire and 7.4 to 8.2 ms for Typed; eager two-point
 intercepts straddle zero and therefore do not support a fixed-cost claim. The
 per-root slopes and exact retained figures are the useful scaling observations.
+
+The direct-Wire whole-process cost proof retains its accepted pre-existing
+result: exactly 20 additional objects and 40 additional references with zero
+additional held bytes. The same result predates COR-112, so it is baseline noise
+rather than a COR-112 regression; its test and threshold remain unchanged.
 
 ## What the escalation block said
 
