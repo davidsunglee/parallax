@@ -6887,15 +6887,17 @@ locking unions retain the core refusal.
   its subject, readings and units — each optionally naming the CPython minor
   that took it and the window it was read over — declared comparisons,
   explicit incomplete cells and errors, and provenance: commit and dirty state;
-  Budget Contract,
-  workload-catalog, and `uv.lock` digests; hardware and OS identity; CPython and
+  the Budget Contract as authored at capture beside its digest;
+  workload-catalog and `uv.lock` digests; hardware and OS identity; CPython and
   PostgreSQL versions; and the sampling protocol. A declared comparison names
   its workload and cell, an `at-most` or `at-least` operator, numeric limit,
   unit, and outcome. Provenance capture reads the commit and dirty state from
   Git and the server version from the connected PostgreSQL source. Semantic
-  validation requires the commit to resolve to a commit object, loads the Budget
-  Contract authored at that producing commit, and recomputes the authority label
-  from the provenance and that contract. Only a
+  validation loads the Budget Contract from the envelope's own provenance,
+  requiring only that the recorded digest hashes the embedded text, and
+  recomputes the authority label from the provenance and that contract; an
+  envelope is therefore verifiable wherever it is read, and the producing
+  commit it records is informational. Only a
   clean tree at a commit with an exactly matching authority fingerprint,
   contract digest, and sampling protocol is `authoritative`; every other useful
   reading is `non-authoritative`.
@@ -6938,8 +6940,12 @@ locking unions retain the core refusal.
   `languages/python/docs/structural-metadata-envelope/recovered/`, named once
   by `cost_report.CANONICAL_PORTFOLIO`; the pre-unification baseline beside it
   under `before/` and the unification's after-capture under `after/` are
-  retained unchanged as that capture's comparison bases and are verified by
-  nothing. That repository role is
+  retained unchanged as that capture's comparison bases and are verified by the
+  database-free tests alongside it. The older captures under that snapshot
+  delivery directory and under
+  `languages/python/docs/write-lowering-envelope/` predate envelope schema
+  version 2, carry no embedded contract, and are verified by nothing. That
+  repository role is
   independent of each member's schema-level `authority`. Verification recomputes
   each retained member's current Budget Contract and workload digest and reports
   a mismatch as stale evidence; it never rewrites a producing commit's digest to

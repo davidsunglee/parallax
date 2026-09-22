@@ -65,7 +65,11 @@ class BudgetCell:
 
 @dataclass(frozen=True, slots=True)
 class BudgetContract:
-    """The parsed Budget Contract and the digest of its authored bytes."""
+    """The parsed Budget Contract beside the authored bytes ``digest`` hashes.
+
+    ``authored`` is retained so a consumer that must record what the contract
+    said can copy the exact bytes rather than re-read the file.
+    """
 
     path: Path
     schema_version: int
@@ -73,6 +77,7 @@ class BudgetContract:
     sampling: Mapping[str, object]
     workloads: Mapping[str, Mapping[str, object]]
     digest: str
+    authored: bytes
 
     @classmethod
     @cache
@@ -115,6 +120,7 @@ class BudgetContract:
             MappingProxyType(dict(typed_sampling)),
             MappingProxyType(typed_workloads),
             hashlib.sha256(authored).hexdigest(),
+            authored,
         )
 
     @property

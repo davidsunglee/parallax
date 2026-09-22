@@ -108,14 +108,16 @@ def test_budget_contract_rejects_malformed_documents(
 
 
 def test_budget_contract_rejects_missing_fixture_and_non_numeric_cells(tmp_path: Path) -> None:
-    missing_fixture = BudgetContract(tmp_path / "contract.yaml", 1, {}, {}, {"x": {}}, "a")
+    missing_fixture = BudgetContract(
+        tmp_path / "contract.yaml", 1, {}, {}, {"x": {}}, "a", b"authored"
+    )
     with pytest.raises(ValueError, match="fixture is not a string"):
         missing_fixture.fixture("x")
     with pytest.raises(ValueError, match="cells is not a mapping"):
         missing_fixture.cells("x")
 
     invalid_cell = BudgetContract(
-        tmp_path / "contract.yaml", 1, {}, {}, {"x": {"cells": {"bad": "value"}}}, "a"
+        tmp_path / "contract.yaml", 1, {}, {}, {"x": {"cells": {"bad": "value"}}}, "a", b"authored"
     )
     with pytest.raises(ValueError, match="budget cell must be numeric"):
         invalid_cell.cells("x")

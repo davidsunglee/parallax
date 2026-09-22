@@ -15,7 +15,7 @@
     "errors"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "subject": { "type": "string", "minLength": 1 },
     "provenance": { "$ref": "#/$defs/provenance" },
     "authority": { "enum": ["authoritative", "non-authoritative"] },
@@ -44,6 +44,7 @@
         "commit",
         "dirty",
         "budgetContractDigest",
+        "budgetContract",
         "workloadDigest",
         "lockDigest",
         "machine",
@@ -59,6 +60,7 @@
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "dirty": { "type": "boolean" },
         "budgetContractDigest": { "$ref": "#/$defs/digest" },
+        "budgetContract": { "type": "string", "minLength": 1 },
         "workloadDigest": { "$ref": "#/$defs/digest" },
         "lockDigest": { "$ref": "#/$defs/digest" },
         "machine": { "type": "string", "minLength": 1 },

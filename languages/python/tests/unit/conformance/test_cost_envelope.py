@@ -58,6 +58,7 @@ def _provenance(contract: BudgetContract, *, dirty: bool = False) -> Provenance:
         commit=commit,
         dirty=dirty,
         budget_contract_digest=contract.digest,
+        budget_contract=contract.authored.decode("utf-8"),
         workload_digest="b" * 64,
         lock_digest="c" * 64,
         machine=str(authority["machine"]),
@@ -86,9 +87,10 @@ def test_envelope_round_trips_through_its_schema() -> None:
     )
     validate(envelope)
     assert envelope.document()["authority"] == "authoritative"
+    assert envelope.document()["schemaVersion"] == 2
 
 
-def test_validation_uses_the_producing_commits_contract(
+def test_validation_uses_the_embedded_contract_not_the_checkout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = BudgetContract.load()
@@ -138,7 +140,7 @@ def test_provenance_capture_retains_a_members_own_sampling_protocol() -> None:
     assert classify_authority(captured, contract) == "non-authoritative"
 
 
-def test_semantic_validation_recomputes_authority_and_requires_a_commit() -> None:
+def test_semantic_validation_recomputes_authority_and_checks_the_embedded_contract() -> None:
     contract = BudgetContract.load()
     envelope = CostReportEnvelope(
         "snapshot-delivery", _provenance(contract, dirty=True), "authoritative"
@@ -149,11 +151,15 @@ def test_semantic_validation_recomputes_authority_and_requires_a_commit() -> Non
         "snapshot-delivery", _provenance(contract), "authoritative"
     ).document()
     provenance_document = cast("Mapping[str, object]", document["provenance"])
-    provenance = dict(provenance_document)
-    provenance["commit"] = "f" * 40
-    document["provenance"] = provenance
-    with pytest.raises(ValueError, match="is not a commit"):
+    edited = dict(provenance_document)
+    edited["budgetContract"] = f"{edited['budgetContract']}\n# edited"
+    document["provenance"] = edited
+    with pytest.raises(ValueError, match="does not hash to budgetContractDigest"):
         validate(document)
+    unresolvable = dict(provenance_document)
+    unresolvable["commit"] = "f" * 40
+    document["provenance"] = unresolvable
+    validate(document)
 
 
 def test_provenance_capture_has_portable_memory_fallbacks(
