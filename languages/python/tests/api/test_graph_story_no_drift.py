@@ -84,8 +84,8 @@ from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
-    D67_GRAPH_STORY_RESIDUALS,
-    D67_WITHOUT_GRAPH_STORIES,
+    CHILD_SHAPE_CASES_WITHOUT_STORIES,
+    CHILD_SHAPE_GRAPH_STORY_RESIDUALS,
     classify_child_graph_shape_residuals,
 )
 from tests._support.query_probes import canonical_document
@@ -929,15 +929,15 @@ def test_every_graph_story_read_projects_like_a_direct_wire_twin(
         assert projected.edition == direct.edition, story.case_id
 
 
-def test_every_graph_story_and_d67_case_has_one_audit_partition() -> None:
+def test_every_graph_story_and_child_shape_case_has_one_audit_partition() -> None:
     story_ids = {story.case_id for story in graph_stories.GRAPH_STORIES}
     residual_ids = frozenset(CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS)
-    assert residual_ids == D67_GRAPH_STORY_RESIDUALS | D67_WITHOUT_GRAPH_STORIES
-    assert story_ids & residual_ids == D67_GRAPH_STORY_RESIDUALS
+    assert residual_ids == (CHILD_SHAPE_GRAPH_STORY_RESIDUALS | CHILD_SHAPE_CASES_WITHOUT_STORIES)
+    assert story_ids & residual_ids == CHILD_SHAPE_GRAPH_STORY_RESIDUALS
     assert {
-        case_id for case_id in D67_GRAPH_STORY_RESIDUALS if _CASES[case_id].shape == "read"
-    } == D67_GRAPH_STORY_RESIDUALS
-    assert D67_WITHOUT_GRAPH_STORIES.isdisjoint(story_ids)
+        case_id for case_id in CHILD_SHAPE_GRAPH_STORY_RESIDUALS if _CASES[case_id].shape == "read"
+    } == CHILD_SHAPE_GRAPH_STORY_RESIDUALS
+    assert CHILD_SHAPE_CASES_WITHOUT_STORIES.isdisjoint(story_ids)
     assert set(_EXTRA_CAPTURED_READS) == {"m-snapshot-read-017"}
     assert all(_authored_reads(story.case_id) for story in graph_stories.GRAPH_STORIES)
     assert {

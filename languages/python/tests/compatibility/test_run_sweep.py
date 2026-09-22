@@ -68,10 +68,10 @@ from tests._support.sweep_goldens import (
 #
 # Everything else these cases assert still runs here — every level's SQL and
 # binds (the N+1-elimination proof they exist for) and the round-trip count. Exact
-# `then.graph` equality remains the deferred contract conflict; this audit derives
-# which recorded structural residuals explain the observed difference and fails if
-# any other mismatch remains. Nine of the eleven also carry a graph story whose
-# projected and direct Wire publications undergo the same classification against
+# `then.graph` equality is withheld only for this child-shape partition; this audit
+# derives which recorded structural residuals explain the observed difference and
+# fails if any other mismatch remains. Nine of the eleven also carry a graph story
+# whose projected and direct Wire publications undergo the same classification against
 # the authored graph. `m-inheritance-073` and `-077` have no idiomatic story
 # spelling, so this compatibility audit is their graph-shape evidence.
 
