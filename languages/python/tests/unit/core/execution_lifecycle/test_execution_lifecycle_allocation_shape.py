@@ -30,10 +30,12 @@ import gc
 import subprocess
 import sys
 import tracemalloc
+import uuid
 from collections.abc import Callable
 from typing import Final
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import parallax.core.execution_lifecycle._activity as _activity
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -362,12 +364,25 @@ def test_a_declined_roots_first_run_costs_only_its_permitted_opening() -> None:
     assert _first_run_in_a_child("declined") == _first_run_in_a_child("opening")
 
 
+def _fixed_width_uuid4() -> UUID:
+    """A version-4 UUID whose integer is always five 30-bit digits wide.
+
+    A random draw leaves the top byte zero once in 256, and that integer is four
+    bytes narrower than every other, so two children drawing their own would
+    disagree by those four bytes about the same seam. The measured paths draw
+    through this name, in every child alike, so a first run's cost is the path's.
+    """
+    return UUID(int=uuid.uuid4().int | (1 << 127), version=4)
+
+
 # Two callers, told apart by what they name. A first-run child is asked for one
 # seam and answers with its two numbers; a measurement child is asked for one
 # test and asserts for itself. The seams are checked first because that protocol
 # predates the other and its names are the closed set.
 if __name__ == "__main__":
     if sys.argv[1] in FIRST_RUN_SEAMS:
+        _activity.uuid4 = _fixed_width_uuid4  # pyright: ignore[reportPrivateImportUsage] - the production draw, replaced only in this child
+        uuid4 = _fixed_width_uuid4
         tracemalloc.start()
         first_run(_nothing)
         print(*first_run(FIRST_RUN_SEAMS[sys.argv[1]]))
