@@ -343,6 +343,23 @@ def test_include_validation_rejects_a_relationship_with_no_declaring_entity(
         )
 
 
+def test_include_validation_rejects_a_segment_disconnected_from_the_previous_target() -> None:
+    model = formed(_ORDERS)
+    root = _root(model, "Order")
+
+    with pytest.raises(ValueError, match="does not resolve from the active Include Path position"):
+        query_validation.validate_include_path(
+            IncludePath(
+                segments=(
+                    IncludeSegment(rel="Order.items"),
+                    IncludeSegment(rel="Order.statuses"),
+                )
+            ),
+            model,
+            predicate_validation.root_position(model, root),
+        )
+
+
 def test_temporal_read_rejects_an_undeclared_dimension() -> None:
     # A dimension is keyed once by construction, so the only cardinality defect a
     # canonical query can still carry is naming one the target does not declare.

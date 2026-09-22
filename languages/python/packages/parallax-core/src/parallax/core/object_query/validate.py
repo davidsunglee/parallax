@@ -164,15 +164,17 @@ def validate_include_path(
 
     The source guard is constrained by ``queried`` and each segment is resolved
     from the preceding relationship target. Narrowing and wrong-kind violations
-    raise :class:`ModelRejectedError` with their shared rule code. An unresolved
-    or undeclared relationship direction raises ``ValueError`` because accepted
-    metadata supplies no direction to return.
+    raise :class:`ModelRejectedError` with their shared rule code. A relationship
+    direction that is unresolved, undeclared, or disconnected from the preceding
+    target raises ``ValueError`` because accepted metadata supplies no direction
+    to return from that position.
     """
     source_scope = (
         queried if path.applies_to is None else validate_narrow(path.applies_to, queried, model)
     )
     source = _scope_identities(model, source_scope)
     segments: list[ValidatedIncludeSegment] = []
+    active_scope = source_scope
     for segment in path.segments:
         target = relationship_target(
             segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
@@ -181,6 +183,11 @@ def validate_include_path(
         declaring = entity_by_name(model, class_name) if dot else None
         if declaring is None:
             raise ValueError(f"{segment.rel!r} names no resolved relationship direction")
+        if not active_scope.effective <= effective_set(model, declaring):
+            raise ValueError(
+                f"{segment.rel!r} does not resolve from the active Include Path position "
+                f"{sorted(active_scope.effective)}"
+            )
         direction = RelationshipIdentity(declaring.identity, member_name)
         target_scope = PositionScope(effective=effective_set(model, target))
         if segment.narrow_to:
@@ -208,6 +215,7 @@ def validate_include_path(
                 bool(segment.narrow_to),
             )
         )
+        active_scope = target_scope
     return ValidatedIncludePath(source, tuple(segments))
 
 
