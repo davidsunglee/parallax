@@ -1259,13 +1259,20 @@ def test_any_other_exception_a_source_raises_is_wrapped_with_fixed_text() -> Non
     assert establishment.last_refusal is raised.value
 
 
-def test_a_later_successful_resolution_clears_the_credential_refusal_on_record() -> None:
-    # A healthy runtime must not report an old refusal for a later, unrelated
-    # timeout — the same rule the initialization refusal already follows.
+def test_a_resolved_credential_leaves_a_refusal_on_record_until_a_connection_is_usable() -> None:
+    # Several workers dial at once over one record. A credential resolved for
+    # one attempt establishes nothing — that attempt can still fail to dial or
+    # to initialize — so clearing there would let it erase another attempt's
+    # completed refusal and hand the waiting caller a bare timeout instead.
     establishment = _establishment()
-    establishment.last_refusal = CredentialResolutionError("earlier")
+    refusal = CredentialResolutionError("RDS IAM token could not be generated")
+    establishment.last_refusal = refusal
 
     establishment.connect_kwargs(_base_kwargs(), Password("hunter2"))()
+
+    assert establishment.last_refusal is refusal
+
+    establishment(cast("Any", _Initializable()))
 
     assert establishment.last_refusal is None
 
