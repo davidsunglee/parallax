@@ -67,9 +67,13 @@ below is why drift is stated rather than made a reason to capture again.
 Every envelope carries the Budget Contract it was classified against, as the
 authored YAML text whose bytes its `budgetContractDigest` hashes, so `--verify`
 reconstructs the contract that was in force at capture from the envelope alone.
-The producing commit stays in provenance as an informational field that only
-`--compare` and the not-an-ancestor advisory read; verification needs no history
-and runs identically in a shallow clone, in a fresh one, and here. The
+The producing commit stays in provenance as a recorded fact rather than a tree
+to resolve: `--verify` reads it to refuse members produced at different commits,
+`--compare` pairs captures by it, and the not-an-ancestor advisory asks whether
+the inspected head still descends from it. Reconstructing the contract and
+grading the capture against it read the envelope alone, so they run identically
+in a shallow clone, in a fresh one, and here; only that advisory consults
+history, and a clone too shallow to hold the commit prints it. The
 alternative — keeping every producing commit reachable, by capturing on `main`
 or tagging each one — was weighed and refused: it makes a retained capture
 verifiable only where its branch survives, which is precisely what the

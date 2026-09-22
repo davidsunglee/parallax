@@ -46,8 +46,9 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
 
 # A retained capture keeps the digest measured at its producing commit. The
 # Snapshot workload is unchanged and remains current; the authority migration
-# changed write-instrument source without a recapture, so verification must name
-# that member stale instead of making the historical evidence claim new inputs.
+# changed the source defining the write-lowering workload without a recapture,
+# so verification must name that member stale instead of making the historical
+# evidence claim new inputs.
 def test_committed_envelope_digests_preserve_their_provenance() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
