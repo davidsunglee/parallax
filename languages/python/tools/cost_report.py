@@ -95,7 +95,7 @@ from interpreter_matrix import (
     supported_minors,
 )
 from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
-from parallax.conformance.cost_envelope import Reading, validate
+from parallax.conformance.cost_envelope import Provenance, Reading, validate
 from parallax.conformance.workloads import workload_digest
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
@@ -2377,20 +2377,6 @@ def _stated_history_reason(marker: Path) -> str | None:
     return reason if isinstance(reason, str) and reason else None
 
 
-type ContractSource = Callable[[str], BudgetContract]
-
-
-def contract_at(commit: str) -> BudgetContract:
-    """The Budget Contract as authored at ``commit``."""
-    authored = subprocess.run(
-        ["git", "show", f"{commit}:languages/python/spec/budget-contract.yaml"],
-        cwd=WORKSPACE,
-        capture_output=True,
-        check=True,
-    ).stdout
-    return BudgetContract.from_bytes(WORKSPACE / "spec" / "budget-contract.yaml", authored)
-
-
 @dataclass(frozen=True, slots=True)
 class ShardAssembly:
     shard: Shard
@@ -2450,7 +2436,6 @@ def assemble(
     plan: Sequence[Shard],
     request: Request,
     history: History | None = None,
-    contracts: ContractSource = contract_at,
 ) -> Assembly:
     """Reconcile ``captures`` against ``plan`` and ``request``: one entry per
     planned shard whatever arrived, every side validated against its own
@@ -2508,7 +2493,7 @@ def assemble(
     merged = Spans()
     assembled: list[ShardAssembly] = []
     for shard in plan:
-        entry = _reconcile(shard, by_shard[shard.id], request, previous, contracts, failures)
+        entry = _reconcile(shard, by_shard[shard.id], request, previous, failures)
         assembled.append(entry)
         for side in (entry.base, entry.head):
             _merge_durations(merged, shard.id, side, request)
@@ -2542,7 +2527,6 @@ def _reconcile(
     arrived: Sequence[ShardCapture],
     request: Request,
     history: History,
-    contracts: ContractSource,
     failures: list[Failure],
 ) -> ShardAssembly:
     reasons: list[Reason] = []
@@ -2552,7 +2536,6 @@ def _reconcile(
         HEAD,
         [c for c in arrived if c.side == HEAD],
         request.head_commit,
-        contracts,
         reasons,
         failures,
     )
@@ -2560,9 +2543,7 @@ def _reconcile(
     pairing = UNPAIRED
     base: ShardCapture | None = None
     if request.base_commit is not None:
-        base = _unique(
-            shard, BASE, base_candidates, request.base_commit, contracts, reasons, failures
-        )
+        base = _unique(shard, BASE, base_candidates, request.base_commit, reasons, failures)
         if base is not None and head is not None:
             assert base.capture is not None and head.capture is not None
             if base.capture.pair_id == head.capture.pair_id:
@@ -2592,7 +2573,7 @@ def _reconcile(
         if history.reason is not None:
             reasons.append(Reason("history-unavailable", BASE, history.reason))
         elif history.document is not None:
-            base = _previous(shard, history, contracts, reasons)
+            base = _previous(shard, history, reasons)
             if base is not None:
                 pairing = CROSS_RUNNER
         else:
@@ -2601,9 +2582,7 @@ def _reconcile(
     return ShardAssembly(shard, head, base, pairing, tuple(reasons), sources, tuple(comparison))
 
 
-def _previous(
-    shard: Shard, history: History, contracts: ContractSource, reasons: list[Reason]
-) -> ShardCapture | None:
+def _previous(shard: Shard, history: History, reasons: list[Reason]) -> ShardCapture | None:
     previous = history.head(shard.id)
     if previous is None:
         reasons.append(
@@ -2616,7 +2595,7 @@ def _previous(
         reasons.append(Reason("history-invalid", BASE, "; ".join(previous.problems)))
         return None
     assert previous.capture is not None
-    side_reasons = _side_reasons(shard, previous, previous.capture.commit, contracts)
+    side_reasons = _side_reasons(shard, previous, previous.capture.commit)
     reasons.extend(replace(reason, side=BASE) for reason in side_reasons)
     return previous if not side_reasons else None
 
@@ -2626,7 +2605,6 @@ def _unique(
     side: str,
     candidates: Sequence[ShardCapture],
     expected_commit: str,
-    contracts: ContractSource,
     reasons: list[Reason],
     failures: list[Failure],
 ) -> ShardCapture | None:
@@ -2654,7 +2632,7 @@ def _unique(
         assert only.unavailable is not None
         reasons.append(Reason(only.unavailable.code, side, only.unavailable.message))
         return None
-    side_reasons = _side_reasons(shard, only, expected_commit, contracts, planned=side == HEAD)
+    side_reasons = _side_reasons(shard, only, expected_commit, planned=side == HEAD)
     for reason in side_reasons:
         reasons.append(replace(reason, side=side))
         failures.append(Failure(reason.code, reason.message, shard.id, side, only.source))
@@ -2665,7 +2643,6 @@ def _side_reasons(
     shard: Shard,
     side: ShardCapture,
     expected_commit: str,
-    contracts: ContractSource,
     *,
     planned: bool = False,
 ) -> list[Reason]:
@@ -2739,7 +2716,7 @@ def _side_reasons(
         return reasons
     try:
         validate(envelope)
-        contract = contracts(str(cast("Document", envelope["provenance"])["commit"]))
+        contract = Provenance.from_document(cast("Document", envelope["provenance"])).contract()
         validate_matrix(
             envelope,
             shard.subject,
@@ -2747,13 +2724,7 @@ def _side_reasons(
             workload_selection(capture.workloads or (), contract),
             sorted(capture.runtimes),
         )
-    except (
-        KeyError,
-        TypeError,
-        ValueError,
-        ValidationError,
-        subprocess.CalledProcessError,
-    ) as error:
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
         reasons.append(Reason("envelope-invalid", None, f"the envelope is invalid: {error}"))
         return reasons
     provenance = _provenance(envelope)

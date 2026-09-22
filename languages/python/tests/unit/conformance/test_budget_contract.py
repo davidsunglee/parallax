@@ -48,8 +48,6 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
 # Snapshot workload is unchanged and remains current; the authority migration
 # changed write-instrument source without a recapture, so verification must name
 # that member stale instead of making the historical evidence claim new inputs.
-# The producing commits were squash-merged, so whole-portfolio verification runs
-# only in a clone that still carries them; the digest facts are checked everywhere.
 def test_committed_envelope_digests_preserve_their_provenance() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
@@ -66,10 +64,6 @@ def test_committed_envelope_digests_preserve_their_provenance() -> None:
     assert provenance["workloadDigest"] == workload_digest()
     assert write_provenance["workloadDigest"] != lowering_support.write_lowering_digest()
     assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
-    for member in members:
-        commit = cast("str", cast("Mapping[str, object]", member["provenance"])["commit"])
-        if cost_report.resolve_commit(commit) is None:
-            pytest.skip(f"producing commit {commit} is not in this clone")
     assert cost_report.verify(portfolio) == [
         "the write-lowering envelope's workload digest is stale"
     ]
