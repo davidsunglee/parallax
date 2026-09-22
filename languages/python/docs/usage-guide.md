@@ -2160,6 +2160,83 @@ def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
     return typed.wire()
 ```
 
+### Publish a Typed stream root in canonical Wire form
+
+Spec: `python.md` §4 (*Stream projection is page-scoped and element-only*). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: every Typed Order root projects through `SnapshotStream.wire` with its requested items through the shipped adapter).
+
+Project while delivery is paused at the root: the method uses the current page and never advances it or issues SQL. Consume the Wire node inside the scope so the stream retains only its current page.
+
+```python
+class Order(
+    Entity,
+    table="orders",
+    namespace=_NS,
+    indices=(index("orders_sku", "sku"),),
+):
+    """Mirror of the ``Order`` entity of ``models/orders.yaml`` (the full
+    relationship set: to-many ``items``/``statuses``/``tags`` plus the
+    alternate-ordering ``itemsByShipDate`` path over the same join and the three
+    ``notes*`` paths, one per authorable direction/Null-Placement pair over one
+    nullable key — ``asc`` with Nulls Last is unauthorable because canonical form
+    omits a default, and ``itemsByShipDate`` already spells it)."""
+
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=255)
+    sku: Attr[str | None] = attr(max_length=32)
+    qty: Attr[int] = attr(type=Int32)
+    price: Attr[Decimal] = attr(precision=18, scale=2)
+    active: Attr[bool]
+    ordered_on: Attr[dt.date]
+    items: Rel[tuple["OrderItem", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        dependent=True,
+        order_by=(desc("id"),),
+    )
+    statuses: Rel[tuple["OrderStatus", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "order_id"), dependent=True
+    )
+    tags: Rel[tuple["OrderTag", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(desc("priority"), "label"),
+    )
+    items_by_ship_date: Rel[tuple["OrderItem", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "order_id"), order_by=("shipped_on",)
+    )
+    notes_asc_nulls_first: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(asc("resolved_on").nulls_first(),),
+    )
+    notes_desc_nulls_last: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(desc("resolved_on"),),
+    )
+    notes_desc_nulls_first: Rel[tuple["OrderNote", ...]] = rel(
+        cardinality=ONE_TO_MANY,
+        join=("id", "order_id"),
+        order_by=(desc("resolved_on").nulls_first(),),
+    )
+
+
+def publish_typed_stream_as_wire(
+    db: ScopedDatabase, page: int, publish: Callable[[WireEntity], None]
+) -> None:
+    """Publish each Typed delivery root in canonical Wire form as it arrives.
+
+    ``SnapshotStream.wire(value)`` projects one eligible Entity while iteration
+    is paused at a root of its current page. It uses that page's requested graph,
+    performs no read or advance of its own, and releases its working state at the
+    next page. The explicit ``publish`` boundary consumes each Wire node inside
+    the stream scope, preserving the delivery's bounded-retention shape.
+    """
+    with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
+        for order in orders:
+            publish(orders.wire(order))
+```
+
 ### Streamed delivery — one root at a time, in either namespace
 
 Spec: `python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the scope-bound single-pass delivery, and `batch_size`) and `m-snapshot-read` *Streamed delivery* (the Continuation Order, the `1 + L` ceiling per page, and *What a delivery costs*). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: the same roots, the same order, and the same included children at three page sizes, in both namespaces). The memory bound the surface exists for is measured separately in `tests/unit/test_snapshot_stream_retention.py`, which the `cost` class owns, and the page partition each delivery spells is graded against golden SQL by the corpus's streamed cases (`m-snapshot-read-027`, `-031` through `-037`).

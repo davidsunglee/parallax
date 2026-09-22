@@ -32,6 +32,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.snapshot_recipes import (
     publish_typed_read_as_wire,
+    publish_typed_stream_as_wire,
     read_a_table_per_concrete_subtype_family,
     read_a_table_per_hierarchy_family,
     read_to_one_relationship_states,
@@ -222,6 +223,25 @@ def test_an_eager_typed_read_projects_to_canonical_wire_form(profile_run: Any) -
     }
 
 
+def test_a_typed_stream_projects_each_root_to_wire_through_the_shipped_adapter(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_ORDERS), {})
+    db = own_root(connect(profile_run.port, _ORDERS)).using_database_login()
+    _seed_streamed_orders(db, 3)
+    published: list[Any] = []
+
+    publish_typed_stream_as_wire(db, 2, published.append)
+
+    assert [row["id"] for row in published] == [1, 2, 3]
+    assert [row["name"] for row in published] == ["order-1", "order-2", "order-3"]
+    assert [[item["id"] for item in row["items"]] for row in published] == [
+        [11, 10],
+        [21, 20],
+        [31, 30],
+    ]
+
+
 def test_a_streamed_delivery_answers_the_same_result_at_every_page_size(
     profile_run: Any,
 ) -> None:
@@ -288,6 +308,11 @@ def _streamed_delivery_at_page_two(db: ScopedDatabase) -> tuple[int, list[str]]:
     """The streamed recipe with its page size bound, so the run-through drives
     every recipe through one signature."""
     return stream_a_result_one_root_at_a_time(db, 2)
+
+
+def _streamed_projection_at_page_two(db: ScopedDatabase) -> None:
+    published: list[Any] = []
+    publish_typed_stream_as_wire(db, 2, published.append)
 
 
 def _streamed_write_at_page_two(db: ScopedDatabase) -> list[Decimal]:
@@ -411,6 +436,12 @@ class _CannedOrderPort(ConnectsAsItself):
         ),
         pytest.param(publish_typed_read_as_wire, "account", _CannedAccountPort, id="typed-to-wire"),
         pytest.param(
+            _streamed_projection_at_page_two,
+            "orders",
+            _CannedOrderPort,
+            id="streamed-typed-to-wire",
+        ),
+        pytest.param(
             _streamed_delivery_at_page_two, "orders", _CannedOrderPort, id="streamed-delivery"
         ),
         pytest.param(
@@ -431,6 +462,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             read_to_one_relationship_states,
             read_a_table_per_hierarchy_family,
             publish_typed_read_as_wire,
+            publish_typed_stream_as_wire,
             read_a_table_per_concrete_subtype_family,
             stream_a_result_one_root_at_a_time,
             stream_and_write_inside_one_transaction,

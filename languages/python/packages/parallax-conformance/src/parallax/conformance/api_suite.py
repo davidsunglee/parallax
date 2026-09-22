@@ -37,7 +37,7 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
-from parallax.conformance.story_models import Account, OrderStatus
+from parallax.conformance.story_models import Account, Order, OrderStatus
 
 __all__ = [
     "CASE_SKIP_REASONS",
@@ -162,6 +162,25 @@ RECIPES: Final[list[Recipe]] = [
             inspect.getsource(Account)
             + "\n\n"
             + inspect.getsource(snapshot_recipes.publish_typed_read_as_wire)
+        ),
+    ),
+    Recipe(
+        title="Publish a Typed stream root in canonical Wire form",
+        spec="`python.md` §4 (*Stream projection is page-scoped and element-only*)",
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: every Typed Order "
+            "root projects through `SnapshotStream.wire` with its requested items "
+            "through the shipped adapter)"
+        ),
+        notes=(
+            "Project while delivery is paused at the root: the method uses the current "
+            "page and never advances it or issues SQL. Consume the Wire node inside the "
+            "scope so the stream retains only its current page."
+        ),
+        snippet=(
+            inspect.getsource(Order)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.publish_typed_stream_as_wire)
         ),
     ),
     Recipe(
