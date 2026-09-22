@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from typing import cast
 
 import pytest
 
+import cost_report
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
@@ -107,6 +109,33 @@ def test_validation_uses_the_embedded_contract_not_the_checkout(
 
     monkeypatch.setattr(BudgetContract, "load", staticmethod(load_current_checkout_contract))
     validate(envelope)
+
+
+# The retained captures name producing commits no fresh clone need contain.
+# Validating every committed member while any subprocess is refused pins that an
+# envelope's authority is classified from the envelope alone, never from history.
+def test_validation_of_committed_evidence_asks_git_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    members = [
+        member
+        for capture in ("recovered", "before", "after")
+        for member in cast(
+            "Sequence[Mapping[str, object]]",
+            json.loads(
+                (cost_report.EVIDENCE_DIRECTORY / capture / "portfolio.json").read_text(
+                    encoding="utf-8"
+                )
+            )["members"],
+        )
+    ]
+
+    def refuse(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"validation ran {list(command)}")
+
+    monkeypatch.setattr(subprocess, "run", refuse)
+    for member in members:
+        validate(member)
 
 
 def test_dirty_or_os_different_runs_are_classified_from_the_fingerprint_only() -> None:

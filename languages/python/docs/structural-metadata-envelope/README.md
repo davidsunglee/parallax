@@ -19,7 +19,8 @@ checked-out head, the database-free gate recomputes its Snapshot delivery
 member's Budget Contract and workload-catalog digests from the committed inputs,
 and the memory gates are derived from it. `before/` is retained unchanged as
 the recovery reference and `after/` as the fixed regression baseline; both are
-comparison bases and are verified by nothing. The historical captures under
+comparison bases and are verified whole by the database-free gate alongside the
+canonical portfolio. The historical captures under
 `../write-lowering-envelope/` and `../snapshot-delivery-envelope/` keep their
 original names, protocols, and producing commits; nothing here is compared
 against them, because their write window stopped at `LoweredStatement` and their
@@ -62,6 +63,22 @@ verifier — `--verify` states a reading past its gate as one more advisory, on
 whichever runtime read it (see *Memory gates* below); a dependency bump or a
 rebase changes nothing a reading measured; and the capture budget recorded
 below is why drift is stated rather than made a reason to capture again.
+
+Every envelope carries the Budget Contract it was classified against, as the
+authored YAML text whose bytes its `budgetContractDigest` hashes, so `--verify`
+reconstructs the contract that was in force at capture from the envelope alone.
+The producing commit stays in provenance as an informational field that only
+`--compare` and the not-an-ancestor advisory read; verification needs no history
+and runs identically in a shallow clone, in a fresh one, and here. The
+alternative — keeping every producing commit reachable, by capturing on `main`
+or tagging each one — was weighed and refused: it makes a retained capture
+verifiable only where its branch survives, which is precisely what the
+squash-merged captures under this directory had already stopped being. The
+authority label a verified envelope carries therefore attests to the envelope's
+internal consistency, not to the unforgeability of the reading: the digest binds
+the embedded contract to the classification, and the evidence's integrity rests
+on review of these tracked files, exactly as it did when the contract bytes were
+read from the producing commit.
 
 Retained checkpoints are taken separately from the uninterrupted timing and
 high-water runs, each after 200 warm-up runs of its seam, at the production

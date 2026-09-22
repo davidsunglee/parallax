@@ -239,13 +239,17 @@ jobs:
   # request by label, dispatch, or the nightly schedule.
   python-verify-cost:
     runs-on: ubuntu-latest
+    # Advisory until the canonical capture is retaken: its write-lowering member
+    # records the workload digest of instrument source that has since changed, so
+    # verification reports that member stale and exits non-zero on every run.
     continue-on-error: true
     env:
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
         with:
-          # verify() resolves the committed capture's producing commit.
+          # advisories asks whether the producing commit is an ancestor of the
+          # inspected head.
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: astral-sh/setup-uv@v7

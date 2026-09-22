@@ -593,10 +593,6 @@ def _to_legacy(document: dict[str, Any]) -> None:
 # case and both runtimes. Their original workload digests remain untouched when
 # later instrument source changes without a recapture, and verification names
 # that mismatch rather than presenting the old readings as current evidence.
-# Their producing commits were squash-merged, so a clone holds them only if it
-# still carries the original branches; the whole-portfolio verification needs
-# the commit and is skipped where it is absent, while the matrix contract is
-# checked everywhere.
 @pytest.mark.parametrize("name", ["before", "after"])
 def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     name: str,
@@ -611,10 +607,6 @@ def test_each_retained_historical_portfolio_preserves_its_original_provenance(
             (cost_report.EVIDENCE_DIRECTORY / name / "portfolio.json").read_text(encoding="utf-8")
         ),
     )
-    for member in cast("list[dict[str, Any]]", portfolio["members"]):
-        commit = str(cast("dict[str, Any]", member["provenance"])["commit"])
-        if cost_report.resolve_commit(commit) is None:
-            pytest.skip(f"{name}/ producing commit {commit} is not in this clone")
     assert verify(portfolio) == ["the write-lowering envelope's workload digest is stale"]
 
 
