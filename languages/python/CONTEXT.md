@@ -696,8 +696,10 @@ _Avoid_: performance baseline, benchmark config, SLA, CI threshold file
 The versioned document every quantitative `python-report-*` member emits under
 `spec/cost-report-envelope.schema.json`: subject, readings and units, declared
 comparisons, provenance, authority classification, and explicit incompleteness
-and errors. Only a clean committed run whose fingerprint matches the Budget
-Contract is `authoritative`; the retained authoritative envelope lives under
+and errors. Provenance embeds the Budget Contract as authored at capture, so
+validation reclassifies an envelope from the envelope alone. Only a clean
+committed run whose fingerprint matches the Budget Contract is `authoritative`;
+the retained authoritative envelope lives under
 `docs/snapshot-delivery-envelope/`.
 _Avoid_: benchmark log, summary table, CI artifact, verdict
 

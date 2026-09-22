@@ -46,16 +46,6 @@ def _git(repo: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _git_bytes(repo: Path, *args: str) -> bytes:
-    completed = subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
-    return completed.stdout
-
-
-def _contract_at_commit(repo: Path, commit: str) -> BudgetContract:
-    authored = _git_bytes(repo, "show", f"{commit}:{_BUDGET_CONTRACT_PATH.as_posix()}")
-    return BudgetContract.from_bytes(repo / _BUDGET_CONTRACT_PATH, authored)
-
-
 def _sysctl(name: str) -> str | None:
     if sys.platform != "darwin":
         return None
@@ -66,9 +56,17 @@ def _sysctl(name: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class Provenance:
+    """What produced a reading, including the Budget Contract it was judged by.
+
+    ``budget_contract`` is the authored YAML text whose UTF-8 bytes
+    ``budget_contract_digest`` hashes, so an envelope states the contract in
+    force at capture without the producing commit having to be resolvable.
+    """
+
     commit: str
     dirty: bool
     budget_contract_digest: str
+    budget_contract: str
     workload_digest: str
     lock_digest: str
     machine: str
@@ -102,6 +100,7 @@ class Provenance:
             commit=_git(repo, "rev-parse", "HEAD"),
             dirty=bool(_git(repo, "status", "--porcelain")),
             budget_contract_digest=contract.digest,
+            budget_contract=contract.authored.decode("utf-8"),
             workload_digest=workload_digest,
             lock_digest=_digest(repo / _LOCK_PATH),
             machine=_sysctl("hw.model") or platform.machine(),
@@ -119,6 +118,7 @@ class Provenance:
             "commit": self.commit,
             "dirty": self.dirty,
             "budgetContractDigest": self.budget_contract_digest,
+            "budgetContract": self.budget_contract,
             "workloadDigest": self.workload_digest,
             "lockDigest": self.lock_digest,
             "machine": self.machine,
@@ -137,6 +137,7 @@ class Provenance:
             commit=cast("str", document["commit"]),
             dirty=cast("bool", document["dirty"]),
             budget_contract_digest=cast("str", document["budgetContractDigest"]),
+            budget_contract=cast("str", document["budgetContract"]),
             workload_digest=cast("str", document["workloadDigest"]),
             lock_digest=cast("str", document["lockDigest"]),
             machine=cast("str", document["machine"]),
@@ -148,6 +149,21 @@ class Provenance:
             postgres=cast("str", document["postgres"]),
             sampling=cast("Mapping[str, object]", document["sampling"]),
         )
+
+    def contract(self) -> BudgetContract:
+        """The Budget Contract this run was judged by, parsed from the envelope.
+
+        ``ValueError`` when the embedded text is not the text the recorded
+        digest hashes.
+        """
+        authored = self.budget_contract.encode("utf-8")
+        if hashlib.sha256(authored).hexdigest() != self.budget_contract_digest:
+            raise ValueError(
+                "provenance budgetContract does not hash to budgetContractDigest "
+                f"{self.budget_contract_digest!r}"
+            )
+        repo = case_format.find_repo_root()
+        return BudgetContract.from_bytes(repo / _BUDGET_CONTRACT_PATH, authored)
 
 
 class PostgresVersionSource(Protocol):
@@ -223,7 +239,7 @@ class CostReportEnvelope:
     comparisons: tuple[Comparison, ...] = ()
     incomplete: tuple[Diagnostic, ...] = ()
     errors: tuple[Diagnostic, ...] = ()
-    schema_version: int = 1
+    schema_version: int = 2
 
     def document(self) -> dict[str, object]:
         return {
@@ -265,11 +281,7 @@ def validate(envelope: CostReportEnvelope | Mapping[str, object]) -> None:
     validator.validate(document)
     provenance_document = cast("Mapping[str, object]", document["provenance"])
     provenance = Provenance.from_document(provenance_document)
-    try:
-        _git(repo, "cat-file", "-e", f"{provenance.commit}^{{commit}}")
-    except subprocess.CalledProcessError as error:
-        raise ValueError(f"provenance commit {provenance.commit!r} is not a commit") from error
-    expected = classify_authority(provenance, _contract_at_commit(repo, provenance.commit))
+    expected = classify_authority(provenance, provenance.contract())
     if document["authority"] != expected:
         raise ValueError(
             f"authority {document['authority']!r} disagrees with provenance "

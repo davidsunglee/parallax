@@ -267,6 +267,7 @@ def test_catalog_rejects_a_fixture_that_is_not_a_mapping(tmp_path: Path) -> None
         {},
         {"bad": {"fixture": "bad.yaml"}},
         "a",
+        b"authored",
     )
     with pytest.raises(ValueError, match="benchmark fixture is not a mapping"):
         catalog(contract)
@@ -287,6 +288,7 @@ def test_catalog_rejects_duplicate_fixture_ownership(tmp_path: Path) -> None:
             "second": {"fixture": "shared.yaml"},
         },
         "a",
+        b"authored",
     )
     with pytest.raises(
         ValueError,
