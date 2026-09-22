@@ -1,4 +1,4 @@
-# Published instance state — the three-arm reading
+# Published instance state and Typed Wire projection
 
 What one published Typed Entity retains and costs under each backing, measured
 on one machine under stated conditions, over COR-111's six canonical scenarios
@@ -7,7 +7,9 @@ discharged: retained bytes before and after per scenario, each scenario's own
 percentage, the primary and secondary aggregates, construction, attribute-read
 and serialization timings, transient allocation and peak memory — plus the
 separate warmed scenario the contract requires beside the mix and outside every
-aggregate.
+aggregate. COR-112 adds a fourth, separate reading: what publishing the retained
+Typed envelope as Wire costs. That projection reading does not alter the
+three-arm aggregates and has no fabricated pre-projection baseline.
 
 **Two different comparisons are recorded here, and every figure says which it
 makes.** The aggregates and the regression ratios divide the *legacy* arm into
@@ -317,6 +319,115 @@ lower bound and "the latest minor + one prior minor" fixes its width above it.
 Which interpreter takes the reading decides nothing — closing the range at
 `sys.version_info` instead would silently drop the top row whenever the report
 ran on anything but the latest minor.
+
+## Typed-envelope Wire projection
+
+COR-112 measures `Snapshot.wire()` from an already completed one-root Typed
+envelope. The source envelope, matched direct-Wire Page, model preparation, and
+the first correspondence check are outside every measured window. `fresh us`
+includes the projection, construction of its public `Snapshot` envelope, and
+access to `result()`. `reuse us` repeats the projection within one call's
+successful class/layout reuse scope. `direct us` publishes the matched Page
+through the canonical Wire walk, constructs the same public envelope, and also
+accesses `result()`. The memory columns are caller-owned retained output,
+allocation released before return, and their sum at the high-water mark.
+
+### CPython 3.14.7
+
+| scenario | retained B | transient B | peak B | fresh us | reuse us | direct us | fresh/direct |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| shallow | 438 | 3,424 | 3,862 | 12.72 | 6.90 | 7.71 | 1.65x |
+| wide | 672 | 3,192 | 3,864 | 14.97 | 8.87 | 7.27 | 2.06x |
+| nested | 1,248 | 7,450 | 8,698 | 25.08 | 15.06 | 11.81 | 2.12x |
+| nullable | 480 | 2,640 | 3,120 | 12.35 | 7.61 | 6.07 | 2.03x |
+| partial | 392 | 2,608 | 3,000 | 11.53 | 6.85 | 5.37 | 2.15x |
+| polymorphic | 480 | 2,808 | 3,288 | 12.64 | 7.58 | 6.59 | 1.92x |
+
+### CPython 3.13.15
+
+| scenario | retained B | transient B | peak B | fresh us | reuse us | direct us | fresh/direct |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| shallow | 430 | 3,056 | 3,486 | 12.42 | 6.48 | 7.40 | 1.68x |
+| wide | 664 | 2,872 | 3,536 | 14.11 | 8.66 | 7.51 | 1.88x |
+| nested | 1,240 | 6,496 | 7,736 | 23.11 | 13.61 | 10.96 | 2.11x |
+| nullable | 472 | 2,216 | 2,688 | 11.77 | 7.41 | 6.35 | 1.85x |
+| partial | 384 | 2,216 | 2,600 | 11.02 | 6.39 | 5.29 | 2.09x |
+| polymorphic | 472 | 2,528 | 3,000 | 11.89 | 7.10 | 6.19 | 1.92x |
+
+The output graph, rather than its Typed source, determines retained memory:
+384-1,240 B on 3.13 and 392-1,248 B on 3.14. The nested occurrence graph is the
+largest retained and transient case; equal-width nullable and partial roots keep
+different output sizes because presence is preserved. Peak is exactly retained
+plus transient in every cell. The proof suite separately establishes that these
+figures retain no reader, memo, encoder, Typed backreference, Page, RootView, or
+execution owner.
+
+Fresh projection takes 1.65-2.15x the matched direct publication, with medians of
+1.90x on 3.13 and 2.05x on 3.14. Same-call reuse removes 37.1-47.8% of fresh
+projection time on 3.13 and 38.4-45.7% on 3.14. It is near the direct publication
+cost rather than universally below it: 0.88-1.24x direct on 3.13 and 0.90-1.28x
+on 3.14. This is the measured price of projecting an existing Typed graph through
+the canonical publisher, not another read and not Pydantic serialization.
+
+## COR-112 before/after controls
+
+The durable captures are the clean instrumented baseline `e372c69c` and the
+clean reviewed implementation `77ef7566`. The after capture completed on
+2026-09-22 with all required snapshot-delivery, write-lowering, and
+instance-state matrices complete on both runtimes. The non-strict arithmetic is
+archived outside Git at
+`$HOME/.local/share/parallax/evidence/cor-112/comparison.md` (SHA-256
+`07dee126dd6364f700ef91102fd34eebbfc317cd68993a0a22791c724668cdb8`).
+
+This is an explicitly qualified comparison, not one mechanically certified by
+`--require-compatible`. The strict check correctly refused arithmetic for one
+reason and one reason only: the snapshot-delivery control source
+`tests/unit/_snapshot_materialization_support.py` has a different digest. The
+user reviewed and approved that sole exception as a semantically equivalent API
+migration: the driver moved mechanically from `plan.levels` and the level-owned
+`attach_key` to `plan.fetch_steps` and the canonical IncludeTree position view's
+`narrowed_view` or relationship name. The validator was not weakened. With
+`instance-state` explicitly required, it reported no other failure: both
+envelopes are valid and clean; workload, budget, lock, sampling protocol,
+machine, CPU/core/RAM, OS, in-process Python, PostgreSQL facts, per-runtime
+interpreter identities, all other control and instrument sources, cell windows,
+units, and sample counts match. The six projection cells are the declared
+head-only matrix.
+
+The controls show these directions:
+
+- Existing instance-state retained and bare bytes are identical before and
+  after in every scenario on both runtimes. The changed wall-clock readings are
+  report-only variation around an unchanged representation matrix.
+- Unused Typed eager/stream retained memory is unchanged. Its median timing
+  change is -2.5% for eager and +1.2% for page-32 delivery; its peak allocation
+  rises by medians of 5.9% and 5.3%.
+- Direct Wire retained memory is unchanged. Direct Wire timing rises by a median
+  9.4% for eager and 7.8% for page-32 delivery across runtime/workload/root-count
+  cells; peak allocation rises by medians of 9.0% and 6.8%. The two-point
+  200-to-2,000-root slopes move from a median 60.0 to 65.6 us/root eager and
+  63.8 to 69.4 us/root page-32. These are directional one-run timing and peak
+  observations, not gates; they do not hide retained growth or repeated
+  publication, and no arbitrary materiality threshold is introduced here.
+- Guarded-plan cold and warm timing remains centered within 1.3% of baseline;
+  cold retained/peak memory rises about 2%, while warm retained memory is
+  unchanged. Guarded Typed timing is centered 1.3% faster and Wire timing 10.5%
+  slower, consistent with the broader delivery controls rather than planning.
+- A closed result now retains the required model and IncludeTree metadata:
+  about 6.1 KiB over the small model and 12.2-12.4 KiB over the larger model.
+  The shared-owner controls move by only 16 B. This is bounded metadata lifetime,
+  not an execution-resource survivor.
+- Family model preparation remains stable: elapsed time is -4.8%/+0.8%, retained
+  memory is +24 B, and transient memory falls 88/96 B on 3.13/3.14. The public
+  family-bearing `tx.wire.insert` response retains exactly the same bytes and is
+  0.3-3.0% faster, while transient allocation rises 1,421 B (22.6%) on 3.13 and
+  2,243 B (34.4%) on 3.14. Response encoding and SQL-bind encoding remain
+  distinct measured outputs.
+
+The delivery slope fit is descriptive only. Page-32 fixed intercepts move from
+about 7.6 to 8.1 ms for Wire and 7.4 to 8.2 ms for Typed; eager two-point
+intercepts straddle zero and therefore do not support a fixed-cost claim. The
+per-root slopes and exact retained figures are the useful scaling observations.
 
 ## What the escalation block said
 
