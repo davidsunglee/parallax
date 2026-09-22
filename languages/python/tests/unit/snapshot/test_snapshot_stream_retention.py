@@ -482,6 +482,22 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     return seam
 
 
+def _projecting_paused(total: int, *, batch_size: int, fanout: int, at: int) -> Seam:
+    """A Typed delivery projecting each current root and retaining no output."""
+
+    def seam(sample: Callable[[], None]) -> None:
+        with Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL) as root:
+            database = root.using_database_login()
+            with database.stream(_query(), batch_size=batch_size) as stream:
+                for position, published in enumerate(stream):
+                    stream.wire(published)
+                    if position == at:
+                        sample()
+                        return
+
+    return seam
+
+
 def _paused_over(terms: int, total: int, *, batch_size: int, fanout: int, at: int) -> Seam:
     """:func:`_paused`'s Typed reading under a Continuation Order of ``terms``
     authored keys, so the term count varies while everything else holds."""
@@ -786,6 +802,16 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
         )
         assert near == larger, (namespace.name, near, larger)
         assert near == further, (namespace.name, near, further)
+
+    projected = _census(_projecting_paused(_LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
+    projected_larger = _census(
+        _projecting_paused(_LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT)
+    )
+    projected_further = _census(
+        _projecting_paused(_LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER)
+    )
+    assert projected == projected_larger, (projected, projected_larger)
+    assert projected == projected_further, (projected, projected_further)
 
 
 @in_a_child_interpreter

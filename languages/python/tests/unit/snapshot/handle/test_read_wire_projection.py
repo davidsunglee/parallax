@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import json
 import weakref
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from pydantic import computed_field, field_serializer
 
 from parallax.conformance import vo_models as vo
 from parallax.conformance.animal_owner import ANIMAL_MODEL
@@ -24,11 +26,14 @@ from parallax.conformance.read_models import (
 )
 from parallax.core import (
     TX_TIME,
+    AbstractRoot,
     Attr,
     ConcreteSubtype,
     DomainModel,
     Entity,
     RelationshipPath,
+    TablePerHierarchy,
+    ValueObject,
     attr,
 )
 from parallax.core import (
@@ -41,6 +46,7 @@ from parallax.snapshot import (
     InvalidData,
     Snapshot,
     SnapshotInspectionError,
+    SnapshotStream,
     WireEntity,
     handle,
     view,
@@ -78,6 +84,65 @@ class _Bird(
 _EXPANDED_ANIMAL_MODEL = DomainModel(AnimalOwnerPerson, Animal, Pet, Dog, Cat, WildBoar, _Bird)
 
 
+class _ExtendedEntity(
+    Entity,
+    name="ExtendedEntity",
+    table="extended_entity",
+    namespace="parallax.compatibility",
+):
+    id: Attr[int] = attr(primary_key=True, column="entity_id")
+    external_label: Attr[str] = attr(column="label_col")
+
+    @computed_field
+    @property
+    def poisoned_computed(self) -> str:
+        raise AssertionError("Wire projection invoked a computed field")
+
+    @field_serializer("external_label")
+    def _poisoned_serializer(self, value: str) -> str:
+        del value
+        raise AssertionError("Wire projection invoked a field serializer")
+
+
+_EXTENDED_MODEL = DomainModel(_ExtendedEntity)
+
+
+class _NarrowedDetails(ValueObject):
+    label: Attr[str]
+
+
+class _NarrowedRoot(
+    Entity,
+    name="NarrowedRoot",
+    table="narrowed_root",
+    namespace="parallax.compatibility",
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    details: Attr[_NarrowedDetails]
+
+
+class _NarrowedLeft(
+    _NarrowedRoot,
+    name="NarrowedLeft",
+    namespace="parallax.compatibility",
+    inheritance=ConcreteSubtype(tag_value="left"),
+):
+    left_value: Attr[int | None]
+
+
+class _NarrowedRight(
+    _NarrowedRoot,
+    name="NarrowedRight",
+    namespace="parallax.compatibility",
+    inheritance=ConcreteSubtype(tag_value="right"),
+):
+    right_value: Attr[int | None]
+
+
+_NARROWED_MODEL = DomainModel(_NarrowedRoot, _NarrowedLeft, _NarrowedRight)
+
+
 if TYPE_CHECKING:
 
     def _static_projection_contract(  # pyright: ignore[reportUnusedFunction] - static contract probe
@@ -85,12 +150,18 @@ if TYPE_CHECKING:
         wire: Snapshot[WireEntity],
         customer: vo.Customer,
         invalid: InvalidData[vo.Customer],
+        typed_stream: SnapshotStream[vo.Customer],
+        wire_stream: SnapshotStream[WireEntity],
     ) -> None:
         projected: Snapshot[WireEntity] = typed.wire()
         node: WireEntity = typed.wire(customer)
         projected_invalid: InvalidData[WireEntity] = typed.wire(invalid)
-        del projected, node, projected_invalid
+        streamed_node: WireEntity = typed_stream.wire(customer)
+        streamed_invalid: InvalidData[WireEntity] = typed_stream.wire(invalid)
+        del projected, node, projected_invalid, streamed_node, streamed_invalid
         wire.wire()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType] - Wire envelopes are ineligible receivers
+        wire_stream.wire(customer)  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType] - Wire streams are ineligible receivers
+        typed_stream.wire()  # pyright: ignore[reportCallIssue] - stream projection always takes one element
         typed.wire(at=vo.Customer.locations)  # pyright: ignore[reportCallIssue] - whole-result projection has no position override
         wrong: vo.Customer = typed.wire()  # pyright: ignore[reportAssignmentType] - projection returns the Wire envelope
         del wrong
@@ -170,6 +241,28 @@ def test_projection_does_not_serialize_or_reclassify(
 
     assert typed.wire().result()["name"] == "Ada"
     assert named_state_reads > 0
+
+
+def test_projection_ignores_pydantic_extensions_and_is_directly_json_serializable() -> None:
+    row = {"entity_id": 1, "label_col": "Ada"}
+    root = cast(
+        "handle.Database[Any]",
+        handle.Database.connect(
+            ScriptedAdapter(Read(rows=[row]), Read(rows=[row])), _EXTENDED_MODEL
+        ),
+    )
+    db = root.using_database_login()
+    query = _ExtendedEntity.where(_ExtendedEntity.id == 1)
+
+    typed = db.find(query)
+    projected = typed.wire()
+    direct = db.wire.find(query)
+    root.close()
+
+    assert projected.results() == direct.results()
+    assert json.loads(json.dumps(projected.checked().results())) == [
+        {"id": 1, "externalLabel": "Ada"}
+    ]
 
 
 def test_whole_result_projection_preserves_root_order() -> None:
@@ -282,6 +375,54 @@ def test_projection_preserves_hydrated_and_nonhydrating_invalid_records() -> Non
     assert isinstance(projected_nonhydrating, InvalidData)
     assert projected_nonhydrating.data is None
     assert projected_nonhydrating == nonhydrating
+
+
+def test_invalid_narrowed_view_projects_only_its_position_evidence() -> None:
+    invalid_left: dict[str, object] = {
+        "id": 1,
+        "kind": "left",
+        "details": {},
+        "left_value": 7,
+        "right_value": 9,
+    }
+    root = cast(
+        "handle.Database[Any]",
+        handle.Database.connect(
+            ScriptedAdapter(
+                Read(rows=[invalid_left]),
+                Read(rows=[invalid_left]),
+            ),
+            _NARROWED_MODEL,
+        ),
+    )
+    db = root.using_database_login()
+    query = _NarrowedRoot.where(_NarrowedRoot.id == 1).narrow(_NarrowedLeft)
+
+    projected = db.find(query).wire().checked()
+    direct = db.wire.find(query).checked()
+    root.close()
+
+    assert projected.results() == direct.results()
+    invalid = projected.result()
+    assert isinstance(invalid, InvalidData)
+    assert invalid.data is not None
+    assert invalid.data["familyVariant"] == "NarrowedLeft"
+    assert "rightValue" not in invalid.data
+    direct_invalid = direct.result()
+    assert isinstance(direct_invalid, InvalidData)
+    assert (
+        invalid.issues,
+        invalid.object_key,
+        invalid.version,
+        invalid.edge,
+        invalid.ordinal,
+    ) == (
+        direct_invalid.issues,
+        direct_invalid.object_key,
+        direct_invalid.version,
+        direct_invalid.edge,
+        direct_invalid.ordinal,
+    )
 
 
 def test_explicit_position_is_strict_and_admits_the_requested_concrete() -> None:

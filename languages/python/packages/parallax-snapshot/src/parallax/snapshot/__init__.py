@@ -53,8 +53,11 @@ keeps that module's class instead.
 The streamed peer of a Snapshot is here as well: :class:`SnapshotStream`
 (``SnapshotStream[T]``), what ``db.stream`` / ``tx.stream`` and their Wire peers
 answer — a scope-bound, single-pass delivery of roots with no whole-result
-accessor — and :class:`SnapshotStreamStateError`, its refusal of a second entry,
-a second view, or a reach outside its scope. Every case of that one is a rule
+accessor. A Typed stream's ``wire(value, *, at=None)`` projects one eligible
+published node only while delivery is paused at a root of its current Page; it
+does not advance the stream and has no whole-delivery form.
+:class:`SnapshotStreamStateError` refuses a second entry, a second view, a reach
+outside its scope, or projection when no delivered Page is current. Every case of that one is a rule
 about the stream rather than about the data: a checked delivery continues past a
 root whose stored state contradicts the model.
 :class:`SnapshotStreamContinuationError` is the delivery's other refusal and the

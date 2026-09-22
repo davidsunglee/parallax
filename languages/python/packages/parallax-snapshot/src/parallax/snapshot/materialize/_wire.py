@@ -474,10 +474,11 @@ class RootViewReader:
 class EntityReader:
     """The native published-Entity adapter for the shared Wire walk."""
 
-    __slots__ = ("_checked", "_model")
+    __slots__ = ("_checked", "_model", "_operation")
 
-    def __init__(self, model: CatalogedModel) -> None:
+    def __init__(self, model: CatalogedModel, *, operation: str = "Snapshot.wire") -> None:
         self._model = model
+        self._operation = operation
         self._checked: set[tuple[type, EntityIdentity]] = set()
 
     def layout(self, node: object) -> EntityLayout:
@@ -499,7 +500,7 @@ class EntityReader:
                     f"{type(node).__name__} does not correspond to retained layout "
                     f"{state.entity.canonical}: {error}"
                 ),
-                operation="Snapshot.wire",
+                operation=self._operation,
                 entity=state.entity,
             ) from error
         return layout
@@ -523,7 +524,7 @@ class EntityReader:
                     f"{type(node).__name__} declares no relationship position for "
                     f"{view.relationship}"
                 ),
-                operation="Snapshot.wire",
+                operation=self._operation,
                 entity=state.entity,
             )
         value = relationship_state(cast("Any", node), py_name)
@@ -544,19 +545,18 @@ class EntityReader:
         return SnapshotInspectionError(
             code="snapshot-wire-at-concrete-mismatch",
             message=f"{concrete.canonical} is not admitted by the requested include position",
-            operation="Snapshot.wire",
+            operation=self._operation,
             entity=concrete,
         )
 
-    @staticmethod
-    def _required(node: object):
-        projection_entity(node)
+    def _required(self, node: object):
+        projection_entity(node, operation=self._operation)
         state = snapshot_state_of(node)
         assert state is not None
         return state
 
 
-def projection_entity(node: object) -> EntityIdentity:
+def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> EntityIdentity:
     """Require one eligible published Snapshot Entity and answer its concrete."""
     if isinstance(node, Entity) and isinstance(
         named_state_value(node, CHANGE_RECORD_SLOT), ChangeRecord
@@ -565,7 +565,7 @@ def projection_entity(node: object) -> EntityIdentity:
         raise SnapshotInspectionError(
             code="snapshot-wire-input-edited",
             message="an edited Entity cannot be projected as read Wire state",
-            operation="Snapshot.wire",
+            operation=operation,
             entity=None if state is None else state.entity,
         )
     published = is_published(node)
@@ -574,7 +574,7 @@ def projection_entity(node: object) -> EntityIdentity:
         raise SnapshotInspectionError(
             code="snapshot-node-required",
             message="Wire projection requires a published Snapshot node",
-            operation="Snapshot.wire",
+            operation=operation,
             entity=None if state is None else state.entity,
         )
     return state.entity

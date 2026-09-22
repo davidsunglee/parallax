@@ -74,20 +74,21 @@ from tests._support.sweep_goldens import (
 # subtype class — the same permanent non-fit
 # `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for both
 # ids. So for those two nothing in this target grades the graph at all.
+_CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS: Final[dict[str, frozenset[str]]] = {
+    "m-inheritance-065": frozenset({"narrowed-child-family-variant"}),
+    "m-inheritance-066": frozenset({"sibling-null-padding"}),
+    "m-inheritance-067": frozenset({"narrowed-child-family-variant"}),
+    "m-inheritance-068": frozenset({"sibling-null-padding"}),
+    "m-inheritance-073": frozenset({"sibling-null-padding"}),
+    "m-inheritance-074": frozenset({"sibling-null-padding"}),
+    "m-inheritance-075": frozenset({"sibling-null-padding"}),
+    "m-inheritance-076": frozenset({"sibling-null-padding", "narrowed-child-family-variant"}),
+    "m-inheritance-077": frozenset({"sibling-null-padding"}),
+    "m-inheritance-078": frozenset({"sibling-null-padding"}),
+    "m-snapshot-read-012": frozenset({"sibling-null-padding", "narrowed-child-family-variant"}),
+}
 _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED: Final[frozenset[str]] = frozenset(
-    {
-        "m-inheritance-065",
-        "m-inheritance-066",
-        "m-inheritance-067",
-        "m-inheritance-068",
-        "m-inheritance-073",
-        "m-inheritance-074",
-        "m-inheritance-075",
-        "m-inheritance-076",
-        "m-inheritance-077",
-        "m-inheritance-078",
-        "m-snapshot-read-012",
-    }
+    _CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS
 )
 
 # The reachable read cases whose fixtures + observation this file runs end-to-
@@ -295,11 +296,16 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
-    elif "graph" in then and case.case_id not in _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED:
-        compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
-        compare_stored_data_issues(
-            observations.get("storedDataIssues"), then.get("storedDataIssues")
-        )
+    elif "graph" in then:
+        if case.case_id in _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED:
+            assert _CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[case.case_id]
+            with pytest.raises(AssertionError, match="graph mismatch"):
+                compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
+        else:
+            compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
+            compare_stored_data_issues(
+                observations.get("storedDataIssues"), then.get("storedDataIssues")
+            )
     elif "graphs" in then:
         expected_graphs = then["graphs"]
         observed_graphs = observations["graphs"]

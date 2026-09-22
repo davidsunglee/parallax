@@ -358,7 +358,7 @@ class Snapshot[T]:
                 values = ()
         del self
         reader = _require_projection_inputs((value,), model)
-        position = _wire_position(
+        position = wire_position(
             includes,
             model,
             None if at is _WIRE_AT_OMITTED else cast("RelationshipPath[Entity, Any] | None", at),
@@ -398,25 +398,29 @@ class Snapshot[T]:
             raise InvalidDataError(self._invalid, edition=self._edition)
 
 
-def _require_projection_inputs(values: tuple[object, ...], model: CatalogedModel) -> EntityReader:
+def _require_projection_inputs(
+    values: tuple[object, ...], model: CatalogedModel, *, operation: str = "Snapshot.wire"
+) -> EntityReader:
     """Validate explicit inputs before resolving a separately supplied position."""
     from parallax.snapshot.materialize._wire import EntityReader
 
-    reader = EntityReader(model)
+    reader = EntityReader(model, operation=operation)
     for value in values:
         record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
         node: object | None = record.data if record is not None else cast("object", value)
         if node is None:
             continue
-        _projection_concrete(reader, node)
+        projection_concrete(reader, node, operation=operation)
     return reader
 
 
-def _projection_concrete(reader: EntityReader, node: object) -> EntityIdentity:
+def projection_concrete(
+    reader: EntityReader, node: object, *, operation: str = "Snapshot.wire"
+) -> EntityIdentity:
     """Require lifecycle identity and retained layout to describe one concrete."""
     from parallax.snapshot.materialize._wire import projection_entity
 
-    concrete = projection_entity(node)
+    concrete = projection_entity(node, operation=operation)
     layout = reader.layout(node)
     if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
         raise SnapshotInspectionError(
@@ -425,16 +429,18 @@ def _projection_concrete(reader: EntityReader, node: object) -> EntityIdentity:
                 f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
                 f"match retained layout {layout.concrete.canonical}"
             ),
-            operation="Snapshot.wire",
+            operation=operation,
             entity=concrete,
         )
     return concrete
 
 
-def _wire_position(
+def wire_position(
     includes: deep_fetch.IncludeTree,
     model: CatalogedModel,
     path: RelationshipPath[Entity, Any] | None,
+    *,
+    operation: str = "Snapshot.wire",
 ) -> deep_fetch.PositionId:
     if path is None:
         return includes.root
@@ -443,7 +449,7 @@ def _wire_position(
         raise SnapshotInspectionError(
             code="snapshot-wire-at-unrequested",
             message=f"the retained model declares no query root {includes.queried.canonical}",
-            operation="Snapshot.wire",
+            operation=operation,
         )
     authored = IncludePath(
         segments=path.segments,
@@ -458,13 +464,13 @@ def _wire_position(
         raise SnapshotInspectionError(
             code="snapshot-wire-at-unrequested",
             message=f"the requested projection position is not part of this read: {error}",
-            operation="Snapshot.wire",
+            operation=operation,
         ) from error
     if position is None:
         raise SnapshotInspectionError(
             code="snapshot-wire-at-unrequested",
             message="the requested projection position is not an exact prefix of this read",
-            operation="Snapshot.wire",
+            operation=operation,
         )
     return position
 
@@ -501,7 +507,7 @@ def _project_eager_values(
                 continue
             if reader is None:
                 reader = EntityReader(model)
-            concrete = _projection_concrete(reader, node)
+            concrete = projection_concrete(reader, node)
             if not includes.admits(position, concrete):
                 raise SnapshotInspectionError(
                     code="snapshot-wire-at-concrete-mismatch",
