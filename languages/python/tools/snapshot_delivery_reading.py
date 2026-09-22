@@ -31,6 +31,7 @@ from parallax.conformance.workloads import (
     catalog,
 )
 from parallax.core.db_port import (
+    DRIVER_MANAGED,
     CleanupResult,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -321,7 +322,9 @@ def _live_timing(
     warmups: int,
     measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
-    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as root:
+    with Database.connect(
+        PostgresAdapter(connection_info, credentials=DRIVER_MANAGED), workload.domain_model
+    ) as root:
         database = root.using_database_login()
         work: Callable[[], object]
         if path.startswith("live.eager"):
@@ -388,7 +391,9 @@ def _live_memory(
         if path.startswith("streamedMemory.")
         else None
     )
-    with Database.connect(PostgresAdapter(connection_info), workload.domain_model) as root:
+    with Database.connect(
+        PostgresAdapter(connection_info, credentials=DRIVER_MANAGED), workload.domain_model
+    ) as root:
         database = root.using_database_login()
         if page_size is None:
             database.wire.find(workload.query)
@@ -933,6 +938,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--roots", required=True, type=int)
     parser.add_argument("--warmups", required=True, type=int)
     parser.add_argument("--measured", required=True, type=int)
+    # Where alone: the secret arrives as `PGPASSWORD` in this process's own
+    # environment rather than on an argv line anything can read, which is what
+    # `DRIVER_MANAGED` means at the two construction sites above.
     parser.add_argument("--connection-info")
     args = parser.parse_args(argv)
     contract = BudgetContract.load()

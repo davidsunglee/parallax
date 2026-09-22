@@ -44,7 +44,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import PhysicalIndexName
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._connection import (
-    ConnectionPreparation,
+    ConnectionEstablishment,
     IncompatibleSessionError,
     PostgresConnection,
     adapt_binds,
@@ -881,12 +881,12 @@ def test_the_per_connection_setup_records_a_refusal_and_reraises_it() -> None:
     # A pool creates most of its connections on its own background path, where a
     # refusal is retried and logged where a caller waiting for one never sees
     # it; the record is what lets the eventual timeout say what is wrong.
-    preparation = ConnectionPreparation()
+    establishment = ConnectionEstablishment()
     refused = _FakeConnection(encoding="latin1")
 
     with pytest.raises(IncompatibleSessionError) as raised:
-        preparation(cast("psycopg.Connection[TupleRow]", refused))
+        establishment(cast("psycopg.Connection[TupleRow]", refused))
 
-    assert preparation.last_refusal is raised.value
-    preparation(cast("psycopg.Connection[TupleRow]", _FakeConnection()))
-    assert preparation.last_refusal is None
+    assert establishment.last_refusal is raised.value
+    establishment(cast("psycopg.Connection[TupleRow]", _FakeConnection()))
+    assert establishment.last_refusal is None

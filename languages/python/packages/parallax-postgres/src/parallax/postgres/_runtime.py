@@ -41,7 +41,7 @@ import contextlib
 import threading
 from dataclasses import dataclass
 from time import monotonic
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import psycopg_pool
 
@@ -51,7 +51,9 @@ from parallax.core.db_port import (
     ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
+    CredentialSource,
     DatabaseStartupError,
+    DriverManaged,
     InvalidAuthorizationError,
     PoolMetricsSource,
     ReleaseUnconfirmed,
@@ -62,10 +64,13 @@ from parallax.core.db_port import (
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._authorization import PostgresRole
-from parallax.postgres._connection import CONNECT_KWARGS, ConnectionPreparation
+from parallax.postgres._connection import CONNECT_KWARGS, ConnectionEstablishment
 from parallax.postgres._context import NativePool, PostgresConnectionContext
 from parallax.postgres._options import PoolOptions, RetentionOptions
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
+
+if TYPE_CHECKING:
+    from psycopg_pool.abc import KwargsParam
 
 __all__ = ["PROBE_SQL", "PostgresRuntime", "open_runtime"]
 
@@ -101,22 +106,22 @@ class PostgresRuntime:
     __slots__ = (
         "_admission",
         "_closed",
+        "_establishment",
         "_login_identity",
         "_metrics",
         "_options",
         "_pool",
-        "_preparation",
     )
 
     def __init__(
         self,
         pool: NativePool,
         options: RetentionOptions,
-        preparation: ConnectionPreparation,
+        establishment: ConnectionEstablishment,
     ) -> None:
         self._pool = pool
         self._options = options
-        self._preparation = preparation
+        self._establishment = establishment
         self._metrics = PostgresPoolMetrics(pool)
         self._closed = False
         self._login_identity: str | None = None
@@ -169,14 +174,16 @@ class PostgresRuntime:
         acquisition it makes has to fit inside, rather than an ordinary
         acquisition timeout added to it.
         """
-        return PostgresConnectionContext(self._pool, self._admit, deadline, self._preparation, None)
+        return PostgresConnectionContext(
+            self._pool, self._admit, deadline, self._establishment, None
+        )
 
     def _context(self, role: PostgresRole | None) -> PostgresConnectionContext:
         return PostgresConnectionContext(
             self._pool,
             self._admit,
             monotonic() + self._options.acquire_timeout,
-            self._preparation,
+            self._establishment,
             role,
         )
 
@@ -241,7 +248,10 @@ class _PostgresExecutionSource:
 
 
 def open_runtime(
-    conninfo: str, options: RetentionOptions, prepare_threshold: int | None
+    conninfo: str,
+    options: RetentionOptions,
+    prepare_threshold: int | None,
+    credentials: CredentialSource | DriverManaged,
 ) -> PostgresRuntime:
     """Open one ready runtime over ``conninfo``, or raise having released what it took.
 
@@ -252,11 +262,11 @@ def open_runtime(
     rather than assumed away.
     """
     deadline = monotonic() + options.startup_timeout
-    preparation = ConnectionPreparation()
-    pool = _build_pool(conninfo, options, prepare_threshold, preparation)
-    runtime = PostgresRuntime(pool, options, preparation)
+    establishment = ConnectionEstablishment()
+    pool = _build_pool(conninfo, options, prepare_threshold, establishment, credentials)
+    runtime = PostgresRuntime(pool, options, establishment)
     try:
-        _await_minimum(pool, options, deadline, preparation)
+        _await_minimum(pool, options, deadline, establishment)
         runtime._complete_startup(_probe(runtime, deadline))  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
     except BaseException:
         with contextlib.suppress(Exception):
@@ -269,7 +279,8 @@ def _build_pool(
     conninfo: str,
     options: RetentionOptions,
     prepare_threshold: int | None,
-    preparation: ConnectionPreparation,
+    establishment: ConnectionEstablishment,
+    credentials: CredentialSource | DriverManaged,
 ) -> NativePool:
     """Create and open the native pool this runtime manages.
 
@@ -279,13 +290,25 @@ def _build_pool(
     row shape, and prepared-statement policy — and ``configure`` is where every
     connection, however it came to exist, is initialized and checked.
 
+    Where a credential source is configured, those keywords become a CALLABLE
+    the pool resolves on every physical connection, which is what makes the
+    secret late rather than frozen into configuration. Under
+    :data:`~parallax.core.db_port.DRIVER_MANAGED` the static dictionary is
+    passed exactly as it would be otherwise and carries no ``password`` at all,
+    leaving authentication to the driver and the server.
+
     No ``reset`` callback is configured. Native return already brings a
     connection back to a usable state or discards it, and a reset callback runs
     after that decision rather than instead of it — so it could not prevent an
     unexpected transaction being rolled back for reuse, which is exactly the
     outcome this adapter refuses by disposing of such a connection itself.
     """
-    kwargs: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
+    base: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
+    kwargs: KwargsParam = (
+        base
+        if isinstance(credentials, DriverManaged)
+        else establishment.connect_kwargs(base, credentials)
+    )
     check = psycopg_pool.ConnectionPool.check_connection if options.validate_on_checkout else None
     pool: NativePool
     if isinstance(options, PoolOptions):
@@ -293,7 +316,7 @@ def _build_pool(
             conninfo,
             kwargs=kwargs,
             open=False,
-            configure=preparation,
+            configure=establishment,
             check=check,
             min_size=options.min_size,
             max_size=options.max_size,
@@ -309,7 +332,7 @@ def _build_pool(
             conninfo,
             kwargs=kwargs,
             open=False,
-            configure=preparation,
+            configure=establishment,
             check=check,
             max_size=options.max_size,
             timeout=options.acquire_timeout,
@@ -333,7 +356,7 @@ def _await_minimum(
     pool: NativePool,
     options: RetentionOptions,
     deadline: float,
-    preparation: ConnectionPreparation,
+    establishment: ConnectionEstablishment,
 ) -> None:
     """Wait for the retained minimum, where there is one to wait for.
 
@@ -355,7 +378,7 @@ def _await_minimum(
     try:
         pool.wait(timeout=remaining)
     except Exception as exc:
-        refusal = preparation.last_refusal
+        refusal = establishment.last_refusal
         raise DatabaseStartupError(
             "no database connection this runtime opened became usable"
             if refusal is not None

@@ -6,19 +6,57 @@ companion `psycopg-pool`. See `languages/python/spec/python.md`.
 ## Connecting
 
 ```python
+from parallax.core.db_port import Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
 from parallax.snapshot import connect
 
-with connect(PostgresAdapter("postgresql://localhost/app"), model) as root:
+adapter = PostgresAdapter("postgresql://app@localhost/app", credentials=Password("s3cret"))
+with connect(adapter, model) as root:
     db = root.using_database_login()
     ...
 ```
 
 `PostgresAdapter` is **configuration**. Constructing one opens no connection, no
-pool, and no thread: it parses the connection string, validates the retention
-policy, and stores both. That is what makes it safe to build at import time,
-hold as a module constant, share between threads, and — for a forking server —
-build before the fork and open after it.
+pool, and no thread: it parses the connection string, validates the credential
+declaration and the retention policy, and stores them. That is what makes it
+safe to build at import time, hold as a module constant, share between threads,
+and — for a forking server — build before the fork and open after it.
+
+## Where the password lives
+
+The connection string says **where**, and `credentials` says **how**. A string
+carrying a password is refused at construction, whatever `credentials` is, and
+the refusal never quotes the string back:
+
+```text
+PostgresAdapter("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
+ValueError: connection_string must not carry a password; supply it through credentials.
+```
+
+There are three spellings, all exported from `parallax.core.db_port`:
+
+```python
+from parallax.core.db_port import DRIVER_MANAGED, Password
+
+# a constant secret; `Password` is its own source and keeps it out of every repr
+PostgresAdapter("postgresql://app@db.internal:5432/app", credentials=Password("s3cret"))
+
+# any object with `resolve() -> Password`, asked once per physical connection
+PostgresAdapter("postgresql://app@db.internal/app", credentials=my_source)
+
+# Parallax supplies none: peer, trust, a client certificate, Kerberos, or
+# libpq's own PGPASSWORD, .pgpass and service files
+PostgresAdapter("host=/var/run/postgresql dbname=app", credentials=DRIVER_MANAGED)
+```
+
+A source is asked every time the driver establishes a **physical** connection —
+initial fill, growth, replacement, retirement by `max_lifetime`, on-demand
+establishment — and never when an acquisition reuses a retained one, which is
+what lets a short-lived cloud token authenticate a pool that outlives it. It may
+block on a network and must bound its own I/O. Parallax cannot see a password
+reachable through a `service` file or `PGPASSWORD`, so neither is refused above;
+under an explicit source the resolved password wins over both, by libpq's own
+precedence.
 
 `connect` is what opens a runtime, and the Database Root it returns is what owns
 that runtime. Modeled work requires an explicitly selected `ScopedDatabase`, as

@@ -114,11 +114,12 @@ def test_a_startup_that_cannot_reach_a_server_publishes_no_handle(profile_run: A
     # Readiness is proved before publication, so a destination nothing answers
     # at is a composition failure rather than a handle that fails later.
     del profile_run  # the fixture is what admits this test to the database lane
-    from parallax.core.db_port import DatabaseStartupError
+    from parallax.core.db_port import DRIVER_MANAGED, DatabaseStartupError
     from parallax.postgres import PostgresAdapter
 
     unreachable = PostgresAdapter(
         "host=127.0.0.1 port=1 dbname=absent connect_timeout=1",
+        credentials=DRIVER_MANAGED,
         pool=PoolOptions(min_size=0, max_size=1, startup_timeout=5.0, acquire_timeout=2.0),
     )
 
@@ -291,8 +292,10 @@ def test_every_documented_retention_form_opens_against_a_real_server(profile_run
     # connection string. What a real server adds to the unit proof of their
     # policies is that each spelling opens a runtime that reads.
     _seeded(profile_run)
-    conninfo = profile_run.configured().connection_string
-    forms = database_pooling_stories.every_retention_form_is_one_configuration_value(conninfo)
+    configured = profile_run.configured()
+    forms = database_pooling_stories.every_retention_form_is_one_configuration_value(
+        configured.connection_string, configured.credentials
+    )
 
     for adapter in (forms.default, forms.tuned, forms.zero_minimum, forms.on_demand):
         with connect(adapter, _ACCOUNT) as _root_db:

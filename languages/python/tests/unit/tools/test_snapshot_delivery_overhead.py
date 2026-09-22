@@ -17,6 +17,7 @@ from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import Diagnostic, validate
 from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.provision import Provisioner
+from parallax.core.db_port import Password
 from parallax.core.metamodel import Metamodel
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
@@ -260,6 +261,7 @@ class _FakeProvisioner:
         self.resets: list[str] = []
         self.port = _FakePort()
         self.connection_info = "postgresql://fake"
+        self.credentials = Password("fake-secret")
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
         del fixtures

@@ -457,8 +457,12 @@ def _measure_group(
 
 
 def _engine(run: Any) -> tuple[Any, StatementCounter]:
+    from psycopg.conninfo import make_conninfo
+
     provisioner = run._provisioner
-    conninfo = provisioner._conninfo
+    # The provisioner holds where and how apart, as the adapter now requires.
+    # SQLAlchemy takes one string, so the two are composed back here.
+    conninfo = make_conninfo(provisioner._conninfo, password=provisioner.credentials.secret)
     url = conninfo.replace("postgresql://", "postgresql+psycopg://", 1)
     engine = create_engine(url, pool_size=5, max_overflow=0)
 

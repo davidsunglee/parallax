@@ -23,7 +23,7 @@ from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
 from parallax.core import storage_layout
 from parallax.core.base import JSON, TIMESTAMP, NeutralType
-from parallax.core.db_port import DatabaseRuntime, JsonDocument
+from parallax.core.db_port import DatabaseRuntime, JsonDocument, Password
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
     NULL,
@@ -65,9 +65,11 @@ if TYPE_CHECKING:
     from parallax.core.db_port import (
         Bind,
         ConnectionContextSource,
+        CredentialSource,
         DatabaseAdapter,
         DatabaseConnection,
         DocumentReadOrdinals,
+        DriverManaged,
         IsolationLevel,
         PipelineStatement,
         PoolMetricsSource,
@@ -507,8 +509,15 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._install_authority_fixtures()
         from psycopg.conninfo import make_conninfo
 
+        # Composed from the container's own host, port and database rather than
+        # derived from the admin URL by overriding its user: that URL carries the
+        # container superuser's password, and a string derived from it would
+        # still carry it into an adapter that now refuses one.
         self._conninfo = make_conninfo(
-            self._admin_conninfo, user=_TEST_LOGIN, password=_TEST_PASSWORD
+            host=self._container.get_container_host_ip(),
+            port=self._container.get_exposed_port(self._container.port),
+            dbname=self._container.dbname,
+            user=_TEST_LOGIN,
         )
         self._database = ContainerDatabase(self._configuration(), self._session)
         # Every scoped session that may still be alive. One removes itself as
@@ -533,6 +542,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         return self._built(
             pool=PoolOptions(min_size=0, num_workers=1),
             prepare_threshold=None,
+            credentials=self.credentials,
             **conninfo_options,
         )
 
@@ -552,6 +562,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         *,
         pool: PoolOptions | OnDemandOptions,
         prepare_threshold: int | None,
+        credentials: CredentialSource | DriverManaged,
         **conninfo_options: str,
     ) -> PostgresAdapter:
         """The shipped configuration for this container, under ``conninfo_options``."""
@@ -559,6 +570,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         return self.adapter()(
             make_conninfo(self._conninfo, **conninfo_options),
+            credentials=credentials,
             pool=pool,
             prepare_threshold=prepare_threshold,
         )
@@ -570,8 +582,18 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
     @property
     def connection_info(self) -> str:
-        """The running container's libpq connection string for isolated report children."""
+        """The running container's libpq connection string for isolated report children.
+
+        It says where the test login is, and carries no secret: a child takes
+        the password beside it and supplies it the way its own composition
+        chooses.
+        """
         return self._conninfo
+
+    @property
+    def credentials(self) -> Password:
+        """The test login's secret, as the adapter's credential source takes it."""
+        return Password(_TEST_PASSWORD)
 
     @property
     def login_identity(self) -> str:
@@ -631,9 +653,15 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         group holds a session opened for it alone, behind a controlled adapter
         whose Database is composed here rather than paired with it afterwards.
         Scoped exactly as :meth:`control` is.
+
+        This is the one view that dials raw psycopg rather than the adapter, so
+        it is also the one that composes the two halves back into a single
+        string libpq can authenticate from.
         """
+        from psycopg.conninfo import make_conninfo
+
         execution = self._interleaved().open(
-            self._conninfo,
+            make_conninfo(self._conninfo, password=_TEST_PASSWORD),
             model,
             options=options,
             clock=clock,
@@ -649,6 +677,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         pool: PoolOptions | OnDemandOptions | None = None,
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
+        credentials: CredentialSource | DriverManaged | None = None,
     ) -> PostgresAdapter:
         """This container's configuration, tuned as a pool proof needs it.
 
@@ -662,6 +691,11 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         connection this configuration opens — initial, grown, replacement or
         on-demand — arrives already carrying them. Values containing spaces are
         the caller's to escape, exactly as libpq requires.
+
+        ``credentials`` is how a proof about the credential seam itself crosses
+        it: a counting or refusing source reaches the adapter through the same
+        keyword a deployment uses. Omitting it takes this container's own test
+        login secret.
         """
         from parallax.postgres import PoolOptions
 
@@ -673,6 +707,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         return self._built(
             pool=pool if pool is not None else PoolOptions(),
             prepare_threshold=prepare_threshold,
+            credentials=credentials if credentials is not None else self.credentials,
             **options,
         )
 

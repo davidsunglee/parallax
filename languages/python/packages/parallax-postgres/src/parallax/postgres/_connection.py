@@ -13,11 +13,14 @@ interpretation is delegated to the pure dialect strategy; only psycopg's
 driver-specific SQLSTATE, its message, and the structured ``diag.constraint_name``
 beside them are extracted here, and no message text is ever parsed.
 
-:func:`initialize_connection` is the other half: the once-per-physical-connection
-setup that makes a connection usable at all. It runs for every way a connection
-comes into existence — initial capacity, growth, replacement, and on-demand
-establishment — because a codec installed on some connections and not others is
-a decoding bug that appears under load and nowhere else.
+:class:`ConnectionEstablishment` is the other half: everything that happens once
+per PHYSICAL connection. It produces the driver keywords each one is dialed with
+— which is where the credential source is resolved — and then, as the pool's
+``configure``, runs :func:`initialize_connection` over the connection that
+resulted. Both run for every way a connection comes into existence — initial
+capacity, growth, replacement, and on-demand establishment — because a codec
+installed on some connections and not others is a decoding bug that appears
+under load and nowhere else.
 
 Execution here is SCOPED. A :class:`PostgresConnection` is created per
 acquisition and revoked when that acquisition ends: after revocation it holds no
@@ -48,6 +51,8 @@ from parallax.core.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
+    CredentialResolutionError,
+    CredentialSource,
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -66,7 +71,7 @@ from parallax.postgres._isolation import isolation_spelling
 
 __all__ = [
     "CONNECT_KWARGS",
-    "ConnectionPreparation",
+    "ConnectionEstablishment",
     "IncompatibleSessionError",
     "PostgresConnection",
     "adapt_binds",
@@ -81,6 +86,8 @@ _REVOKED = (
     "this database connection's scope has ended; acquire another one through the Database "
     "that owns the runtime"
 )
+
+_CREDENTIAL_REFUSAL = "the credential source could not produce a password"
 
 
 class _PresentJsonNull:
@@ -369,23 +376,31 @@ def _require_supported_session(connection: psycopg.Connection[TupleRow]) -> None
         )
 
 
-class ConnectionPreparation:
-    """The per-connection setup a native pool calls, remembering its last refusal.
+class ConnectionEstablishment:
+    """Everything a native pool needs to bring one connection into existence, and
+    the last refusal met doing it.
+
+    Two callbacks and one record. :meth:`connect_kwargs` produces the driver
+    keywords each physical connection is dialed with, resolving the credential
+    source as it goes; ``__call__`` is the pool's ``configure``, initializing
+    the connection that resulted. Both write the one record, which is why they
+    live together: the write discipline is stated once rather than agreed on by
+    two modules.
 
     The record exists because a pool creates most of its connections on its own
-    background path: an initialization refusal there is retried and logged where
-    a caller waiting for a connection never sees it, and what that caller
-    eventually gets is a bare timeout naming nothing to fix. Keeping the last
-    refusal lets the timeout say what is actually wrong.
+    background path: a refusal there is retried and logged where a caller
+    waiting for a connection never sees it, and what that caller eventually gets
+    is a bare timeout naming nothing to fix. Keeping the last refusal lets the
+    timeout say what is actually wrong.
 
-    A successful initialization clears it, so the record describes the runtime
-    now rather than something it recovered from.
+    A success clears it, so the record describes the runtime now rather than
+    something it recovered from.
     """
 
     __slots__ = ("last_refusal",)
 
     def __init__(self) -> None:
-        self.last_refusal: IncompatibleSessionError | None = None
+        self.last_refusal: IncompatibleSessionError | CredentialResolutionError | None = None
 
     def __call__(self, connection: psycopg.Connection[TupleRow]) -> None:
         try:
@@ -394,6 +409,39 @@ class ConnectionPreparation:
             self.last_refusal = refusal
             raise
         self.last_refusal = None
+
+    def connect_kwargs(
+        self, base: dict[str, object], source: CredentialSource
+    ) -> Callable[[], dict[str, object]]:
+        """The pool's ``kwargs``, resolved anew for every physical connection.
+
+        psycopg_pool calls this on each connection attempt and on no other
+        occasion, which is exactly the seam's per-physical-connection contract:
+        a reused retained connection never reaches it. A fresh dictionary comes
+        back each time, so the secret is never written into the base the next
+        connection would inherit.
+
+        Anything the source raises that is not already a
+        :class:`~parallax.core.db_port.CredentialResolutionError` is wrapped in
+        one with fixed text and the original chained, so classification does not
+        depend on a provider's discipline and the pool's own warning line — which
+        prints the exception's text — carries nothing a source put in a message.
+        """
+
+        def resolve() -> dict[str, object]:
+            try:
+                credential = source.resolve()
+            except CredentialResolutionError as refusal:
+                self.last_refusal = refusal
+                raise
+            except Exception as exc:
+                refusal = CredentialResolutionError(_CREDENTIAL_REFUSAL)
+                self.last_refusal = refusal
+                raise refusal from exc
+            self.last_refusal = None
+            return {**base, "password": credential.secret}
+
+        return resolve
 
 
 class PostgresConnection:

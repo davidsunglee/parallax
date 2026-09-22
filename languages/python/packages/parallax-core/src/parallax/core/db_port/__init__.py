@@ -23,6 +23,13 @@ Query code receives execution alone; composition receives the lifetime. That
 split is what lets a connection be acquired for exactly one operation without
 any statement being able to acquire or release one.
 
+**Authentication.** A connection string says where a database is;
+:class:`CredentialSource` says how the login it names proves who it is, and
+:data:`DRIVER_MANAGED` declares that Parallax supplies no secret at all.
+Configuration carries one or the other, and the adapter resolves it once per
+physical connection. That is the login's own authentication, distinct from the
+`Authorization` a runtime binds to an acquisition afterwards.
+
 A runtime that manages a pool also publishes a :class:`PoolMetricsSource`, whose
 :data:`PoolSample` answers with :class:`PoolMeasurements`, with an ordinary
 failure to read them, or with the runtime having closed. That is the whole
@@ -48,6 +55,14 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core.base import DocumentReadOrdinals
+from parallax.core.db_port._credentials import (
+    DRIVER_MANAGED,
+    Credential,
+    CredentialResolutionError,
+    CredentialSource,
+    DriverManaged,
+    Password,
+)
 from parallax.core.db_port._pool_metrics import (
     PoolAvailable,
     PoolDetached,
@@ -83,6 +98,7 @@ from parallax.core.db_port._resources import (
 from parallax.core.dialect import Dialect
 
 __all__ = [
+    "DRIVER_MANAGED",
     "ISOLATION_LEVELS",
     "RESOURCE_LOGGER_NAME",
     "AcquisitionReason",
@@ -98,17 +114,22 @@ __all__ = [
     "ConnectionAcquisitionError",
     "ConnectionContext",
     "ConnectionContextSource",
+    "Credential",
+    "CredentialResolutionError",
+    "CredentialSource",
     "DatabaseAdapter",
     "DatabaseConnection",
     "DatabaseRuntime",
     "DatabaseStartupError",
     "DeclaresDialect",
     "DocumentReadOrdinals",
+    "DriverManaged",
     "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
     "MappingRow",
+    "Password",
     "PipelineStatement",
     "PoolAvailable",
     "PoolDetached",

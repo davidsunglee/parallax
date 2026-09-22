@@ -1408,6 +1408,34 @@ runtime proves readiness. Callers cannot supply it. Its sole audit projection is
 the reserved `db-login:` prefix followed by the captured login verbatim.
 _Avoid_: default Principal, system user, configured role, caller-supplied login
 
+**Credential Source**:
+The named part of adapter configuration that produces the secret authenticating
+the Database Login Identity. It is asked once for every physical connection an
+adapter establishes and never for an acquisition that reuses one, so an
+established connection outlives the credential that opened it. It may perform
+I/O and bounds its own; it never carries a secret in anything it raises. It is
+not a Database Authorization, which is bound to an acquisition after the login
+exists.
+_Avoid_: credential provider, secret manager, connection factory, authorization
+source
+
+**Credential**:
+The one value a Credential Source produces: today a login password, kept out of
+every representation. Its kinds are a closed set the port names, so a later
+bearer-token or client-certificate kind is a member rather than a new seam.
+_Avoid_: connection string, password field, token cache, Database Authorization
+
+**Driver-Managed Credentials**:
+The declaration, stated in place of a Credential Source, that Parallax supplies
+no secret and the driver and the server settle authentication between themselves
+— peer or trust authentication, a client certificate, Kerberos, or the driver's
+own environment and credential files. It resolves nothing and is therefore not a
+Credential Source. It is a required declaration rather than an omission, and a
+connection string is refused for carrying a password under it as under any
+source.
+_Avoid_: default credentials, no credentials, implicit authentication, optional
+password
+
 **Execution Actor**:
 The closed immutable identity captured by an Execution Scope: either one Subject
 Identity paired with its Database Authorization, or one Database Login Identity.
