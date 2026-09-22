@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import sys
 import weakref
+from collections import Counter
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -14,6 +15,7 @@ from parallax.snapshot import Snapshot
 from parallax.snapshot.materialize import WireEntity
 from parallax.snapshot.materialize import _wire as wire_materialize
 from tests._support.model_capabilities import cataloged_for
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
@@ -34,21 +36,6 @@ def _snapshot(scenario: Scenario, count: int = 1) -> Snapshot[Any]:
     return Snapshot(cast("tuple[Any, ...]", roots), Pin(), "retention", includes, model)
 
 
-def _reachable_ids(value: object) -> set[int]:
-    seen: set[int] = set()
-    pending = [value]
-    while pending:
-        held = pending.pop()
-        identity = id(held)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        if isinstance(held, type):
-            continue
-        pending.extend(gc.get_referents(held))
-    return seen
-
-
 @in_a_child_interpreter
 def test_eager_projection_retains_only_the_returned_wire_envelope() -> None:
     source = _snapshot(SCENARIOS[2])
@@ -60,14 +47,38 @@ def test_eager_projection_retains_only_the_returned_wire_envelope() -> None:
 
     graph = live_graph(warmed(projection))
     assert returned
-    allowed = _reachable_ids(returned[0])
-    unexpected = [
-        f"{type(value).__module__}.{type(value).__qualname__}"
+    expected = {
+        id(cast("object", value))
+        for value in reachable_objects(returned[0])
+        if isinstance(value, (Snapshot, WireEntity, dict, list, tuple))
+    }
+    survivors = {id(value) for value in graph.survivors}
+    assert survivors <= expected
+    inventory = Counter(
+        "snapshot"
+        if isinstance(value, Snapshot)
+        else "entity"
+        if isinstance(value, WireEntity)
+        else "mapping"
+        if isinstance(value, dict)
+        else "sequence"
+        if isinstance(value, list)
+        else "roots"
         for value in graph.survivors
-        if id(value) not in allowed
-    ]
-    assert graph.survivors
-    assert unexpected == []
+    )
+    assert inventory == {
+        "snapshot": 1,
+        "entity": 1,
+        "mapping": 4,
+        "sequence": 1,
+        "roots": 1,
+    }
+    assert graph.inbound == sum(
+        1
+        for holder in (returned, *graph.survivors)
+        for referent in gc.get_referents(holder)
+        if id(referent) in survivors
+    )
 
 
 @in_a_child_interpreter
