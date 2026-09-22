@@ -326,6 +326,35 @@ def test_a_configuration_every_connection_is_refused_under_is_named_rather_than_
     assert "usable" in str(failed.value)
 
 
+def test_a_source_that_authenticates_nothing_is_named_rather_than_timed_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same recorded-refusal channel carrying the other kind, and the wait
+    # says which one it found: a credential no source would produce and a
+    # session the codecs cannot run under are different things to fix. Startup
+    # still spends its whole budget first — a refusal here is retried with
+    # backoff rather than ending readiness on the spot.
+    from parallax.postgres import _runtime as runtime_module
+
+    establishment = _establishment()
+    refusal = CredentialResolutionError("RDS IAM token could not be generated")
+    establishment.last_refusal = refusal
+    pool = _pool(wait_error=psycopg_pool.PoolTimeout("not filled"))
+
+    def build(*_args: object, **_kwargs: object) -> Any:
+        return pool
+
+    monkeypatch.setattr(runtime_module, "_build_pool", build)
+    monkeypatch.setattr(runtime_module, "ConnectionEstablishment", lambda: establishment)
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        open_runtime("", PoolOptions(min_size=1), 5, Password("hunter2"))
+
+    assert failed.value.phase == "minimum_ready"
+    assert failed.value.__cause__ is refusal
+    assert "authenticated" in str(failed.value)
+
+
 def test_a_startup_acquisition_that_fails_carries_its_phase_and_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -438,11 +467,16 @@ def test_readiness_shares_one_budget_that_is_never_restarted(
         (psycopg_pool.TooManyRequests("queued"), "queue_rejected"),
         (psycopg_pool.PoolClosed("closed"), "closed"),
         (psycopg.OperationalError("could not connect"), "preparation_failed"),
+        (CredentialResolutionError("RDS IAM token could not be generated"), "credentials_refused"),
     ],
 )
 def test_every_native_checkout_failure_maps_to_its_own_reason(
     native: Exception, reason: str
 ) -> None:
+    # A credential refusal is in the table because an on-demand pool
+    # establishes on the acquiring thread: what the source raised comes out of
+    # the checkout itself rather than being read back off the record, so it is
+    # classified here without the record being consulted at all.
     resource = _context(_pool(checkout_error=native))
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -486,6 +520,32 @@ def test_a_timeout_names_the_initialization_refusal_on_record() -> None:
 
     assert refused.value.reason == "preparation_failed"
     assert refused.value.__cause__ is refusal
+
+
+def test_a_timeout_names_the_credential_refusal_on_record() -> None:
+    # A retained pool resolves the credential on its own worker threads, so a
+    # source that produces none reaches a waiting caller only by being on
+    # record — and it is a reason of its own rather than a preparation that
+    # failed, because nothing was ever offered to the server.
+    establishment = _establishment()
+    refusal = CredentialResolutionError("RDS IAM token could not be generated")
+    establishment.last_refusal = refusal
+    pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
+    runtime = _runtime(pool)
+    resource = PostgresConnectionContext(
+        pool,
+        runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
+        monotonic() + 5.0,
+        establishment,
+        None,
+    )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "credentials_refused"
+    assert refused.value.__cause__ is refusal
+    assert "authenticated" in str(refused.value)
 
 
 def test_a_successful_initialization_clears_the_refusal_on_record() -> None:

@@ -51,6 +51,7 @@ from parallax.core.db_port import (
     ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
+    CredentialResolutionError,
     CredentialSource,
     DatabaseStartupError,
     DriverManaged,
@@ -64,7 +65,11 @@ from parallax.core.db_port import (
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._authorization import PostgresRole
-from parallax.postgres._connection import CONNECT_KWARGS, ConnectionEstablishment
+from parallax.postgres._connection import (
+    CONNECT_KWARGS,
+    ConnectionEstablishment,
+    IncompatibleSessionError,
+)
 from parallax.postgres._context import NativePool, PostgresConnectionContext
 from parallax.postgres._options import PoolOptions, RetentionOptions
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
@@ -366,11 +371,13 @@ def _await_minimum(
     away. The probe below is what proves readiness in every mode, so nothing is
     lost by skipping this one.
 
-    Filling happens on the runtime's own background path, where an initialization
+    Filling happens on the runtime's own background path, where an establishment
     refusal is retried rather than reported, so all this wait can see is that
     time ran out. Where such a refusal is on record it is stated as the failure
     instead: a configuration every connection is refused under is what an
-    operator has to fix, and "timed out" names none of it.
+    operator has to fix, and "timed out" names none of it. A credential the
+    source would not produce and a session the codecs cannot run under are
+    different things to fix, so each says which one happened.
     """
     if not isinstance(options, PoolOptions) or options.min_size <= 0:
         return
@@ -380,11 +387,19 @@ def _await_minimum(
     except Exception as exc:
         refusal = establishment.last_refusal
         raise DatabaseStartupError(
-            "no database connection this runtime opened became usable"
-            if refusal is not None
-            else "the database runtime did not reach its minimum number of connections in time",
+            _minimum_failure(refusal),
             phase="minimum_ready",
         ) from (refusal if refusal is not None else exc)
+
+
+def _minimum_failure(
+    refusal: IncompatibleSessionError | CredentialResolutionError | None,
+) -> str:
+    if refusal is None:
+        return "the database runtime did not reach its minimum number of connections in time"
+    if isinstance(refusal, CredentialResolutionError):
+        return "no database connection this runtime opened could be authenticated"
+    return "no database connection this runtime opened became usable"
 
 
 def _probe(runtime: PostgresRuntime, deadline: float) -> str:

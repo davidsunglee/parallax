@@ -160,6 +160,7 @@ type AcquisitionReason = Literal[
     "closed",
     "preparation_failed",
     "authorization_failed",
+    "credentials_refused",
 ]
 """Why an acquisition did not produce a usable connection.
 
@@ -171,6 +172,9 @@ execution access: a direct connection attempt that failed, a session
 configuration the codecs cannot execute under, and a checkout that handed over a
 connection which was not idle. ``authorization_failed`` means the provider could
 not establish the bound authorization before admitting modeled work.
+``credentials_refused`` means the configured Credential Source produced no
+credential, so nothing was ever offered to the server — which is a different
+thing to fix from a connection the server itself rejected.
 
 These are separate from `m-db-error`'s SQL categories on purpose. No modeled
 statement ran, so nothing was classified, and no retry rule reads them.

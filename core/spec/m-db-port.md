@@ -256,19 +256,30 @@ exceptions, whose existing precedence and cleanup rules are unchanged.
 
 ## Acquisition and readiness failures are outside the SQL categories
 
-An acquisition that produces no usable connection reports one of five
-driver-neutral reasons: **timeout**, **queue rejected**, **closed**, and
-**preparation failed**, or **authorization failed**. Preparation failure covers
+An acquisition that produces no usable connection reports one of six
+driver-neutral reasons: **timeout**, **queue rejected**, **closed**,
+**preparation failed**, **authorization failed**, or **credentials refused**.
+Preparation failure covers
 establishing or preparing execution access, including a direct connection attempt that failed, a session
 configuration the codecs cannot execute under, and a checkout that handed over a
 connection which was not idle. Authorization failure means the provider could
-not establish the source's bound authorization. No modeled statement ran, so nothing was
+not establish the source's bound authorization. Credentials refused means the
+Credential Source produced no credential, so nothing was offered to the server —
+reported wherever that refusal is what the acquisition met, whether it was
+raised on the acquiring thread or read from what the runtime last recorded. No
+modeled statement ran, so nothing was
 classified: these are not `m-db-error` categories and no retry rule reads them.
 
 A runtime that did not become ready reports which readiness phase stopped it and
 what is known about a connection it had already acquired. An earlier readiness
 failure stays primary; cleanup that follows it reports through the
 implementation's restricted resource reporting rather than replacing it.
+
+A credential refusal MUST NOT end readiness early. Establishment is retried for
+as long as the readiness budget allows, exactly as a preparation refusal is, and
+readiness fails when that budget is spent — naming the refusal rather than the
+wait, and distinguishing a credential that was never produced from a connection
+that was produced and then refused.
 
 ## A pooling runtime publishes what it measures about itself
 

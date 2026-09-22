@@ -34,6 +34,7 @@ from parallax.core.db_port import (
     CleanupPhase,
     CleanupResult,
     ConnectionAcquisitionError,
+    CredentialResolutionError,
     DatabaseConnection,
     Invalidated,
     ReleaseUnconfirmed,
@@ -85,13 +86,16 @@ def checkout(
     allowance. Native failures map to the checkout-reachable acquisition reasons
     and keep their cause; authorization setup is classified later, after checkout.
 
-    An expiry is reported as ``preparation_failed`` rather than ``timeout``
-    when a connection initialization refusal is currently on record: a
-    configuration every new connection is refused under is what the caller has
-    to fix, and the pool retries such failures in the background where nothing
-    would otherwise reach the caller waiting on them. A single successful
-    initialization clears the record, so a healthy runtime cannot report an old
-    refusal for a later, unrelated timeout.
+    An expiry is reported as the refusal currently on record rather than as a
+    ``timeout``: a configuration every new connection is refused under is what
+    the caller has to fix, and the pool retries such failures in the background
+    where nothing would otherwise reach the caller waiting on them. A single
+    successful establishment clears the record, so a healthy runtime cannot
+    report an old refusal for a later, unrelated timeout.
+
+    An on-demand pool establishes on this thread, so a credential the source
+    would not produce arrives here as itself rather than as a timeout, and is
+    classified on the spot without consulting the record at all.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
@@ -110,6 +114,11 @@ def checkout(
             "this Database is closed, so it opens no new database connection",
             reason="closed",
         ) from exc
+    except CredentialResolutionError as exc:
+        raise ConnectionAcquisitionError(
+            "a database connection could not be authenticated",
+            reason="credentials_refused",
+        ) from exc
     except Exception as exc:
         raise ConnectionAcquisitionError(
             "a database connection could not be established or prepared",
@@ -122,12 +131,16 @@ def _expired(
 ) -> ConnectionAcquisitionError:
     """The failure a spent acquisition budget reports, and what it chains.
 
-    An expiry names the initialization refusal on record where there is one, and
+    An expiry names the establishment refusal on record where there is one, and
     the native timeout otherwise. The refusal is the more actionable of the two:
     it happened on the runtime's own background path, where the pool retries and
     logs it and nothing reaches the caller waiting on it, and a configuration
     every new connection is refused under is what an operator has to fix. A bare
     "timed out" names none of that.
+
+    The two kinds a record can hold are two different things to fix — a
+    credential the source would not produce, or a session the codecs cannot run
+    under — so each reports its own reason and says so in its own words.
     """
     refusal = establishment.last_refusal
     if refusal is None:
@@ -137,6 +150,13 @@ def _expired(
         )
         timed_out.__cause__ = native
         return timed_out
+    if isinstance(refusal, CredentialResolutionError):
+        unauthenticated = ConnectionAcquisitionError(
+            "no database connection could be authenticated within the acquisition timeout",
+            reason="credentials_refused",
+        )
+        unauthenticated.__cause__ = refusal
+        return unauthenticated
     unusable = ConnectionAcquisitionError(
         "no database connection became usable within the acquisition timeout; the last "
         "connection this runtime opened was refused as unusable",

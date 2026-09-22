@@ -103,6 +103,17 @@ For every supported adapter, the smoke suite covers:
   shipped consumption rather than a stand-in for it. And that **Driver-Managed
   Credentials** asks nothing and supplies no password, proved by authenticating
   the same login through a driver-owned mechanism instead
+- where the adapter consumes a Credential Source: that a source which produces
+  no credential is **named as the cause** rather than reported as a bare wait,
+  in each of the three places a caller can meet it — readiness over retained
+  capacity, an acquisition over retained capacity once the runtime is running,
+  and an on-demand acquisition, which meets it on its own thread and reports
+  immediately. Each names the credential-refusal reason or phase and carries the
+  refusal as its cause, and readiness spends its whole budget retrying rather
+  than ending at the first refusal. And that a source raising anything else
+  surfaces as a credential refusal with fixed text and the original as its
+  cause, with nothing the source put in its own message reaching what the
+  driver's pool logs
 - a **connection that is idle between operations**: a standalone statement opens
   no implicit whole-operation transaction, so a connection comes back with no
   transaction of its own and the next scope over it starts clean
