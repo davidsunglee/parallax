@@ -393,8 +393,17 @@ class ConnectionEstablishment:
     is a bare timeout naming nothing to fix. Keeping the last refusal lets the
     timeout say what is actually wrong.
 
-    A success clears it, so the record describes the runtime now rather than
-    something it recovered from.
+    One record serves every attempt, because a pool dials several at once on
+    several workers and the caller it answers is waiting on the pool rather than
+    on any one of them. Two rules arbitrate the writes. The most recent refusal
+    wins, so a caller is told the last thing establishment actually met rather
+    than the first. Only a connection that became USABLE clears the record, so
+    what ends a refusal is the outcome a caller could have been handed — a
+    resolved credential is not one, since the connection it was resolved for may
+    still fail to dial or to initialize, and clearing there would let one
+    attempt's partial progress erase another's completed refusal and leave a
+    bare timeout in its place. The record therefore reads: the last refusal met
+    since the last connection became usable, or nothing if one has since.
     """
 
     __slots__ = ("last_refusal",)
@@ -426,6 +435,10 @@ class ConnectionEstablishment:
         one with fixed text and the original chained, so classification does not
         depend on a provider's discipline and the pool's own warning line — which
         prints the exception's text — carries nothing a source put in a message.
+
+        A refusal is recorded; a credential is not, because producing one
+        establishes nothing. Initialization is where a connection proves usable
+        and therefore where the record clears.
         """
 
         def resolve() -> dict[str, object]:
@@ -438,7 +451,6 @@ class ConnectionEstablishment:
                 refusal = CredentialResolutionError(_CREDENTIAL_REFUSAL)
                 self.last_refusal = refusal
                 raise refusal from exc
-            self.last_refusal = None
             return {**base, "password": credential.secret}
 
         return resolve

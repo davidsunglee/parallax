@@ -211,6 +211,26 @@ def test_neither_half_of_the_destination_reaches_the_representation() -> None:
     assert adapter.credentials is _SECRET
 
 
+def test_a_provider_s_own_source_is_held_out_of_the_representation_too() -> None:
+    # `Password` hides its own secret, but a source is any object a provider
+    # wrote: a broker's is an ordinary record whose repr shows what it holds.
+    # Excluding the field is what keeps that out of every log line this value
+    # reaches, rather than trusting each provider's repr.
+    @dataclasses.dataclass(frozen=True)
+    class Broker:
+        token: str
+
+        def resolve(self) -> Password:
+            return Password(self.token)
+
+    source = Broker("hunter2")
+
+    adapter = PostgresAdapter("dbname=app", credentials=source)
+
+    assert "hunter2" not in repr(adapter)
+    assert adapter.credentials is source
+
+
 def test_configuration_reaches_no_driver_and_starts_no_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -316,6 +336,27 @@ def test_any_object_that_resolves_a_credential_is_accepted_structurally() -> Non
     source = Minted()
 
     assert PostgresAdapter("dbname=app", credentials=source).credentials is source
+
+
+def test_a_source_class_passed_where_one_of_its_instances_was_meant_is_refused() -> None:
+    # `credentials=Password` resolves nothing: its `resolve` has no instance to
+    # bind. Configuration validates what it can locally, so this is a refusal
+    # here rather than a credential failure a retaining pool retries per
+    # connection until a caller's budget runs out.
+    with pytest.raises(TypeError, match="CredentialSource or DRIVER_MANAGED"):
+        PostgresAdapter("dbname=app", credentials=cast("Any", Password))
+
+
+def test_an_object_whose_resolve_is_not_callable_is_refused() -> None:
+    # Recognizing a source structurally sees only that the attribute exists,
+    # and a value parked under that name is not something to ask.
+    class NotASource:
+        resolve = "hunter2"
+
+    with pytest.raises(TypeError) as refused:
+        PostgresAdapter("dbname=app", credentials=cast("Any", NotASource()))
+
+    assert str(refused.value) == "credentials takes a CredentialSource or DRIVER_MANAGED."
 
 
 @pytest.mark.parametrize(

@@ -100,10 +100,23 @@ def _credentials(value: object) -> None:
     :data:`DRIVER_MANAGED` is recognized by identity, since ``DriverManaged``
     admits one instance; a source is recognized structurally, which is what lets
     a ``Password``, a provider's token source, and a test's fake all pass
-    without registering anything. The refusal quotes nothing: a value in this
-    position can be a bare secret somebody meant to pass as a password.
+    without registering anything. A structural check sees only that the
+    attribute exists, so the two ways it can exist without being resolvable are
+    excluded here: an attribute that is not callable, and a source CLASS passed
+    where one of its instances was meant — ``credentials=Password`` rather than
+    ``credentials=Password(...)`` — whose ``resolve`` would be called with no
+    instance to bind. Both would otherwise fail per connection, which a
+    retaining pool retries until a caller's budget runs out rather than
+    reporting here.
+
+    The refusal quotes nothing: a value in this position can be a bare secret
+    somebody meant to pass as a password.
     """
-    if value is not DRIVER_MANAGED and not isinstance(value, CredentialSource):
+    if value is DRIVER_MANAGED:
+        return
+    if isinstance(value, type) or not isinstance(value, CredentialSource):
+        raise TypeError(_CREDENTIALS_REFUSAL)
+    if not callable(value.resolve):
         raise TypeError(_CREDENTIALS_REFUSAL)
 
 
@@ -147,7 +160,11 @@ class PostgresAdapter:
     supplies no secret and leaves authentication to the driver and the server
     (peer, trust, a client certificate, Kerberos, or libpq's own environment:
     ``PGPASSWORD``, ``.pgpass``, a ``service`` file). There is no default and no
-    ``None``, so which of the two a deployment chose is visible on the line.
+    ``None``, so which of the two a deployment chose is visible on the line. It
+    is kept out of this value's representation for the same reason the string
+    is: :class:`~parallax.core.db_port.Password` hides its own secret, but a
+    source is any object a provider wrote, and one holding broker material in an
+    ordinary repr would otherwise reach every log line this value does.
 
     ``pool`` selects retention. Omitting it takes :class:`PoolOptions`' defaults;
     :class:`OnDemandOptions` keeps no idle connections instead. Change either by
@@ -175,7 +192,7 @@ class PostgresAdapter:
     """
 
     connection_string: str = field(repr=False)
-    credentials: CredentialSource | DriverManaged = field(kw_only=True)
+    credentials: CredentialSource | DriverManaged = field(repr=False, kw_only=True)
     pool: RetentionOptions = field(default_factory=PoolOptions, kw_only=True)
     prepare_threshold: int | None = field(default=5, kw_only=True)
 
