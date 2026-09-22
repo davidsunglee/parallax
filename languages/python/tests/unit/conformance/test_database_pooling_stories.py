@@ -25,7 +25,7 @@ import pytest
 
 from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
+from parallax.core.db_port import Bind, DocumentReadOrdinals, Password, Row
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandlerError
 from parallax.postgres import OnDemandOptions, PoolOptions
@@ -41,12 +41,20 @@ def test_the_documented_retention_forms_are_the_four_the_guide_distinguishes() -
     # The guide's construction block is a claim about which four policies exist
     # and what each one retains, so what is graded here is the policy each form
     # carries rather than that four adapters were built.
-    forms = stories.every_retention_form_is_one_configuration_value("postgresql://localhost/app")
+    credentials = Password("hunter2")
+    forms = stories.every_retention_form_is_one_configuration_value(
+        "postgresql://app@localhost/app", credentials
+    )
 
     assert forms.default.pool == PoolOptions()
     assert forms.tuned.pool == PoolOptions(min_size=2, max_size=20)
     assert forms.zero_minimum.pool == PoolOptions(min_size=0, max_size=20)
     assert forms.on_demand.pool == OnDemandOptions(max_size=20)
+    # The credential travels with every form: which policy retains connections
+    # says nothing about how the login they carry authenticates.
+    assert {form.credentials for form in (forms.default, forms.tuned, forms.on_demand)} == {
+        credentials
+    }
 
 
 def test_both_model_forms_connect_and_both_closes_give_the_runtime_back() -> None:

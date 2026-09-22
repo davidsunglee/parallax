@@ -202,20 +202,30 @@ class ProvisionedRun(ProfileRun):
         pool: Any = None,
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
+        credentials: Any = None,
     ) -> Any:
         """This run's database as configuration tuned for one pool proof.
 
         ``settings`` are session settings a deployment would configure its
         connections with, carried so every connection this configuration opens
-        already has them.
+        already has them. ``credentials`` replaces this run's own login secret
+        with a source a credential proof supplies.
         """
         return self._provisioner.configured(
-            pool=pool, prepare_threshold=prepare_threshold, settings=settings
+            pool=pool,
+            prepare_threshold=prepare_threshold,
+            settings=settings,
+            credentials=credentials,
         )
 
     @property
     def login_identity(self) -> str:  # pragma: no cover - Docker
         return self._provisioner.login_identity
+
+    @property
+    def credentials(self) -> Any:  # pragma: no cover - Docker
+        """This run's login secret, as the adapter's credential source takes it."""
+        return self._provisioner.credentials
 
     @property
     def default_role(self) -> Any:  # pragma: no cover - Docker

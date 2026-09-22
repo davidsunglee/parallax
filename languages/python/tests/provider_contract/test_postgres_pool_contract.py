@@ -21,6 +21,7 @@ import pytest
 
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
+    DRIVER_MANAGED,
     ConnectionAcquisitionError,
     PoolAvailable,
     PoolDetached,
@@ -316,6 +317,157 @@ def test_a_grown_connection_decodes_exactly_as_the_first_one_does(profile_run: A
             for scoped in grown:
                 (row,) = scoped.execute(_CODEC_PROBE, [])
                 assert row == (INFINITY, {"present": None}, None, None, 42)
+    finally:
+        runtime.close()
+
+
+# --------------------------------------------------------------------------- #
+# The credential: one resolution per physical connection, and none on reuse.   #
+# --------------------------------------------------------------------------- #
+
+
+class _Counting:
+    """The run's own credential source, counting how often it is asked.
+
+    It crosses the seam exactly as a provider's does — through
+    ``credentials=`` on the shipped adapter — so what is counted is the
+    adapter's real consumption rather than a stand-in for it.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.calls = 0
+
+    def resolve(self) -> Any:
+        self.calls += 1
+        return self._inner.resolve()
+
+
+def _counted(profile_run: Any, **options: Any) -> tuple[Any, _Counting]:
+    source = _Counting(profile_run.credentials)
+    return profile_run.configured(credentials=source, **options).open(), source
+
+
+@pytest.mark.adapter_smoke
+def test_the_retained_minimum_is_authenticated_once_and_reuse_asks_for_nothing(
+    profile_run: Any,
+) -> None:
+    # Initial capacity is one physical connection, and the startup probe and
+    # every sequential acquisition after it ride that same connection. A source
+    # asked again there would be asked on a path that establishes nothing.
+    runtime, source = _counted(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        assert source.calls == 1
+        with _context(runtime) as first:
+            original = _pid(first)
+        with _context(runtime) as second:
+            assert _pid(second) == original
+        assert source.calls == 1
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_growth_authenticates_each_connection_it_creates(profile_run: Any) -> None:
+    # Overlapping scopes are what make a retaining runtime create the second and
+    # third connections, and each is established in its own right.
+    runtime, source = _counted(profile_run, pool=PoolOptions(min_size=1, max_size=3))
+    try:
+        with (
+            _context(runtime) as first,
+            _context(runtime) as second,
+            _context(runtime) as third,
+        ):
+            assert len({_pid(scoped) for scoped in (first, second, third)}) == 3
+        assert source.calls == 3
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_on_demand_establishment_authenticates_on_the_acquiring_thread_each_time(
+    profile_run: Any,
+) -> None:
+    # An on-demand runtime keeps no inventory, so every acquisition is a
+    # physical connection and every one is a resolution — on the caller's own
+    # thread, ahead of the driver's connect timeout.
+    runtime, source = _counted(profile_run, pool=OnDemandOptions(max_size=1))
+    try:
+        established = source.calls
+        with _context(runtime) as first:
+            first_pid = _pid(first)
+        with _context(runtime) as second:
+            assert _pid(second) != first_pid
+        assert source.calls == established + 2
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_connection_retired_by_its_maximum_lifetime_is_authenticated_anew(
+    profile_run: Any,
+) -> None:
+    # Age is judged when a connection comes back rather than when it is handed
+    # out, so the aged connection serves one more scope and the replacement the
+    # runtime creates for it is a fresh establishment with a fresh credential.
+    runtime, source = _counted(
+        profile_run, pool=PoolOptions(min_size=1, max_size=1, max_lifetime=1.0)
+    )
+    try:
+        with _context(runtime) as first:
+            original = _pid(first)
+        time.sleep(1.5)
+        with _context(runtime) as aged:
+            assert _pid(aged) == original
+        with _context(runtime) as replacement:
+            assert _pid(replacement) != original
+        assert source.calls == 2
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_connection_the_server_ended_is_authenticated_again_when_it_is_replaced(
+    profile_run: Any,
+) -> None:
+    # The replacement is a physical connection the runtime created on its own,
+    # so it crosses the credential seam exactly as the first one did.
+    runtime, source = _counted(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    executioner = profile_run.control()
+    try:
+        with _context(runtime) as first:
+            retained = _pid(first)
+        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
+
+        with _context(runtime) as replacement:
+            assert _pid(replacement) != retained
+        assert source.calls == 2
+    finally:
+        executioner.close()
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_the_driver_managed_declaration_asks_nothing_and_lets_libpq_authenticate(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Declaring it means Parallax supplies no secret at all: the connection
+    # string carries none, nothing is resolved, and libpq finds the password in
+    # its own environment — the documented driver-managed case, against a real
+    # server.
+    from psycopg.conninfo import conninfo_to_dict
+
+    monkeypatch.setenv("PGPASSWORD", profile_run.credentials.secret)
+    configured = profile_run.configured(
+        credentials=DRIVER_MANAGED, pool=OnDemandOptions(max_size=1)
+    )
+    assert "password" not in conninfo_to_dict(configured.connection_string)
+
+    runtime = configured.open()
+    try:
+        with _context(runtime) as scoped:
+            (row,) = scoped.execute(_SESSION_USER, [])
+        assert row[0] == profile_run.login_identity
     finally:
         runtime.close()
 

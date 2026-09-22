@@ -42,7 +42,7 @@ from parallax.core.db_port import (
 from parallax.core.diagnostics import diagnostic_for
 from parallax.postgres._authorization import PostgresRole, install_role
 from parallax.postgres._authorization import restore_role as _restore_role
-from parallax.postgres._connection import ConnectionPreparation, PostgresConnection
+from parallax.postgres._connection import ConnectionEstablishment, PostgresConnection
 
 __all__ = ["Admit", "NativePool", "PostgresConnectionContext", "checkout", "release"]
 
@@ -76,7 +76,7 @@ def _issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> Cleanu
 
 
 def checkout(
-    pool: NativePool, deadline: float, preparation: ConnectionPreparation
+    pool: NativePool, deadline: float, establishment: ConnectionEstablishment
 ) -> psycopg.Connection[TupleRow]:
     """Take a connection out of ``pool`` within ``deadline``, or raise.
 
@@ -95,11 +95,11 @@ def checkout(
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        raise _expired(preparation, None)
+        raise _expired(establishment, None)
     try:
         return pool.getconn(timeout=remaining)
     except psycopg_pool.PoolTimeout as exc:
-        raise _expired(preparation, exc)  # noqa: B904 - the cause is chosen above
+        raise _expired(establishment, exc)  # noqa: B904 - the cause is chosen above
     except psycopg_pool.TooManyRequests as exc:
         raise ConnectionAcquisitionError(
             "the database runtime already has as many callers waiting as it admits",
@@ -118,7 +118,7 @@ def checkout(
 
 
 def _expired(
-    preparation: ConnectionPreparation, native: BaseException | None
+    establishment: ConnectionEstablishment, native: BaseException | None
 ) -> ConnectionAcquisitionError:
     """The failure a spent acquisition budget reports, and what it chains.
 
@@ -129,7 +129,7 @@ def _expired(
     every new connection is refused under is what an operator has to fix. A bare
     "timed out" names none of that.
     """
-    refusal = preparation.last_refusal
+    refusal = establishment.last_refusal
     if refusal is None:
         timed_out = ConnectionAcquisitionError(
             "no database connection became available within the acquisition timeout",
@@ -231,10 +231,10 @@ class PostgresConnectionContext:
         "_authorized",
         "_cleanup_result",
         "_deadline",
+        "_establishment",
         "_execution",
         "_native",
         "_pool",
-        "_preparation",
         "_role",
         "_spent",
     )
@@ -244,13 +244,13 @@ class PostgresConnectionContext:
         pool: NativePool,
         admit: Admit,
         deadline: float,
-        preparation: ConnectionPreparation,
+        establishment: ConnectionEstablishment,
         role: PostgresRole | None,
     ) -> None:
         self._pool = pool
         self._admit = admit
         self._deadline = deadline
-        self._preparation = preparation
+        self._establishment = establishment
         self._role = role
         self._spent = False
         self._authorized = False
@@ -266,7 +266,7 @@ class PostgresConnectionContext:
         if self._spent:
             raise RuntimeError(_SPENT if self._native is None else _ENTER_ONCE)
         self._spent = True
-        connection = checkout(self._pool, self._deadline, self._preparation)
+        connection = checkout(self._pool, self._deadline, self._establishment)
         try:
             self._require_idle(connection)
             self._admit(self._deadline)

@@ -20,15 +20,16 @@ specification disagree, the specification is right.
 ## What you build, and what owns it
 
 ```python
+from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged, Password
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
 from parallax.snapshot import ServingModel, connect, prepare_model
 ```
 
 `PostgresAdapter` is **configuration**. Constructing one opens no connection, no
-pool, and no thread: it parses the connection string, validates the retention
-policy, and stores both. That is what makes it safe to build at import time, hold
-as a module constant, and share between threads — in any of the four retention
-forms.
+pool, and no thread: it parses the connection string, validates the credential
+declaration and the retention policy, and stores them. That is what makes it
+safe to build at import time, hold as a module constant, and share between
+threads — in any of the four retention forms.
 
 <!-- story: construction_snippet -->
 
@@ -41,19 +42,33 @@ class RetentionForms:
     on_demand: PostgresAdapter
 
 
-def every_retention_form_is_one_configuration_value(conninfo: str) -> RetentionForms:
+def every_retention_form_is_one_configuration_value(
+    conninfo: str, credentials: CredentialSource | DriverManaged
+) -> RetentionForms:
     """The four ways to configure retention, none of which opens anything.
 
-    Each one parses the connection string, validates the policy, and stops
-    there. ``default`` takes the retaining defaults; ``tuned`` sets them;
-    ``zero_minimum`` retains connections but keeps none until one is asked for;
-    ``on_demand`` retains none at all and closes each connection on release.
+    Each one parses the connection string, validates the credential declaration
+    and the policy, and stops there. ``default`` takes the retaining defaults;
+    ``tuned`` sets them; ``zero_minimum`` retains connections but keeps none
+    until one is asked for; ``on_demand`` retains none at all and closes each
+    connection on release.
+
+    ``conninfo`` says where the database is and carries no password;
+    ``credentials`` says how its login authenticates — a ``Password``, a
+    provider's own source asked once per physical connection, or
+    ``DRIVER_MANAGED`` where the driver and the server settle it themselves.
     """
     return RetentionForms(
-        default=PostgresAdapter(conninfo),
-        tuned=PostgresAdapter(conninfo, pool=PoolOptions(min_size=2, max_size=20)),
-        zero_minimum=PostgresAdapter(conninfo, pool=PoolOptions(min_size=0, max_size=20)),
-        on_demand=PostgresAdapter(conninfo, pool=OnDemandOptions(max_size=20)),
+        default=PostgresAdapter(conninfo, credentials=credentials),
+        tuned=PostgresAdapter(
+            conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+        ),
+        zero_minimum=PostgresAdapter(
+            conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+        ),
+        on_demand=PostgresAdapter(
+            conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+        ),
     )
 ```
 
@@ -128,6 +143,37 @@ def account_balances(db: ScopedDatabase) -> list[Decimal]:
     """
     return [account.balance for account in db.find(Account.where(Account.all)).results()]
 ```
+
+## Where the password lives
+
+The connection string says **where**, and `credentials` says **how**. They are
+separate arguments because they have different lifetimes: the string is frozen
+into configuration, while the credential is resolved afresh every time the
+driver establishes a physical connection. That is what lets a fifteen-minute
+cloud token authenticate a pool that outlives it.
+
+A string carrying a password is refused at construction, whatever `credentials`
+is, and the refusal never quotes the string back:
+
+```text
+PostgresAdapter("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
+ValueError: connection_string must not carry a password; supply it through credentials.
+```
+
+There are three spellings and no fourth:
+
+| `credentials=` | What authenticates the login |
+|---|---|
+| `Password("s3cret")` | A constant secret. It is its own source — there is no wrapper around it — and it is kept out of every repr |
+| any `CredentialSource` | Anything with `resolve() -> Password`. It is asked once per **physical** connection — initial fill, growth, replacement, retirement by `max_lifetime`, on-demand establishment — and never when an acquisition reuses a retained connection. It may block on a network, on the pool's own worker threads or on an acquiring caller's thread, so it must bound its own I/O. A connection already open is never dropped because the credential that opened it expired |
+| `DRIVER_MANAGED` | Parallax supplies none. Peer or trust authentication, a client certificate, Kerberos, or libpq's own `PGPASSWORD`, `.pgpass` and `service` files |
+
+Two libpq facts follow from `DRIVER_MANAGED` being a declaration rather than an
+absence. Parallax cannot see a password reachable through a `service` file or
+through `PGPASSWORD`, so neither is refused by the check above; and under an
+explicit source the resolved password wins over both, by libpq's own precedence
+for an explicit connection keyword. Declaring `DRIVER_MANAGED` is therefore how
+you ask for those mechanisms, rather than how you disable a check.
 
 ## Retention
 
@@ -591,8 +637,9 @@ never both and never neither.
 
 | Before | Now |
 |---|---|
-| `PostgresAdapter(open_psycopg_connection)` | `PostgresAdapter(connection_string)` — configuration, not a live connection |
-| `PostgresAdapter.connect(conninfo, ...)` | `PostgresAdapter(conninfo, prepare_threshold=...)`, opened by `connect` |
+| `PostgresAdapter(open_psycopg_connection)` | `PostgresAdapter(connection_string, credentials=...)` — configuration, not a live connection |
+| `PostgresAdapter.connect(conninfo, ...)` | `PostgresAdapter(conninfo, credentials=..., prepare_threshold=...)`, opened by `connect` |
+| `PostgresAdapter("postgresql://app:<password>@host/app")` | `PostgresAdapter("postgresql://app@host/app", credentials=Password("<password>"))` — a password in the string is refused |
 | `adapter.connection` (raw psycopg connection) | removed; open your own connection for DDL, migrations, and fixtures |
 | `adapter.close()` | `db.close()`, or leaving the handle's `with` block |
 | `DbPort` | `DatabaseConnection` |

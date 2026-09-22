@@ -109,6 +109,40 @@ the other working. External inputs a connection string refers to (environment,
 service files, credentials, server defaults) resolve when each physical
 connection is created rather than being frozen at construction.
 
+**Configuration carries where, and a Credential Source carries how.**
+Configuration MUST NOT accept a connection string that carries a login password,
+whatever credential it was given: a secret has exactly one home. The refusal is
+a configuration error, and — like every construction-time refusal that would
+quote the caller's own input — it states fixed text and neither echoes the
+string nor chains a parser's message that would.
+
+Configuration names a **Credential Source** or declares **Driver-Managed
+Credentials**; there is no third state and no absence. A source produces one
+**Credential** — today, one login password — and it is asked EVERY time a
+physical connection is established, and never for an acquisition that reuses one
+already open. Initial capacity, growth, replacement after a drop, retirement by
+a maximum lifetime, and on-demand establishment each ask; a connection already
+open is never disturbed because the credential that opened it has expired, so
+the seam has no refresh operation and no expiry field. A source MAY perform I/O
+and MUST bound it, because it runs where nothing above it can interrupt it: on a
+pooling runtime's own background path, or on an acquiring caller's thread ahead
+of the driver's own establishment limit. Nothing it raises may carry the secret.
+An implementation MUST report any other failure a source raises as a credential
+resolution failure with fixed text, with the original as its cause, so
+classification does not depend on a provider's discipline.
+
+Driver-Managed Credentials is a declaration that the implementation supplies no
+secret at all and the driver and the server settle authentication between
+themselves — peer or trust authentication, a client certificate, Kerberos, or
+the driver's own environment and credential files. It resolves nothing, so it is
+not a source and is never asked. An implementation is not required to detect a
+password reachable through such a driver-owned mechanism, and the refusal above
+does not extend to one.
+
+The credential authenticates the **Database Login Identity**. It is not a
+Database Authorization: one proves who the login is before a connection exists,
+the other is bound to an acquisition afterwards.
+
 **A runtime binds before it acquires.** Its `Authorization` parameter is an
 opaque provider value. The runtime captures the actual authenticated login
 identity during readiness and exposes it after publication. Binding either that

@@ -94,6 +94,15 @@ For every supported adapter, the smoke suite covers:
   same boundary values back through several acquisitions of each retention mode.
   A codec installed on some connections and not others is a decoding defect that
   appears under load and nowhere else
+- where the adapter consumes a **Credential Source** (`m-db-port`): that the
+  source is asked exactly once for every PHYSICAL connection and not at all for
+  an acquisition that reuses one, over the same four creation paths plus
+  retirement by a maximum lifetime, telling reuse from re-establishment by the
+  session the server itself reports rather than by timing. The source must cross
+  the adapter's own documented configuration keyword, so what is graded is the
+  shipped consumption rather than a stand-in for it. And that **Driver-Managed
+  Credentials** asks nothing and supplies no password, proved by authenticating
+  the same login through a driver-owned mechanism instead
 - a **connection that is idle between operations**: a standalone statement opens
   no implicit whole-operation transaction, so a connection comes back with no
   transaction of its own and the next scope over it starts clean

@@ -33,7 +33,7 @@ import statistics
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, Literal, cast
@@ -131,12 +131,22 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
 
 @dataclass(frozen=True, slots=True)
 class ChildRequest:
+    """What one isolated reading child is asked to measure, and how to reach the
+    database if the reading needs one.
+
+    ``connection_info`` says where, and ``connection_secret`` says how. They are
+    separate because the child constructs a driver-managed adapter: the string
+    goes on an argv line, and the secret is placed into the child's environment
+    instead, where nothing listing processes can read it.
+    """
+
     workload: str
     cell: str
     roots: int
     warmups: int
     measured: int
     connection_info: str | None = None
+    connection_secret: str | None = field(default=None, repr=False)
     runtime: str = CURRENT_MINOR
 
 
@@ -258,12 +268,25 @@ def _child_command(request: ChildRequest) -> list[str]:
     return child_command(request.runtime, READING_SCRIPT, arguments)
 
 
+def _child_env(request: ChildRequest) -> dict[str, str]:
+    """The measuring environment, plus the login secret the child authenticates with.
+
+    ``PGPASSWORD`` rather than an argument, because the shared measuring
+    environment is generic and an argv line is world-readable; the child's
+    adapter is driver-managed, so libpq reads it from here.
+    """
+    environment = child_environment(request.runtime, ENVIRONMENT_NAMESPACE)
+    if request.connection_secret is not None:
+        environment["PGPASSWORD"] = request.connection_secret
+    return environment
+
+
 def run_child(request: ChildRequest) -> ChildResult:
     """Run one isolated reading child and decode its final JSON line."""
     completed = subprocess.run(
         _child_command(request),
         cwd=WORKSPACE,
-        env=child_environment(request.runtime, ENVIRONMENT_NAMESPACE),
+        env=_child_env(request),
         capture_output=True,
         text=True,
         check=False,
@@ -527,7 +550,7 @@ def _request(
     workload: str,
     path: str,
     roots: int,
-    connection_info: str | None,
+    provisioner: Provisioner | None,
 ) -> ChildRequest:
     return ChildRequest(
         workload,
@@ -535,7 +558,8 @@ def _request(
         roots,
         contract.timing_warmups,
         contract.timing_measured,
-        connection_info,
+        None if provisioner is None else provisioner.connection_info,
+        None if provisioner is None else provisioner.credentials.secret,
         runtime,
     )
 
@@ -685,7 +709,7 @@ def _measure_workload(
                         cell.workload,
                         cell.path,
                         scaling_arms[0],
-                        provisioner.connection_info,
+                        provisioner,
                     )
                 )
             )
@@ -705,7 +729,7 @@ def _measure_workload(
                             cell.workload,
                             cell.path,
                             roots,
-                            provisioner.connection_info,
+                            provisioner,
                         )
                     )
                 )

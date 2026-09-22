@@ -2289,11 +2289,18 @@ as the API Conformance Suite's publication story, rendered into the Usage Guide
 **A connected Database Root owns its runtime.**
 `Database.connect(adapter, model, *, options=None, read_plan_cache_capacity=16, clock=None, lifecycle_provider=None)`
 takes **configuration**, not a live resource. `PostgresAdapter(connection_string,
-pool=PoolOptions(...) | OnDemandOptions(...), prepare_threshold=...)` is a frozen
+*, credentials=CredentialSource | DRIVER_MANAGED, pool=PoolOptions(...) |
+OnDemandOptions(...), prepare_threshold=...)` is a frozen
 value that opens no connection, pool, or thread, so it is safe to build at import
 time, share between threads, and build before a fork; `connect` is what opens a
 ready runtime from it and the returned root is what owns that runtime until it
-closes. Every `connect` over one configuration opens an INDEPENDENT runtime, so
+closes. `credentials` is required and has no `None`: the connection string says
+where the database is and is refused if it carries a password, while
+`Password(...)`, any object with `resolve() -> Password`, or `DRIVER_MANAGED`
+says how its login authenticates. A source is resolved once per physical
+connection rather than at construction, so a token with a lifetime shorter than
+the pool's is a supported credential (`m-db-port`; ADR 0067). All four names are
+exported from `parallax.core.db_port`. Every `connect` over one configuration opens an INDEPENDENT runtime, so
 closing one root leaves another working. `db.close()` and using the root as a
 context manager are equivalent, both idempotent, and one of them is required:
 what a root holds is connections, and nothing above it can release them.

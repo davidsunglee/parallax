@@ -32,7 +32,9 @@ from decimal import Decimal
 
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import (
+    CredentialSource,
     DatabaseAdapter,
+    DriverManaged,
     PoolAvailable,
     PoolDetached,
     PoolMetricsSource,
@@ -85,19 +87,33 @@ class RetentionForms:
     on_demand: PostgresAdapter
 
 
-def every_retention_form_is_one_configuration_value(conninfo: str) -> RetentionForms:
+def every_retention_form_is_one_configuration_value(
+    conninfo: str, credentials: CredentialSource | DriverManaged
+) -> RetentionForms:
     """The four ways to configure retention, none of which opens anything.
 
-    Each one parses the connection string, validates the policy, and stops
-    there. ``default`` takes the retaining defaults; ``tuned`` sets them;
-    ``zero_minimum`` retains connections but keeps none until one is asked for;
-    ``on_demand`` retains none at all and closes each connection on release.
+    Each one parses the connection string, validates the credential declaration
+    and the policy, and stops there. ``default`` takes the retaining defaults;
+    ``tuned`` sets them; ``zero_minimum`` retains connections but keeps none
+    until one is asked for; ``on_demand`` retains none at all and closes each
+    connection on release.
+
+    ``conninfo`` says where the database is and carries no password;
+    ``credentials`` says how its login authenticates — a ``Password``, a
+    provider's own source asked once per physical connection, or
+    ``DRIVER_MANAGED`` where the driver and the server settle it themselves.
     """
     return RetentionForms(
-        default=PostgresAdapter(conninfo),
-        tuned=PostgresAdapter(conninfo, pool=PoolOptions(min_size=2, max_size=20)),
-        zero_minimum=PostgresAdapter(conninfo, pool=PoolOptions(min_size=0, max_size=20)),
-        on_demand=PostgresAdapter(conninfo, pool=OnDemandOptions(max_size=20)),
+        default=PostgresAdapter(conninfo, credentials=credentials),
+        tuned=PostgresAdapter(
+            conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+        ),
+        zero_minimum=PostgresAdapter(
+            conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+        ),
+        on_demand=PostgresAdapter(
+            conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+        ),
     )
 
 

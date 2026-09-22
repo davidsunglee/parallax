@@ -282,9 +282,9 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 
 
 def _runtime(pool: _StatsPool) -> PostgresRuntime:
-    from parallax.postgres._connection import ConnectionPreparation
+    from parallax.postgres._connection import ConnectionEstablishment
 
-    return PostgresRuntime(cast("Any", pool), PoolOptions(), ConnectionPreparation())
+    return PostgresRuntime(cast("Any", pool), PoolOptions(), ConnectionEstablishment())
 
 
 def test_a_runtime_publishes_one_source_that_stays_the_same_object() -> None:

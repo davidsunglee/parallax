@@ -1,10 +1,13 @@
 """The concrete Postgres database adapter (psycopg) — a leaf production artifact.
 
 ``PostgresAdapter`` is CONFIGURATION. Constructing one opens no connection, no
-pool, and no thread; it parses the connection string, validates the retention
-policy, and stores both. That is what makes it safe to build at import time, hold
-as a module constant, share between threads, and — importantly for a forking web
-server — build before a fork and open after one.
+pool, and no thread; it parses the connection string, validates the credential
+declaration and the retention policy, and stores them. That is what makes it
+safe to build at import time, hold as a module constant, share between threads,
+and — importantly for a forking web server — build before a fork and open after
+one. Resolving the credential is not part of that: it happens each time the
+driver establishes a physical connection, which is why a source may reach a
+network and configuration never does.
 
 Opening is a separate act with a separate owner. ``Database.connect`` calls
 :meth:`PostgresAdapter.open` and owns the runtime it gets back until it closes.
@@ -23,13 +26,18 @@ application configures this value and executes through the handle it composes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import psycopg
 import psycopg.conninfo
 
+from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged
 from parallax.core.dialect import POSTGRES
 from parallax.postgres._options import OnDemandOptions, PoolOptions, RetentionOptions
 from parallax.postgres._runtime import PostgresRuntime, open_runtime
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = ["PostgresAdapter"]
 
@@ -37,9 +45,11 @@ _TYPE_REFUSAL = "connection_string must be a string."
 _SYNTAX_REFUSAL = (
     "Invalid PostgreSQL connection string; expected libpq keyword/value syntax or a PostgreSQL URI."
 )
+_PASSWORD_REFUSAL = "connection_string must not carry a password; supply it through credentials."
+_CREDENTIALS_REFUSAL = "credentials takes a CredentialSource or DRIVER_MANAGED."
 
 
-def _parsed(connection_string: str) -> None:
+def _parsed(connection_string: str) -> Mapping[str, object]:
     """Prove the string is one the driver will accept, and disclose nothing if not.
 
     Parsing here is a spelling check and nothing more: it opens no socket,
@@ -56,13 +66,45 @@ def _parsed(connection_string: str) -> None:
     rather than chained. This disclosure rule is specific to construction-time
     configuration errors — a failure to CONNECT later chains its cause normally,
     because by then nothing is quoting the caller's input back.
+
+    The parse is returned rather than discarded so the password check below
+    reads it instead of running a second one.
     """
     if type(connection_string) is not str:
         raise TypeError(_TYPE_REFUSAL)
     try:
-        psycopg.conninfo.conninfo_to_dict(connection_string)
+        return psycopg.conninfo.conninfo_to_dict(connection_string)
     except psycopg.Error:
         raise ValueError(_SYNTAX_REFUSAL) from None
+
+
+def _password_free(parsed: Mapping[str, object]) -> None:
+    """Refuse a connection string that carries a secret, whatever ``credentials`` is.
+
+    A secret has exactly one home: the credential source. The parse sees both
+    libpq spellings — a ``password=`` keyword and a URI password — and it sees
+    neither a ``service`` file nor ``PGPASSWORD``, which are libpq's own
+    business under :data:`DRIVER_MANAGED` and lose to an explicit password by
+    libpq's own precedence under a source.
+
+    The refusal is the same fixed text the syntax refusal is, and for the same
+    reason: the string may still carry other secrets, so it is never quoted.
+    """
+    if "password" in parsed:
+        raise ValueError(_PASSWORD_REFUSAL)
+
+
+def _credentials(value: object) -> None:
+    """Refuse anything that is neither the declaration nor a source.
+
+    :data:`DRIVER_MANAGED` is recognized by identity, since ``DriverManaged``
+    admits one instance; a source is recognized structurally, which is what lets
+    a ``Password``, a provider's token source, and a test's fake all pass
+    without registering anything. The refusal quotes nothing: a value in this
+    position can be a bare secret somebody meant to pass as a password.
+    """
+    if value is not DRIVER_MANAGED and not isinstance(value, CredentialSource):
+        raise TypeError(_CREDENTIALS_REFUSAL)
 
 
 def _prepare_threshold(value: object) -> int | None:
@@ -90,9 +132,22 @@ class PostgresAdapter:
 
     ``connection_string`` is libpq's own grammar — keyword/value pairs, a
     ``postgresql://`` URI, a ``service=`` reference, or the empty string, which
-    asks libpq to take everything from the environment. It is stored exactly as
-    given and kept out of this value's representation, because a connection
-    string is a place a password lives and a repr is a place values get logged.
+    asks libpq to take everything from the environment. It says WHERE, and it
+    may not carry a password: one that does is refused here. It is stored
+    exactly as given and kept out of this value's representation, because a
+    connection string is still a place other secrets live and a repr is a place
+    values get logged.
+
+    ``credentials`` says HOW the login that string names authenticates, and is
+    required: either a
+    :class:`~parallax.core.db_port.CredentialSource` — a
+    :class:`~parallax.core.db_port.Password`, or a provider's own source, asked
+    once per physical connection — or
+    :data:`~parallax.core.db_port.DRIVER_MANAGED`, which declares that Parallax
+    supplies no secret and leaves authentication to the driver and the server
+    (peer, trust, a client certificate, Kerberos, or libpq's own environment:
+    ``PGPASSWORD``, ``.pgpass``, a ``service`` file). There is no default and no
+    ``None``, so which of the two a deployment chose is visible on the line.
 
     ``pool`` selects retention. Omitting it takes :class:`PoolOptions`' defaults;
     :class:`OnDemandOptions` keeps no idle connections instead. Change either by
@@ -120,11 +175,13 @@ class PostgresAdapter:
     """
 
     connection_string: str = field(repr=False)
+    credentials: CredentialSource | DriverManaged = field(kw_only=True)
     pool: RetentionOptions = field(default_factory=PoolOptions, kw_only=True)
     prepare_threshold: int | None = field(default=5, kw_only=True)
 
     def __post_init__(self) -> None:
-        _parsed(self.connection_string)
+        _password_free(_parsed(self.connection_string))
+        _credentials(self.credentials)
         object.__setattr__(self, "pool", _retention(self.pool))
         object.__setattr__(self, "prepare_threshold", _prepare_threshold(self.prepare_threshold))
 
@@ -139,4 +196,6 @@ class PostgresAdapter:
         connection already acquired goes through the ordinary cleanup path,
         which reports what it established rather than promising reclamation.
         """
-        return open_runtime(self.connection_string, self.pool, self.prepare_threshold)
+        return open_runtime(
+            self.connection_string, self.pool, self.prepare_threshold, self.credentials
+        )
