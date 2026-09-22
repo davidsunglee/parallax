@@ -48,10 +48,13 @@ exactly in one further contract. Those interfaces are the only files this tool
 exempts, and the exemption set is verified to be exactly that derived set: an
 interface with no exemption is reported here rather than as merely unowned,
 because what it needs is a decision — declare the root a scope, or exempt the
-interface with its reason — and an exemption for an unowned file that is no
-derived interface is reported because it would excuse a module the generator
-sources no contract from at all. A first scope in a new distribution therefore
-lands its package interface here until one of the two is done.
+interface with its reason — and so is an interface whose file does not exist,
+since import-linter reads a package missing its ``__init__.py`` as a namespace
+and sources that contract from it without a word; an exemption for an unowned
+file that is no derived interface is reported because it would excuse a module
+the generator sources no contract from at all. A first scope in a new
+distribution therefore lands its package interface here until one of the two
+is done.
 
 Zero-grant scopes
 -----------------
@@ -426,23 +429,47 @@ def exemptions_differing_from_the_interfaces(
 ) -> list[str]:
     """Where the exemption set and the derived package interfaces disagree.
 
-    The interfaces are the files whose module is one of ``interfaces``; each
-    must be exempt, and nothing else may be. An exemption for a file that a
-    scope owns or that no longer exists is the stale-exemption finding's, so
-    what is reported here is an exemption for a file that is unowned and yet no
-    derived interface — the one shape an exemption must never excuse, because
-    the generator sources no contract from such a module at all.
+    Each interface must be an exempt file, and nothing else may be. The
+    interface is looked for in every distribution holding a file of its
+    package rather than among the files found, because a package missing its
+    ``__init__.py`` is one import-linter reads as a namespace and sources the
+    interface contract from without a word; a root holding no file at all it
+    refuses outright, so that shape needs no report here. An exemption for a
+    file that a scope owns or that no longer exists is the stale-exemption
+    finding's, so what is reported here beside the interfaces is an exemption
+    for a file that is unowned and yet no derived interface — the one shape an
+    exemption must never excuse, because the generator sources no contract
+    from such a module at all.
     """
     found: list[str] = []
-    for relative in paths:
-        module = module_path(relative)
-        if module in interfaces:
-            if relative not in exemptions:
+    present = set(paths)
+    for module in sorted(interfaces):
+        distributions = {
+            relative.split("/", 1)[0]
+            for relative in paths
+            if dag.is_in_scope(module_path(relative), module)
+        }
+        for distribution in sorted(distributions):
+            interface = "/".join([distribution, "src", *module.split("."), "__init__.py"])
+            if interface in exemptions:
+                continue
+            if interface in present:
                 found.append(
-                    f"{relative} (the {module} package interface no scope owns, and no "
+                    f"{interface} (the {module} package interface no scope owns, and no "
                     "exemption names it)"
                 )
-        elif relative in exemptions and not owning_scopes(module, scopes):
+            else:
+                found.append(
+                    f"{interface} (the {module} package interface no scope owns, and no "
+                    "such file exists to exempt)"
+                )
+    for relative in paths:
+        module = module_path(relative)
+        if (
+            module not in interfaces
+            and relative in exemptions
+            and not owning_scopes(module, scopes)
+        ):
             found.append(f"{relative} (exempt, but no derived package interface)")
     return sorted(found)
 
@@ -544,9 +571,10 @@ def main(argv: list[str] | None = None) -> int:
         "  and a sealed scope's import of its own parent package is that same\n"
         "  overlap seen from the other side. The exemptions are exactly the package\n"
         "  interfaces check_dag_sync.py derives from the declared scopes and sources\n"
-        "  as modules: an interface without one has no contract and no owner, and\n"
-        "  an exemption for anything else excuses a module no contract is sourced\n"
-        "  from.",
+        "  as modules: an interface without one is a file no scope owns and nothing\n"
+        "  excuses, or no file at all, which import-linter sources as a namespace\n"
+        "  without a word; an exemption for anything else excuses a module no\n"
+        "  contract is sourced from.",
         file=sys.stderr,
     )
     for label in sorted(findings):
@@ -554,8 +582,10 @@ def main(argv: list[str] | None = None) -> int:
         for entry in findings[label]:
             print(f"    languages/python/packages/{entry}", file=sys.stderr)
     print(
-        "  Declare the owning scope in spec/python.md §7 (and check_dag_sync.py), or\n"
-        "  add an exact, justified exemption to EXEMPTIONS in this tool.",
+        "  Declare the owning scope in spec/python.md §7 (and check_dag_sync.py); exempt\n"
+        "  a package interface no scope owns in EXEMPTIONS in this tool, with its reason,\n"
+        "  once the file exists; remove an exemption for anything else, then own or\n"
+        "  delete the file.",
         file=sys.stderr,
     )
     return 1

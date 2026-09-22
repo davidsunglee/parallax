@@ -6483,9 +6483,10 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   the check, which runs in `just python-check-scope-ownership`. The exemptions
   are verified to be exactly the package interfaces `check_dag_sync.py` derives
   from the declared scopes and sources as modules: an interface with no
-  exemption, and an exemption for an unowned file that is no such interface,
-  each fail, so a new distribution's interface is either declared a scope or
-  exempted with its reason before the gate is green. The same tool adds
+  exemption — its file present or missing — and an exemption for an unowned
+  file that is no such interface each fail, so a new distribution's interface
+  is either declared a scope or exempted with its reason before the gate is
+  green. The same tool adds
   the file-level requirement no scope table can state: inside a
   package holding a scope granted `(none)`, every module must either resolve to
   a scope that row names — the zero-grant scope itself, one of its declared

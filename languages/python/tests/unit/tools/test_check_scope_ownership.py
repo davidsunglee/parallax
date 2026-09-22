@@ -15,8 +15,8 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
   — and, in every one of those spellings, a granted sibling staying legal;
 * an exemption that stops describing the tree — in both directions;
 * the exemption set differing from the package interfaces ``check_dag_sync``
-  derives — an interface with no exemption, and an exemption for an unowned
-  file that is no interface.
+  derives — an interface with no exemption, an interface with no file at all,
+  and an exemption for an unowned file that is no interface.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
 present in ``PYTHON_FIRST_PARTY_GRANTS`` but missing from ``CHILD_SCOPES`` is
@@ -792,6 +792,33 @@ def test_an_interface_without_an_exemption_fails(
         "exemption names it)"
     ) in err
     assert "owned by no enforcement scope" not in err
+
+
+def test_an_interface_with_no_file_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A new distribution whose package carries a scope but no `__init__.py`:
+    # import-linter reads the package as a namespace and marks the exact-module
+    # interface contract kept without a word, so the missing file must be
+    # reported here or nowhere.
+    monkeypatch.setattr(
+        dag,
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, "parallax.mariadb.adapter": frozenset[str]()},
+    )
+    adapter = _scratch_package_path("parallax-mariadb/src/parallax/mariadb/adapter.py")
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text('"""Deliberately the only file of its package."""\n')
+    assert "parallax.mariadb" in own.unowned_interfaces()
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert "exemptions that differ from the package interfaces no scope owns" in err
+    assert (
+        "parallax-mariadb/src/parallax/mariadb/__init__.py (the parallax.mariadb package "
+        "interface no scope owns, and no such file exists to exempt)"
+    ) in err
+    assert "owned by no enforcement scope" not in err
+    assert "no longer describe the tree" not in err
 
 
 def test_an_exemption_for_an_unowned_non_interface_fails(
