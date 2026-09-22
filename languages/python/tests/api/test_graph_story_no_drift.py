@@ -1,16 +1,15 @@
-"""DB-free graph-story drivers for the read-side stories.
+"""Graph-story drivers and projection audits for the read-side stories.
 
-Every ``GRAPH_STORIES`` function executes through the shipped in-process
-pipeline (statement build → canonicalize → plan → compile → port →
-materialize → wrap) against a canned fake ``m-db-port``, so the story bodies
-contribute to the database-free coverage gate exactly as ``test_write_no_drift``
-keeps ``stories.py`` in it (pure, Docker-free, in-process behaviour). The
-golden grading — real Postgres, each case's own oracle — stays in
-``test_story_run.py``; this driver pins that each story RUNS through the
-public surface (an empty root level legally short-circuits every child
-level), plus the two edit stories' in-memory semantics — that a mutation
-writes nothing back, and that an edited copy keeps its source node's view
-state — which need no database at all. The two SUPPLEMENTAL story functions
+Every ``GRAPH_STORIES`` function has a shipped-pipeline run-through against a
+canned fake ``m-db-port``, so the story bodies contribute to the database-free
+coverage gate exactly as ``test_write_no_drift`` keeps ``stories.py`` in it. The
+projection audit separately resets each case on real Postgres, records the raw
+responses of every authored story read, and replays each response schedule through
+a direct Wire read. Both that publication and ``Snapshot.wire()`` then feed the
+same authored row or graph observation, so an empty schedule or shared publication
+defect cannot pass by mutual agreement. The two edit stories' in-memory semantics —
+that a mutation writes nothing back, and that an edited copy keeps its source
+node.s view state — remain database-free. The two SUPPLEMENTAL story functions
 (not ``GRAPH_STORIES`` entries) get their own drivers here for the same
 reason: a read-only-pin refusal reached before any DML, and a milestone
 history run-through.
@@ -33,16 +32,21 @@ runs (:class:`_RecordingDatabase`).
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, graph_stories
+from parallax.conformance import case_format, engine, graph_stories
+from parallax.conformance._decoration import DecoratingAdapter
+from parallax.conformance._lanes import scenario as scenario_lane
+from parallax.conformance._mechanism import envelope
+from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
+from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
@@ -68,9 +72,22 @@ from parallax.snapshot.handle import (
 )
 from parallax.snapshot.handle._options import OMITTED, Omitted
 from tests._support.adoption import raises_contextualized
-from tests._support.corpus import case_document, compare_binds
+from tests._support.corpus import (
+    CollectionKinds,
+    case_document,
+    case_fixtures,
+    compare_binds,
+    compare_graph,
+    compare_rows,
+)
 from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.document_reads import fold_mapping_rows
+from tests._support.graph_residuals import (
+    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
+    D67_GRAPH_STORY_RESIDUALS,
+    D67_WITHOUT_GRAPH_STORIES,
+    classify_child_graph_shape_residuals,
+)
 from tests._support.query_probes import canonical_document
 from tests._support.root_ownership import own_root
 
@@ -258,6 +275,88 @@ class _WritingCannedPort(_TransactingCannedPort):
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.writes.append((sql, list(binds)))
         return 1
+
+
+class _ResponseRecordingConnection:
+    def __init__(self, inner: DatabaseConnection, responses: list[list[Row]]) -> None:
+        self._inner = inner
+        self._responses = responses
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._inner.dialect
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+    ) -> list[Row]:
+        rows = self._inner.execute(sql, binds, document_reads)
+        self._responses.append(list(rows))
+        return rows
+
+    def execute_pipeline(self, statements: Sequence[Any]) -> list[list[Row]]:
+        responses = self._inner.execute_pipeline(statements)
+        self._responses.extend(list(rows) for rows in responses)
+        return responses
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        return self._inner.execute_write(sql, binds)
+
+    def transaction[T](
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+    ) -> TransactionOutcome[T]:
+        return self._inner.transaction(
+            lambda connection: body(_ResponseRecordingConnection(connection, self._responses)),
+            isolation=isolation,
+        )
+
+
+class _ResponseRecordingAdapter:
+    def __init__(self, inner: Any) -> None:
+        self._responses: list[list[Row]] = []
+        self._decorated = DecoratingAdapter(inner, self._decorate)
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._decorated.dialect
+
+    def open(self) -> Any:
+        return self._decorated.open()
+
+    def mark(self) -> int:
+        return len(self._responses)
+
+    def since(self, mark: int) -> tuple[list[Row], ...]:
+        return tuple(self._responses[mark:])
+
+    def _decorate(self, connection: DatabaseConnection) -> DatabaseConnection:
+        return cast(
+            "DatabaseConnection",
+            _ResponseRecordingConnection(connection, self._responses),
+        )
+
+
+class _ReplayPort(_TransactingCannedPort):
+    def __init__(self, responses: Sequence[list[Row]]) -> None:
+        super().__init__()
+        self._recorded = [list(rows) for rows in responses]
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
+        return self._recorded.pop(0) if self._recorded else []
+
+    def assert_exhausted(self) -> None:
+        assert not self._recorded, self._recorded
 
 
 # The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
@@ -564,7 +663,7 @@ def test_the_read_your_own_writes_story_addresses_the_relationships_own_row() ->
 class _CapturedRead:
     query: ObjectQuery[Any, Any]
     snapshot: Snapshot[Any]
-    responses: tuple[list[MappingRow], ...]
+    responses: tuple[list[Row], ...]
     participating: bool
 
 
@@ -609,7 +708,7 @@ class _RecordingDatabase(ScopedDatabase):
 
     def __init__(
         self,
-        port: _CannedPort,
+        port: Any,
         model: DomainModel,
         *,
         clock: Clock | None = None,
@@ -677,9 +776,15 @@ class _RecordingDatabase(ScopedDatabase):
 _GROUPED_FIND_STORIES = frozenset({"m-unit-work-029"})
 
 
-def _recording_db(story: graph_stories.GraphStory) -> _RecordingDatabase:
+def _recording_db(
+    story: graph_stories.GraphStory, adapter: Any | None = None
+) -> _RecordingDatabase:
     clock = story.clock() if story.clock is not None else None
-    port = _port_for(story.run, _responses_for(story.run))
+    port = (
+        _port_for(story.run, _responses_for(story.run))
+        if adapter is None
+        else _ResponseRecordingAdapter(adapter)
+    )
     return _RecordingDatabase(
         port,
         MODELS[story.model],
@@ -688,44 +793,135 @@ def _recording_db(story: graph_stories.GraphStory) -> _RecordingDatabase:
     )
 
 
-_D67_STORY_RESIDUALS = frozenset(
-    {
-        "m-inheritance-065",
-        "m-inheritance-066",
-        "m-inheritance-067",
-        "m-inheritance-068",
-        "m-inheritance-074",
-        "m-inheritance-075",
-        "m-inheritance-076",
-        "m-inheritance-078",
-        "m-snapshot-read-012",
-    }
-)
+_EXTRA_CAPTURED_READS = {"m-snapshot-read-017": 1}
 
 
 def _wire_twin(story: graph_stories.GraphStory, captured: _CapturedRead) -> Snapshot[Any]:
-    port = _port_for(story.run, captured.responses)
+    port = _ReplayPort(captured.responses)
     clock = story.clock() if story.clock is not None else None
     model = ServingModel(prepare_model(MODELS[story.model], edition=captured.snapshot.edition))
     db = own_root(Database.connect(port, model, clock=clock)).using_database_login()
     if captured.participating:
-        return cast(
+        direct = cast(
             "Snapshot[Any]",
             db.transact(lambda tx: tx.wire.find(captured.query)),
         )
-    return cast("Snapshot[Any]", db.wire.find(captured.query))
+    else:
+        direct = cast("Snapshot[Any]", db.wire.find(captured.query))
+    port.assert_exhausted()
+    return direct
+
+
+def _authored_reads(case_id: str) -> list[tuple[int | None, Any, Mapping[str, object]]]:
+    case = _CASES[case_id]
+    document = case_document(case)
+    model = engine.load_case_metamodel(case)
+    when = cast("Mapping[str, object]", document["when"])
+    if case.shape == "read":
+        query = scenario_lane.step_query(
+            {"objectQuery": when["objectQuery"]},
+            model,
+        )
+        return [(None, query, cast("Mapping[str, object]", document["then"]))]
+
+    steps = cast("list[Mapping[str, object]]", when["scenario"])
+    return [
+        (index, scenario_lane.step_query(step, model), step)
+        for index, step in enumerate(steps)
+        if "objectQuery" in step
+    ]
+
+
+def _assert_authored_observation(
+    case_id: str,
+    step_index: int | None,
+    query: Any,
+    authored: Mapping[str, object],
+    snapshot: Snapshot[Any],
+) -> None:
+    case = _CASES[case_id]
+    model = engine.load_case_metamodel(case)
+    row_oracle = authored.get("expectRows", authored.get("rows"))
+    if row_oracle is not None:
+        observed_rows = scenario_lane.graph_rows(
+            model,
+            query,
+            cast("Sequence[object]", snapshot.checked().results()),
+        )
+        expected_rows = cast("list[dict[str, object]]", row_oracle)
+        expected_fields = {key for row in expected_rows for key in row}
+        compare_rows(
+            [{key: row[key] for key in expected_fields} for row in observed_rows],
+            expected_rows,
+        )
+        return
+
+    graph_oracle = authored.get("expectGraph", authored.get("graph"))
+    assert isinstance(graph_oracle, Mapping), (case_id, step_index)
+    expected_graph = cast("Mapping[str, object]", graph_oracle)
+    if step_index is None:
+        observed_graph: Mapping[str, object] = {
+            envelope.graph_root_key(query.target.canonical, model): [
+                envelope.graph_root(root) for root in snapshot.checked().results()
+            ]
+        }
+    else:
+        observation = scenario_lane.read_step_graph(
+            case,
+            model,
+            step_index,
+            authored,
+            query,
+            snapshot,
+        )
+        assert observation is not None
+        observed_graph = cast("Mapping[str, object]", observation["graph"])
+
+    kinds = CollectionKinds(model)
+    if case_id in CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS:
+        assert (
+            classify_child_graph_shape_residuals(
+                observed_graph,
+                expected_graph,
+                kinds,
+            )
+            == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[case_id]
+        )
+    else:
+        compare_graph(observed_graph, expected_graph, kinds)
+
+
+def _reset_audit_story(story: graph_stories.GraphStory, profile_run: Any) -> None:
+    case = _CASES[story.case_id]
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    apply_given_apply(case, profile_run.port, TemporalShadow())
 
 
 @pytest.mark.parametrize(
     "story", graph_stories.GRAPH_STORIES, ids=[s.case_id for s in graph_stories.GRAPH_STORIES]
 )
 def test_every_graph_story_read_projects_like_a_direct_wire_twin(
-    story: graph_stories.GraphStory,
+    story: graph_stories.GraphStory, profile_run: Any
 ) -> None:
-    db = _recording_db(story)
+    _reset_audit_story(story, profile_run)
+    db = _recording_db(story, profile_run.port)
     story.run(db)
-    assert db.reads, story.case_id
-    for captured in db.reads:
+    authored_reads = _authored_reads(story.case_id)
+    extra_reads = _EXTRA_CAPTURED_READS.get(story.case_id, 0)
+    assert len(db.reads) == len(authored_reads) + extra_reads, story.case_id
+
+    for captured, (step_index, query, authored) in zip(
+        db.reads[: len(authored_reads)], authored_reads, strict=True
+    ):
+        projected = captured.snapshot.wire()
+        direct = _wire_twin(story, captured)
+        assert projected.checked().results() == direct.checked().results(), story.case_id
+        assert projected.pin == direct.pin, story.case_id
+        assert projected.edition == direct.edition, story.case_id
+        _assert_authored_observation(story.case_id, step_index, query, authored, projected)
+        _assert_authored_observation(story.case_id, step_index, query, authored, direct)
+
+    for captured in db.reads[len(authored_reads) :]:
         projected = captured.snapshot.wire()
         direct = _wire_twin(story, captured)
         assert projected.checked().results() == direct.checked().results(), story.case_id
@@ -735,11 +931,15 @@ def test_every_graph_story_read_projects_like_a_direct_wire_twin(
 
 def test_every_graph_story_and_d67_case_has_one_audit_partition() -> None:
     story_ids = {story.case_id for story in graph_stories.GRAPH_STORIES}
-    assert story_ids >= _D67_STORY_RESIDUALS
+    residual_ids = frozenset(CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS)
+    assert residual_ids == D67_GRAPH_STORY_RESIDUALS | D67_WITHOUT_GRAPH_STORIES
+    assert story_ids & residual_ids == D67_GRAPH_STORY_RESIDUALS
     assert {
-        case_id for case_id in _D67_STORY_RESIDUALS if _CASES[case_id].shape == "read"
-    } == _D67_STORY_RESIDUALS
-    assert {"m-inheritance-073", "m-inheritance-077"}.isdisjoint(story_ids)
+        case_id for case_id in D67_GRAPH_STORY_RESIDUALS if _CASES[case_id].shape == "read"
+    } == D67_GRAPH_STORY_RESIDUALS
+    assert D67_WITHOUT_GRAPH_STORIES.isdisjoint(story_ids)
+    assert set(_EXTRA_CAPTURED_READS) == {"m-snapshot-read-017"}
+    assert all(_authored_reads(story.case_id) for story in graph_stories.GRAPH_STORIES)
     assert {
         story.case_id
         for story in graph_stories.GRAPH_STORIES

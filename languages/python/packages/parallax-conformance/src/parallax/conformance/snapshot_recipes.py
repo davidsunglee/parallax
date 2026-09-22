@@ -16,15 +16,17 @@ rendered snippet and an executable proof.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
 from parallax.conformance.read_models import Document, Payment
 from parallax.conformance.story_models import Account, Order, OrderStatus
-from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction
+from parallax.snapshot.handle import ScopedDatabase, Snapshot, Transaction, WireEntity
 
 __all__ = [
     "publish_typed_read_as_wire",
+    "publish_typed_stream_as_wire",
     "read_a_table_per_concrete_subtype_family",
     "read_a_table_per_hierarchy_family",
     "read_to_one_relationship_states",
@@ -84,6 +86,22 @@ def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
     """
     typed = db.find(Account.where(Account.id == 1))
     return typed.wire()
+
+
+def publish_typed_stream_as_wire(
+    db: ScopedDatabase, page: int, publish: Callable[[WireEntity], None]
+) -> None:
+    """Publish each Typed delivery root in canonical Wire form as it arrives.
+
+    ``SnapshotStream.wire(value)`` projects one eligible Entity while iteration
+    is paused at a root of its current page. It uses that page's requested graph,
+    performs no read or advance of its own, and releases its working state at the
+    next page. The explicit ``publish`` boundary consumes each Wire node inside
+    the stream scope, preserving the delivery's bounded-retention shape.
+    """
+    with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
+        for order in orders:
+            publish(orders.wire(order))
 
 
 def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[int, list[str]]:

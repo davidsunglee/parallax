@@ -451,6 +451,36 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
         stream.wire(order)
 
 
+def test_projection_refusals_commit_no_page_working_state() -> None:
+    port = ScriptedAdapter(
+        Read(rows=[_order_row(1)]),
+        Read(rows=[_item_row(10, 1)]),
+    )
+    with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
+        roots = iter(stream)
+        order = next(roots)
+        item = order.items[0]
+
+        with pytest.raises(SnapshotInspectionError) as edited:
+            stream.wire(order.edit(name="changed"))
+        assert edited.value.code == "snapshot-wire-input-edited"
+
+        with pytest.raises(SnapshotInspectionError) as unrequested:
+            stream.wire(order, at=Order.statuses)
+        assert unrequested.value.code == "snapshot-wire-at-unrequested"
+
+        with pytest.raises(SnapshotInspectionError) as mismatch:
+            stream.wire(item)
+        assert mismatch.value.code == "snapshot-wire-at-concrete-mismatch"
+
+        projection = cast("Any", stream)._projection_state
+        assert projection._reader is None
+        assert projection._walk is None
+        assert projection._encoder is None
+        assert stream.wire(order)["id"] == 1
+        assert projection._reader is not None
+
+
 def test_projection_refusals_are_recoverable_and_preserve_same_page_entries() -> None:
     port = ScriptedAdapter(Read(rows=[_order_row(1)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:

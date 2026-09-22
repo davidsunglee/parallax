@@ -37,6 +37,10 @@ from tests._support.corpus import (
     compare_stored_data_issues,
     wire_value_deep,
 )
+from tests._support.graph_residuals import (
+    CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
+    classify_child_graph_shape_residuals,
+)
 from tests._support.repo import adapter_schema
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
@@ -63,33 +67,13 @@ from tests._support.sweep_goldens import (
 # decision rather than an adapter one.
 #
 # Everything else these cases assert still runs here — every level's SQL and
-# binds (the N+1-elimination proof they exist for) and the round-trip count. Only
-# the `then.graph` comparison is withheld, and what it withholds is the WIRE
-# rendering rather than the graph: nine of the eleven carry a graph story
-# (`parallax.conformance.graph_stories`), whose `tests/api/test_story_run.py`
-# case walks the SAME merged graph through the typed developer surface against a
-# real database. `m-inheritance-073` and `-077` carry no story and cannot: each
-# needs a path-root guard resolving to two or more concrete subtypes, which the
-# idiomatic surface can only author by reaching a relationship through ONE
-# subtype class — the same permanent non-fit
-# `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for both
-# ids. So for those two nothing in this target grades the graph at all.
-_CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS: Final[dict[str, frozenset[str]]] = {
-    "m-inheritance-065": frozenset({"narrowed-child-family-variant"}),
-    "m-inheritance-066": frozenset({"sibling-null-padding"}),
-    "m-inheritance-067": frozenset({"narrowed-child-family-variant"}),
-    "m-inheritance-068": frozenset({"sibling-null-padding"}),
-    "m-inheritance-073": frozenset({"sibling-null-padding"}),
-    "m-inheritance-074": frozenset({"sibling-null-padding"}),
-    "m-inheritance-075": frozenset({"sibling-null-padding"}),
-    "m-inheritance-076": frozenset({"sibling-null-padding", "narrowed-child-family-variant"}),
-    "m-inheritance-077": frozenset({"sibling-null-padding"}),
-    "m-inheritance-078": frozenset({"sibling-null-padding"}),
-    "m-snapshot-read-012": frozenset({"sibling-null-padding", "narrowed-child-family-variant"}),
-}
-_CHILD_LEVEL_GRAPH_SHAPE_DEFERRED: Final[frozenset[str]] = frozenset(
-    _CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS
-)
+# binds (the N+1-elimination proof they exist for) and the round-trip count. Exact
+# `then.graph` equality remains the deferred contract conflict; this audit derives
+# which recorded structural residuals explain the observed difference and fails if
+# any other mismatch remains. Nine of the eleven also carry a graph story whose
+# projected and direct Wire publications undergo the same classification against
+# the authored graph. `m-inheritance-073` and `-077` have no idiomatic story
+# spelling, so this compatibility audit is their graph-shape evidence.
 
 # The reachable read cases whose fixtures + observation this file runs end-to-
 # end: every compile-exercised read (including the instance-form-graph reads
@@ -297,15 +281,18 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
     if "rows" in then:
         compare_rows(observations["rows"], then["rows"])
     elif "graph" in then:
-        if case.case_id in _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED:
-            assert _CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[case.case_id]
-            with pytest.raises(AssertionError, match="graph mismatch"):
-                compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
+        if case.case_id in CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS:
+            assert (
+                classify_child_graph_shape_residuals(
+                    observations["graph"], then["graph"], CollectionKinds(model)
+                )
+                == CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS[case.case_id]
+            )
         else:
             compare_graph(observations["graph"], then["graph"], CollectionKinds(model))
-            compare_stored_data_issues(
-                observations.get("storedDataIssues"), then.get("storedDataIssues")
-            )
+        compare_stored_data_issues(
+            observations.get("storedDataIssues"), then.get("storedDataIssues")
+        )
     elif "graphs" in then:
         expected_graphs = then["graphs"]
         observed_graphs = observations["graphs"]
