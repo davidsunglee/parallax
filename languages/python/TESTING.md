@@ -92,6 +92,7 @@ the `tests/unit/` root —
 `_authored_storage_support.py`, `_contention_support.py`,
 `_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_delivery_control_support.py`, `_document_layout_support.py`,
+`_gc_reachability.py`,
 `_inheritance_family_support.py`,
 `_instance_state_support.py`, `_memory_gate_support.py`, `_metamodel_support.py`,
 `_pool_source_support.py`, `_predicate_acquisition_support.py`,
@@ -99,6 +100,9 @@ the `tests/unit/` root —
 `_source_inventory_support.py`, `_stream_page_support.py`,
 `_structural_geometry_support.py`, `_transact_support.py`,
 `_write_lowering_support.py`, and `memory_instruments.py`.
+
+`_gc_reachability.py` provides the identity-safe object-graph walk shared by
+retained-object proofs across Snapshot test directories.
 
 Eight of those serve the cost suites and split by subject:
 `memory_instruments.py` is what every cost suite measures WITH,
