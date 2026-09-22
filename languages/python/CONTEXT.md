@@ -247,6 +247,15 @@ there is no separate valid/invalid partition method.
 _Avoid_: lenient Snapshot, copied result, ignore-invalid mode, partitioned
 result
 
+**Typed Interface**:
+The class-backed read-and-write interface reached through `scope` or `tx`.
+Reads publish frozen instances of the caller's Entity Classes, with Pydantic
+behavior and loaded relationship state, while writes accept class-backed create
+payloads and Edited Copies. It shares execution, observations, Unit Work, and
+canonical storage semantics with the Wire Interface; it is not a managed-object
+lifecycle or a serialization mode.
+_Avoid_: object mode, Pydantic format, managed interface, ORM mode
+
 **Wire Interface**:
 The class-independent read-and-write interface reached through `scope.wire` or
 `tx.wire`. It shares the underlying read composition and, within a transaction, the same
@@ -256,13 +265,26 @@ or, for a class-backed model, the Typed Object Query authoring value; a
 descriptor-backed caller therefore needs no Entity Class.
 _Avoid_: Neutral API, Wire transaction, format selector, descriptor mode
 
+**Wire Projection**:
+The explicit `wire()` operation on a Typed Snapshot or on an in-scope Typed
+Snapshot Stream. It publishes canonical Wire Entity Mappings from the completed
+Typed result's retained model and finite IncludeTree, without another read,
+Pydantic serialization, graph membership checking, or execution-authority
+capture. Whole-result eager projection preserves root order, invalid verdicts,
+Pin, and Model Edition; element projection renders one eligible published node
+at an exact requested position. Stream projection is element-only and available
+only while a delivery is paused at a root of its current Page.
+_Avoid_: Entity serializer, `model_dump` mode, query replay, lazy Snapshot view
+
 **Wire Entity Mapping**:
 The mapping-shaped Python representation of one Entity node in a Wire Snapshot,
 keyed by declared member names and carrying no serialized framework metadata.
 Its Value Object occurrences key exactly the members the read contract carries —
 `core/spec/m-snapshot-read.md` _What a materialized value carries_ — so presence is
 something a consumer reads off the mapping rather than assuming, and the mapping is
-the same document the Typed value of that row serializes to.
+the same canonical Entity document a Typed result's Wire Projection publishes.
+`encode_value_object` is the separate Value Object occurrence frontend, not an
+Entity serializer.
 It may retain a core Read Origin privately without changing its mapping value.
 The origin identifies the concrete Entity and original Object Key and optionally
 an exact observed state; an unversioned Non-Temporal source carries an origin

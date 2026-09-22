@@ -1248,8 +1248,8 @@ temporal member, so those spellings are ordinary Value Object members.
   downstream of a guard that has already passed;
 - the schema seam `__get_pydantic_core_schema__`, on either kind, because an
   authored one replaces a declared class's whole validation and serialization
-  rather than composing with it, so what publication means for that class's
-  instances would become the class's to redefine. Reserving exactly this name is
+  rather than composing with it and can rebuild a published value as an ordinary
+  instance without its Snapshot lifecycle state. Reserving exactly this name is
   what keeps every other Pydantic extension point authorable: a field serializer,
   a model serializer, a computed field, a validator, and the JSON-schema hook
   `__get_pydantic_json_schema__` all still run, and the last of those is
@@ -3839,9 +3839,10 @@ of shared edition identity.
   `edge` for a decoded temporal one, so the two never appear together; `ordinal`
   is always the zero-based position in the ordered result. These are diagnostic
   facts only — they expose no observation address and grant no write authority.
-  When `data` is present, publication omits lifecycle state from every Typed node
-  and a Read Origin from every Wire node in that root-local graph. The value is
-  inspectable diagnostic data, but a keyed update refuses it as
+  When `data` is present, every Typed node retains the structural Snapshot state
+  needed to inspect loaded broad and narrowed views, but that state carries no
+  Read Origin; every Wire node in the root-local graph likewise carries no Read
+  Origin. The value is inspectable diagnostic data, but a keyed update refuses it as
   `write-value-not-stored`. A distinct node published for a valid root may carry
   its ordinary origin even when both nodes borrow one page-owned Entity State.
   `InvalidDataError.invalid_data` is nonempty and is the exception's sole
@@ -3935,10 +3936,12 @@ of shared edition identity.
   (`m-snapshot-read`, *What a materialized value carries*) — a member that
   contract does not carry is no key of it at all, rather than a key holding a
   `None` the document never stored. So a consumer reads presence off the node
-  rather than assuming every declared name is there, and the node is exactly the
-  document `encode_value_object` derives from the Typed value of the same row: one
-  materialization published two ways, never two answers about one stored
-  occurrence.
+  rather than assuming every declared name is there. A Typed result's supported
+  `wire()` projection publishes this same canonical Entity mapping from the
+  completed result envelope: one materialization published two ways, never two
+  answers about one stored occurrence. `encode_value_object` remains the separate
+  frontend for encoding one live Value Object occurrence; it is not an Entity
+  serializer or a result-projection door.
 - **Finite unwind.** Relationships render along the requested Include Paths
   rather than traversing the Root View identity topology, so a back-reference renders its target
   once, in full, and terminates — never a primary-key stub. A relationship no
@@ -3985,7 +3988,13 @@ of shared edition identity.
   default-only values do not become Wire members. Every projected node carries
   the exact Read Origin already attached to its Typed counterpart; structural
   narrowed-view state can exist without such an origin and projection does not
-  create one.
+  create one. Pin and edition remain envelope facts and a temporal edge remains
+  derived inspection state rather than a Wire member. Repeated nodes under one
+  rendering token are identical in memory in both publications; ordinary JSON
+  serialization duplicates their mapping value and does not preserve that alias
+  identity. These are surface differences, not lost read facts: Pydantic defaults,
+  computed fields, authored serializers, private attributes, and cached properties
+  remain behavior of the Typed interface alone.
 - **Projection capability and retained shape.** Typed eager publication retains
   by reference the plan's canonical finite IncludeTree and its existing
   `CatalogedModel`; direct and projected Wire envelopes carry no projection

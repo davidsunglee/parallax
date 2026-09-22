@@ -472,3 +472,24 @@ compatibility case is.
   call it a change. An implementation shipping one ingress owes nothing here,
   exactly as one whose host runtime supplies no inherited copy doors owes nothing
   for SIO-016.
+
+### SIO-023 — Two read publications of one implementation observe one value
+
+- **Module tag**: `m-snapshot-read`
+- **Supplements**: *standalone*
+- **Why the corpus cannot state it**: the conformance adapter contract fixes
+  **one** read publication per implementation. A case can grade the publication
+  that adapter exposes against its authored observation, but cannot ask the same
+  implementation to publish the completed read through a second host-language
+  representation. This is not the single-grader observable: both graders can
+  agree on the case while one implementation's two public read interfaces drift.
+- **Required assertion**: an implementation shipping more than one read
+  publication over one materialization owes agreement between them. For one read,
+  both publications preserve declared member identity and value, absence versus
+  explicit null, unloaded/null/empty/value relationship state, narrowed views,
+  concrete family variant, Value Object presence, temporal values, root and child
+  ordering, and conforming versus invalid verdicts including hydrated diagnostic
+  data. Representation-only facts may differ only where the language contract
+  states them: envelope metadata stays on the envelope, host-framework behavior
+  stays on its native values, and serialization need not preserve in-memory alias
+  identity. An implementation shipping one read publication owes nothing here.

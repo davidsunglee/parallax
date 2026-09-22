@@ -528,7 +528,9 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
     assert printed.count("primary (lifecycle included)") == 2
     assert printed.count("secondary (lifecycle excluded)") == 2
     assert printed.count("published vs ordinary (lifecycle where each holds it)") == 2
-    headers = [line for line in printed.splitlines() if line.startswith("scenario ")]
+    headers = [
+        line for line in printed.splitlines() if line.startswith("scenario ") and "fields" in line
+    ]
     assert len(headers) == 2
     for column in (
         "node us",
@@ -548,6 +550,16 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
     ]
     for arm in ARMS:
         assert sum(arm.name in row for row in measured) == 2 * len(REPORTED)
+    assert printed.count("Typed-envelope Wire projection") == 2
+    assert all(
+        column in printed
+        for column in (
+            "projection us",
+            "reuse us",
+            "direct Wire us",
+            "model_dump us",
+        )
+    )
 
 
 def test_each_printed_reduction_names_the_arm_it_divides() -> None:
@@ -666,6 +678,13 @@ def _reading(
         ordinary=_arm(ordinary_retained, ordinary_bare, legacy_ns),
         legacy=_arm(retained[0], bare[0], legacy_ns),
         compact=_arm(retained[1], bare[1], compact_ns, scaffolding=scaffolding_ns),
+        projection=report.ProjectionReading(
+            retained_bytes=400,
+            peak_bytes=700,
+            projection_ns=2_000.0,
+            projection_reuse_ns=1_500.0,
+            direct_wire_ns=1_000.0,
+        ),
     )
 
 

@@ -519,7 +519,10 @@ def validate_write_lowering_matrix(
 
 
 def validate_instance_state_matrix(
-    document: Document, runtimes: Sequence[str] | None = None
+    document: Document,
+    runtimes: Sequence[str] | None = None,
+    *,
+    include_head_only: bool = True,
 ) -> None:
     """Validate the exact instance-state matrix its report owner declares over
     every supported runtime: each scenario's readings under every arm, each
@@ -527,8 +530,15 @@ def validate_instance_state_matrix(
     comparisons recomputed from the readings they compare."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
     readings = _indexed(_readings(document), label="instance-state reading")
+    expected = instance_report.expected_addresses(minors)
+    if not include_head_only:
+        expected = frozenset(
+            (workload, cell)
+            for workload, cell in expected
+            if cell not in instance_report.HEAD_ONLY_CELLS
+        )
     _exact(
-        (("", workload, cell) for workload, cell in instance_report.expected_addresses(minors)),
+        (("", workload, cell) for workload, cell in expected),
         readings,
         label="instance-state reading",
     )
@@ -1279,7 +1289,7 @@ def _comparable_envelope(
         validate(envelope)
         validate_matrix(envelope, subject, contract)
         if subject == INSTANCE_STATE_SUBJECT:
-            validate_instance_state_matrix(envelope)
+            validate_instance_state_matrix(envelope, include_head_only=side != BASE)
     except (KeyError, TypeError, ValueError, ValidationError) as error:
         return None, [f"{side}: the {subject} envelope is invalid: {error}"]
     failures: list[str] = []
