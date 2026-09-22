@@ -591,8 +591,9 @@ def _to_legacy(document: dict[str, Any]) -> None:
 
 # The two retained captures carry the legacy counter vocabulary on every keyed
 # case and both runtimes. Their original workload digests remain untouched when
-# later instrument source changes without a recapture, and verification names
-# that mismatch rather than presenting the old readings as current evidence.
+# the source defining a workload later changes without a recapture, and
+# verification names that mismatch rather than presenting the old readings as
+# current evidence.
 @pytest.mark.parametrize("name", ["before", "after"])
 def test_each_retained_historical_portfolio_preserves_its_original_provenance(
     name: str,

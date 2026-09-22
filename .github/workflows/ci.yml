@@ -239,9 +239,10 @@ jobs:
   # request by label, dispatch, or the nightly schedule.
   python-verify-cost:
     runs-on: ubuntu-latest
-    # Advisory until the canonical capture is retaken: its write-lowering member
-    # records the workload digest of instrument source that has since changed, so
-    # verification reports that member stale and exits non-zero on every run.
+    # Advisory until the canonical capture is retaken: the source defining the
+    # write-lowering workload changed after that member's workload digest was
+    # recorded, so verification reports that member stale and exits non-zero on
+    # every run.
     continue-on-error: true
     env:
       UV_FROZEN: "1"
