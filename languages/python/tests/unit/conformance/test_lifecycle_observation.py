@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 from uuid import uuid4
 
 import pytest
@@ -27,6 +27,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.core.db_port import (
+    AcquisitionReason,
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
@@ -405,14 +406,20 @@ def test_an_acquisition_names_what_it_granted_or_why_it_granted_nothing() -> Non
 def test_a_failed_acquisitions_reason_is_projected_member_by_member() -> None:
     # The `m-db-port` vocabulary is a Python runtime one and the corpus token is
     # core-authored, so the two are stated side by side rather than derived —
-    # a rename on either side has to be written down.
-    for member, token in (
+    # a rename on either side has to be written down. What IS derived is the
+    # coverage: a member with no token spelled for it fails here rather than on
+    # the one acquisition that failed that way.
+    pairs = (
         ("timeout", "timeout"),
         ("queue_rejected", "queue-rejected"),
         ("closed", "closed"),
         ("preparation_failed", "preparation-failed"),
         ("authorization_failed", "authorization-failed"),
-    ):
+        ("credentials_refused", "credentials-refused"),
+    )
+
+    assert {member for member, _ in pairs} == set(get_args(AcquisitionReason.__value__))
+    for member, token in pairs:
         outcome = AcquisitionFailed(member, DirectFailure(_diagnostic()), None)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
         finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
         assert _transition(finished)["acquisitionFinished"]["reason"] == token

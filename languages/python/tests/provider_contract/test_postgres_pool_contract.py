@@ -13,6 +13,7 @@ it opens is closed by the scope that opened it.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any
@@ -23,6 +24,8 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     ConnectionAcquisitionError,
+    CredentialResolutionError,
+    DatabaseStartupError,
     PoolAvailable,
     PoolDetached,
     PoolUnavailable,
@@ -470,6 +473,124 @@ def test_the_driver_managed_declaration_asks_nothing_and_lets_libpq_authenticate
         assert row[0] == profile_run.login_identity
     finally:
         runtime.close()
+
+
+# --------------------------------------------------------------------------- #
+# The credential refused: named as the cause rather than reported as a wait.   #
+# --------------------------------------------------------------------------- #
+
+_SIGNING_SECRET = "hunter2-would-have-signed-this"
+"""What a careless source puts in its own message, and what must not be logged."""
+
+
+class _RefusingAfter:
+    """The run's own source, refusing once it has produced ``successes`` of them.
+
+    Zero refuses from the very first physical connection; a positive count lets
+    retained capacity fill and refuses everything the runtime opens after that,
+    which is how an operation-time refusal is reached without a startup that
+    never completed.
+    """
+
+    def __init__(self, inner: Any, *, successes: int = 0, error: BaseException | None = None):
+        self._inner = inner
+        self._successes = successes
+        self.error = (
+            error
+            if error is not None
+            else CredentialResolutionError("RDS IAM token could not be generated")
+        )
+        self.calls = 0
+
+    def resolve(self) -> Any:
+        self.calls += 1
+        if self.calls > self._successes:
+            raise self.error
+        return self._inner.resolve()
+
+
+@pytest.mark.adapter_smoke
+def test_a_retained_runtime_whose_source_refuses_fails_startup_naming_the_refusal(
+    profile_run: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Filling happens on the pool's own worker threads, where a refusal is
+    # retried with backoff and logged where nothing reaches the caller waiting
+    # on it — so readiness spends its whole budget and then names the refusal
+    # rather than the wait. What the source itself raised is wrapped in fixed
+    # text, which is what keeps its message out of the driver's own log line.
+    source = _RefusingAfter(
+        profile_run.credentials, error=RuntimeError(f"could not sign for {_SIGNING_SECRET}")
+    )
+    configured = profile_run.configured(
+        credentials=source, pool=PoolOptions(min_size=1, max_size=1, startup_timeout=2.0)
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="psycopg.pool"),
+        pytest.raises(DatabaseStartupError) as failed,
+    ):
+        configured.open()
+
+    assert failed.value.phase == "minimum_ready"
+    assert "authenticated" in str(failed.value)
+    refusal = failed.value.__cause__
+    assert isinstance(refusal, CredentialResolutionError)
+    assert str(refusal) == "the credential source could not produce a password"
+    assert refusal.__cause__ is source.error
+    attempts = [record for record in caplog.records if record.name == "psycopg.pool"]
+    assert attempts
+    assert all(str(refusal) in record.getMessage() for record in attempts)
+    assert all(_SIGNING_SECRET not in record.getMessage() for record in attempts)
+
+
+@pytest.mark.adapter_smoke
+def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal(
+    profile_run: Any,
+) -> None:
+    # The source authenticates initial capacity and refuses afterwards, so the
+    # runtime is healthy until the server ends its one connection. The
+    # replacement it then tries to open is what meets the refusal, and the
+    # acquisition waiting on it says so instead of timing out.
+    source = _RefusingAfter(profile_run.credentials, successes=1)
+    runtime = profile_run.configured(
+        credentials=source,
+        pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0),
+    ).open()
+    executioner = profile_run.control()
+    try:
+        with _context(runtime) as first:
+            retained = _pid(first)
+        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
+
+        with pytest.raises(ConnectionAcquisitionError) as refused:
+            _context(runtime).__enter__()
+
+        assert refused.value.reason == "credentials_refused"
+        assert refused.value.__cause__ is source.error
+    finally:
+        executioner.close()
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_an_on_demand_runtime_meets_the_refusal_on_its_own_thread_and_does_not_wait(
+    profile_run: Any,
+) -> None:
+    # An on-demand runtime establishes on the acquiring thread, so the refusal
+    # comes back as itself rather than as a record read after a wait. Startup's
+    # own acquisition is the first one to meet it, and it is asked exactly once.
+    source = _RefusingAfter(profile_run.credentials)
+    configured = profile_run.configured(credentials=source, pool=OnDemandOptions(max_size=1))
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        configured.open()
+
+    assert failed.value.phase == "acquire"
+    acquisition = failed.value.__cause__
+    assert isinstance(acquisition, ConnectionAcquisitionError)
+    assert acquisition.reason == "credentials_refused"
+    assert acquisition.__cause__ is source.error
+    assert source.calls == 1
 
 
 @pytest.mark.adapter_smoke

@@ -400,13 +400,13 @@
       }
     },
     "lifecycleAcquisitionFinished": {
-      "description": "The acquisition reached its terminal outcome. `acquired` granted the activity exclusive use of a connection and carries nothing else: which connection, and what it is, belong to the adapter. `failed` granted none and names the `m-db-port` `reason` it did not — `timeout` (the cooperative budget ran out, a native success arriving after it included), `queue-rejected` (a bounded waiting queue would hold no more), `closed` (the runtime no longer admits work), `preparation-failed` (establishing or preparing execution access, a non-idle checkout included), or `authorization-failed` (the requested authorization context could not be established). Those are deliberately outside the `m-db-error` categories: no modeled statement ran, so nothing was classified and no retry rule reads them. A failed acquisition also carries the `cleanup` its own partial ownership already ran, ABSENT where it owned nothing to clean up — it rides here rather than on a release because no hold was granted for a release to end — and is followed by NO release. The monotonic duration is not portable and is absent.",
+      "description": "The acquisition reached its terminal outcome. `acquired` granted the activity exclusive use of a connection and carries nothing else: which connection, and what it is, belong to the adapter. `failed` granted none and names the `m-db-port` `reason` it did not — `timeout` (the cooperative budget ran out, a native success arriving after it included), `queue-rejected` (a bounded waiting queue would hold no more), `closed` (the runtime no longer admits work), `preparation-failed` (establishing or preparing execution access, a non-idle checkout included), `authorization-failed` (the requested authorization context could not be established), or `credentials-refused` (the configured credential source produced no credential, so nothing was offered to the server). Those are deliberately outside the `m-db-error` categories: no modeled statement ran, so nothing was classified and no retry rule reads them. A failed acquisition also carries the `cleanup` its own partial ownership already ran, ABSENT where it owned nothing to clean up — it rides here rather than on a release because no hold was granted for a release to end — and is followed by NO release. The monotonic duration is not portable and is absent.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
       "properties": {
         "outcome": {"enum": ["acquired", "failed"]},
-        "reason": {"enum": ["timeout", "queue-rejected", "closed", "preparation-failed", "authorization-failed"]},
+        "reason": {"enum": ["timeout", "queue-rejected", "closed", "preparation-failed", "authorization-failed", "credentials-refused"]},
         "cleanup": {"enum": ["returned", "invalidated", "release-unconfirmed"]},
         "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}},
         "attribution": {"enum": ["direct", "caused"]},

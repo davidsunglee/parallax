@@ -175,6 +175,27 @@ explicit source the resolved password wins over both, by libpq's own precedence
 for an explicit connection keyword. Declaring `DRIVER_MANAGED` is therefore how
 you ask for those mechanisms, rather than how you disable a check.
 
+A source that produces no credential is named rather than timed out. Whatever it
+raises is recorded and — unless it is already a `CredentialResolutionError` —
+wrapped in one carrying fixed text, with the original chained beneath it. Where
+that surfaces depends only on which retention policy was asked to establish the
+connection:
+
+| Where | What you get |
+|---|---|
+| A retained pool, at startup | `DatabaseStartupError` (`phase="minimum_ready"`), after `startup_timeout`: *no database connection this runtime opened could be authenticated* |
+| A retained pool, once it is running | `ConnectionAcquisitionError` (`reason="credentials_refused"`), after `acquire_timeout`: *no database connection could be authenticated within the acquisition timeout* |
+| An on-demand pool | `ConnectionAcquisitionError` (`reason="credentials_refused"`) on your own thread, with no wait: *a database connection could not be authenticated* |
+| A startup probe over an on-demand pool, or over a zero minimum | `DatabaseStartupError` (`phase="acquire"`) wrapping the acquisition failure above |
+
+The `CredentialResolutionError` is the `__cause__` in every row, and whatever
+the source itself raised is the cause beneath that. Startup does not fail fast
+on one: the pool retries with backoff exactly as it does for a session it cannot
+execute under, so a transient token or metadata-service failure costs a retry
+rather than a process. That backoff is also why the fixed text matters —
+`psycopg.pool` logs the exception's own text on every failed attempt, under the
+driver's disclosure policy rather than Parallax's.
+
 ## Retention
 
 `pool=PoolOptions(...)` keeps connections between operations;

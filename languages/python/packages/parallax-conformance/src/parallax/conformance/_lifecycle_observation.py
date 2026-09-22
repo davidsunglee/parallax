@@ -165,6 +165,7 @@ _ACQUISITION_REASON: Final[dict[AcquisitionReason, str]] = {
     "closed": "closed",
     "preparation_failed": "preparation-failed",
     "authorization_failed": "authorization-failed",
+    "credentials_refused": "credentials-refused",
 }
 
 _CLEANUP_PHASE: Final[dict[CleanupPhase, str]] = {
