@@ -1,7 +1,7 @@
 """Parity canary: every workspace distribution appears in every inventory that
 is meant to list all of them.
 
-Adding a distribution means spelling it into eight hand-maintained inventories
+Adding a distribution means spelling it into seven hand-maintained inventories
 whose shapes have nothing in common — TOML requirement strings, TOML source
 roots, a JSON list of type-check roots, Python tuples of distribution names, a
 distribution-to-package-directory map, and a tuple of dotted root packages.
@@ -10,6 +10,11 @@ ownership of its own generated block for no real gain; failing loudly when
 ``packages/*`` gains a member an inventory does not know about buys the same
 protection. An omission is silent otherwise: a missing type-check root disables
 strict checking over a whole distribution without any gate going red.
+
+The import-linter roots are not an inventory: ``check_dag_sync`` derives them
+from the enforcement scopes §7 declares. What is asserted of them is that the
+derivation covers every distribution, which fails exactly when a distribution
+declares no scope at all — a tree import-linter would then never examine.
 
 ``packages/*`` is the authority, because that glob is exactly
 ``[tool.uv.workspace].members`` — what makes a directory a distribution at all.
@@ -176,8 +181,9 @@ def test_every_distribution_has_a_wheel_top_package_directory() -> None:
 
 
 def test_every_root_package_is_an_import_linter_root() -> None:
-    assert set(dag.ROOT_PACKAGES) == set(ROOT_PACKAGES.values()), (
-        "check_dag_sync.ROOT_PACKAGES does not match packages/*"
+    assert set(dag.root_packages()) == set(ROOT_PACKAGES.values()), (
+        "the roots check_dag_sync.root_packages() derives from the declared scopes do not "
+        "match packages/*"
     )
 
 

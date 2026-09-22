@@ -18,9 +18,10 @@ child scope over a private implementation module, every file inside it matches
 both the child and the parent, and that is the point: the child's own grant row
 is what governs it. What fails is overlap that *nobody declared*.
 
-Six findings fail the check:
+Seven findings fail the check:
 
-* **unowned** — the file matches no declared scope and is not exempt;
+* **unowned** — the file matches no declared scope, is not exempt, and is not
+  a package interface the last finding accounts for;
 * **undeclared overlapping owners** — the file matches several scopes that do
   not form a parent/child chain declared in
   :data:`check_dag_sync.CHILD_SCOPES`, the tool's copy of §7's child-scope
@@ -33,7 +34,24 @@ Six findings fail the check:
 * **a sealed scope importing its own parent package beyond its grants** — see
   below;
 * **stale exemption** — an exempt path that no longer exists, or that a scope
-  now owns, so the exemption is carrying nothing.
+  now owns, so the exemption is carrying nothing;
+* **exemptions differing from the derived package interfaces** — see below.
+
+Unowned package interfaces
+--------------------------
+
+``check_dag_sync.py`` derives the import-linter roots from the declared scopes,
+and from those the **unowned production interfaces**: each root outside the
+conformance tree that is not itself a scope, whose one interface module every
+package-scoped contract misses and which the generator therefore sources
+exactly in one further contract. Those interfaces are the only files this tool
+exempts, and the exemption set is verified to be exactly that derived set: an
+interface with no exemption is reported here rather than as merely unowned,
+because what it needs is a decision — declare the root a scope, or exempt the
+interface with its reason — and an exemption for an unowned file that is no
+derived interface is reported because it would excuse a module the generator
+sources no contract from at all. A first scope in a new distribution therefore
+lands its package interface here until one of the two is done.
 
 Zero-grant scopes
 -----------------
@@ -132,9 +150,11 @@ _HERE = Path(__file__).resolve()
 PY_ROOT = _HERE.parents[1]
 PACKAGES = PY_ROOT / "packages"
 
-# Production files that no single scope can own, each with the reason it cannot.
-# Keys are POSIX paths relative to `packages/`. An entry that stops being true —
-# the file disappears, or a scope grows to cover it — is itself a finding.
+# The package interfaces no scope owns, each with the reason none can. Keys are
+# POSIX paths relative to `packages/`. The set is verified against the
+# interfaces `check_dag_sync` derives, so an entry that stops being true — the
+# file disappears, a scope grows to cover it, or it was never a package
+# interface — is itself a finding.
 EXEMPTIONS: Mapping[str, str] = {
     "parallax-core/src/parallax/core/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.core` developer "
@@ -157,11 +177,6 @@ EXEMPTIONS: Mapping[str, str] = {
 }
 
 
-def declared_scopes() -> frozenset[str]:
-    """Every enforcement scope §7 declares, as imported from ``check_dag_sync``."""
-    return frozenset(dag.MODULE_SCOPE.values()) | frozenset(dag.PYTHON_FIRST_PARTY_GRANTS)
-
-
 def module_path(relative_path: str) -> str:
     """Dotted module path for a ``<dist>/src/<pkg>/...`` file, ``__init__`` folded in."""
     parts = list(Path(relative_path).parts)[2:]
@@ -174,7 +189,7 @@ def module_path(relative_path: str) -> str:
 
 def owning_scopes(module: str, scopes: frozenset[str]) -> list[str]:
     """Declared scopes containing ``module``, outermost first."""
-    owners = [s for s in scopes if module == s or module.startswith(f"{s}.")]
+    owners = [s for s in scopes if dag.is_in_scope(module, s)]
     return sorted(owners, key=len)
 
 
@@ -221,17 +236,18 @@ def first_party_reaches(source: str, package: str) -> frozenset[tuple[str, ...]]
     what lets a caller judge the import at whichever candidate it meant, instead
     of judging a package-form spelling as though it had named the package alone.
 
-    First party is the distribution root ``check_dag_sync.ROOT_PACKAGES`` are
-    spelled under, so the two tools agree on what import-linter treats as a
-    first-party edge. A relative import is resolved against ``package`` — it is
-    first-party whatever it resolves to, and resolving it is what lets a caller
-    ask which module it reached. Imports guarded by ``TYPE_CHECKING`` count:
-    import-linter's graph contains them too.
+    First party is the namespace the import-linter roots
+    ``check_dag_sync.root_packages()`` derives are spelled under, so the two
+    tools agree on what import-linter treats as a first-party edge. A relative
+    import is resolved against ``package`` — it is first-party whatever it
+    resolves to, and resolving it is what lets a caller ask which module it
+    reached. Imports guarded by ``TYPE_CHECKING`` count: import-linter's graph
+    contains them too.
     """
-    roots = frozenset(root.split(".", 1)[0] for root in dag.ROOT_PACKAGES)
+    roots = frozenset(root.split(".", 1)[0] for root in dag.root_packages())
 
     def first_party(name: str) -> bool:
-        return any(name == root or name.startswith(f"{root}.") for root in roots)
+        return any(dag.is_in_scope(name, root) for root in roots)
 
     found: set[tuple[str, ...]] = set()
     for node in ast.walk(ast.parse(source)):
@@ -262,11 +278,6 @@ def first_party_imports(source: str, package: str) -> frozenset[str]:
     return frozenset(module for reach in first_party_reaches(source, package) for module in reach)
 
 
-def is_inside(module: str, scope: str) -> bool:
-    """Whether ``module`` is ``scope`` or something nested inside it."""
-    return module == scope or module.startswith(f"{scope}.")
-
-
 def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
     """Production imports of an isolated child scope from inside its own ancestors.
 
@@ -288,13 +299,13 @@ def imports_reaching_an_isolated_scope(paths: list[str]) -> list[str]:
         ancestors = dag.scope_ancestors(scope)
         for relative in paths:
             module = module_path(relative)
-            if is_inside(module, scope):
+            if dag.is_in_scope(module, scope):
                 continue
-            if not any(is_inside(module, ancestor) for ancestor in ancestors):
+            if not any(dag.is_in_scope(module, ancestor) for ancestor in ancestors):
                 continue
             source = (PACKAGES / relative).read_text()
             imports = first_party_imports(source, containing_package(relative))
-            if any(is_inside(imported, scope) for imported in imports):
+            if any(dag.is_in_scope(imported, scope) for imported in imports):
                 found.add(f"{relative} (imports {scope}, which no forbidden row can reject here)")
     return sorted(found)
 
@@ -334,15 +345,17 @@ def imports_escaping_a_sealed_child_row(paths: list[str]) -> list[str]:
         parent = dag.CHILD_SCOPES[scope].parent
         permitted = (scope, *adjacency[scope])
         for relative in paths:
-            if not is_inside(module_path(relative), scope):
+            if not dag.is_in_scope(module_path(relative), scope):
                 continue
             source = (PACKAGES / relative).read_text()
             for reach in first_party_reaches(source, containing_package(relative)):
-                landing = [candidate for candidate in reach if is_inside(candidate, parent)]
+                landing = [candidate for candidate in reach if dag.is_in_scope(candidate, parent)]
                 if not landing:
                     continue
                 covered = any(
-                    is_inside(candidate, allowed) for candidate in reach for allowed in permitted
+                    dag.is_in_scope(candidate, allowed)
+                    for candidate in reach
+                    for allowed in permitted
                 )
                 if covered:
                     continue
@@ -392,12 +405,46 @@ def production_files() -> list[str]:
     found: list[str] = []
     for path in sorted(PACKAGES.glob("*/src/**/*.py")):
         relative = path.relative_to(PACKAGES).as_posix()
-        if module_path(relative).startswith(f"{dag.CONFORMANCE_ROOT}."):
-            continue
-        if module_path(relative) == dag.CONFORMANCE_ROOT:
+        if dag.is_in_scope(module_path(relative), dag.CONFORMANCE_ROOT):
             continue
         found.append(relative)
     return found
+
+
+def unowned_interfaces() -> frozenset[str]:
+    """The package interfaces the generator sources exactly, as modules: every
+    derived import-linter root outside the conformance tree that no production
+    scope owns."""
+    return dag.unowned_production_interfaces(dag.production_scopes(), dag.root_packages())
+
+
+def exemptions_differing_from_the_interfaces(
+    paths: list[str],
+    scopes: frozenset[str],
+    exemptions: Mapping[str, str],
+    interfaces: frozenset[str],
+) -> list[str]:
+    """Where the exemption set and the derived package interfaces disagree.
+
+    The interfaces are the files whose module is one of ``interfaces``; each
+    must be exempt, and nothing else may be. An exemption for a file that a
+    scope owns or that no longer exists is the stale-exemption finding's, so
+    what is reported here is an exemption for a file that is unowned and yet no
+    derived interface — the one shape an exemption must never excuse, because
+    the generator sources no contract from such a module at all.
+    """
+    found: list[str] = []
+    for relative in paths:
+        module = module_path(relative)
+        if module in interfaces:
+            if relative not in exemptions:
+                found.append(
+                    f"{relative} (the {module} package interface no scope owns, and no "
+                    "exemption names it)"
+                )
+        elif relative in exemptions and not owning_scopes(module, scopes):
+            found.append(f"{relative} (exempt, but no derived package interface)")
+    return sorted(found)
 
 
 def audit(
@@ -405,12 +452,15 @@ def audit(
     scopes: frozenset[str],
     children: Mapping[str, dag.ChildScope],
     exemptions: Mapping[str, str],
+    interfaces: frozenset[str],
 ) -> dict[str, list[str]]:
     """Group every ownership finding by kind; an empty result means the tree is clean.
 
     A file with several owners is a finding only when they are not a declared
     chain: a file inside a declared child scope legitimately matches the child
-    and every ancestor above it.
+    and every ancestor above it. An unowned file that is a derived package
+    interface is the interface finding's rather than the unowned one's: what it
+    needs is an exemption or a root scope, and the finding says which.
 
     Ownership alone does not settle a package holding a zero-grant scope, where
     every module must also be one that row names or carry a first-party import,
@@ -424,7 +474,7 @@ def audit(
     for relative in paths:
         owners = owning_scopes(module_path(relative), scopes)
         if not owners:
-            if relative not in exemptions:
+            if relative not in exemptions and module_path(relative) not in interfaces:
                 unowned.append(relative)
             continue
         if relative in exemptions:
@@ -447,6 +497,9 @@ def audit(
             imports_escaping_a_sealed_child_row(paths)
         ),
         "exemptions that no longer describe the tree": stale,
+        "exemptions that differ from the package interfaces no scope owns": (
+            exemptions_differing_from_the_interfaces(paths, scopes, exemptions, interfaces)
+        ),
     }
     return {label: found for label, found in findings.items() if found}
 
@@ -461,18 +514,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.parse_args(argv)
 
     paths = production_files()
-    scopes = declared_scopes()
-    findings = audit(paths, scopes, dag.CHILD_SCOPES, EXEMPTIONS)
+    scopes = dag.declared_first_party_scopes()
+    findings = audit(paths, scopes, dag.CHILD_SCOPES, EXEMPTIONS, unowned_interfaces())
     if not findings:
         nested = sum(1 for path in paths if len(owning_scopes(module_path(path), scopes)) > 1)
         print(
             f"{_TOOL}: all {len(paths)} production source files resolve to exactly one "
             f"most-specific enforcement scope (plus any declared ancestor scopes: "
             f"{nested} file(s) sit inside a declared child scope) or an exact "
-            f"exemption ({len(EXEMPTIONS)}); beside a zero-grant scope, every module "
-            f"is one its row can name or carries a first-party import; no file "
-            f"inside an isolated scope's ancestors imports it; and no sealed scope "
-            f"reaches its own parent package beyond its grants"
+            f"exemption ({len(EXEMPTIONS)}), and the exemptions are exactly the "
+            f"package interfaces no scope owns; beside a zero-grant scope, every "
+            f"module is one its row can name or carries a first-party import; no "
+            f"file inside an isolated scope's ancestors imports it; and no sealed "
+            f"scope reaches its own parent package beyond its grants"
         )
         return 0
 
@@ -488,7 +542,11 @@ def main(argv: list[str] | None = None) -> int:
         "  scope imported from inside its own ancestors is the one edge a forbidden\n"
         "  row cannot state, because that row's source package overlaps the target,\n"
         "  and a sealed scope's import of its own parent package is that same\n"
-        "  overlap seen from the other side.",
+        "  overlap seen from the other side. The exemptions are exactly the package\n"
+        "  interfaces check_dag_sync.py derives from the declared scopes and sources\n"
+        "  as modules: an interface without one has no contract and no owner, and\n"
+        "  an exemption for anything else excuses a module no contract is sourced\n"
+        "  from.",
         file=sys.stderr,
     )
     for label in sorted(findings):
