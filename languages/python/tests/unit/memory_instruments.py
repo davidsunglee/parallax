@@ -167,6 +167,18 @@ bytes, so anything kept per run — the smallest object is tens of bytes — cle
 it by two orders of magnitude, and "under one byte per run" needs no threshold
 anyone has to justify."""
 
+SETTLING_COLLECTIONS: Final = 16
+"""The most collections a whole-heap mark takes before the listing has settled.
+
+One collection does not settle it. The collector untracks a tuple whose items are
+all untracked, so a nested structure of them loses one level per pass: a key built
+from a query's own dataclasses is still listed, with every reference in it, for as
+many collections as it is deep. Which of those passes a sample lands after is a
+function of how much the process happened to allocate since the structure was
+built, not of what it holds, so two arms of one comparison would differ in
+``objects`` and ``references`` over a heap whose ``held`` is identical.
+"""
+
 type Seam = Callable[[Callable[[], None]], None]
 """One sequence through the seam, calling its argument at its innermost point.
 
@@ -590,11 +602,29 @@ def _marking(readings: list[Heap]) -> Callable[[], None]:
     """
 
     def mark() -> None:
-        gc.collect()
+        _settled()
         heap = gc.get_objects()
         readings.append(_heap_census(heap, frozenset({id(heap), id(readings), *map(id, readings)})))
 
     return mark
+
+
+def _settled() -> None:
+    """Collect until the collector's listing stops moving.
+
+    A sample is a statement about what the process holds, so it is taken where
+    another collection would change nothing. Reaching that point is the whole
+    reason for the loop; a listing still moving after
+    :data:`SETTLING_COLLECTIONS` passes is a heap no total can describe.
+    """
+    listed = -1
+    for _ in range(SETTLING_COLLECTIONS):
+        gc.collect()
+        current = len(gc.get_objects())
+        if current == listed:
+            return
+        listed = current
+    raise AssertionError(f"the heap listing still moved after {SETTLING_COLLECTIONS} collections")
 
 
 def _heap_census(heap: Sequence[object], instruments: frozenset[int]) -> Heap:
