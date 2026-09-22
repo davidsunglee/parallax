@@ -360,6 +360,15 @@ def _check_topologies(
         row_modules = [
             set(_BACKTICKED_MODULE_RE.findall(row[0])) for _line, row in source.rows if row
         ]
+        for modules in row_modules:
+            if len(modules) > 1:
+                issues.append(
+                    Diagnostic(
+                        "combined-source-module-row",
+                        "source-enforcement topology combines "
+                        f"{', '.join(sorted(modules))} in one row",
+                    )
+                )
         for module in sorted(required_modules):
             occurrences = sum(module in modules for modules in row_modules)
             if occurrences == 0:

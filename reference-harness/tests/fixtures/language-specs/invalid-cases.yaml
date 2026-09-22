@@ -236,6 +236,17 @@
   code: missing-source-module
   message: "source-enforcement topology has no row for m-pk-gen"
 
+# One row per module: a row naming two modules would satisfy the presence
+# rule for both while declaring one scope for neither in particular.
+- name: combined-source-module-row
+  base: valid-snapshot.md
+  old: |-
+    | `m-pk-gen` | `pk-gen` |
+    | `m-read-lock` | `read-lock` |
+  new: "| `m-pk-gen` `m-read-lock` | `pk-gen` |"
+  code: combined-source-module-row
+  message: "source-enforcement topology combines m-pk-gen, m-read-lock in one row"
+
 - name: duplicate-source-module
   base: valid-snapshot.md
   old: "| `m-pk-gen` | `pk-gen` |"
