@@ -25,9 +25,17 @@ __all__ = [
 ]
 
 type PositionId = int
+"""An index issued by one :class:`IncludeTree`; ``0`` is that tree's root.
+
+The identity is meaningful only to the tree that issued it.
+"""
+
 type RenderToken = PositionId | tuple[PositionId, ...]
+"""One admitted position, or issued positions whose child views render together."""
 
 EMPTY_RENDER: Final[PositionId] = -1
+"""The terminal token for a node whose requested position has no child views."""
+
 ROOT_POSITION: Final[PositionId] = 0
 
 

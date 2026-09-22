@@ -1,11 +1,10 @@
-"""The wire materializer: one Root View into a finite tree of frozen values.
+"""The Wire renderer: one requested result position as frozen canonical values.
 
-A peer of :mod:`parallax.snapshot.materialize._typed`, not a wrapper of it.
-Both consume the same :class:`~parallax.snapshot.materialize.RootView` and the
-same root classification; neither calls the other, and a typed read constructs
-nothing defined here. What differs is only what a Root View node becomes: a frozen
-Entity instance there, and here the :class:`WireEntity` mapping a caller with no
-compiled Entity Class can still read.
+Direct Wire reads render classified :class:`~parallax.snapshot.materialize.RootView`
+nodes through :class:`RootViewReader`. Typed eager and streaming reads instead
+project already-published Entity nodes through :class:`EntityReader`; both use the
+same :class:`WireWalk`, without reclassification or serialization. What differs is
+only the representation the reader exposes to that shared walk.
 
 Two rules give the result its shape.
 
@@ -33,14 +32,13 @@ representation a node is stored in and the Wire semantics rendered over it. A
 reader answers the layout a node is read against, its positional member values,
 one relationship view's raw arm, and the Read Origin it carries; the walk owns
 declaration order, the family variant that layout fixed, occurrence rendering,
-view keys, include-tree termination, and aliasing. :class:`RootViewReader` is
-the adapter over a Root View's own indexed state, borrowing rather than copying
-it.
+view keys, include-tree termination, and aliasing.
 
 Aliasing is preserved rather than copied: the walk memoizes on
-``(node, subtree)``, so every position reaching one Root View node under one subtree
-answers the identical frozen object. The cache lives for one materialization pass
-and dies with it, so its scope IS the materialization unit.
+``(node, subtree)``, so every position reaching one node under one subtree answers
+the identical frozen object. Direct and eager reads retain that identity for one
+whole result. A stream retains it for one page and clears both reader and walk at
+each page boundary and terminal release.
 """
 
 from __future__ import annotations
@@ -581,8 +579,7 @@ def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> Enti
 
 
 class WireWalk[Node]:
-    """One materialization pass's walk over a reader's nodes, and the memo it
-    shares across the roots of that pass.
+    """One result- or page-scoped walk over a reader's nodes and its shared memo.
 
     The memo keys the reader's native reference beside the subtree a node
     renders under, so two positions reaching one node under one subtree answer
@@ -591,7 +588,8 @@ class WireWalk[Node]:
     that refuses mutation through the instance is safely shared. The leaf
     subtree is one object shared by every position that renders members and no
     relationship, so a node reached under it is keyed by the reference alone.
-    The memo dies when the pass returns.
+    The owner clears the memo when its eager result is complete or its stream
+    advances or terminates.
     """
 
     __slots__ = ("_encode", "_includes", "_memo", "_reader", "_trusted")

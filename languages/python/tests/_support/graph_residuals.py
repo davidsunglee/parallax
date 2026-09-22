@@ -26,9 +26,9 @@ CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS: Final[dict[str, frozenset[str]]] = {
     "m-snapshot-read-012": frozenset({SIBLING_NULL_PADDING, NARROWED_CHILD_FAMILY_VARIANT}),
 }
 
-D67_WITHOUT_GRAPH_STORIES: Final = frozenset({"m-inheritance-073", "m-inheritance-077"})
-D67_GRAPH_STORY_RESIDUALS: Final = (
-    frozenset(CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS) - D67_WITHOUT_GRAPH_STORIES
+CHILD_SHAPE_CASES_WITHOUT_STORIES: Final = frozenset({"m-inheritance-073", "m-inheritance-077"})
+CHILD_SHAPE_GRAPH_STORY_RESIDUALS: Final = (
+    frozenset(CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS) - CHILD_SHAPE_CASES_WITHOUT_STORIES
 )
 
 

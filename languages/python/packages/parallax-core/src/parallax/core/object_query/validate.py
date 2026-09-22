@@ -160,6 +160,14 @@ def _narrowed_position(
 def validate_include_path(
     path: IncludePath, model: Metamodel, queried: PositionScope
 ) -> ValidatedIncludePath:
+    """Resolve ``path`` relative to the model's active queried position.
+
+    The source guard is constrained by ``queried`` and each segment is resolved
+    from the preceding relationship target. Narrowing and wrong-kind violations
+    raise :class:`ModelRejectedError` with their shared rule code. An unresolved
+    or undeclared relationship direction raises ``ValueError`` because accepted
+    metadata supplies no direction to return.
+    """
     source_scope = (
         queried if path.applies_to is None else validate_narrow(path.applies_to, queried, model)
     )
