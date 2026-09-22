@@ -36,9 +36,10 @@ view keys, include-tree termination, and aliasing.
 
 Aliasing is preserved rather than copied: the walk memoizes on
 ``(node, subtree)``, so every position reaching one node under one subtree answers
-the identical frozen object. Direct and eager reads retain that identity for one
-whole result. A stream retains it for one page and clears both reader and walk at
-each page boundary and terminal release.
+the identical frozen object. Direct Wire publication retains that identity for one
+Root View, Typed eager projection for one whole result, and Typed stream projection
+for one page. Streaming clears both reader and walk at each page boundary and
+terminal release.
 """
 
 from __future__ import annotations
@@ -579,7 +580,7 @@ def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> Enti
 
 
 class WireWalk[Node]:
-    """One result- or page-scoped walk over a reader's nodes and its shared memo.
+    """One root-, result-, or page-scoped walk over a reader's nodes and memo.
 
     The memo keys the reader's native reference beside the subtree a node
     renders under, so two positions reaching one node under one subtree answer
@@ -588,8 +589,9 @@ class WireWalk[Node]:
     that refuses mutation through the instance is safely shared. The leaf
     subtree is one object shared by every position that renders members and no
     relationship, so a node reached under it is keyed by the reference alone.
-    The owner clears the memo when its eager result is complete or its stream
-    advances or terminates.
+    Direct publication owns one walk per Root View, eager Typed projection owns
+    one for the complete result, and stream projection owns one per page. The
+    owner releases that state when its scope ends.
     """
 
     __slots__ = ("_encode", "_includes", "_memo", "_reader", "_trusted")
