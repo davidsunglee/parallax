@@ -42,7 +42,11 @@ importer exemption), and the four §7 relations:
   is built from, and ``lint-imports`` canaries naming the four packages
   literally: a Snapshot module importing any of them breaks, an unowned package
   interface importing one breaks, every owner's own import is kept, and the
-  indirect Snapshot -> Entity -> Pydantic reach stays legal.
+  indirect Snapshot -> Entity -> Pydantic reach stays legal; and
+* the topology derived from the declared scopes rather than inventoried: the
+  production scopes, the import-linter roots, and the unowned package
+  interfaces, with a first scope in a new package adding its root and a
+  conformance scope staying non-production by where it sits.
 """
 
 from __future__ import annotations
@@ -230,8 +234,88 @@ def test_build_adjacency_fails_on_unknown_support_dependency(
 def test_conformance_scopes_are_exempt_importers() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    # No forbidden contract is *sourced* from a conformance scope.
-    assert not (set(forbidden) & dag.CONFORMANCE_SCOPES)
+    # The two tagged conformance scopes are declared, so parity sees them, and
+    # non-production by where they sit, so no forbidden contract is *sourced*
+    # from either — nor from any conformance scope declared later.
+    conformance = {"parallax.conformance.case_format", "parallax.conformance.cli"}
+    assert conformance <= dag.declared_first_party_scopes()
+    assert not (conformance & dag.production_scopes())
+    assert set(forbidden) == dag.production_scopes()
+    assert not any(dag.is_in_scope(scope, dag.CONFORMANCE_ROOT) for scope in forbidden)
+
+
+def test_production_scopes_are_derived_from_where_a_scope_sits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A conformance scope declared tomorrow is non-production by construction,
+    # not by being added to an inventory: nothing is sourced from it, and it is
+    # not an owner a restricted external may be granted to.
+    monkeypatch.setattr(
+        dag,
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, "parallax.conformance.sweep": frozenset[str]()},
+    )
+    assert "parallax.conformance.sweep" in dag.declared_first_party_scopes()
+    assert "parallax.conformance.sweep" not in dag.production_scopes()
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    assert "parallax.conformance.sweep" not in dag.compute_forbidden(adjacency)
+    with pytest.raises(ValueError, match=r"'parallax\.conformance\.sweep', which is neither"):
+        dag.parse_restricted_external_table(
+            "| Restricted external package | Granted enforcement scopes |\n|---|---|\n"
+            "| `psycopg` | `parallax.conformance.sweep` |\n"
+        )
+
+
+def test_root_packages_are_derived_from_the_declared_scopes() -> None:
+    assert dag.root_packages() == (
+        "parallax.conformance",
+        "parallax.core",
+        "parallax.descriptor",
+        "parallax.evolution",
+        "parallax.postgres",
+        "parallax.snapshot",
+    )
+    assert dag.root_packages() == tuple(sorted(dag.root_packages()))
+
+
+def test_a_first_scope_in_a_new_package_adds_its_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A second adapter distribution declares one scope and is an import-linter
+    # root from then on, with no inventory to remember. Its package interface
+    # is not that scope, so it joins the exactly-sourced interfaces too.
+    monkeypatch.setattr(
+        dag,
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, "parallax.mariadb.adapter": frozenset[str]()},
+    )
+    assert "parallax.mariadb" in dag.root_packages()
+    assert "parallax.mariadb.adapter" in dag.production_scopes()
+    assert dag.unowned_production_interfaces(dag.production_scopes(), dag.root_packages()) == (
+        frozenset({"parallax.core", "parallax.evolution", "parallax.mariadb", "parallax.snapshot"})
+    )
+    block = dag.render_block({"parallax.mariadb.adapter": []}, {})
+    assert '    "parallax.mariadb",\n' in block
+    assert '    "parallax.mariadb",\n    "parallax.snapshot",\n' in block
+
+
+def test_enforcement_root_is_the_distribution_package() -> None:
+    assert dag.enforcement_root("parallax.core.entity._layout") == "parallax.core"
+    assert dag.enforcement_root("parallax.postgres") == "parallax.postgres"
+    with pytest.raises(ValueError, match=r"not inside a parallax package: 'tests\.api'"):
+        dag.enforcement_root("tests.api")
+    with pytest.raises(ValueError, match="not inside a parallax package: 'parallax'"):
+        dag.enforcement_root("parallax")
+
+
+def test_declared_first_party_scopes_are_the_contract_universe() -> None:
+    # The scope universe is the behavioral mapping's scopes and the first-party
+    # table's keys — never the pytest-bounded scope, which is a row of the
+    # behavioral table and no scope at all.
+    declared = dag.declared_first_party_scopes()
+    assert declared == frozenset(dag.MODULE_SCOPE.values()) | frozenset(
+        dag.PYTHON_FIRST_PARTY_GRANTS
+    )
+    assert not (declared & set(dag.PYTEST_BOUNDED_SCOPES.values()))
+    assert all(scope.startswith("parallax.") for scope in declared)
 
 
 def test_render_block_is_deterministic() -> None:
@@ -1935,7 +2019,8 @@ def test_a_delegated_child_that_is_not_a_leaf_fails_generation(
 def test_unowned_production_interfaces_are_the_roots_no_scope_owns() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     production = frozenset(dag.compute_forbidden(adjacency))
-    assert dag.unowned_production_interfaces(production, dag.ROOT_PACKAGES) == frozenset(
+    assert production == dag.production_scopes()
+    assert dag.unowned_production_interfaces(production, dag.root_packages()) == frozenset(
         {"parallax.core", "parallax.evolution", "parallax.snapshot"}
     )
     # A root that is itself a scope is owned, and the conformance root sources
@@ -1968,8 +2053,13 @@ def test_the_rendered_block_carries_the_external_contracts() -> None:
 def test_render_block_omits_the_interface_contract_when_every_root_is_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(dag, "ROOT_PACKAGES", ("parallax.conformance", "parallax.postgres"))
-    block = dag.render_block({"parallax.postgres": []}, {}, frozenset({"parallax.postgres"}))
+    # A tree whose only declared scope is a distribution's root package derives
+    # that root and no unowned interface, so the exact-module contract is not
+    # emitted with an empty source list.
+    monkeypatch.setattr(dag, "MODULE_SCOPE", {"m-db-port": "parallax.postgres"})
+    monkeypatch.setattr(dag, "PYTHON_FIRST_PARTY_GRANTS", {})
+    assert dag.root_packages() == ("parallax.conformance", "parallax.postgres")
+    block = dag.render_block({"parallax.postgres": []}, {})
     assert "Unowned production interfaces" not in block
     assert "as_packages = false" not in block
 

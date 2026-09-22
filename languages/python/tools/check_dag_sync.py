@@ -721,28 +721,58 @@ def scopes_with_policy(policy: ChildPolicy) -> frozenset[str]:
     return frozenset(child for child, declared in CHILD_SCOPES.items() if declared.policy == policy)
 
 
-# The conformance-family enforcement scopes that carry a module tag and thus
-# appear as nodes in the DAG (m-case-format, m-conformance-adapter). They are
-# exempt on the *importing* side: no forbidden contract is sourced from them.
-CONFORMANCE_SCOPES: frozenset[str] = frozenset(
-    {"parallax.conformance.case_format", "parallax.conformance.cli"}
-)
+# The namespace every enforcement scope and every import-linter root sits
+# under; a distribution's top package is its second component.
+FIRST_PARTY_NAMESPACE: str = "parallax"
 
 # Every production scope is forbidden from importing *any* conformance scope
 # (python.md §7). Rather than enumerate the conformance subtree — which silently
 # leaves a newly added conformance module (`.adapter`, `.claim`, `.api_suite`, …)
 # importable — the whole package is forbidden as one edge; import-linter treats a
 # package forbidden module as covering all its descendants (`as_packages`).
+# The conformance scopes declared beneath it are exempt on the *importing*
+# side: a declared scope inside this root is not a production scope, so no
+# forbidden contract is sourced from it.
 CONFORMANCE_ROOT: str = "parallax.conformance"
 
-ROOT_PACKAGES: tuple[str, ...] = (
-    "parallax.conformance",
-    "parallax.core",
-    "parallax.descriptor",
-    "parallax.evolution",
-    "parallax.postgres",
-    "parallax.snapshot",
-)
+
+def declared_first_party_scopes() -> frozenset[str]:
+    """Every enforcement scope §7 declares: the behavioral mapping's scopes and
+    the first-party support table's, conformance scopes included."""
+    return frozenset(MODULE_SCOPE.values()) | frozenset(PYTHON_FIRST_PARTY_GRANTS)
+
+
+def is_in_scope(module: str, scope: str) -> bool:
+    """Whether ``module`` is ``scope`` or something nested inside it."""
+    return module == scope or module.startswith(f"{scope}.")
+
+
+def production_scopes() -> frozenset[str]:
+    """The declared scopes outside :data:`CONFORMANCE_ROOT`: the ones a
+    contract is sourced from, and the only owners a restricted external may
+    be granted to beside the conformance root itself."""
+    return frozenset(
+        scope for scope in declared_first_party_scopes() if not is_in_scope(scope, CONFORMANCE_ROOT)
+    )
+
+
+def enforcement_root(scope: str) -> str:
+    """The distribution's top package ``scope`` sits under, ``parallax.<pkg>``."""
+    parts = scope.split(".")
+    if len(parts) < 2 or parts[0] != FIRST_PARTY_NAMESPACE:
+        raise ValueError(
+            f"enforcement scope is not inside a {FIRST_PARTY_NAMESPACE} package: {scope!r}"
+        )
+    return ".".join(parts[:2])
+
+
+def root_packages() -> tuple[str, ...]:
+    """The import-linter roots, sorted: the top package of every declared scope
+    and of the conformance root, so a first scope in a new distribution adds
+    that distribution without an inventory edit."""
+    scopes = declared_first_party_scopes() | {CONFORMANCE_ROOT}
+    return tuple(sorted({enforcement_root(scope) for scope in scopes}))
+
 
 # Restricted external package -> the scopes that may import it DIRECTLY
 # (spec/python.md §7's restricted-external table). Keys are top-level import
@@ -990,10 +1020,6 @@ def parse_first_party_support_table(text: str) -> dict[str, frozenset[str]]:
     return declared
 
 
-def _declared_scopes() -> frozenset[str]:
-    return frozenset(MODULE_SCOPE.values()) | frozenset(PYTHON_FIRST_PARTY_GRANTS)
-
-
 def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
     """The child topology §7 declares: child scope to the parent it is nested
     inside and the policy governing it.
@@ -1008,7 +1034,7 @@ def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
     rather than a later reading to keep, since silently keeping the last would
     erase exactly the disagreement parity exists to catch.
     """
-    scopes = _declared_scopes()
+    scopes = declared_first_party_scopes()
     declared: dict[str, ChildScope] = {}
     for child_cell, parent_cell, policy in _table_rows(text, _CHILD_SCOPE_HEADER, 3, "child-scope"):
         child = _one_backticked(child_cell, "child-scope", "child")
@@ -1045,7 +1071,7 @@ def parse_child_scope_table(text: str) -> dict[str, ChildScope]:
 def _grantable_external_owners() -> frozenset[str]:
     """The scopes a restricted external may be granted to: every declared
     production scope, plus the conformance root as one development-only grant."""
-    return (_declared_scopes() - CONFORMANCE_SCOPES) | {CONFORMANCE_ROOT}
+    return production_scopes() | {CONFORMANCE_ROOT}
 
 
 def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
@@ -1063,7 +1089,6 @@ def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
     grant.
     """
     owners_universe = _grantable_external_owners()
-    namespaces = frozenset(root.split(".", 1)[0] for root in ROOT_PACKAGES)
     declared: dict[str, frozenset[str]] = {}
     for package_cell, owners_cell in _table_rows(
         text, _RESTRICTED_EXTERNAL_HEADER, 2, "restricted-external"
@@ -1076,7 +1101,7 @@ def parse_restricted_external_table(text: str) -> dict[str, frozenset[str]]:
                 "§7 restricted-external table: the package cell must hold exactly one "
                 f"backticked top-level import name and nothing else, got {package_cell!r}"
             )
-        if package in namespaces:
+        if package == FIRST_PARTY_NAMESPACE:
             raise ValueError(
                 f"§7 restricted-external table: {package!r} is the first-party namespace, "
                 "not an external package"
@@ -1394,7 +1419,7 @@ def build_adjacency(edges: Iterable[tuple[str, str]]) -> dict[str, frozenset[str
     target does not enforce) are skipped. First-party grant targets are likewise
     checked against the known scope set.
     """
-    nodes = set(MODULE_SCOPE.values()) | set(PYTHON_FIRST_PARTY_GRANTS)
+    nodes = declared_first_party_scopes()
     for scope, deps in PYTHON_FIRST_PARTY_GRANTS.items():
         unknown = deps - nodes
         if unknown:
@@ -1431,12 +1456,13 @@ def transitive_closure(adjacency: Mapping[str, frozenset[str]], start: str) -> f
 
 
 def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list[str]]:
-    """For each production source scope, the sorted scopes it may not import.
+    """For each production scope (:func:`production_scopes`), the sorted scopes
+    it may not import.
 
     Targets are every *production* scope the scope's transitive closure does not
     reach, plus the whole ``parallax.conformance`` subtree as a single package
     edge — so every production scope is forbidden from importing any conformance
-    scope, modelled or not.
+    scope, modelled or not, and no contract is sourced from one.
 
     Child scopes (:data:`CHILD_SCOPES`) are excluded from the general target
     set. import-linter's ``forbidden`` contracts are package-scoped on
@@ -1479,11 +1505,11 @@ def compute_forbidden(adjacency: Mapping[str, frozenset[str]]) -> dict[str, list
     is reported as an indirect chain, which is what lets a narrowed grant put a
     target the wide package reaches back inside this row.
     """
-    production_sources = sorted(node for node in adjacency if node not in CONFORMANCE_SCOPES)
-    production_targets = set(adjacency) - CONFORMANCE_SCOPES - set(CHILD_SCOPES)
+    production = production_scopes()
+    production_targets = production - set(CHILD_SCOPES)
     all_targets = production_targets | {CONFORMANCE_ROOT} | scopes_with_policy("isolated")
     forbidden: dict[str, list[str]] = {}
-    for scope in production_sources:
+    for scope in sorted(production):
         allowed = transitive_closure(adjacency, scope)
         reached_ancestors = {a for granted in allowed for a in scope_ancestors(granted)}
         targets = all_targets
@@ -1554,22 +1580,25 @@ def _render_forbidden_contract(
 def render_block(
     forbidden: Mapping[str, list[str]],
     exceptions: Mapping[str, list[str]],
-    production: AbstractSet[str],
 ) -> str:
-    """Render the ``[tool.importlinter]`` section: one first-party contract per
-    production scope, one direct-only contract per restricted external, and one
-    exact-module contract over the unowned package interfaces, each family sorted.
+    """Render the ``[tool.importlinter]`` section: the roots and the unowned
+    package interfaces derived from the declared scopes, one first-party
+    contract per production scope, one direct-only contract per restricted
+    external, and one exact-module contract over those interfaces, each family
+    sorted.
 
     ``include_external_packages`` is what lets a contract name an external at
     all; grimp then records each imported external as one squashed node and
     reads none of its source, so the option costs the graph only those nodes.
     """
+    production = production_scopes()
+    roots = root_packages()
     lines: list[str] = [
         f"# Generated by {_TOOL} from core/spec/modules.md and spec/python.md §7"
         " — do not edit by hand.",
         f"# Regenerate with: uv run python {_TOOL} --write",
         "[tool.importlinter]",
-        f"root_packages = {_toml_str_list(ROOT_PACKAGES)}",
+        f"root_packages = {_toml_str_list(roots)}",
         "include_external_packages = true",
     ]
     for scope in sorted(forbidden):
@@ -1597,7 +1626,7 @@ def render_block(
                 allow_indirect_imports=True,
             )
         )
-    interfaces = unowned_production_interfaces(production, ROOT_PACKAGES)
+    interfaces = unowned_production_interfaces(production, roots)
     if interfaces:
         lines.extend(
             _render_forbidden_contract(
@@ -1632,7 +1661,7 @@ def generate() -> str:
     adjacency = build_adjacency(edges)
     forbidden = compute_forbidden(adjacency)
     exceptions = {scope: child_grant_exceptions(adjacency, scope) for scope in forbidden}
-    return render_block(forbidden, exceptions, frozenset(forbidden))
+    return render_block(forbidden, exceptions)
 
 
 def main(argv: list[str] | None = None) -> int:

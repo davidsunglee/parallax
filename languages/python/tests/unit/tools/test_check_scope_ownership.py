@@ -1,6 +1,6 @@
 """Unit tests for the production-file enforcement-scope ownership check.
 
-Each of the tool's six findings gets a canary that drives ``main()`` to a
+Each of the tool's seven findings gets a canary that drives ``main()`` to a
 non-zero exit, because a gate that runs but cannot block buys nothing:
 
 * an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
@@ -13,7 +13,10 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
 * a sealed scope importing its own parent package beyond its grants, which is
   that same overlap seen from the other side, in every spelling that reaches it
   — and, in every one of those spellings, a granted sibling staying legal;
-* an exemption that stops describing the tree — in both directions.
+* an exemption that stops describing the tree — in both directions;
+* the exemption set differing from the package interfaces ``check_dag_sync``
+  derives — an interface with no exemption, and an exemption for an unowned
+  file that is no interface.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
 present in ``PYTHON_FIRST_PARTY_GRANTS`` but missing from ``CHILD_SCOPES`` is
@@ -72,7 +75,9 @@ def test_module_path_folds_package_interfaces() -> None:
 
 
 def test_owning_scopes_returns_the_chain_outermost_first() -> None:
-    owners = own.owning_scopes("parallax.snapshot.handle._materialization", own.declared_scopes())
+    owners = own.owning_scopes(
+        "parallax.snapshot.handle._materialization", dag.declared_first_party_scopes()
+    )
     assert owners == ["parallax.snapshot.handle", "parallax.snapshot.handle._materialization"]
     # ...and the most specific scope is the file's owner.
     assert owners[-1] == "parallax.snapshot.handle._materialization"
@@ -102,9 +107,19 @@ def test_the_conformance_tree_is_out_of_scope() -> None:
 
 
 def test_every_exemption_is_genuinely_unowned_today() -> None:
-    scopes = own.declared_scopes()
+    scopes = dag.declared_first_party_scopes()
     for relative in own.EXEMPTIONS:
         assert own.owning_scopes(own.module_path(relative), scopes) == [], relative
+
+
+def test_the_exemptions_are_exactly_the_derived_package_interfaces() -> None:
+    # The interfaces are derived from the declared scopes, so the exemption list
+    # carries only the physical path and the reason for each — never which
+    # files there are.
+    assert own.unowned_interfaces() == frozenset(
+        {"parallax.core", "parallax.evolution", "parallax.snapshot"}
+    )
+    assert {own.module_path(relative) for relative in own.EXEMPTIONS} == own.unowned_interfaces()
 
 
 def test_child_scope_files_are_owned_by_their_whole_declared_chain() -> None:
@@ -117,7 +132,7 @@ def test_child_scope_files_are_owned_by_their_whole_declared_chain() -> None:
     # parent -> child -> grandchild declaration gives three owners and is just as
     # legal. Stated as a property of the scope tables rather than as a file list,
     # so declaring another child scope does not move a literal here.
-    scopes = own.declared_scopes()
+    scopes = dag.declared_first_party_scopes()
     nested: dict[str, list[str]] = {}
     for path in own.production_files():
         owners = own.owning_scopes(own.module_path(path), scopes)
@@ -147,7 +162,7 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
     # The message is the only thing most readers of this gate ever see, so it
     # must not promise one owner per file while a file inside a declared child
     # scope has its whole chain.
-    scopes = own.declared_scopes()
+    scopes = dag.declared_first_party_scopes()
     nested = sum(
         1
         for path in own.production_files()
@@ -341,7 +356,9 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     (nest / "__init__.py").write_text(_NESTED)
     (nest / "_leaf.py").write_text(_NESTED)
     try:
-        assert own.owning_scopes("parallax.snapshot.handle._nest._leaf", own.declared_scopes()) == [
+        assert own.owning_scopes(
+            "parallax.snapshot.handle._nest._leaf", dag.declared_first_party_scopes()
+        ) == [
             "parallax.snapshot.handle",
             "parallax.snapshot.handle._nest",
             "parallax.snapshot.handle._nest._leaf",
@@ -746,3 +763,71 @@ def test_exemption_for_an_owned_file_fails(
     err = capsys.readouterr().err
     assert "no longer describe the tree" in err
     assert "now owned by parallax.snapshot.handle._materialization" in err
+
+
+# --------------------------------------------------------------------------
+# Canary 7: the exemption set differs from the derived package interfaces.
+# --------------------------------------------------------------------------
+_CORE_INTERFACE = "parallax-core/src/parallax/core/__init__.py"
+
+
+def test_an_interface_without_an_exemption_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The state a first scope in a new distribution lands its package interface
+    # in: no scope owns the interface module and nothing exempts it. It is
+    # reported as the interface it is — what it needs is a decision, a root
+    # scope or an exemption with its reason — rather than as one more unowned
+    # file.
+    monkeypatch.setattr(
+        own,
+        "EXEMPTIONS",
+        {path: reason for path, reason in own.EXEMPTIONS.items() if path != _CORE_INTERFACE},
+    )
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert "exemptions that differ from the package interfaces no scope owns" in err
+    assert (
+        f"{_CORE_INTERFACE} (the parallax.core package interface no scope owns, and no "
+        "exemption names it)"
+    ) in err
+    assert "owned by no enforcement scope" not in err
+
+
+def test_an_exemption_for_an_unowned_non_interface_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The `parallax/snapshot/wrap.py` shape, excused instead of scoped: the file
+    # is unowned, so the exemption would otherwise be accepted, and no contract
+    # is sourced from it at all — the generator sources exactly the derived
+    # interfaces and nothing else.
+    canary = "parallax-snapshot/src/parallax/snapshot/_canary_unowned.py"
+    _scratch_package_path(canary).write_text('"""Deliberately outside every scope."""\n')
+    monkeypatch.setattr(own, "EXEMPTIONS", {**own.EXEMPTIONS, canary: "excused rather than owned"})
+    try:
+        assert own.main([]) == 1
+        err = capsys.readouterr().err
+    finally:
+        _scratch_package_path(canary).unlink()
+    assert "exemptions that differ from the package interfaces no scope owns" in err
+    assert f"{canary} (exempt, but no derived package interface)" in err
+    assert "owned by no enforcement scope" not in err
+    assert "no longer describe the tree" not in err
+
+
+def test_an_interface_that_becomes_a_scope_leaves_its_exemption_stale(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Declaring the root itself a scope removes it from the derived interfaces;
+    # its exemption is then owned, which the stale-exemption finding already
+    # reports, so the interface finding says nothing more about it.
+    monkeypatch.setattr(
+        dag,
+        "PYTHON_FIRST_PARTY_GRANTS",
+        {**dag.PYTHON_FIRST_PARTY_GRANTS, "parallax.evolution": frozenset[str]()},
+    )
+    assert "parallax.evolution" not in own.unowned_interfaces()
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert "parallax/evolution/__init__.py (now owned by parallax.evolution)" in err
+    assert "exemptions that differ from the package interfaces" not in err

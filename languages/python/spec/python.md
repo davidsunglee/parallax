@@ -6141,10 +6141,13 @@ entry. A granted child inside a blocked ancestor's package is delegated back to
 the child by two `ignore_imports` expressions, the module and its undeclared
 descendants, and such a child must be a leaf of the child topology: import-linter
 has no expression for a package less a declared child beneath it, so generation
-refuses rather than widening the grant. The three package interfaces no scope
-owns — `parallax.core`, `parallax.evolution`, `parallax.snapshot` — are sourced
-exactly, as modules rather than packages, in one further contract over every
-restricted package. The direct-only shape is what lets the first-party closure
+refuses rather than widening the grant. The import-linter roots are derived,
+not listed: the top package of every declared scope, and `parallax.conformance`.
+The package interfaces no scope owns — each root outside the conformance tree
+that is not itself a declared scope, today `parallax.core`,
+`parallax.evolution`, and `parallax.snapshot` — are derived from those roots and
+sourced exactly, as modules rather than packages, in one further contract over
+every restricted package. The direct-only shape is what lets the first-party closure
 stay deep: a scope granted `parallax.core.entity` reaches Pydantic through the
 Entity frontend and never names it, so Snapshot reaches an Entity value's
 substrate without importing it, and a Snapshot module that imports `pydantic`
@@ -6229,7 +6232,9 @@ stand outside that default and are stated here once. The conformance-family
 scopes `parallax.conformance.case_format` and `parallax.conformance.cli` are
 parity-checked like any other and exempt as importing sources — the core
 conformance-family exception of `modules.md` — while every production scope
-stays forbidden from importing `parallax.conformance` as one package.
+stays forbidden from importing `parallax.conformance` as one package. A
+production scope is a declared scope outside `parallax.conformance`, so any
+scope declared beneath that root is exempt the same way by where it sits.
 `tests.api` is a pytest collection boundary rather than an import-linter scope.
 The application composition root — application or test code calling
 `parallax.snapshot.connect` — is owned by no scope and graded by no contract:
@@ -6248,9 +6253,10 @@ with literal negative and positive `lint-imports` canaries naming it: a package
 misspelled consistently on both sides would forbid a node the graph never
 holds, and import-linter drops such a node without a word. A new or changed
 child is a row of the child table and a `CHILD_SCOPES` entry. A first scope in
-a new `parallax` package adds that package to the import-linter roots and must
-leave the package's interface module either a declared scope or an exact
-ownership exemption (*Filesystem ownership*, below).
+a new `parallax` package needs no root declared: the import-linter roots derive
+from the declared scopes, so that package is a root from then on, and its
+interface module is either a declared scope or an exact ownership exemption,
+which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
 
 - **Dependency-analysis tool.** import-linter; configuration in
   `languages/python/pyproject.toml` (`[tool.importlinter]`) **generated** by
@@ -6474,7 +6480,12 @@ ownership exemption (*Filesystem ownership*, below).
   what governs it. Zero owners, **undeclared** overlapping owners (two or more
   matching scopes that do not form a parent/child chain of the child-scope
   table, read as `check_dag_sync.CHILD_SCOPES`), and stale exemptions each fail
-  the check, which runs in `just python-check-scope-ownership`. The same tool adds
+  the check, which runs in `just python-check-scope-ownership`. The exemptions
+  are verified to be exactly the package interfaces `check_dag_sync.py` derives
+  from the declared scopes and sources as modules: an interface with no
+  exemption, and an exemption for an unowned file that is no such interface,
+  each fail, so a new distribution's interface is either declared a scope or
+  exempted with its reason before the gate is green. The same tool adds
   the file-level requirement no scope table can state: inside a
   package holding a scope granted `(none)`, every module must either resolve to
   a scope that row names — the zero-grant scope itself, one of its declared
@@ -6634,7 +6645,7 @@ locking unions retain the core refusal.
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
 |---|---|---|---|---|---|
-| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement between a §7 relation and `check_dag_sync.py`'s declaration of it, each checked before generation: the behavioral-scope table against `MODULE_SCOPE` — a module declared on one side alone, or mapped to a different scope — and the first-party support table against `PYTHON_FIRST_PARTY_GRANTS` — a scope or a grant declared on one side alone, one scope declared by two rows, or a grant naming a scope no row declares; any disagreement between the §7 child-scope table and `check_dag_sync.py`'s `CHILD_SCOPES` fails the same way — a child declared on one side alone, a parent or an import policy the two sides state differently, a child declared by two rows, one not nested inside its parent, or one whose child or parent is not a declared scope; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails |
+| Dependency directions within and across artifacts | import-linter (pinned in `uv.lock`) + `check_dag_sync.py` + `check_scope_ownership.py` | `languages/python/pyproject.toml` `[tool.importlinter]`; `languages/python/tools/check_dag_sync.py`; `languages/python/tools/check_scope_ownership.py` | `just python-check-imports`, whose prerequisites are `python-check-dag-sync` and `python-check-scope-ownership` | `python-check-dbfree` job, same recipe | any production-scope import outside the DAG's transitive closure fails — the forbidden-edge complement generated from `modules.md` rejects illegal non-edges, not just wrong directions, with only the §7 conformance-family importer exemption; generated-contract drift fails, as does any disagreement between a §7 relation and `check_dag_sync.py`'s declaration of it, each checked before generation: the behavioral-scope table against `MODULE_SCOPE` — a module declared on one side alone, or mapped to a different scope — and the first-party support table against `PYTHON_FIRST_PARTY_GRANTS` — a scope or a grant declared on one side alone, one scope declared by two rows, or a grant naming a scope no row declares; any disagreement between the §7 child-scope table and `check_dag_sync.py`'s `CHILD_SCOPES` fails the same way — a child declared on one side alone, a parent or an import policy the two sides state differently, a child declared by two rows, one not nested inside its parent, or one whose child or parent is not a declared scope; any disagreement between the §7 restricted-external table and `check_dag_sync.py`'s `RESTRICTED_EXTERNAL_GRANTS` fails before generation, and a direct import of a restricted external package (`pydantic`, `pydantic_core`, `psycopg`, `psycopg_pool`) from a production scope its row does not grant fails that package's generated direct-import contract; a production source file owned by no §7 scope (and so covered by no contract), owned by undeclared overlapping scopes, importing an isolated scope from inside that scope's own ancestors, reaching — from inside a sealed scope — a module of its own parent package no granted scope covers, or covered by a stale exemption also fails, as does an exemption set that differs from the package interfaces derived from the declared scopes |
 | Unit tests | pytest (pinned) | `languages/python/pyproject.toml` `[tool.pytest.ini_options]` | `uv run pytest tests/unit` | `python-check-dbfree` job | the internal-behavior surface proves seams, diagnostics, and failure modes with no container or socket I/O; Storage Layout tests pin Rule Set ownership, exact immutable layouts/views, all six tiers, applicability, effective nullability, physical keys, alias de-duplication, unknown lookups, and bounded allocation; any failure blocks |
 | Code coverage | coverage.py via pytest-cov, branch mode + diff-cover (both pinned) | `[tool.coverage]` in `languages/python/pyproject.toml` | `just python-test-dbfree` then `just python-coverage-diff` | CPython 3.14 `python-check-dbfree` leg with `--cov-fail-under=95` plus the same diff-cover gate | **95% branch-mode minimum** overall, re-baselined against the measured database-free selection rather than carried across from a narrower one; diff-cover requires **100%** of changed lines vs the merge-base with `main`, making the no-new-uncovered-code policy executable, and the measurement is the database-free class alone, so a database-backed test cannot satisfy it; no generated/vendor code exists to exclude; conformance CLI included |
 | Linting | ruff (pinned) | `[tool.ruff]` in `languages/python/pyproject.toml` | `uv run ruff check` | `python-check-dbfree` job | rule sets E, F, W, I, UP, B, SIM, RUF; `# noqa` requires rule code + one-line justification |
