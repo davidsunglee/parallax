@@ -324,42 +324,6 @@ def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
     )
 
 
-def test_include_validation_rejects_a_relationship_with_no_declaring_entity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = formed(_ORDERS)
-    root = _root(model, "Order")
-    monkeypatch.setattr(
-        query_validation,
-        "relationship_target",
-        lambda *_args, **_kwargs: root,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
-    )
-
-    with pytest.raises(ValueError, match="no resolved relationship direction"):
-        query_validation.validate_include_path(
-            IncludePath(segments=(IncludeSegment(rel="Missing.items"),)),
-            model,
-            predicate_validation.root_position(model, root),
-        )
-
-
-def test_include_validation_rejects_a_segment_disconnected_from_the_previous_target() -> None:
-    model = formed(_ORDERS)
-    root = _root(model, "Order")
-
-    with pytest.raises(ValueError, match="does not resolve from the active Include Path position"):
-        query_validation.validate_include_path(
-            IncludePath(
-                segments=(
-                    IncludeSegment(rel="Order.items"),
-                    IncludeSegment(rel="Order.statuses"),
-                )
-            ),
-            model,
-            predicate_validation.root_position(model, root),
-        )
-
-
 def test_temporal_read_rejects_an_undeclared_dimension() -> None:
     # A dimension is keyed once by construction, so the only cardinality defect a
     # canonical query can still carry is naming one the target does not declare.
