@@ -552,7 +552,7 @@ runs, corroborated untraced by an ablation that recovers 5.5% of the delivery.
 
 ### The certified control-slice pair
 
-The cells that grade this ticket are the `control` workload group, which the
+The cells this section reads are the `control` workload group, which the
 report partitions as the `snapshot-controls` shard, so the pair is one
 control slice on one host rather than a whole portfolio. Base
 `1742bf4746a6a576fe5c83e585e48b8409141f2b` was measured through its own
@@ -573,8 +573,11 @@ about the slice, not an incomplete capture.
 ### What the pair recovered
 
 Across the two provider-free delivery workloads, both root counts and both
-runtimes, direct Wire is faster and nothing is slower. Medians of the
-per-cell deltas against `1742bf47`:
+runtimes, direct Wire is faster and the tool reads no cell as slower. These
+are directional one-run timing, peak and retention observations, not gates:
+like every figure in this document they are machine- and interpreter-relative,
+and none of them reaches an exit code. Medians of the per-cell deltas against
+`1742bf47`:
 
 | Lane | Elapsed | Peak | Retained |
 |---|---:|---:|---:|
@@ -587,11 +590,23 @@ Of 206 cells the tool reads 25 as faster, 7 as smaller, and 174 as within
 noise; it reads none as slower and none as larger. The guarded delivery
 controls, whose overlapping sibling positions ask the tree the most, move
 furthest: guarded Wire timing is a median 8.4% faster while guarded Typed
-timing stays within 0.3%. The Typed delivery cells are the control that says
-what changed: a Typed result that is never projected never enters the walk,
-and its timing does not move.
+timing has a median of +0.3%. The Typed delivery cells are the control that
+says what changed: a Typed result that is never projected never enters the
+walk, and its median timing does not move.
 
-The per-root slope is the reading that settles the ticket, because COR-112's
+**The median is not a bound on the Typed cells, and the control is not as
+quiet as the median makes it look.** Three of the twenty-eight Typed timing
+cells are among the 25 the tool reads as faster: 3.13
+`control-delivery-duplicate-include` and 3.14
+`control-delivery-conventional-fanout`, both `typed.eager.roots2000`, at
+-6.48% and -9.19%, and 3.14 `control-guarded-1 typed.eager.roots32` at -9.65%.
+Nothing in this change reaches the Typed lane, so those three measure what one
+cell of this capture moves on its own, and they are the size of the Wire
+lane's own cells. What distinguishes the two lanes is not cell size but
+coverage: every direct-Wire delivery cell moved the same way, where the Typed
+movement is three scattered cells of twenty-eight.
+
+The per-root slope is the reading this section turns on, because COR-112's
 regression moved the slope rather than an intercept. Two-point 200-to-2,000
 slopes, median over workloads and runtimes:
 
@@ -602,14 +617,30 @@ slopes, median over workloads and runtimes:
 | `1742bf47`, this pair's base | 64.2 | 68.8 |
 | `3dbaf824`, this pair's head | 60.2 | 63.7 |
 
-The per-node publication cost COR-112 added is gone: the head slope sits on
-the pre-COR-112 slope on both delivery forms.
+The head slope sits on the pre-COR-112 slope on both delivery forms, which is
+what a recovered per-node publication cost reads like. **Like the COR-112
+slope fit above, this fit is descriptive only.** Each figure is a two-point
+estimate between 200 and 2,000 roots, each endpoint a nine-sample median from
+one run, and agreement to 0.1-0.2 us/root is finer than these readings
+resolve: the same regression reads 65.6 us/root at `77ef7566` and 64.2 at
+`1742bf47`, 1.4 us/root apart on two measurements of nominally one state. The
+slope is consistent with the per-node cost having gone and fails to contradict
+it; it does not on its own establish it.
 
-Peak allocation did not move, which is what the Phase 1 ablation predicted
-and not a shortfall of the memo. The transients the three tree methods built
-were released as each node finished, so they never stood together and the
-high-water mark never saw them. COR-112's 9.0% eager peak rise has a cause
-elsewhere and this change does not address it.
+Peak allocation did not move, which is what the untraced ablation above
+predicted and not a shortfall of the memo. The transients the three tree
+methods built were released as each node finished, so they never stood
+together and the high-water mark never saw them. COR-112's 9.0% eager peak
+rise has a cause elsewhere and this change does not address it. **Timing is
+the half of COR-112's delivery regression these readings answer**; peak
+allocation is still where COR-112 left it, at the +8.7% and +5.4% the table
+below records against `e372c69c`.
+
+The plan controls are within noise on the reading that is not memory. Over the
+three guard widths and both runtimes, `plan.cold` elapsed ranges from -2.57%
+to +0.99% and `plan.warm` from -4.01% to +1.62%, every cell inside the tool's
+allowance and none of them read as faster or slower. What those cells do carry
+is a fixed retained constant, priced below.
 
 ### Against the archived `e372c69c` baseline
 
@@ -631,8 +662,21 @@ One guarded cell is not: 3.13 `control-guarded-3 wire.eager.roots256` reads
 +5.9%, while its 3.14 twin reads -2.3% and the same cell is 9.0% faster than
 this pair's own base. It is one cell of twelve in a window whose median
 residual is +2.0%, taken from a nine-sample median against an archive
-captured on another day, and it is read as the width of that qualified
-comparison rather than as a surviving regression.
+captured on another day.
+
+**It is not an isolated cell, and the arm it sits in is coherent.** The three
+largest positive residuals among those twelve guarded timing cells are the
+three 3.13 roots-256 cells, and they rise with guard width: +3.91%, +4.12%,
++5.89% at widths 1, 2 and 3. Their 3.14 twins read -2.83%, +2.10% and -2.32%,
+and the 3.13 roots-32 cells read +1.99%, +2.54% and +0.60%. So one runtime at
+one root count reads systematically high against the archive rather than one
+cell reading high by accident, and the +5.9% is that arm's largest member, not
+an outlier within it. Two readings bear against its being a surviving
+regression: the same three cells are 8.9% to 9.3% faster than this pair's own
+certified base, measured on one day through one instrument, and the 3.14 arm
+of the same comparison moves the other way. The +5.9% is read as the width of
+a cross-day comparison, and a successor re-measuring this window should expect
+3.13 at 256 roots to be the arm that reads highest.
 
 ### What the memo costs a retained result
 
@@ -647,13 +691,18 @@ bound stated in `spec/python.md` and ADR 0012 read off the instrument: the
 memo is a function of the includes clause and the model, never of roots.
 
 This control holds an eager Typed result that is never projected, and only the
-Wire walk calls the three memoized methods, so 288 B is the three empty memo
-dicts a tree carries from construction. A projected result additionally holds
-the keys its own walk reached, which the flatness proof in
+Wire walk calls the three memoized methods, so what the window prices is the
+memo a tree carries from construction, empty. The 288 B decomposes exactly on
+the recorded layout: four memo dictionaries at 64 B apiece while empty - one
+per derivation plus the continuation intern table - and four added `__slots__`
+entries at 8 B apiece, the tree's slot row having grown from two to six.
+
+A projected result additionally holds the keys its own walk reached, which the
+flatness proof in
 `tests/unit/snapshot/handle/test_read_include_tree_memo_bound.py`
 pins as identical at both memory scaling arms. Against `e372c69c` the `closed`
 reading is 6.4 KiB larger on the small model and 12.5-12.7 KiB on the larger
-one, which is COR-112's metadata retention with this ticket's 0.281 KiB
+one, which is COR-112's metadata retention with this change's 0.281 KiB
 inside it.
 
 ### The comparison against the archive is qualified, not certified
@@ -671,8 +720,8 @@ a one-member control slice, so its snapshot-delivery matrix is not exact - it
 carries no cell for any of the five heavy workloads - and it carries no
 write-lowering envelope at all. Both are properties of comparing a slice
 against an older whole portfolio, not of the measurement; the certified
-reading is the `1742bf47` pair above, and this one is the ticket's stated
-tie back to the baseline it names.
+reading is the `1742bf47` pair above, and this one is the stated tie back
+to the `e372c69c` baseline.
 
 ## What the escalation block said
 
