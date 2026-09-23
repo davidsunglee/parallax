@@ -623,6 +623,34 @@ def test_include_tree_answers_are_canonical_objects_rather_than_fresh_copies() -
     assert includes.child_groups(continuation) is includes.child_groups(continuation)
 
 
+def test_equal_continuations_from_different_candidate_groups_are_one_token() -> None:
+    # Candidate groups that differ only in positions rendering nothing — here a
+    # guarded `owner` with no include below it — normalize to the same
+    # continuation. Publication keys its per-node memo on that continuation, so
+    # equal answers are one object whichever group the walk asked with.
+    includes = _plan(
+        ANIMAL,
+        "Animal",
+        (
+            _path(_seg("Animal.owner"), narrow=_guard("Dog")),
+            _path(_seg("Animal.owner"), _seg("Person.pets", ("Dog",))),
+            _path(_seg("Animal.owner"), _seg("Person.pets", ("Cat",)), narrow=_guard("Cat", "Dog")),
+        ),
+    ).includes
+    owner_positions = next(iter(includes.position(includes.root).children.values()))
+    dog = EntityIdentity("parallax.compatibility", "Dog")
+    cat = EntityIdentity("parallax.compatibility", "Cat")
+    person = EntityIdentity("parallax.compatibility", "Person")
+
+    from_dogs = includes.admitted_children(owner_positions, dog)
+    from_cats = includes.admitted_children(owner_positions, cat)
+    assert from_dogs != from_cats
+
+    continuation = includes.render_token(from_dogs, person)
+    assert isinstance(continuation, tuple)
+    assert includes.render_token(from_cats, person) is continuation
+
+
 def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
     # A guard denotes ONE position, exactly as a segment narrow does, so a member
     # the model does not declare resolves to no position rather than silently
