@@ -31,6 +31,7 @@ from interpreter_matrix import supported_minors
 from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContract, MemoryGates
 from tests._support import cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
+from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
@@ -375,6 +376,28 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     over_predicted = MemoryGates.from_bytes(authored.path, yaml.safe_dump(document).encode("utf-8"))
     assert set(over_predicted.addresses) == set(predicted)
     assert gate_support.unowned_gates(over_predicted) == ()
+
+
+def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:
+    # A claim is only as good as the reading behind it, and the sole control
+    # reading any owner's child takes is a cold read-plan compilation. The
+    # cold-plan owner claims the guarded include workloads by workload, so
+    # gating a warm-plan or delivery window would hand it addresses it cannot
+    # read while the partition above still reports every gate claimed.
+    arms = BudgetContract.load().memory_scaling_arms
+    claimed = [
+        (workload, cell)
+        for subject, workload, cell in _gated_by_the_instruments()
+        if workload.startswith(control_support.CONTROL_PREFIX)
+        and any(
+            owner.subject == subject and owner.selects(workload) for owner in gate_support.OWNERS
+        )
+    ]
+    assert claimed
+    for workload, cell in claimed:
+        control = control_support.control_address(workload, cell, arms)
+        assert isinstance(control, control_support.GuardedPlanControl), (workload, cell)
+        assert control.phase == "cold", (workload, cell)
 
 
 # --------------------------------------------------------------------------
