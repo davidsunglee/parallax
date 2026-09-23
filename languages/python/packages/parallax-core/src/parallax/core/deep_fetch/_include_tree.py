@@ -92,7 +92,7 @@ class IncludeTree:
     one canonical answer.
     """
 
-    __slots__ = ("_admitted", "_positions", "_tokens", "_unions", "queried")
+    __slots__ = ("_admitted", "_multi", "_positions", "_tokens", "_unions", "queried")
 
     def __init__(self, queried: EntityIdentity, positions: Sequence[IncludePosition]) -> None:
         if not positions or positions[ROOT_POSITION].parent is not None:
@@ -106,6 +106,7 @@ class IncludeTree:
             tuple[PositionId, ...], dict[EntityIdentity, tuple[PositionId, ...]]
         ] = {}
         self._tokens: dict[tuple[PositionId, ...], dict[EntityIdentity, RenderToken | None]] = {}
+        self._multi: dict[tuple[PositionId, ...], tuple[PositionId, ...]] = {}
 
     @property
     def positions(self) -> tuple[IncludePosition, ...]:
@@ -155,8 +156,9 @@ class IncludeTree:
     ) -> RenderToken | None:
         """The normalized continuation token admitted for one hydrated child.
 
-        Equal multi-position answers are one object, so a caller keying its own
-        state on the token compares interned tuples.
+        Equal multi-position answers are one object however the candidate groups
+        that produced them differ, so a caller keying its own state on the token
+        compares interned tuples.
         """
         by_concrete = self._tokens.get(candidates)
         if by_concrete is None:
@@ -198,7 +200,8 @@ class IncludeTree:
             return EMPTY_RENDER
         if len(nonempty) == 1:
             return nonempty[0]
-        return tuple(nonempty)
+        multi = tuple(nonempty)
+        return self._multi.setdefault(multi, multi)
 
     def requested_position(self, path: ValidatedIncludePath) -> PositionId | None:
         """The exact requested position denoted by ``path``, if one exists."""
