@@ -442,7 +442,9 @@ widths under `control-guarded-`, whose delivery and warm-plan cells are read in
 windows no gate covers. Ownership is graded a second time against the addresses
 the instruments read in a gated window rather than against the file, so a
 manifest that widens the matrix is claimed at the change that widens it and not
-at the next rebaseline. The cost class is CI-owned (`python-check-cost`, six
+at the next rebaseline, and every claimed control address is held to a cold
+read-plan compilation, the one control reading an owner's child takes. The cost
+class is CI-owned (`python-check-cost`, six
 shards) and outside `just check`.
 
 ## Diagnostic runs

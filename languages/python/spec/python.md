@@ -6875,7 +6875,12 @@ locking unions retain the core refusal.
   reading child the report measures with; the scheduling-partition check grades
   that every named item is collected in the class and that the owners partition
   the gates, so ownership is never inferred from a report member's
-  registration. Seeded regressions — a retained duplicate at the preparation
+  registration. That check grades the partition a second time against the
+  addresses the instruments' static matrices read in a gated window rather than
+  against the file, and holds every claimed address to one its owner's reading
+  child takes, so widening the matrix is answered by the change that widens it
+  rather than by the next rebaseline, which may land no implementation.
+  Seeded regressions — a retained duplicate at the preparation
   seam, a second formed model, mutable copies of every document bind held
   across the driver dump, per-row retention and a rows-squared structure at the
   resolving read, a reduced tree beside every positional row, a copy of the
