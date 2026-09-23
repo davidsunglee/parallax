@@ -4010,11 +4010,14 @@ of shared edition identity.
 - **Projection capability and retained shape.** Typed eager publication retains
   by reference the plan's canonical finite IncludeTree and its existing
   `CatalogedModel`; direct and projected Wire envelopes carry no projection
-  capability. This nullable model reference is the constant-time runtime
-  eligibility check, including for an empty envelope, while Entity-bounded
-  receiver annotations reject Wire-valued receivers statically. A result retains
-  no execution plan, Page, Root View, construction carrier, connection, scope,
-  principal, or transaction runner, and it does not cache projected output.
+  capability. That IncludeTree carries a memo of the continuation answers
+  publication derives from it, bounded by the includes clause and the model and
+  never by roots or published nodes. This nullable model reference is the
+  constant-time runtime eligibility check, including for an empty envelope,
+  while Entity-bounded receiver annotations reject Wire-valued receivers
+  statically. A result retains no execution plan, Page, Root View, construction
+  carrier, connection, scope, principal, or transaction runner, and it does not
+  cache projected output.
 - **Projection positions and refusals.** Omitted `at` and explicit `None` select
   the canonical query-root position. A supplied class-derived Relationship Path
   is resolved against the retained original model and must identify an exact
