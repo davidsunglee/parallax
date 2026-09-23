@@ -422,13 +422,15 @@ class ConnectionEstablishment:
     def connect_kwargs(
         self, base: dict[str, object], source: CredentialSource
     ) -> Callable[[], dict[str, object]]:
-        """The pool's ``kwargs``, resolved anew for every physical connection.
+        """The pool's ``kwargs``, resolved anew for every connection attempt.
 
         psycopg_pool calls this on each connection attempt and on no other
-        occasion, which is exactly the seam's per-physical-connection contract:
-        a reused retained connection never reaches it. A fresh dictionary comes
-        back each time, so the secret is never written into the base the next
-        connection would inherit.
+        occasion, which is what the seam asks for: the credential is an input to
+        connecting, so an attempt that never reaches a connection has already
+        asked and a retried attempt asks again, while a reused retained
+        connection never reaches it at all. A fresh dictionary comes back each
+        time, so the secret is never written into the base the next connection
+        would inherit.
 
         Anything the source raises that is not already a
         :class:`~parallax.core.db_port.CredentialResolutionError` is wrapped in

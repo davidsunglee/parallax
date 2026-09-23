@@ -6,13 +6,11 @@ identity integration — AWS RDS IAM, Cloud SQL IAM, a secrets broker — be a
 provider artifact an application composes rather than a change to an adapter.
 
 Nothing here reaches a driver, a pool, or a network. An adapter is the only
-consumer: it calls :meth:`CredentialSource.resolve` each time its driver
-establishes a PHYSICAL connection — initial capacity, growth, replacement after
-a drop, retirement by a maximum lifetime, and on-demand establishment — and
-never for an acquisition that reuses a retained connection. Established
-connections outlive the credential that opened them, so there is no refresh verb
-and no expiry field: a source that needs to rotate simply produces a different
-credential the next time it is asked.
+consumer: it calls :meth:`CredentialSource.resolve` where its driver establishes
+a PHYSICAL connection, and never for an acquisition that reuses a retained one.
+Established connections outlive the credential that opened them, so there is no
+refresh verb and no expiry field: a source that needs to rotate simply produces
+a different credential the next time it is asked.
 
 That timing is also what separates this seam from the other ``-Source``
 protocols in Parallax, whose verbs are I/O-free. ``resolve`` MAY block on a

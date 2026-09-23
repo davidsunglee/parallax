@@ -1410,12 +1410,13 @@ _Avoid_: default Principal, system user, configured role, caller-supplied login
 
 **Credential Source**:
 The named part of adapter configuration that produces the secret authenticating
-the Database Login Identity. It is asked once for every physical connection an
-adapter establishes and never for an acquisition that reuses one, so an
-established connection outlives the credential that opened it. It may perform
-I/O and bounds its own; it never carries a secret in anything it raises. It is
-not a Database Authorization, which is bound to an acquisition after the login
-exists.
+the Database Login Identity. It belongs to establishing connections rather than
+to configuring or to acquiring, so an established connection outlives the
+credential that opened it: the seam has no refresh operation and no expiry
+field, and a source that must rotate produces a different credential the next
+time it is asked. It may perform I/O and bounds its own; it never carries a
+secret in anything it raises. It is not a Database Authorization, which is bound
+to an acquisition after the login exists.
 _Avoid_: credential provider, secret manager, connection factory, authorization
 source
 

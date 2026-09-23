@@ -41,7 +41,7 @@ from parallax.core.db_port import DRIVER_MANAGED, Password
 # a constant secret; `Password` is its own source and keeps it out of every repr
 PostgresAdapter("postgresql://app@db.internal:5432/app", credentials=Password("s3cret"))
 
-# any object with `resolve() -> Password`, asked once per physical connection
+# any object with `resolve() -> Password`, asked as connections are established
 PostgresAdapter("postgresql://app@db.internal/app", credentials=my_source)
 
 # Parallax supplies none: peer, trust, a client certificate, Kerberos, or
@@ -49,13 +49,12 @@ PostgresAdapter("postgresql://app@db.internal/app", credentials=my_source)
 PostgresAdapter("host=/var/run/postgresql dbname=app", credentials=DRIVER_MANAGED)
 ```
 
-A source is asked every time the driver establishes a **physical** connection —
-initial fill, growth, replacement, retirement by `max_lifetime`, on-demand
-establishment — and never when an acquisition reuses a retained one, which is
-what lets a short-lived cloud token authenticate a pool that outlives it. It may
-block on a network and must bound its own I/O. Parallax cannot see a password
-reachable through a `service` file or `PGPASSWORD`, so neither is refused above;
-under an explicit source the resolved password wins over both, by libpq's own
+A source is asked where the driver establishes a **physical** connection, and
+never when an acquisition reuses a retained one, which is what lets a
+short-lived cloud token authenticate a pool that outlives it. It may block on a
+network and must bound its own I/O. Parallax cannot see a password reachable
+through a `service` file or `PGPASSWORD`, so neither is refused above; under an
+explicit source the resolved password wins over both, by libpq's own
 precedence.
 
 `connect` is what opens a runtime, and the Database Root it returns is what owns

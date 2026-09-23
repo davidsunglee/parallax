@@ -296,7 +296,7 @@ def _build_pool(
     connection, however it came to exist, is initialized and checked.
 
     Where a credential source is configured, those keywords become a CALLABLE
-    the pool resolves on every physical connection, which is what makes the
+    the pool resolves on every connection attempt, which is what makes the
     secret late rather than frozen into configuration. Under
     :data:`~parallax.core.db_port.DRIVER_MANAGED` the static dictionary is
     passed exactly as it would be otherwise and carries no ``password`` at all,

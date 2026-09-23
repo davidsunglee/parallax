@@ -2297,8 +2297,8 @@ ready runtime from it and the returned root is what owns that runtime until it
 closes. `credentials` is required and has no `None`: the connection string says
 where the database is and is refused if it carries a password, while
 `Password(...)`, any object with `resolve() -> Password`, or `DRIVER_MANAGED`
-says how its login authenticates. A source is resolved once per physical
-connection rather than at construction, so a token with a lifetime shorter than
+says how its login authenticates. A source is resolved while connections are
+established rather than at construction, so a token with a lifetime shorter than
 the pool's is a supported credential (`m-db-port`; ADR 0067). All four names are
 exported from `parallax.core.db_port`. Every `connect` over one configuration opens an INDEPENDENT runtime, so
 closing one root leaves another working. `db.close()` and using the root as a
