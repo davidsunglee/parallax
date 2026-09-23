@@ -373,7 +373,17 @@ def closure(start: object, boundary: Sequence[object]) -> Closure:
     reason the survivor sample cannot count them at all: whether an equal integer
     or an interned string is one object or two is the interpreter's business
     rather than the measured structure's.
+
+    The reading is taken after a collection for that same reason. A tuple whose
+    contents are all untracked is itself untracked only once a collection has
+    visited it, so until then ``tracked`` counts how much allocation has happened
+    to run since the structure was built rather than anything the structure
+    holds: two identical structures reached by walks of different sizes read
+    differently, the larger walk reading LOWER because it triggered the
+    collections the smaller one did not. Collecting first puts every caller at
+    the settled state, where tracked-ness is a property of the structure.
     """
+    gc.collect()
     others = {id(obj): index for index, obj in enumerate(boundary) if obj is not start}
     seen = {id(start)}
     reached: set[int] = set()
