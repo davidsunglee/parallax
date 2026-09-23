@@ -408,6 +408,10 @@ class NodeReader[Node](Protocol):
     ``None`` for loaded-null, a native reference for loaded-one, and a tuple of
     them for loaded-many: the reader's answer already travels in the shape the
     walk renders, so nothing is translated between them.
+
+    ``occurrence_carrier`` describes the representation rather than any node, so
+    a reader answers one carrier for its whole lifetime and the walk binds that
+    answer once and renders every occurrence through it.
     """
 
     def layout(self, node: Node) -> EntityLayout: ...
