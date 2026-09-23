@@ -6,9 +6,11 @@ presign's inputs, that one client serves every resolution while each resolution
 signs anew, that a native failure becomes a refusal carrying no token, and that
 constructing the record runs no credential chain.
 
-The last two build a real botocore session over an authored AWS config file,
-because a credential helper that never answers is a wait only the real chain
-can be asked to take.
+Two families stand apart from that stub. The ``credential_process`` cases build
+a real botocore session over an authored AWS config file, because a helper that
+never answers is a wait only the real chain can be asked to take; the cases
+driving ``_BoundedHelper`` directly grade what giving up on such a helper
+releases, which belongs to the process rather than to the refusal.
 """
 
 from __future__ import annotations
@@ -48,6 +50,19 @@ _WRAPPER_HELPER = (
     "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]])\n"
     "import time; time.sleep(300)\n"
 )
+_EMITTING_HELPER = (
+    "import pathlib, sys, time\n"
+    "sys.stdout.write(pathlib.Path(sys.argv[1]).read_text())\n"
+    "sys.stdout.flush()\n"
+    "pathlib.Path(sys.argv[2]).write_text('written')\n"
+    "time.sleep(300)\n"
+)
+_CREDENTIAL_DOCUMENT = (
+    '{"Version": 1, "AccessKeyId": "AKIAIOSFODNN7EXAMPLE",'
+    ' "SecretAccessKey": "wJalrXUtnFEMIK7MDENGbPxRfiCY", "Expiration": "2999-01-01T00:00:00Z"}'
+)
+_SECRET = "wJalrXUtnFEMIK7MDENGbPxRfiCY"
+
 _WRAPPED_WORKER = (
     "import os, pathlib, sys, time\n"
     "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
@@ -340,6 +355,42 @@ def test_a_helper_given_up_on_leaves_no_pipe_of_its_own_open() -> None:
     assert helper.stdout.closed
     assert helper.stderr.closed
     assert helper.returncode is not None
+
+
+def test_a_helper_given_up_on_carries_no_credential_out_of_the_expiry(
+    tmp_path: Path,
+) -> None:
+    # A helper that emitted its credential document and then hung has already
+    # put the secret in the pipe, and `communicate` attaches what it read to the
+    # expiry it raises and keeps the same bytes on the process for a retry that
+    # never comes. That expiry is chained as the cause of a refusal a pool
+    # retains and a log may walk, and `core/spec/m-db-port.md` lets nothing a
+    # source raises carry the secret — so neither the expiry nor the helper it
+    # came from may still hold what was written.
+    document = tmp_path / "credentials.json"
+    document.write_text(_CREDENTIAL_DOCUMENT)
+    emitted = tmp_path / "emitted"
+    helper = _BoundedHelper(
+        [sys.executable, "-c", _EMITTING_HELPER, str(document), str(emitted)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert _settles(emitted.exists)
+
+    with pytest.raises(subprocess.TimeoutExpired) as expired:
+        helper.communicate(None, 0.2)
+
+    assert _SECRET not in _carried_by(expired.value)
+    assert _SECRET not in repr(helper.__dict__)
+
+
+def _carried_by(expiry: subprocess.TimeoutExpired) -> str:
+    carried = [str(expiry), repr(expiry.output), repr(expiry.stdout), repr(expiry.stderr)]
+    frame = expiry.__traceback__
+    while frame is not None:
+        carried.append(repr(frame.tb_frame.f_locals))
+        frame = frame.tb_next
+    return "".join(carried)
 
 
 def test_a_helper_given_up_on_leaves_no_worker_writing_credentials_behind(

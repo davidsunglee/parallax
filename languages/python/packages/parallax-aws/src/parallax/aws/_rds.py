@@ -51,6 +51,10 @@ _CHAIN_ATTEMPTS = 2
 # wait, and a deployment whose helper needs longer than this injects a session.
 _CHAIN_PROCESS_TIMEOUT = 5.0
 
+# Where ``Popen.communicate`` buffers what it has read, on the process itself,
+# so an interrupted call can resume — one name per platform implementation.
+_READ_BUFFERS = ("_fileobj2output", "_stdout_buff", "_stderr_buff")
+
 
 class _RdsTokenClient(Protocol):
     """The one RDS-client operation this module calls.
@@ -79,17 +83,20 @@ class _BoundedHelper(subprocess.Popen[bytes]):
             return super().communicate(
                 input, _CHAIN_PROCESS_TIMEOUT if timeout is None else timeout
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as expiry:
             self.kill()
             self._let_go()
-            raise
+            raise _without_what_the_helper_wrote(expiry) from None
 
     def _let_go(self) -> None:
-        """Close the killed helper's pipes, then reap it.
+        """Close the killed helper's pipes, forget what it wrote, then reap it.
 
         The expiry travels out as the cause of a refusal a caller may hold on
-        to, and its traceback holds this helper, so a pipe still open here stays
-        open for as long as that refusal does. Closing the read ends is also
+        to, and its traceback holds this helper, so whatever is still held here
+        stays held for as long as that refusal does — a descriptor for an open
+        pipe, and the credential document itself for the bytes already read off
+        one. Nothing resumes the interrupted call those bytes were buffered
+        for, because the helper has been killed. Closing the read ends is also
         what ends a descendant the helper left behind: writing the credential
         document is what such a process exists to do, and once it does there is
         nothing reading. A descendant that writes nothing is one the helper
@@ -100,7 +107,30 @@ class _BoundedHelper(subprocess.Popen[bytes]):
         for pipe in (self.stdout, self.stderr):
             if pipe is not None:
                 pipe.close()
+        for name in _READ_BUFFERS:
+            buffered: dict[object, list[bytes]] | list[bytes] | None = getattr(self, name, None)
+            if buffered is not None:
+                buffered.clear()
         self.wait()
+
+
+def _without_what_the_helper_wrote(
+    expiry: subprocess.TimeoutExpired,
+) -> subprocess.TimeoutExpired:
+    """The expiry with the bytes it captured dropped from it.
+
+    ``communicate`` attaches what it had already read to the expiry it raises,
+    and what a credential helper writes on stdout is the credential document.
+    That expiry leaves here as the cause of a refusal a caller may hold on to
+    and may log, and ``core/spec/m-db-port.md`` lets nothing a source raises
+    carry the secret, so it keeps the command and the budget it overran and
+    nothing else. Dropping the traceback drops the ``communicate`` frames
+    holding the same bytes in their locals; re-raising puts this module's own
+    frame back.
+    """
+    expiry.output = None
+    expiry.stderr = None
+    return expiry.with_traceback(None)
 
 
 class _BuildsProfileProviders(Protocol):
