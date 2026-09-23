@@ -513,6 +513,9 @@
     "PostgresRole",
     "isolation_spelling"
   ],
+  "parallax.aws": [
+    "RdsIamCredentials"
+  ],
   "parallax.snapshot": [
     "CheckedSnapshot",
     "DatabaseOptions",

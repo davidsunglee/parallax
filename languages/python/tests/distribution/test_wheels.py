@@ -236,6 +236,26 @@ def test_descriptor_sdist_schema_matches_the_authoritative_source(tmp_path: Path
         assert packaged.read() == authoritative
 
 
+def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
+    wheelhouse: Wheelhouse,
+) -> None:
+    # §8 makes `parallax-aws` the sole botocore declarer and a LEAF beside the
+    # adapters. The exact set is what carries both halves: an adapter or a
+    # driver added to the manifest would make an application that installs a
+    # credential provider install a database driver with it, and the
+    # clean-install fixture that proves the same thing installs a wheel this
+    # assertion reads the declaration of.
+    with zipfile.ZipFile(wheelhouse.wheels["parallax-aws"]) as archive:
+        metadata = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
+        declared = archive.read(metadata).decode()
+    requires = {
+        line.partition(":")[2].strip()
+        for line in declared.splitlines()
+        if line.startswith("Requires-Dist:")
+    }
+    assert requires == {"parallax-core", "botocore>=1.43.99"}
+
+
 def test_conformance_wheel_declares_console_script(wheelhouse: Wheelhouse) -> None:
     with zipfile.ZipFile(wheelhouse.wheels["parallax-conformance"]) as archive:
         entry_points = next(

@@ -1,0 +1,28 @@
+[project]
+name = "parallax-aws"
+version = "0.1.0"
+description = "Parallax AWS credential providers: RDS IAM database authentication as a Credential Source (the sole botocore declarer)."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+authors = [{ name = "Parallax" }]
+dependencies = [
+    "parallax-core",
+    # Declared for the AWS credential chain rather than for the token: the
+    # presign is local, but finding the credentials to sign with — environment,
+    # profiles, IMDSv2, ECS task roles, IRSA, SSO, and the automatic refresh of
+    # every temporary credential those produce — is botocore's. boto3 adds
+    # nothing: `generate_db_auth_token` is a botocore RDS-client operation, so an
+    # application already using boto3 shares this one install.
+    "botocore>=1.43.99",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/parallax"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/parallax", "README.md"]

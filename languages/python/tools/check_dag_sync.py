@@ -178,6 +178,13 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
 # support table is read back and compared with this by
 # :func:`check_first_party_support_parity`.
 PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
+    # A credential provider is a LEAF beside the adapters: it produces
+    # configuration a composition root hands to whichever adapter it selected,
+    # so it is granted the port that defines the Credential Source seam and
+    # nothing else. Granting no adapter is the whole of what this row enforces —
+    # an application that never reaches a database over Postgres must be able to
+    # install this provider without the driver arriving with it.
+    "parallax.aws": frozenset({"parallax.core.db_port"}),
     # The standard-library-only projection three scopes share. It grants
     # nothing, which is the whole of what it enforces: a detached diagnostic
     # value must be reachable from the database port, the execution lifecycle,
@@ -790,6 +797,10 @@ def root_packages() -> tuple[str, ...]:
 # reaches past every binding. `_construction_input`, `_expressions`, and
 # `_layout` are not granted, and so are contract sources of their own.
 #
+# `botocore` is granted to the AWS credential provider alone. It is the AWS
+# credential chain the provider needs rather than the token, which is signed
+# locally, and no other scope has any business resolving an AWS identity.
+#
 # The conformance harness is granted `pydantic` for its native edit witnesses —
 # fixtures that are deliberately Pydantic models exercising the Entity frontend
 # from outside it — and `psycopg` for the driver sessions it opens that no
@@ -808,6 +819,7 @@ RESTRICTED_EXTERNAL_GRANTS: Mapping[str, frozenset[str]] = {
     "pydantic_core": frozenset({"parallax.core.entity._instance_state"}),
     "psycopg": frozenset({"parallax.postgres", CONFORMANCE_ROOT}),
     "psycopg_pool": frozenset({"parallax.postgres"}),
+    "botocore": frozenset({"parallax.aws"}),
 }
 
 

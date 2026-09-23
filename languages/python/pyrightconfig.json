@@ -7,6 +7,7 @@
     "packages/parallax-evolution/src",
     "packages/parallax-snapshot/src",
     "packages/parallax-postgres/src",
+    "packages/parallax-aws/src",
     "packages/parallax-conformance/src",
     "tools",
     "tests"

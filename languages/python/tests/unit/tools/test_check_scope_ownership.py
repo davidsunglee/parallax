@@ -98,6 +98,7 @@ def test_the_conformance_tree_is_out_of_scope() -> None:
     assert not [p for p in walked if own.module_path(p).startswith("parallax.conformance")]
     # Production distributions are all present.
     assert {p.split("/")[0] for p in walked} == {
+        "parallax-aws",
         "parallax-core",
         "parallax-descriptor",
         "parallax-evolution",

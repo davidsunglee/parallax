@@ -268,6 +268,7 @@ def test_production_scopes_are_derived_from_where_a_scope_sits(
 
 def test_root_packages_are_derived_from_the_declared_scopes() -> None:
     assert dag.root_packages() == (
+        "parallax.aws",
         "parallax.conformance",
         "parallax.core",
         "parallax.descriptor",
@@ -1737,10 +1738,10 @@ def test_the_spec_and_the_tool_agree_on_restricted_externals() -> None:
     declared = dag.parse_restricted_external_table(dag.PYTHON_MD.read_text())
     assert declared == dict(dag.RESTRICTED_EXTERNAL_GRANTS)
     dag.check_restricted_external_parity(declared)
-    # The four names are literal on purpose: a package misspelled consistently
+    # The five names are literal on purpose: a package misspelled consistently
     # in spec and tool would generate a contract forbidding a node the graph
     # never holds, which import-linter drops without a word.
-    assert set(declared) == {"pydantic", "pydantic_core", "psycopg", "psycopg_pool"}
+    assert set(declared) == {"pydantic", "pydantic_core", "psycopg", "psycopg_pool", "botocore"}
 
 
 def test_parse_restricted_external_table_reads_one_top_level_name_per_row() -> None:
@@ -2065,9 +2066,11 @@ def test_render_block_omits_the_interface_contract_when_every_root_is_owned(
 
 
 # --------------------------------------------------------------------------
-# Canary 10: a Snapshot module may name none of the four restricted packages.
+# Canary 10: a Snapshot module may name none of the five restricted packages.
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("package", ["pydantic", "pydantic_core", "psycopg", "psycopg_pool"])
+@pytest.mark.parametrize(
+    "package", ["pydantic", "pydantic_core", "psycopg", "psycopg_pool", "botocore"]
+)
 def test_a_restricted_import_in_a_snapshot_module_fails_lint_imports(
     linted_copy: Path, package: str
 ) -> None:
@@ -2129,6 +2132,10 @@ def test_a_postgres_module_may_import_the_driver(linted_copy: Path) -> None:
         "parallax.postgres._canary_driver",
         "import psycopg\nimport psycopg_pool",
     )
+
+
+def test_an_aws_module_may_import_the_credential_chain(linted_copy: Path) -> None:
+    kept_with(linted_copy, "parallax.aws._canary_chain", "import botocore.session")
 
 
 def test_an_ungranted_entity_child_may_not_import_pydantic(linted_copy: Path) -> None:
