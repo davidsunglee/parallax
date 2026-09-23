@@ -118,16 +118,20 @@ string nor chains a parser's message that would.
 
 Configuration names a **Credential Source** or declares **Driver-Managed
 Credentials**; there is no third state and no absence. A source produces one
-**Credential** — today, one login password — and it is asked EVERY time a
-physical connection is established, and never for an acquisition that reuses one
-already open. Initial capacity, growth, replacement after a drop, retirement by
-a maximum lifetime, and on-demand establishment each ask; a connection already
-open is never disturbed because the credential that opened it has expired, so
-the seam has no refresh operation and no expiry field. A source MAY perform I/O
-and MUST bound it, because it runs where nothing above it can interrupt it: on a
-pooling runtime's own background path, or on an acquiring caller's thread ahead
-of the driver's own establishment limit. Nothing it raises may carry the secret.
-An implementation MUST report any other failure a source raises as a credential
+**Credential** — today, one login password — and it is asked EVERY time an
+implementation ATTEMPTS to establish a physical connection, and never for an
+acquisition that reuses one already open. The credential is an input to
+connecting rather than a product of it, so an attempt that never reaches a
+connection — a host that does not resolve, a refused or timed-out dial, a login
+the server rejects — has already asked, and a retried attempt asks again.
+Initial capacity, growth, replacement after a drop, retirement by a maximum
+lifetime, and on-demand establishment each ask; a connection already open is
+never disturbed because the credential that opened it has expired, so the seam
+has no refresh operation and no expiry field. A source MAY perform I/O and MUST
+bound it, because it runs where nothing above it can interrupt it: on a pooling
+runtime's own background path, or on an acquiring caller's thread ahead of the
+driver's own establishment limit. Nothing it raises may carry the secret. An
+implementation MUST report any other failure a source raises as a credential
 resolution failure with fixed text, with the original as its cause, so
 classification does not depend on a provider's discipline.
 

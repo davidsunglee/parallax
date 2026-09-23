@@ -155,7 +155,7 @@ class PostgresAdapter:
     required: either a
     :class:`~parallax.core.db_port.CredentialSource` — a
     :class:`~parallax.core.db_port.Password`, or a provider's own source, asked
-    once per physical connection — or
+    where each physical connection is established — or
     :data:`~parallax.core.db_port.DRIVER_MANAGED`, which declares that Parallax
     supplies no secret and leaves authentication to the driver and the server
     (peer, trust, a client certificate, Kerberos, or libpq's own environment:

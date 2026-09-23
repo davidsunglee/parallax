@@ -148,9 +148,9 @@ def account_balances(db: ScopedDatabase) -> list[Decimal]:
 
 The connection string says **where**, and `credentials` says **how**. They are
 separate arguments because they have different lifetimes: the string is frozen
-into configuration, while the credential is resolved afresh every time the
-driver establishes a physical connection. That is what lets a fifteen-minute
-cloud token authenticate a pool that outlives it.
+into configuration, while the credential is resolved afresh as the driver
+establishes connections. That is what lets a fifteen-minute cloud token
+authenticate a pool that outlives it.
 
 A string carrying a password is refused at construction, whatever `credentials`
 is, and the refusal never quotes the string back:
