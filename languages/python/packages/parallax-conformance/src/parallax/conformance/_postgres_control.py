@@ -31,7 +31,6 @@ driver, so the provisioner reaches this module inside the call that opens one.
 from __future__ import annotations
 
 import contextlib
-import os
 import socket
 import threading
 from collections.abc import Callable
@@ -903,9 +902,13 @@ def _teardown_socket(connection: psycopg.Connection[TupleRow]) -> tuple[str, ...
 
     ``shutdown(SHUT_RDWR)`` is the thread-safe way to make a blocking syscall on
     that descriptor return with an OS-level error, unlike closing the descriptor
-    underneath a call still in flight. The descriptor is closed afterwards either
-    way: this connection is already condemned, so closing it too loses nothing,
-    and a failed shutdown must not leave it open.
+    underneath a call still in flight. Once wrapped, the descriptor is closed
+    afterwards either way: this connection is already condemned, so closing it too
+    loses nothing, and a failed shutdown must not leave it open.
+
+    A descriptor the wrapper rejects is reported and left open, because only the
+    wrapper knows which descriptor table the number belongs to; closing it blind
+    would be a guess whose wrong answer destroys an unrelated descriptor.
     """
     try:
         fd = connection.fileno()
@@ -914,8 +917,6 @@ def _teardown_socket(connection: psycopg.Connection[TupleRow]) -> tuple[str, ...
     try:
         sock = socket.socket(fileno=fd)
     except Exception as exc:
-        with contextlib.suppress(Exception):
-            os.close(fd)
         return (f"OS-level socket(fileno={fd}) raised {exc!r}",)
     failures: list[str] = []
     try:

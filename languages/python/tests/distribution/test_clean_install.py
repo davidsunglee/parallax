@@ -22,7 +22,8 @@ from tests._support.repo import REPO_ROOT
 
 def _make_venv(root: Path) -> Path:
     subprocess.run(["uv", "venv", str(root)], check=True, capture_output=True, text=True)
-    python = root / "bin" / "python"
+    layouts = (root / "bin" / "python", root / "Scripts" / "python.exe")
+    python = next((path for path in layouts if path.exists()), layouts[0])
     assert python.exists(), python
     return python
 
