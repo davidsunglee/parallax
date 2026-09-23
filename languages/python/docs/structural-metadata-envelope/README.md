@@ -435,8 +435,15 @@ worth less than the headroom is invisible to its gate.
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
 `tests/unit/test_scheduling_partition.py` grades that every named item is
 collected in the cost class and that the owners partition the 154 gates, so a
-gate is never owned by a report member's registration. The cost class is
-CI-owned (`python-check-cost`, six shards) and outside `just check`.
+gate is never owned by a report member's registration. The prepared-model owner
+claims both preparation cases, `model.prepared` and `model.prepared.family`; the
+cold-plan owner claims the geometry levels under `plan-` and the guarded include
+widths under `control-guarded-`, whose delivery and warm-plan cells are read in
+windows no gate covers. Ownership is graded a second time against the addresses
+the instruments read in a gated window rather than against the file, so a
+manifest that widens the matrix is claimed at the change that widens it and not
+at the next rebaseline. The cost class is CI-owned (`python-check-cost`, six
+shards) and outside `just check`.
 
 ## Diagnostic runs
 

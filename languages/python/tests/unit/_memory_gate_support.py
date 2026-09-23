@@ -100,7 +100,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         WRITE_MODULE,
         "test_the_prepared_model_stays_within_its_memory_gates",
         WRITE_SUBJECT,
-        _exactly("model.prepared"),
+        _exactly("model.prepared", "model.prepared.family"),
     ),
     GateOwner(
         SNAPSHOT_MODULE,
@@ -124,7 +124,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         SNAPSHOT_MODULE,
         "test_the_cold_read_plans_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _prefixed("plan-"),
+        _prefixed("plan-", "control-guarded-"),
     ),
 )
 """Every memory-gate owner. Together they claim each gate exactly once, which
