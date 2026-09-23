@@ -5,9 +5,9 @@ high-water mark of every provider-free geometry read, under both layouts, and
 per retained entry and high-water mark of every cold read-plan compilation,
 derived from the retained capture the file names as its basis. Each family
 below reads its levels through the same child the report measures with — the
-geometry and plan readings of :mod:`snapshot_delivery_reading`, the identical
-port, roots, cache capacity, and warm-ups — and grades the peak and retained
-readings against their gates.
+geometry, plan, and guarded cold-plan readings of
+:mod:`snapshot_delivery_reading`, the identical port, roots, cache capacity, and
+warm-ups — and grades the peak and retained readings against their gates.
 
 Beside the gates, seeded regressions prove what each one detects. A retained
 duplication is seeded at the positional builder as a reduced dictionary kept
@@ -30,7 +30,7 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.conformance.budget import MemoryGates
+from parallax.conformance.budget import BudgetContract, MemoryGates
 from parallax.conformance.workloads import plan_levels
 from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
@@ -41,11 +41,13 @@ from parallax.snapshot.materialize._convert import build_positional_object
 from snapshot_delivery_reading import (
     PLAN_EDITION,
     ColdPlan,
+    _cold_plan,  # pyright: ignore[reportPrivateUsage] - the cold-plan reading is what the gate grades
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is what the gate grades
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is what the gate grades
     geometry_address,
     plan_address,
 )
+from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _structural_geometry_support as geometry_support
 from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement
@@ -67,7 +69,12 @@ level whose rows are widest."""
 
 
 def _read(workload: str, cell: str) -> float:
-    """One gated reading at ``workload.cell``, through the reading the report takes."""
+    """One gated reading at ``workload.cell``, through the reading the report takes.
+
+    A geometry or plan address names its layout in the cell; a guarded cold-plan
+    address names none, so it is resolved by the control support the report
+    parses it with and read through the same cold-plan child.
+    """
     geometry = geometry_address(workload, cell)
     if geometry is not None:
         level, layout, metric = geometry
@@ -76,9 +83,20 @@ def _read(workload: str, cell: str) -> float:
         )
         return value
     plan = plan_address(workload, cell)
-    assert plan is not None, (workload, cell)
-    level, layout, metric = plan
-    value, _unit, _samples = _plan(level, layout, metric, warmups=WARMUPS, measured=MEASURED)
+    if plan is not None:
+        level, layout, metric = plan
+        value, _unit, _samples = _plan(level, layout, metric, warmups=WARMUPS, measured=MEASURED)
+        return value
+    control = control_support.control_address(
+        workload, cell, BudgetContract.load().memory_scaling_arms
+    )
+    assert isinstance(control, control_support.GuardedPlanControl) and control.phase == "cold", (
+        workload,
+        cell,
+    )
+    value, _unit, _samples = _cold_plan(
+        ColdPlan.guarded(control.width), control.metric, warmups=WARMUPS, measured=MEASURED
+    )
     return value
 
 
@@ -174,6 +192,18 @@ def test_the_width_and_sparse_reads_stay_within_their_memory_gates() -> None:
 @in_a_child_interpreter
 def test_the_cold_read_plans_stay_within_their_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_cold_read_plans_stay_within_their_memory_gates))
+
+
+@in_a_child_interpreter
+def test_every_guarded_cold_plan_address_reads_through_the_cold_plan_child() -> None:
+    # The cold-plan owner claims the guarded include workload as well as the
+    # geometry levels, and a guarded cell carries no layout for a plan address to
+    # parse. Every guarded width is read here so the claim is backed by a reading
+    # whichever of those addresses the basis capture gates.
+    for width in control_support.GUARD_WIDTHS:
+        for metric in ("peakKiB", "retainedKiB"):
+            workload = f"{control_support.GUARDED_PREFIX}{width}"
+            assert _read(workload, f"plan.cold.{metric}") > 0.0, (workload, metric)
 
 
 @in_a_child_interpreter
