@@ -56,7 +56,7 @@ class IncludePosition:
     source: tuple[EntityIdentity, ...]
     target: tuple[EntityIdentity, ...]
     to_many: bool
-    children: Mapping[RelationshipViewKey, tuple[PositionId, ...]]
+    children: MappingProxyType[RelationshipViewKey, tuple[PositionId, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,11 +83,13 @@ class IncludeTree:
     derive: after the first call for a key, each answers in amortized constant
     time and allocates nothing. This is not the per-node memo a published value
     forbids. One tree belongs to one compiled plan and is shared by every result
-    of it, and a caller can only present keys drawn from that plan's positions
-    and the model's concretes, so the memo is bounded by the includes clause and
-    the model and never by roots or rendered nodes. Filling is idempotent, so
-    walks sharing one cached plan may race to store equal answers under one key
-    and need no lock.
+    of it, and publication presents keys drawn from that plan's positions and the
+    accepted model's concretes, so the memo it fills is bounded by the includes
+    clause and the model and never by roots or rendered nodes; a key from outside
+    that domain retains one entry of its own. Each derived answer is published by
+    a single atomic store that keeps whichever answer landed first, so walks
+    sharing one cached plan need no lock and every caller of one key receives the
+    one canonical answer.
     """
 
     __slots__ = ("_admitted", "_positions", "_tokens", "_unions", "queried")
@@ -134,7 +136,7 @@ class IncludeTree:
             return self._positions[token].children
         union = self._unions.get(token)
         if union is None:
-            union = self._unions[token] = self._union(token)
+            union = self._unions.setdefault(token, self._union(token))
         return union
 
     def admitted_children(
@@ -142,10 +144,10 @@ class IncludeTree:
     ) -> tuple[PositionId, ...]:
         by_source = self._admitted.get(candidates)
         if by_source is None:
-            by_source = self._admitted[candidates] = {}
+            by_source = self._admitted.setdefault(candidates, {})
         admitted = by_source.get(source)
         if admitted is None:
-            admitted = by_source[source] = self._admit(candidates, source)
+            admitted = by_source.setdefault(source, self._admit(candidates, source))
         return admitted
 
     def render_token(
@@ -158,13 +160,11 @@ class IncludeTree:
         """
         by_concrete = self._tokens.get(candidates)
         if by_concrete is None:
-            by_concrete = self._tokens[candidates] = {}
+            by_concrete = self._tokens.setdefault(candidates, {})
         held = by_concrete.get(concrete, _UNRESOLVED)
         if held is not _UNRESOLVED:
             return cast("RenderToken | None", held)
-        resolved = self._resolve_token(candidates, concrete)
-        by_concrete[concrete] = resolved
-        return resolved
+        return by_concrete.setdefault(concrete, self._resolve_token(candidates, concrete))
 
     def _union(
         self, token: tuple[PositionId, ...]
@@ -238,7 +238,9 @@ def build_include_tree(
     for index, seed in enumerate(positions, start=1):
         child_maps[seed.parent].setdefault(seed.view, []).append(index)
 
-    def children(position: PositionId) -> Mapping[RelationshipViewKey, tuple[PositionId, ...]]:
+    def children(
+        position: PositionId,
+    ) -> MappingProxyType[RelationshipViewKey, tuple[PositionId, ...]]:
         return MappingProxyType(
             {view: tuple(values) for view, values in child_maps[position].items()}
         )
