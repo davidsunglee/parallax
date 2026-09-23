@@ -196,6 +196,56 @@ rather than a process. That backoff is also why the fixed text matters —
 `psycopg.pool` logs the exception's own text on every failed attempt, under the
 driver's disclosure policy rather than Parallax's.
 
+### RDS and Aurora, authenticated by IAM
+
+The shipped source for AWS lives in `parallax-aws`, installed beside this
+adapter. Its `postgres` extra spells the whole deployment in one call:
+
+```python
+from parallax.aws.postgres import rds_postgres
+```
+
+```text
+adapter = rds_postgres(
+    host="orders.cluster-abc.us-east-1.rds.amazonaws.com",   # the endpoint you connect through
+    user="orders_service",                                    # the login; IAM proves it
+    database="orders",
+    region="us-east-1",
+    pool=PoolOptions(min_size=2, max_size=20),                # forwarded untouched
+)
+```
+
+What comes back is an ordinary `PostgresAdapter`: the factory resolves no token
+and opens nothing, so it is configuration exactly as the forms above are. What
+it states so a deployment need not is that the connection is encrypted and that
+the token is signed for the host, port and user the connection then uses.
+`params` keeps the rest of libpq's grammar open and may raise `sslmode` to
+`verify-ca` or `verify-full`, never lower it.
+
+An application that composes its own connection string uses the source alone:
+
+```python
+from parallax.aws import RdsIamCredentials
+```
+
+```text
+adapter = PostgresAdapter(
+    "postgresql://orders_service@orders.cluster-abc.us-east-1.rds.amazonaws.com:5432/orders"
+    "?sslmode=require",
+    credentials=RdsIamCredentials(
+        host="orders.cluster-abc.us-east-1.rds.amazonaws.com",
+        port=5432,
+        user="orders_service",
+        region="us-east-1",
+    ),
+)
+```
+
+A token lasts fifteen minutes and a pool lasts longer, which is the case the
+per-connection contract above exists for: the source is asked as each physical
+connection is established, and a connection already open is never disturbed by
+its token ageing out. There is no token cache and no refresh thread.
+
 ## Retention
 
 `pool=PoolOptions(...)` keeps connections between operations;

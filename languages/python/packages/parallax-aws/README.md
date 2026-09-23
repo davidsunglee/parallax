@@ -3,17 +3,52 @@
 Parallax's AWS credential providers: the sole declarer of `botocore`. See
 `languages/python/spec/python.md`.
 
-## Authenticating an RDS login with IAM
+## Authenticating an RDS Postgres login with IAM
 
-`RdsIamCredentials` is a `CredentialSource`. It produces the IAM token that
-authenticates a database login, and an adapter consumes it — this package
-imports no adapter of its own, so it installs beside whichever one a deployment
-selected. Install `parallax-postgres` alongside it for the Postgres one.
+Install the `postgres` extra — `pip install parallax-aws[postgres]` — and the
+whole story is one call:
+
+```python
+from parallax.aws.postgres import rds_postgres
+from parallax.postgres import PoolOptions
+from parallax.snapshot import connect
+
+adapter = rds_postgres(
+    host="orders.cluster-abc.us-east-1.rds.amazonaws.com",
+    user="orders_service",
+    database="orders",
+    region="us-east-1",
+    pool=PoolOptions(min_size=2, max_size=20),
+)
+with connect(adapter, model) as root:
+    ...
+```
+
+What comes back is the ordinary `PostgresAdapter`, configured — nothing sits
+between the application and the adapter at runtime, and nothing was resolved or
+opened to build it. The factory is where three things are stated once, so no
+deployment has to remember them: the connection is encrypted, the token is
+signed for the host, port and user the connection then uses, and the endpoint to
+sign for is the one the application connects through.
+
+`params` keeps the rest of libpq's grammar open — `application_name`,
+`options`, `connect_timeout`, and `sslrootcert` with an `sslmode` of
+`verify-ca` or `verify-full`, which is what AWS's own certificate bundle is for.
+It may strengthen the TLS requirement and may not weaken it, and it may not
+restate `host`, `port`, `user`, `dbname` or `password`: a value the token was
+not signed for authenticates nothing. Both refusals are fixed text, because
+`params` is a place other secrets live.
+
+## The source on its own
+
+`RdsIamCredentials` is a `CredentialSource`, and the part of this package that
+imports no adapter. An application assembling its own connection string uses it
+directly, and a deployment on another engine installs this package without the
+`postgres` extra and gets no database driver with it.
 
 ```python
 from parallax.aws import RdsIamCredentials
-from parallax.postgres import PoolOptions, PostgresAdapter
-from parallax.snapshot import connect
+from parallax.postgres import PostgresAdapter
 
 endpoint = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
 adapter = PostgresAdapter(
@@ -21,17 +56,15 @@ adapter = PostgresAdapter(
     credentials=RdsIamCredentials(
         host=endpoint, port=5432, user="orders_service", region="us-east-1"
     ),
-    pool=PoolOptions(min_size=2, max_size=20),
 )
-with connect(adapter, model) as root:
-    ...
 ```
 
 IAM database authentication is identical on RDS Postgres and Aurora Postgres.
 For a cluster, the endpoint above is the one the application connects through:
-a token proves nothing at an endpoint it was not signed for.
+a token proves nothing at an endpoint it was not signed for. Written this way,
+the TLS requirement the factory would have stated is the caller's to spell.
 
-Three things outside Parallax have to agree with that line:
+## What has to agree outside Parallax
 
 - the database login exists and holds the IAM role —
   `CREATE USER orders_service; GRANT rds_iam TO orders_service;`;

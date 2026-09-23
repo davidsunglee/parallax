@@ -16,7 +16,10 @@ dependencies = [
     "parallax-evolution",
     "parallax-snapshot",
     "parallax-postgres",
-    "parallax-aws",
+    # With the extra, so the development environment type-checks and tests the
+    # engine-specific slice. The extra is the artifact-level statement that the
+    # slice needs an adapter and the rest of the provider does not.
+    "parallax-aws[postgres]",
 ]
 
 [tool.uv]
@@ -154,6 +157,11 @@ include_external_packages = true
 name = "parallax.aws may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.aws"]
+ignore_imports = [
+    "parallax.aws.postgres -> parallax.postgres",
+    "parallax.aws.postgres -> parallax.postgres.**",
+]
+unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "parallax.conformance",
     "parallax.core._formation_profile",
@@ -188,6 +196,47 @@ forbidden_modules = [
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
     "parallax.postgres",
+    "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.aws.postgres may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.aws.postgres"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.continuation",
+    "parallax.core.deep_fetch",
+    "parallax.core.document_codec",
+    "parallax.core.entity",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.execution_lifecycle.testing",
+    "parallax.core.inheritance",
+    "parallax.core.metamodel",
+    "parallax.core.model_formation",
+    "parallax.core.navigate",
+    "parallax.core.object_query",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.predicate",
+    "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.temporal_read",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
     "parallax.snapshot._inspection",
     "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
@@ -991,8 +1040,10 @@ name = "parallax.core.execution_lifecycle may import only its permitted dependen
 type = "forbidden"
 source_modules = ["parallax.core.execution_lifecycle"]
 ignore_imports = [
+    "parallax.core.execution_lifecycle.testing -> parallax.core.execution_lifecycle",
     "parallax.core.execution_lifecycle.testing -> parallax.core.execution_lifecycle.**",
 ]
+unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "parallax.aws",
     "parallax.conformance",
@@ -1217,8 +1268,10 @@ name = "parallax.core.object_query may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.object_query"]
 ignore_imports = [
+    "parallax.core.object_query._fluent -> parallax.core.entity",
     "parallax.core.object_query._fluent -> parallax.core.entity.**",
 ]
+unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "parallax.aws",
     "parallax.conformance",
@@ -1769,8 +1822,10 @@ name = "parallax.descriptor may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.descriptor"]
 ignore_imports = [
+    "parallax.descriptor._hub -> parallax.core.entity",
     "parallax.descriptor._hub -> parallax.core.entity.**",
 ]
+unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "parallax.aws",
     "parallax.conformance",
@@ -2452,6 +2507,11 @@ source_modules = [
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
+ignore_imports = [
+    "parallax.aws.postgres -> psycopg",
+    "parallax.aws.postgres.** -> psycopg",
+]
+unmatched_ignore_imports_alerting = "none"
 forbidden_modules = [
     "psycopg",
 ]

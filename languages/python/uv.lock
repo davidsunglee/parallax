@@ -978,11 +978,18 @@ dependencies = [
     { name = "parallax-core" },
 ]
 
+[package.optional-dependencies]
+postgres = [
+    { name = "parallax-postgres" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "botocore", specifier = ">=1.43.99" },
     { name = "parallax-core", editable = "packages/parallax-core" },
+    { name = "parallax-postgres", marker = "extra == 'postgres'", editable = "packages/parallax-postgres" },
 ]
+provides-extras = ["postgres"]
 
 [[package]]
 name = "parallax-conformance"
@@ -1070,7 +1077,7 @@ name = "parallax-python"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "parallax-aws" },
+    { name = "parallax-aws", extra = ["postgres"] },
     { name = "parallax-core" },
     { name = "parallax-descriptor" },
     { name = "parallax-evolution" },
@@ -1101,7 +1108,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "parallax-aws", editable = "packages/parallax-aws" },
+    { name = "parallax-aws", extras = ["postgres"], editable = "packages/parallax-aws" },
     { name = "parallax-core", editable = "packages/parallax-core" },
     { name = "parallax-descriptor", editable = "packages/parallax-descriptor" },
     { name = "parallax-evolution", editable = "packages/parallax-evolution" },
