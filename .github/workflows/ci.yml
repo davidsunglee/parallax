@@ -233,17 +233,17 @@ jobs:
       - name: just python-check-cost (shard ${{ matrix.shard }})
         run: just python-check-cost ${{ matrix.shard }}
 
-  # Advisory only: the committed cost evidence is verified against the head
-  # lock and, on pull requests, against the event-merge lock, in seconds.
+  # Required: the committed cost evidence is verified against the head lock
+  # and, on pull requests, against the event-merge lock, in seconds. It fails
+  # only for evidence that is not evidence — a stale workload digest, a dirty
+  # or split provenance, a missing or unauthoritative member — and the answer
+  # to that is a capture, so a change to an input a digest covers blocks until
+  # the evidence is retaken. Drift that leaves a capture evidence, a moved lock
+  # or a ceiling among it, is an advisory line and blocks nothing.
   # Nothing here measures; fresh captures are the cost-report workflow's, on
   # request by label, dispatch, or the nightly schedule.
   python-verify-cost:
     runs-on: ubuntu-latest
-    # Advisory until the canonical capture is retaken: the source defining the
-    # write-lowering workload changed after that member's workload digest was
-    # recorded, so verification reports that member stale and exits non-zero on
-    # every run.
-    continue-on-error: true
     env:
       UV_FROZEN: "1"
     steps:

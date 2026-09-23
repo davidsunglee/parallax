@@ -14,13 +14,17 @@ after/portfolio.json`, which *After capture* below reads, and
 renderings of `recovered/` against each, which *Recovered capture* reads.
 
 The portfolio under `recovered/` is the repository's canonical current cost
-portfolio: the non-required `python-report-cost` CI job verifies it against the
-checked-out head, the database-free gate recomputes its Snapshot delivery
-member's Budget Contract and workload-catalog digests from the committed inputs,
-and the memory gates are derived from it. `before/` is retained unchanged as
-the recovery reference and `after/` as the fixed regression baseline; both are
-comparison bases and are verified whole by the database-free gate alongside the
-canonical portfolio. The historical captures under
+portfolio: the required `python-verify-cost` CI job verifies it from any clone
+and exits non-zero if it does not, the database-free gate recomputes its
+Snapshot delivery member's Budget Contract and workload-catalog digests from the
+committed inputs, and the memory gates are derived from it. `before/` is
+retained unchanged as the recovery reference and `after/` as the fixed
+regression baseline; both are comparison bases and are verified whole by the
+database-free gate alongside the canonical portfolio. Only `recovered/` carries
+the `conditions.json` and `durations.json` sidecars the collector writes beside
+a capture; `before/` and `after/` predate both writers and carry neither, which
+is why `--require-compatible` reaches no source digest or interpreter identity
+against them. The historical captures under
 `../write-lowering-envelope/` and `../snapshot-delivery-envelope/` keep their
 original names, protocols, and producing commits; nothing here is compared
 against them, because their write window stopped at `LoweredStatement` and their
@@ -335,10 +339,10 @@ once when a handle connects rather than per delivery.
 `../../spec/memory-gates.yaml` is the blocking half of this evidence: one
 ceiling per byte-unit reading address of the structural windows — the retained
 checkpoint and the high-water mark of each of the 46 keyed-write cases, the six
-acquisition levels, and the model-preparation checkpoint (106 gates, in bytes
-per row or bytes), and the retained and peak readings of the eighteen geometry
-reads and six cold plan compilations (48 gates, in KiB converted to bytes) —
-154 in all, beside the scaling domains and the advisory allowances. The cost
+acquisition levels, and the two model-preparation checkpoints (108 gates, in
+bytes per row or bytes), and the retained and peak readings of the eighteen
+geometry reads and nine cold plan compilations (54 gates, in KiB converted to
+bytes) — 162 in all, beside the scaling domains and the advisory allowances. The cost
 class grades them, under both layouts and through the same reading children the
 capture uses, in `tests/unit/tools/test_write_lowering_reading_gates.py` and
 `tests/unit/tools/test_snapshot_delivery_reading_gates.py`; timing is asserted
@@ -353,7 +357,7 @@ Every ceiling is the rule's output, not an edit: the largest reading of the
 address on either runtime in the capture the file names as its basis —
 `recovered/portfolio.json` — scaled by **1.10** and rounded up to a whole byte, and
 `test_every_memory_gate_is_the_basis_reading_under_the_stated_rule`
-recomputes all 154 from it. The headroom is the Budget Contract's own
+recomputes all 162 from it. The headroom is the Budget Contract's own
 `individualMax` for a memory cell; the run-to-run agreement recorded under
 *Measured noise floor* — retained checkpoints within 2.8% and high-water marks
 within 1% on this runner, and a further 1–3% between the two runtimes, which
@@ -385,7 +389,39 @@ up to 7.6% (the six acquisition `transientBytes` gates, −3.3% to −7.6%;
 of the rises are keyed-write retained checkpoints, four are acquisition
 retained checkpoints within 0.8%, and one is a transient high-water mark
 (`bitemporal.interior.columns.wire`, +0.4%), every one an address the capture
-read under its `after/` ceiling before the ceiling was re-derived. A gate's
+read under its `after/` ceiling before the ceiling was re-derived.
+
+They were re-derived a fourth time from the present `recovered/` under the same
+rule, after every reading had passed the ceilings the outgoing basis set
+(*Recovered capture*, *Memory*). 154 authored ceilings were rewritten in place:
+37 fell, 55 are unchanged to the byte, and 62 rose. The largest fall is
+`read-depth-1.columns.peakKiB`, 123,513 to 113,516 B (−8.09%), then
+`read-sparse-64.columns.peakKiB` (−6.37%) and `read-many-0.columns.peakKiB`
+(−5.00%). The largest rise is +3.81% at the three Columns cold-plan
+checkpoints, `plan-depth-1` and `plan-depth-8` 18,235 to 18,930 B and
+`plan-width-64` 18,236 to 18,931. Eight entries were inserted beside their
+siblings, taking the file from 154 gates to 162: `model.prepared.family`
+`retainedBytes` and `transientBytes`, and `plan.cold.peakKiB` and
+`plan.cold.retainedKiB` at each of the three `control-guarded-` widths. Those
+eight are addresses the instruments gained after the outgoing basis was
+captured, so this is the first capture that reads them; the ownership extension
+that claims them landed before the capture, not with it.
+
+Two of the movements behind these rises are retention the tree is meant to
+hold, and a reader of a moved ceiling should know which movement is which. `model.prepared`
+`retainedBytes` retains 192 B more than `after/` on both runtimes, which is the
+shared reader seam `02058c35` introduced. Every Columns cold-plan checkpoint
+retains 0.617 KiB more, accumulated across `46883551`, `318baf64` and
+`e28d32b2`; the last of those interns equal continuations, so retention is its
+design rather than a leak, and that 0.617 KiB is exactly the +3.81% above — the
+derivation's largest upward move is an intended cache. Two further movements
+are recorded as observations and were not chased, because neither address is
+gated: `stress.preparedSetKiB` is about 2.2 KiB higher than `after/`, and the
+`control-held` `closed` retained readings are 6.4 to 12.7 KiB above the
+archived `e372c69c` capture, which is COR-112's metadata retention read again
+(*Recovered capture*, *Memory*, and `../instance-state-baseline.md`).
+
+A gate's
 sensitivity is therefore the headroom alone at every address: a retained
 duplicate or a transient copy worth more than 10% of the reading trips it on
 either runtime, and one worth less is inside the noise the headroom absorbs.
@@ -434,7 +470,7 @@ worth less than the headroom is invisible to its gate.
 
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
 `tests/unit/test_scheduling_partition.py` grades that every named item is
-collected in the cost class and that the owners partition the 154 gates, so a
+collected in the cost class and that the owners partition the 162 gates, so a
 gate is never owned by a report member's registration. The prepared-model owner
 claims both preparation cases, `model.prepared` and `model.prepared.family`; the
 cold-plan owner claims the geometry levels under `plan-` and the guarded include
@@ -1146,415 +1182,278 @@ memory cell, and the two scaling arms named above is within its limit.
 
 ## Recovered capture — `recovered/`
 
-The one complete capture of the tree that recovers the read and
-predicate-acquisition time the unification cost, taken once every
-implementation change and review had closed and the owner had approved the
-capture. `before/` stays the recovery reference and `after/` the fixed
-regression baseline; neither is recaptured. The capture is retained beside
-them unchanged, with `comparison-before.md` and `comparison-after.md` as the
-`--compare` renderings against each. Acceptance is read per runtime under one
-rule: for a timing cell, `delta = recovered / reference − 1` with a permitted
-maximum of `0.15`, faster results passing however large the improvement; a
-family result is the median of its paired per-cell deltas on one runtime,
-never a ratio of pooled durations. Deltas are exact decimal arithmetic over
-the readings' printed values. Every criterion passed at its original
-threshold; no exception was requested, and none applies.
+The repository's canonical current cost portfolio: one complete capture of the
+head of `main`, taken once the delivery recovery and the gate-ownership
+extension had merged, so that verification of the committed evidence is
+blocking again rather than advisory against a capture the tree had moved past.
+`before/` stays the recovery reference and `after/` the fixed regression
+baseline; neither is recaptured, and `comparison-before.md` and
+`comparison-after.md` are this capture's `--compare` renderings against each.
+This capture is the basis every memory gate is derived from, and the readings
+below are what the ceilings in *Memory gates* › *Basis* were recomputed from.
+
+The capture this one replaces was taken at `b4091204` and narrated here as the
+recovery's acceptance: per-family required results against `before/`, a 92-row
+keyed-write table against `after/`, and its pass observations, every criterion
+passing at its original threshold. That reading belongs to the tree it was
+taken from and is not restated here. Git history keeps its bytes, and a
+byte-for-byte copy is kept outside Git at
+`$HOME/.local/share/parallax/evidence/cor-164/recovered/`, beside the other
+retained captures the comparisons are rendered against; no tool, test, or
+workflow reads that path.
 
 ### Provenance
 
-Produced from clean commit `b40912042df68beaa01eaa717665e9fe1c2b1b5c`
-(`feat(cost): observe managed encoders and rehearse recovery integration`, the
-reviewed endpoint carrying every phase of the recovery and the current counter
-vocabulary; the capture ran at the branch commit `5a5e312e`, which was
-squash-merged as `b4091204` with an identical tree, and the envelopes name the
-merged commit so every clone can resolve it) by `uv run --project languages/python python
+Produced from clean commit `93733e93fd7414780f14a092cb7487f09ddd0d5d`
+(`test(cost): hold a claimed control gate to a reading its owner can take`, the
+head of `main` at capture time and already published, so no clone draws an
+ancestry advisory) by `uv run --project languages/python python
 languages/python/tools/cost_report.py --out
-languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-18
-04:31–05:25 EDT (08:31–09:25 UTC, 55 minutes; collector exit 0), on the same
-Mac17,4 (Apple M5, 10 cores, 32 GiB, macOS 26.6.2) with the same CPython
-3.14.7 and 3.13.15, PostgreSQL 18.6 (`postgres:18.6-alpine` through
-Testcontainers), and `uv.lock` (digest `bc31fd8f…`, identical in all three
-captures' provenance) as the baselines. The machine was otherwise idle:
-the Backblaze backup client paused, `fseventsd` holding about one core, on
-battery power (94% to 79%), every process at nice 5 as every diagnostic
-reading of the recovery had been taken, where `after/` ran at nice 0. All four
-members name that commit and a clean tree, none carries an incomplete cell or
-an error, and every timing and memory cell the baselines read is paired: the only rows
-`--compare` reports missing on either side, in both renderings, are the 184
-legacy and 184 current counter cells of the two vocabularies (*Pass
-observations* below); the `incomparable` rows are zero-valued instance-state
-cells (72 against `before/`, 70 against `after/`). The portfolio's sha256 is
-`01b0db7a45f85109fd6d71534d1307842e0bca9f1086cbc3f0886796248ce9e0`.
+languages/python/docs/structural-metadata-envelope/recovered`, 2026-09-23
+15:29:51–16:34:50 EDT (19:29:51–20:34:50 UTC, 65 minutes wall clock and
+3898.533 s of recorded collection span; collector exit 0), on the same Mac17,4
+(Apple M5, 10 cores, 32 GiB, macOS 26.6.2 build 25G83, arm64) with the same
+CPython 3.14.7 in the project environment and 3.13.15 in a per-member throwaway
+environment, and PostgreSQL 18.6 (`postgres:18.6-alpine` through
+Testcontainers), as the baselines; `uv.lock` has moved since them and this
+capture records its digest `c6d88f6d…`, which is why the stale-lock advisory
+the outgoing capture drew is gone. The machine was otherwise idle: on AC power
+(59% charging to 99%), this shell and every child at nice 5 as the outgoing
+capture ran, with `fseventsd` holding about 0.85 core throughout as the one
+busy process. Of the collection span, snapshot-delivery took 3727.1 s,
+write-lowering 137.8 s, instance-state 19.1 s, and lifecycle-overhead 14.5 s.
+
+All four members name that commit and a clean tree, none carries an incomplete
+cell or an error, and snapshot-delivery classifies authoritative. This is the
+first committed capture to carry the collector's two sidecars, `conditions.json`
+and `durations.json`: the first is the only input `--require-compatible` reads
+instrument and control source digests and per-runtime interpreter identities
+from, and the second records the spans quoted above. Every timing and memory
+cell the two comparison bases read is paired. The rows `--compare` reports
+missing on the base — 474 in each rendering — are the 184 current counter cells
+whose legacy twins are what `before/` and `after/` recorded, the 168
+`control-delivery` cells, 72 `compact` instance-state cells, 30
+`read-plan-compilation` and `read-plan-reuse` cells at the guarded widths, 8
+`result-held-metadata` cells, and 12 `model-preparation` and
+`wire-insert-response` cells, all of them addresses the instruments gained
+after those captures were taken; the 184 rows missing on the head are the
+legacy `calls.*` cells themselves, and the `incomparable` rows are zero-valued
+instance-state cells (72 against `before/`, 70 against `after/`). The
+portfolio's sha256 is
+`4284bc7f02a447a39a7c7964c5cf34400efdbcbbd0c0fba157c21cd0f6e8b590`.
 
 | Member | Authority | Runtimes | Readings | Within | Outside |
 |---|---|---|---:|---:|---:|
-| snapshot-delivery | authoritative | 3.13, 3.14 | 324 | 83 | 7 |
-| lifecycle-overhead | non-authoritative | 3.14 | 87 | 5 | 10 |
-| instance-state | non-authoritative | 3.13, 3.14 | 624 | 4 | 4 |
-| write-lowering | non-authoritative | 3.13, 3.14 | 962 | — | — |
+| snapshot-delivery | authoritative | 3.13, 3.14 | 530 | 73 | 17 |
+| lifecycle-overhead | non-authoritative | - | 87 | 4 | 11 |
+| instance-state | non-authoritative | - | 696 | 4 | 4 |
+| write-lowering | non-authoritative | 3.13, 3.14 | 974 | 0 | 0 |
 
-`cost_report.py --verify recovered/portfolio.json` exits 0 and reports nine
-advisories, verbatim:
+**The capture was amended, not retaken, and the amendment is recorded in the
+capture.** The run measured a memory regression that was then fixed:
+`PageBuilder.add_claim` allocated an unconditional per-projection list for
+`_overwritten_edges`, introduced at `46883551`, and the fix makes that field a
+sparse mapping behind `SparseEdges`. Rather than take a second complete
+capture, the readings the fix moves were re-measured or derived in place and the
+adjustment recorded as an `adjustment` object at the top of `conditions.json`,
+which is the full record and which `--verify` and every `--compare` rendering
+state, so no reader of a cell meets these readings as the run's own. The
+split matters to anyone reading a cell: **470 memory readings** in windows that
+need no database — snapshot-delivery's `provider-free-delivery`,
+`read-plan-compilation`, `positional-materialization`, `control-delivery`,
+`read-plan-reuse` and `result-held-metadata`, and every byte-unit
+write-lowering reading — were **re-measured** with the fix in the tree through
+the members' own `--diagnostic` subset runs, value and samples both fresh.
+**Eight `eagerMemory` readings were derived, not measured**: the
+`peakKiB` and `retainedKiB` cells of `conventional-fanout` and
+`duplicate-include` on both runtimes, each shifted, value and every sample
+alike, by the measured delta of the provider-free `control-delivery` reading of
+the same delivery shape at the same root count, which is arithmetic on captured
+samples and is why `value` still equals their median; the correspondence was
+checked against direct readings of the database-backed cells and agreed within
+0.117 KiB, 0.009% of the reading. **One of those eight moved a published
+verdict.** `duplicate-include.eagerMemory.peakKiB` is outside its Budget
+Contract memory ceiling at the value the capture read and inside it at the
+derived value, which is why the `--verify` block below carries nineteen
+advisories and not twenty; that outcome rests on arithmetic over captured
+samples rather than on a measurement, though the direct diagnostic readings of
+that cell corroborate the derivation on both runtimes to within 0.01%.
+**52 database-backed memory readings and
+every timing, count and ratio reading are exactly as captured**, the streamed
+delivery cells among them, because no provider-free correspondence survives the
+same check for them. The instance-state member builds its pages through the
+same `PageBuilder` and was re-measured whole as a check: all 258 of its byte
+readings reproduced exactly, so that member is untouched. The provenance every
+member names is the capture's producing commit, not the commit carrying the
+fix.
+
+`cost_report.py --verify recovered/portfolio.json` **exits 0** and reports
+nineteen advisories, verbatim — fourteen timing ceilings over seven cells,
+three memory ceilings, and two scaling-arm growths, none of them a memory
+*gate*. The count is nineteen rather than twenty because of the amendment
+above: the derived `duplicate-include.eagerMemory.peakKiB` sits inside the
+ceiling its captured value was outside, so that cell's absence from the block
+is a derived result and not a measured one. (The run opens with two
+informational lines before the block. The first is `snapshot-delivery
+lock freshness matches`, which names the recorded and the inspected
+`lockDigest`, both `c6d88f6d…`, and then the path of the `uv.lock` it read.
+That path is whatever clone ran the command, so reproducing it here would make
+the block match no other reader's run; it is left out for that reason. The
+second is `the capture is amended: 470 re-measured and 8 derived readings
+changed after the run its provenance names, recorded in the adjustment of
+conditions.json`, which is how the amendment above reaches a reader who runs
+the command rather than one reading this section.)
 
 ```text
+advisory: duplicate-include.live.eager.maxMs is outside its timing ceiling
+advisory: duplicate-include.live.eager.minRootsPerSecond is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.maxMs is outside its timing ceiling
 advisory: duplicate-include.providerFreeCpu.eager.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.maxMs is outside its timing ceiling
+advisory: duplicate-include.providerFreeCpu.page32.minRootsPerSecond is outside its timing ceiling
+advisory: duplicate-include.streamedMemory.page32PeakKiB is outside its memory ceiling
+advisory: duplicate-include.streamedMemory.page128PeakKiB is outside its memory ceiling
 advisory: document-heavy.live.eager.maxMs is outside its timing ceiling
 advisory: document-heavy.live.eager.minRootsPerSecond is outside its timing ceiling
+advisory: document-heavy.live.page32.maxMs is outside its timing ceiling
+advisory: document-heavy.live.page32.minRootsPerSecond is outside its timing ceiling
+advisory: versioned-document.live.eager.maxMs is outside its timing ceiling
+advisory: versioned-document.live.eager.minRootsPerSecond is outside its timing ceiling
 advisory: versioned-document.live.page32.maxMs is outside its timing ceiling
 advisory: versioned-document.live.page32.minRootsPerSecond is outside its timing ceiling
 advisory: bitemporal-current.eagerMemory.peakKiB is outside its memory ceiling
-advisory: document-heavy.streamedMemory.page128PeakKiB grows 38.013 KiB between memory arms
-advisory: bitemporal-current.streamedMemory.page128PeakKiB grows 17.329 KiB between memory arms
+advisory: document-heavy.streamedMemory.page128PeakKiB grows 37.569 KiB between memory arms
+advisory: bitemporal-current.streamedMemory.page128PeakKiB grows 22.276 KiB between memory arms
 ```
 
-Six timing ceilings are exceeded on the authority runtime, against `after/`'s
-seventeen and the baseline's eighteen: eleven of `after/`'s timing advisories
-are back inside their Budget Contract ceilings, including
-`duplicate-include.live.eager.maxMs`, which `after/` alone had put outside.
-The one memory advisory is `after/`'s (`bitemporal-current.eagerMemory.peakKiB`,
-426.7 KiB on 3.14 against 425, read under *Memory* below), and the two
-streamed-memory arms that grow past the 16 KiB limit are `after/`'s two. No
-limit was relaxed; blocking memory is the cost class's.
+The block is the run taken after the gates were re-derived, and it is
+byte-identical to the run taken before, against the ceilings the outgoing basis
+had set — the expected outcome, since a derivation that lowers a ceiling the
+capture already sat under can neither raise nor silence an advisory. All
+nineteen advisories come from `budget-contract.yaml`, which is a different file
+and a different message from a memory gate; no run of either drew an `is
+outside its memory gate` line. Against the outgoing capture's nine advisories
+these are nineteen: the timing ceilings widen from six to fourteen and the
+memory ceilings from one to three, read below and against the timing the
+comparisons record.
 
-### Acceptance against `before/`
+### Against `before/`
 
-Every required family and every mandatory cell is inside the floor on both
-runtimes, with room: the family medians are negative — faster than the
-pre-unification baseline — everywhere but the eager live-delivery family,
-which sits at +8.9% and +3.1%.
+`comparison-before.md` is the rendering. Read as family medians of the paired
+per-cell deltas on one runtime, with the range of those deltas beside each —
+never a ratio of pooled durations — the capture is far faster than the
+pre-unification baseline on the acquisition and keyed-write families and at
+parity on the geometry reads:
 
-| Required result, per runtime | Cells | 3.13 | 3.14 |
+| Family, per runtime | Cells | 3.13 | 3.14 |
 |---|---:|---|---|
-| Acquisition family (`acquisition.*` / `elapsedUs`) | 6 | −23.5% (−59.0% to −18.7%) | −41.6% (−47.3% to −33.3%) |
-| Geometry-read family (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −10.7% (−30.6% to +0.6%) | −5.8% (−28.2% to +4.0%) |
-| Positional-materialization family (`stress-*` / `stress.maxUsPerProjection`) | 2 | −6.6% (−9.6% to −3.5%) | −0.2% (−6.0% to +5.7%) |
-| Eager live-delivery family (catalog workloads / `live.eager.maxMs`) | 5 | +8.9% (−16.4% to +17.1%) | +3.1% (−21.7% to +17.7%) |
-| `read-sparse-64`, columns and document | 2 | −10.0%, −6.5% | −6.5%, −2.5% |
-| `acquisition.rows-128`, columns and document | 2 | −26.2%, −21.1% | −45.1%, −33.3% |
-| `stress-columns` and `stress-document` | 2 | −9.6%, −3.5% | −6.0%, +5.7% |
+| Acquisition (`acquisition.*` / `elapsedUs`) | 6 | −21.5% (−58.7% to −17.4%) | −38.5% (−45.8% to −29.2%) |
+| Keyed writes (46 cases / `elapsedUs`) | 46 | −13.8% (−22.0% to +16.0%) | −14.7% (−33.8% to −0.1%) |
+| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −1.5% (−26.7% to +13.5%) | +3.6% (−20.8% to +13.9%) |
+| Positional materialization (`stress-*`) | 2 | −3.0% (−6.7% to +0.7%) | +0.8% (−4.8% to +6.4%) |
+| Eager live delivery (`live.eager.maxMs`) | 5 | +11.1% (−16.1% to +24.0%) | +7.5% (−16.6% to +28.0%) |
+| Page-32 live delivery (`live.page32.maxMs`) | 5 | +9.1% (−14.6% to +14.2%) | −10.3% (−14.2% to +7.7%) |
 
-Each family row is the median of its paired per-cell deltas with the range of
-those deltas beside it; each mandatory row is the cell's own delta. There is
-no miss to present: no family median, mandatory cell, keyed-write cell, or
-gated memory reading is past its original threshold, so the owner's exception
-protocol was not invoked and no replacement threshold or named exception
-exists. The largest individual timing slowdown anywhere in the families is
-`duplicate-include` `live.eager.maxMs`, +17.1% on 3.13 and +17.7% on 3.14
-against `before/` — an individual cell of the eager live-delivery family, not a
-mandatory cell, inside a family median that passes at +8.9% / +3.1%; against
-`after/` the same cell reads −8.3% / −7.9%, and it is back inside its 18 ms
-Budget Contract ceiling (16.30 / 16.61 ms) that `after/` had put it outside.
-The worst mandatory cell is 3.14 `stress-document` at +5.7%, the one mandatory
-cell slower than `before/`; the same cell is −42% against `after/`.
+The geometry-read family reads about nine points higher on both runtimes than
+the outgoing capture read against the same base, and the eager live-delivery
+family two to four points higher. The same shift appears in the
+`control-delivery` window against the archived `e372c69c` capture, which is a
+third base captured on a third day
+(`../instance-state-baseline.md`, *COR-173 rebaseline*), so it is a property of
+this run rather than of one subject or one family: a whole-portfolio capture
+taken over 65 minutes on a machine holding a steady 0.85-core background load,
+compared against a base captured on another day. No timing reading is gated,
+and the seven cells past a Budget Contract timing ceiling are the ones the
+verbatim block names. Timing evidence for a change is a same-day pair, not this
+comparison; this comparison is what the canonical portfolio reads.
 
-Every family cell, raw values and deltas:
+### Against `after/`
 
-| Runtime | Family | Workload | Cell | `before/` | `recovered/` | Delta |
-|---|---|---|---|---:|---:|---:|
-| 3.13 | acquisition | acquisition.rows-128.columns | elapsedUs | 49.213 | 36.302 | -26.24% |
-| 3.13 | acquisition | acquisition.rows-128.document | elapsedUs | 51.689 | 40.805 | -21.06% |
-| 3.13 | acquisition | acquisition.rows-32.columns | elapsedUs | 56.865 | 42.090 | -25.98% |
-| 3.13 | acquisition | acquisition.rows-32.document | elapsedUs | 57.225 | 45.301 | -20.84% |
-| 3.13 | acquisition | acquisition.rows-8.columns | elapsedUs | 147.760 | 60.536 | -59.03% |
-| 3.13 | acquisition | acquisition.rows-8.document | elapsedUs | 77.740 | 63.172 | -18.74% |
-| 3.13 | geometry-read | read-depth-1 | columns.elapsedUsPerRoot | 33.479 | 31.716 | -5.27% |
-| 3.13 | geometry-read | read-depth-1 | document.elapsedUsPerRoot | 33.026 | 32.242 | -2.37% |
-| 3.13 | geometry-read | read-depth-4 | columns.elapsedUsPerRoot | 55.221 | 46.020 | -16.66% |
-| 3.13 | geometry-read | read-depth-4 | document.elapsedUsPerRoot | 54.467 | 47.258 | -13.24% |
-| 3.13 | geometry-read | read-depth-8 | columns.elapsedUsPerRoot | 90.431 | 65.780 | -27.26% |
-| 3.13 | geometry-read | read-depth-8 | document.elapsedUsPerRoot | 95.168 | 66.091 | -30.55% |
-| 3.13 | geometry-read | read-many-0 | columns.elapsedUsPerRoot | 23.328 | 23.462 | +0.57% |
-| 3.13 | geometry-read | read-many-0 | document.elapsedUsPerRoot | 23.785 | 23.598 | -0.79% |
-| 3.13 | geometry-read | read-many-32 | columns.elapsedUsPerRoot | 166.695 | 145.263 | -12.86% |
-| 3.13 | geometry-read | read-many-32 | document.elapsedUsPerRoot | 159.789 | 147.342 | -7.79% |
-| 3.13 | geometry-read | read-many-8 | columns.elapsedUsPerRoot | 59.622 | 55.022 | -7.72% |
-| 3.13 | geometry-read | read-many-8 | document.elapsedUsPerRoot | 58.559 | 57.133 | -2.43% |
-| 3.13 | geometry-read | read-sparse-64 | columns.elapsedUsPerRoot | 50.396 | 45.361 | -9.99% |
-| 3.13 | geometry-read | read-sparse-64 | document.elapsedUsPerRoot | 46.914 | 43.863 | -6.50% |
-| 3.13 | geometry-read | read-width-16 | columns.elapsedUsPerRoot | 59.332 | 51.397 | -13.37% |
-| 3.13 | geometry-read | read-width-16 | document.elapsedUsPerRoot | 58.617 | 51.958 | -11.36% |
-| 3.13 | geometry-read | read-width-64 | columns.elapsedUsPerRoot | 156.977 | 131.534 | -16.21% |
-| 3.13 | geometry-read | read-width-64 | document.elapsedUsPerRoot | 159.293 | 132.538 | -16.80% |
-| 3.13 | positional-stress | stress-columns | stress.maxUsPerProjection | 6.635 | 5.997 | -9.62% |
-| 3.13 | positional-stress | stress-document | stress.maxUsPerProjection | 7.363 | 7.104 | -3.52% |
-| 3.13 | eager-live-delivery | bitemporal-current | live.eager.maxMs | 5.214 | 5.678 | +8.90% |
-| 3.13 | eager-live-delivery | conventional-fanout | live.eager.maxMs | 8.562 | 8.732 | +1.98% |
-| 3.13 | eager-live-delivery | document-heavy | live.eager.maxMs | 28.371 | 23.718 | -16.40% |
-| 3.13 | eager-live-delivery | duplicate-include | live.eager.maxMs | 13.912 | 16.296 | +17.13% |
-| 3.13 | eager-live-delivery | versioned-document | live.eager.maxMs | 4.594 | 5.213 | +13.47% |
-| 3.14 | acquisition | acquisition.rows-128.columns | elapsedUs | 66.841 | 36.691 | -45.11% |
-| 3.14 | acquisition | acquisition.rows-128.document | elapsedUs | 60.566 | 40.415 | -33.27% |
-| 3.14 | acquisition | acquisition.rows-32.columns | elapsedUs | 73.352 | 40.651 | -44.58% |
-| 3.14 | acquisition | acquisition.rows-32.document | elapsedUs | 71.617 | 43.988 | -38.58% |
-| 3.14 | acquisition | acquisition.rows-8.columns | elapsedUs | 114.922 | 60.511 | -47.35% |
-| 3.14 | acquisition | acquisition.rows-8.document | elapsedUs | 98.667 | 63.104 | -36.04% |
-| 3.14 | geometry-read | read-depth-1 | columns.elapsedUsPerRoot | 31.577 | 31.342 | -0.74% |
-| 3.14 | geometry-read | read-depth-1 | document.elapsedUsPerRoot | 31.960 | 32.346 | +1.21% |
-| 3.14 | geometry-read | read-depth-4 | columns.elapsedUsPerRoot | 54.811 | 47.318 | -13.67% |
-| 3.14 | geometry-read | read-depth-4 | document.elapsedUsPerRoot | 57.217 | 47.816 | -16.43% |
-| 3.14 | geometry-read | read-depth-8 | columns.elapsedUsPerRoot | 93.339 | 66.991 | -28.23% |
-| 3.14 | geometry-read | read-depth-8 | document.elapsedUsPerRoot | 92.501 | 67.174 | -27.38% |
-| 3.14 | geometry-read | read-many-0 | columns.elapsedUsPerRoot | 23.755 | 23.326 | -1.81% |
-| 3.14 | geometry-read | read-many-0 | document.elapsedUsPerRoot | 23.191 | 23.878 | +2.96% |
-| 3.14 | geometry-read | read-many-32 | columns.elapsedUsPerRoot | 160.184 | 152.033 | -5.09% |
-| 3.14 | geometry-read | read-many-32 | document.elapsedUsPerRoot | 159.904 | 166.337 | +4.02% |
-| 3.14 | geometry-read | read-many-8 | columns.elapsedUsPerRoot | 55.896 | 55.171 | -1.30% |
-| 3.14 | geometry-read | read-many-8 | document.elapsedUsPerRoot | 58.379 | 55.934 | -4.19% |
-| 3.14 | geometry-read | read-sparse-64 | columns.elapsedUsPerRoot | 48.012 | 44.904 | -6.47% |
-| 3.14 | geometry-read | read-sparse-64 | document.elapsedUsPerRoot | 46.010 | 44.868 | -2.48% |
-| 3.14 | geometry-read | read-width-16 | columns.elapsedUsPerRoot | 58.874 | 52.633 | -10.60% |
-| 3.14 | geometry-read | read-width-16 | document.elapsedUsPerRoot | 57.958 | 53.063 | -8.45% |
-| 3.14 | geometry-read | read-width-64 | columns.elapsedUsPerRoot | 160.504 | 140.238 | -12.63% |
-| 3.14 | geometry-read | read-width-64 | document.elapsedUsPerRoot | 161.281 | 138.883 | -13.89% |
-| 3.14 | positional-stress | stress-columns | stress.maxUsPerProjection | 6.229 | 5.854 | -6.02% |
-| 3.14 | positional-stress | stress-document | stress.maxUsPerProjection | 7.105 | 7.508 | +5.67% |
-| 3.14 | eager-live-delivery | bitemporal-current | live.eager.maxMs | 5.161 | 5.729 | +11.01% |
-| 3.14 | eager-live-delivery | conventional-fanout | live.eager.maxMs | 8.689 | 8.959 | +3.10% |
-| 3.14 | eager-live-delivery | document-heavy | live.eager.maxMs | 25.821 | 23.561 | -8.75% |
-| 3.14 | eager-live-delivery | duplicate-include | live.eager.maxMs | 14.108 | 16.606 | +17.70% |
-| 3.14 | eager-live-delivery | versioned-document | live.eager.maxMs | 6.712 | 5.259 | -21.65% |
+`comparison-after.md` is the rendering, and it is the sharper of the two,
+because `after/` is the unified implementation before the read and
+predicate-acquisition recovery:
 
-Mandatory individual cells:
+| Family, per runtime | Cells | 3.13 | 3.14 |
+|---|---:|---|---|
+| Acquisition (`acquisition.*` / `elapsedUs`) | 6 | −58.8% (−65.3% to −51.3%) | −60.8% (−62.1% to −48.9%) |
+| Keyed writes (46 cases / `elapsedUs`) | 46 | −2.7% (−10.1% to +6.8%) | −1.6% (−12.4% to +4.8%) |
+| Geometry reads (`read-*` / `<layout>.elapsedUsPerRoot`) | 18 | −17.7% (−42.1% to −7.4%) | −19.3% (−42.0% to −6.2%) |
+| Positional materialization (`stress-*`) | 2 | −33.1% (−36.0% to −30.1%) | −39.9% (−42.0% to −37.7%) |
+| Eager live delivery (`live.eager.maxMs`) | 5 | −8.8% (−14.2% to −2.9%) | −6.7% (−12.0% to +0.2%) |
+| Page-32 live delivery (`live.page32.maxMs`) | 5 | −7.6% (−10.5% to −2.7%) | −5.1% (−10.5% to −2.6%) |
 
-| Runtime | Workload | Cell | `before/` | `recovered/` | Delta | Result |
-|---|---|---|---:|---:|---:|---|
-| 3.13 | read-sparse-64 | columns.elapsedUsPerRoot | 50.396 | 45.361 | -9.99% | pass |
-| 3.13 | read-sparse-64 | document.elapsedUsPerRoot | 46.914 | 43.863 | -6.50% | pass |
-| 3.13 | acquisition.rows-128.columns | elapsedUs | 49.213 | 36.302 | -26.24% | pass |
-| 3.13 | acquisition.rows-128.document | elapsedUs | 51.689 | 40.805 | -21.06% | pass |
-| 3.13 | stress-columns | stress.maxUsPerProjection | 6.635 | 5.997 | -9.62% | pass |
-| 3.13 | stress-document | stress.maxUsPerProjection | 7.363 | 7.104 | -3.52% | pass |
-| 3.14 | read-sparse-64 | columns.elapsedUsPerRoot | 48.012 | 44.904 | -6.47% | pass |
-| 3.14 | read-sparse-64 | document.elapsedUsPerRoot | 46.010 | 44.868 | -2.48% | pass |
-| 3.14 | acquisition.rows-128.columns | elapsedUs | 66.841 | 36.691 | -45.11% | pass |
-| 3.14 | acquisition.rows-128.document | elapsedUs | 60.566 | 40.415 | -33.27% | pass |
-| 3.14 | stress-columns | stress.maxUsPerProjection | 6.229 | 5.854 | -6.02% | pass |
-| 3.14 | stress-document | stress.maxUsPerProjection | 7.105 | 7.508 | +5.67% | pass |
-
-### Keyed writes against `after/`
-
-Every one of the 92 keyed-write `elapsedUs` cells preserves the `after/`
-result within the floor, and every one is also inside the floor against
-`before/`. On 3.13 all 46 cells are at or below `after/` (median −6.8%, the
-closest `txtime.changed.columns.wire` at −0.2%); on 3.14 the median is −3.2%
-with five cells above `after/` — `ancestor.depth-1.document.typed` +8.5%,
-`geometry.width-16.document.typed` +7.9%, `geometry.width-64.columns.typed`
-+3.8%, `geometry.depth-4.columns.typed` +1.8%, `geometry.depth-1.columns.typed`
-+1.7% — each inside the ±15% noise floor of a single cell and none part of a
-family direction. Against `before/` the medians are −16.9% and −15.1%, and the
-only cells slower than the pre-unification baseline on either runtime are
-3.13 `geometry.width-64.columns.typed` at +4.3% and its Document twin at +0.3%
-(3.14: every cell at or below `before/`, the closest at −1.1%). No production
-keyed-write path was changed by the recovery; the write side gives nothing
-back.
-
-| Runtime | Case | `before/` | `after/` | `recovered/` | vs `after/` | vs `before/` | Result |
-|---|---|---:|---:|---:|---:|---:|---|
-| 3.13 | ancestor.depth-1.columns.typed | 238.583 | 211.333 | 198.708 | -5.97% | -16.71% | pass |
-| 3.13 | ancestor.depth-1.document.typed | 244.791 | 224.583 | 201.791 | -10.15% | -17.57% | pass |
-| 3.13 | ancestor.sparse-64.columns.typed | 281.708 | 284.750 | 248.208 | -12.83% | -11.89% | pass |
-| 3.13 | ancestor.sparse-64.document.typed | 291.167 | 266.500 | 253.875 | -4.74% | -12.81% | pass |
-| 3.13 | ancestor.width-16.columns.typed | 310.625 | 321.666 | 289.000 | -10.16% | -6.96% | pass |
-| 3.13 | ancestor.width-16.document.typed | 333.458 | 304.917 | 279.708 | -8.27% | -16.12% | pass |
-| 3.13 | ancestor.width-64.columns.typed | 650.541 | 726.292 | 650.459 | -10.44% | -0.01% | pass |
-| 3.13 | ancestor.width-64.document.typed | 697.833 | 648.833 | 598.000 | -7.83% | -14.31% | pass |
-| 3.13 | bitemporal.interior.columns.typed | 328.166 | 283.416 | 274.416 | -3.18% | -16.38% | pass |
-| 3.13 | bitemporal.interior.columns.wire | 332.375 | 277.250 | 251.166 | -9.41% | -24.43% | pass |
-| 3.13 | bitemporal.interior.document.typed | 343.042 | 287.625 | 270.375 | -6.00% | -21.18% | pass |
-| 3.13 | bitemporal.interior.document.wire | 349.125 | 266.791 | 255.208 | -4.34% | -26.90% | pass |
-| 3.13 | geometry.depth-1.columns.typed | 205.291 | 178.458 | 161.458 | -9.53% | -21.35% | pass |
-| 3.13 | geometry.depth-1.document.typed | 208.500 | 179.250 | 160.500 | -10.46% | -23.02% | pass |
-| 3.13 | geometry.depth-4.columns.typed | 253.125 | 217.667 | 202.709 | -6.87% | -19.92% | pass |
-| 3.13 | geometry.depth-4.document.typed | 260.333 | 213.000 | 202.208 | -5.07% | -22.33% | pass |
-| 3.13 | geometry.depth-8.columns.typed | 330.584 | 265.917 | 251.875 | -5.28% | -23.81% | pass |
-| 3.13 | geometry.depth-8.document.typed | 341.667 | 280.167 | 257.584 | -8.06% | -24.61% | pass |
-| 3.13 | geometry.many-0.columns.typed | 166.542 | 152.417 | 137.375 | -9.87% | -17.51% | pass |
-| 3.13 | geometry.many-0.document.typed | 177.750 | 145.583 | 135.709 | -6.78% | -23.65% | pass |
-| 3.13 | geometry.many-32.columns.typed | 561.209 | 530.750 | 497.083 | -6.34% | -11.43% | pass |
-| 3.13 | geometry.many-32.document.typed | 588.166 | 524.375 | 500.541 | -4.55% | -14.90% | pass |
-| 3.13 | geometry.many-8.columns.typed | 277.167 | 265.208 | 229.750 | -13.37% | -17.11% | pass |
-| 3.13 | geometry.many-8.document.typed | 291.042 | 260.708 | 232.416 | -10.85% | -20.14% | pass |
-| 3.13 | geometry.sparse-64.columns.typed | 235.875 | 239.000 | 207.416 | -13.22% | -12.07% | pass |
-| 3.13 | geometry.sparse-64.document.typed | 239.917 | 236.875 | 207.125 | -12.56% | -13.67% | pass |
-| 3.13 | geometry.width-16.columns.typed | 264.959 | 266.250 | 251.417 | -5.57% | -5.11% | pass |
-| 3.13 | geometry.width-16.document.typed | 273.209 | 266.041 | 258.416 | -2.87% | -5.41% | pass |
-| 3.13 | geometry.width-64.columns.typed | 592.167 | 642.875 | 617.583 | -3.93% | +4.29% | pass |
-| 3.13 | geometry.width-64.document.typed | 619.084 | 647.584 | 621.083 | -4.09% | +0.32% | pass |
-| 3.13 | plain.changed.columns.typed | 182.167 | 171.750 | 167.209 | -2.64% | -8.21% | pass |
-| 3.13 | plain.changed.columns.wire | 173.708 | 154.458 | 136.084 | -11.90% | -21.66% | pass |
-| 3.13 | plain.changed.document.typed | 198.917 | 177.250 | 162.250 | -8.46% | -18.43% | pass |
-| 3.13 | plain.changed.document.wire | 193.417 | 149.042 | 141.000 | -5.40% | -27.10% | pass |
-| 3.13 | txtime.changed.columns.typed | 219.875 | 204.542 | 202.917 | -0.79% | -7.71% | pass |
-| 3.13 | txtime.changed.columns.wire | 200.417 | 186.875 | 186.458 | -0.22% | -6.96% | pass |
-| 3.13 | txtime.changed.document.typed | 256.292 | 224.083 | 198.875 | -11.25% | -22.40% | pass |
-| 3.13 | txtime.changed.document.wire | 222.084 | 187.959 | 174.750 | -7.03% | -21.31% | pass |
-| 3.13 | txtime.opening.columns.typed | 193.167 | 168.750 | 165.750 | -1.78% | -14.19% | pass |
-| 3.13 | txtime.opening.columns.wire | 173.208 | 157.167 | 153.250 | -2.49% | -11.52% | pass |
-| 3.13 | txtime.opening.document.typed | 218.791 | 176.166 | 160.875 | -8.68% | -26.47% | pass |
-| 3.13 | txtime.opening.document.wire | 185.875 | 149.834 | 142.250 | -5.06% | -23.47% | pass |
-| 3.13 | txtime.unchanged.columns.typed | 222.250 | 206.542 | 202.125 | -2.14% | -9.06% | pass |
-| 3.13 | txtime.unchanged.columns.wire | 204.750 | 178.875 | 173.209 | -3.17% | -15.40% | pass |
-| 3.13 | txtime.unchanged.document.typed | 234.708 | 211.209 | 185.584 | -12.13% | -20.93% | pass |
-| 3.13 | txtime.unchanged.document.wire | 213.875 | 185.292 | 166.416 | -10.19% | -22.19% | pass |
-| 3.14 | ancestor.depth-1.columns.typed | 337.084 | 248.000 | 232.375 | -6.30% | -31.06% | pass |
-| 3.14 | ancestor.depth-1.document.typed | 361.584 | 242.583 | 263.292 | +8.54% | -27.18% | pass |
-| 3.14 | ancestor.sparse-64.columns.typed | 411.250 | 324.250 | 286.250 | -11.72% | -30.40% | pass |
-| 3.14 | ancestor.sparse-64.document.typed | 433.041 | 309.833 | 290.750 | -6.16% | -32.86% | pass |
-| 3.14 | ancestor.width-16.columns.typed | 447.625 | 345.583 | 341.917 | -1.06% | -23.62% | pass |
-| 3.14 | ancestor.width-16.document.typed | 479.125 | 339.375 | 323.208 | -4.76% | -32.54% | pass |
-| 3.14 | ancestor.width-64.columns.typed | 872.916 | 753.250 | 733.000 | -2.69% | -16.03% | pass |
-| 3.14 | ancestor.width-64.document.typed | 916.042 | 712.292 | 665.250 | -6.60% | -27.38% | pass |
-| 3.14 | bitemporal.interior.columns.typed | 366.125 | 314.959 | 296.375 | -5.90% | -19.05% | pass |
-| 3.14 | bitemporal.interior.columns.wire | 345.625 | 295.542 | 280.166 | -5.20% | -18.94% | pass |
-| 3.14 | bitemporal.interior.document.typed | 367.333 | 331.333 | 313.334 | -5.43% | -14.70% | pass |
-| 3.14 | bitemporal.interior.document.wire | 363.541 | 300.166 | 290.750 | -3.14% | -20.02% | pass |
-| 3.14 | geometry.depth-1.columns.typed | 206.292 | 191.459 | 194.625 | +1.65% | -5.66% | pass |
-| 3.14 | geometry.depth-1.document.typed | 211.083 | 191.916 | 190.042 | -0.98% | -9.97% | pass |
-| 3.14 | geometry.depth-4.columns.typed | 241.125 | 234.458 | 238.583 | +1.76% | -1.05% | pass |
-| 3.14 | geometry.depth-4.document.typed | 258.792 | 234.709 | 228.500 | -2.65% | -11.71% | pass |
-| 3.14 | geometry.depth-8.columns.typed | 316.375 | 301.584 | 287.083 | -4.81% | -9.26% | pass |
-| 3.14 | geometry.depth-8.document.typed | 326.667 | 295.167 | 293.000 | -0.73% | -10.31% | pass |
-| 3.14 | geometry.many-0.columns.typed | 183.792 | 166.458 | 163.042 | -2.05% | -11.29% | pass |
-| 3.14 | geometry.many-0.document.typed | 178.209 | 165.458 | 160.541 | -2.97% | -9.91% | pass |
-| 3.14 | geometry.many-32.columns.typed | 631.500 | 557.666 | 541.333 | -2.93% | -14.28% | pass |
-| 3.14 | geometry.many-32.document.typed | 732.334 | 578.167 | 534.125 | -7.62% | -27.07% | pass |
-| 3.14 | geometry.many-8.columns.typed | 308.250 | 268.583 | 258.500 | -3.75% | -16.14% | pass |
-| 3.14 | geometry.many-8.document.typed | 339.666 | 264.167 | 259.167 | -1.89% | -23.70% | pass |
-| 3.14 | geometry.sparse-64.columns.typed | 350.875 | 277.917 | 246.792 | -11.20% | -29.66% | pass |
-| 3.14 | geometry.sparse-64.document.typed | 321.750 | 274.292 | 244.500 | -10.86% | -24.01% | pass |
-| 3.14 | geometry.width-16.columns.typed | 367.583 | 301.833 | 285.583 | -5.38% | -22.31% | pass |
-| 3.14 | geometry.width-16.document.typed | 396.834 | 290.458 | 313.458 | +7.92% | -21.01% | pass |
-| 3.14 | geometry.width-64.columns.typed | 812.125 | 689.041 | 715.125 | +3.79% | -11.94% | pass |
-| 3.14 | geometry.width-64.document.typed | 804.792 | 708.292 | 694.875 | -1.89% | -13.66% | pass |
-| 3.14 | plain.changed.columns.typed | 206.458 | 190.333 | 179.750 | -5.56% | -12.94% | pass |
-| 3.14 | plain.changed.columns.wire | 187.667 | 166.708 | 162.750 | -2.37% | -13.28% | pass |
-| 3.14 | plain.changed.document.typed | 215.417 | 196.667 | 192.833 | -1.95% | -10.48% | pass |
-| 3.14 | plain.changed.document.wire | 212.375 | 173.333 | 167.625 | -3.29% | -21.07% | pass |
-| 3.14 | txtime.changed.columns.typed | 241.417 | 222.250 | 214.791 | -3.36% | -11.03% | pass |
-| 3.14 | txtime.changed.columns.wire | 220.208 | 205.208 | 190.375 | -7.23% | -13.55% | pass |
-| 3.14 | txtime.changed.document.typed | 258.250 | 239.292 | 229.250 | -4.20% | -11.23% | pass |
-| 3.14 | txtime.changed.document.wire | 249.375 | 212.458 | 210.958 | -0.71% | -15.41% | pass |
-| 3.14 | txtime.opening.columns.typed | 206.500 | 192.958 | 188.959 | -2.07% | -8.49% | pass |
-| 3.14 | txtime.opening.columns.wire | 193.458 | 170.125 | 161.459 | -5.09% | -16.54% | pass |
-| 3.14 | txtime.opening.document.typed | 219.750 | 192.667 | 186.167 | -3.37% | -15.28% | pass |
-| 3.14 | txtime.opening.document.wire | 196.792 | 168.917 | 166.959 | -1.16% | -15.16% | pass |
-| 3.14 | txtime.unchanged.columns.typed | 242.584 | 224.667 | 216.750 | -3.52% | -10.65% | pass |
-| 3.14 | txtime.unchanged.columns.wire | 229.125 | 202.459 | 195.958 | -3.21% | -14.48% | pass |
-| 3.14 | txtime.unchanged.document.typed | 254.917 | 223.916 | 216.750 | -3.20% | -14.97% | pass |
-| 3.14 | txtime.unchanged.document.wire | 230.834 | 201.917 | 200.041 | -0.93% | -13.34% | pass |
-
-The per-cell high-water and retained readings of every keyed case are under
-the unchanged `after/` ceilings on both runtimes (*Memory*). Retained
-checkpoints that moved past the 3% byte allowance against `after/`, all in the
-50-byte quantization steps the keyed-write checkpoints show between readings,
-in both directions, and all under their gates: 3.13 `txtime.opening.columns.wire`
-2,612 to 2,462 B/row (−5.7%), `txtime.opening.document.wire` 2,612 to 2,512
-(−3.8%), `txtime.unchanged.document.wire` 3,510 to 3,660 (+4.3%); 3.14
-`txtime.opening.columns.wire` 2,560 to 2,660 (+3.9%),
-`txtime.opening.document.wire` 2,660 to 2,560 (−3.8%). No keyed high-water
-mark moved past 3%.
+Every family median is at or below `after/` on both runtimes. The keyed-write
+medians are inside the ±15% floor of a single cell; the fourteen cells above
+`after/` on 3.13 and five on 3.14 are each under +7%, and no keyed-write family
+moves in one direction. `model.prepared` retains 416,184 and 427,208 B against
+`after/`'s 415,992 and 427,016 — the 192 B shared reader seam itemized under
+*Memory gates* › *Basis* — and forms in 3,357 and 3,433 µs against 3,738 and
+3,673.
 
 ### Memory
 
 **Against the ceilings in force when the capture was taken.** Every gated
-reading — all 154 addresses on both runtimes, 308 readings — is under the
-ceiling derived from `after/`, with zero failures; the closest are 3.14
-`ancestor.width-16.document.typed` retained at 92.9% of its 4,865 B/row
-ceiling, `geometry.sparse-64.columns.typed` retained 92.7%,
-`txtime.opening.columns.wire` retained 92.6%, and `plain.changed.columns.wire`
-and `plain.changed.document.wire` retained 92.5%. The old-ceiling result is
+reading the outgoing basis had a ceiling for — all 154 of its addresses on both
+runtimes, 308 readings — is under that ceiling, with zero failures. The closest
+are the 3.14 Columns cold-plan checkpoints, `plan-depth-1`, `plan-depth-8` and
+`plan-width-64` `columns.retainedKiB` at 94.4% of their 18,235–18,236 B
+ceilings, their Document twins at 94.3%, and
+`txtime.changed.document.typed` retained at 93.3%. The old-ceiling result is
 recorded before any re-derivation so a new basis cannot hide a regression
-behind a raised ceiling: none was hidden, because none occurred.
+behind a raised ceiling: none was hidden, because none occurred. Sixteen
+further readings had no ceiling to be read against — the eight addresses the
+instruments gained after the outgoing basis, at two runtimes each — and they
+enter the gates for the first time with this derivation.
 
 **Scaling domains.** Both acquisition domains are monotone non-increasing on
-both runtimes: `acquisition.columns` retained 2,386.8 → 1,767.4 → 1,582.4 and
-transient 5,629.1 → 3,987.7 → 3,494.0 B/row on 3.13, retained 2,570.8 →
-1,809.1 → 1,623.5 and transient 5,590.4 → 3,856.2 → 3,313.7 on 3.14;
-`acquisition.document` retained 3,601.0 → 2,933.6 → 2,772.3 and transient
-7,722.6 → 6,078.0 → 5,643.9 on 3.13, retained 3,780.9 → 3,012.3 → 2,813.6 and
-transient 7,752.2 → 5,952.3 → 5,459.6 on 3.14. Against `after/` the acquisition
-high-water marks are 3.1–5.2% lower on 3.13 and 5.6–9.8% lower on 3.14 at
-every level and layout — the binding rows the recovery no longer materializes
-per resolved row — and the retained checkpoints are within 1.7%.
+both runtimes across the 8, 32 and 128-row levels: `acquisition.columns`
+retained 2,408.0 → 1,745.8 → 1,584.2 and transient 5,751.0 → 3,982.9 → 3,490.5
+B/row on 3.13, retained 2,565.1 → 1,812.8 → 1,622.0 and transient 5,756.0 →
+3,829.6 → 3,310.8 on 3.14; `acquisition.document` retained 3,581.5 → 2,940.8 →
+2,769.4 and transient 7,792.1 → 6,145.2 → 5,646.3 on 3.13, retained 3,823.9 →
+3,014.4 → 2,812.4 and transient 7,863.9 → 6,014.2 → 5,463.8 on 3.14.
 
-**Structural retention elsewhere.** `model.prepared` retains the same bytes
-as `after/` on both runtimes (415,992 and 427,016 B) with its high-water mark
-0.1% lower; every read-plan checkpoint is identical to `after/` and every
-read-plan peak identical or 0.2% lower; the geometry-read retained pages are
-identical on both runtimes and their peaks 0.1–2.3% lower. The stress cells' retained and
-transient bytes per projection are at `before/` parity to the byte on both
-runtimes (`stress-columns` 117.375 / 128.000 transient, `stress-document`
-181.375 / 192.000; `after/`'s 3.14 readings sit 0.75 B/projection below every
-other capture), with the prepared sets at `after/`'s figures.
-
-**Live delivery, inspected explicitly.** The delivery workloads are not gated;
-`bitemporal-current` is the one whose memory `after/` moved, and it is read
-here against both captures (`before/` → `after/` → `recovered/`, KiB):
+**Live delivery, inspected explicitly.** The delivery workloads are not gated.
+The two whose eager cells are the derived readings named under *Provenance*
+sit at parity with both comparison bases, which read those cells identically:
+`conventional-fanout` and `duplicate-include` eager peak and retained memory are
+within 0.012% of `before/` and `after/` on both runtimes, which is where the fix
+returns them to.
+`bitemporal-current` is the workload whose memory `after/` moved, and it is
+read here against both captures (`before/` → `after/` → `recovered/`, KiB):
 
 | Runtime | Cell | `before/` | `after/` | `recovered/` | vs `after/` | vs `before/` |
 |---|---|---:|---:|---:|---:|---:|
-| 3.13 | `eagerMemory.peakKiB` | 426.5 | 466.3 | 468.6 | +0.5% | +9.9% |
-| 3.13 | `eagerMemory.retainedKiB` | 299.0 | 313.8 | 315.0 | +0.4% | +5.4% |
-| 3.13 | `streamedMemory.page1PeakKiB` | 42.2 | 42.4 | 42.7 | +0.8% | +1.4% |
-| 3.13 | `streamedMemory.page32PeakKiB` | 94.2 | 101.9 | 104.9 | +2.9% | +11.3% |
-| 3.13 | `streamedMemory.page128PeakKiB` | 251.1 | 279.8 | 282.0 | +0.8% | +12.3% |
-| 3.13 | `streamedMemory.retainedKiB` | 16.2 | 20.8 | 16.9 | −18.8% | +4.5% |
-| 3.14 | `eagerMemory.peakKiB` | 398.7 | 428.6 | 426.7 | −0.4% | +7.0% |
-| 3.14 | `eagerMemory.retainedKiB` | 304.4 | 315.0 | 316.6 | +0.5% | +4.0% |
-| 3.14 | `streamedMemory.page1PeakKiB` | 42.4 | 41.8 | 45.2 | +8.1% | +6.7% |
-| 3.14 | `streamedMemory.page32PeakKiB` | 86.6 | 97.4 | 98.1 | +0.7% | +13.3% |
-| 3.14 | `streamedMemory.page128PeakKiB` | 238.8 | 283.9 | 285.3 | +0.5% | +19.5% |
-| 3.14 | `streamedMemory.retainedKiB` | 15.6 | 11.1 | 16.0 | +44.5% | +2.9% |
+| 3.13 | `eagerMemory.peakKiB` | 426.5 | 466.3 | 465.6 | −0.2% | +9.2% |
+| 3.13 | `eagerMemory.retainedKiB` | 299.0 | 313.8 | 312.3 | −0.5% | +4.5% |
+| 3.13 | `streamedMemory.page1PeakKiB` | 42.2 | 42.4 | 45.6 | +7.4% | +8.1% |
+| 3.13 | `streamedMemory.page32PeakKiB` | 94.2 | 101.9 | 107.9 | +5.9% | +14.5% |
+| 3.13 | `streamedMemory.page128PeakKiB` | 251.1 | 279.8 | 289.1 | +3.3% | +15.2% |
+| 3.13 | `streamedMemory.retainedKiB` | 16.2 | 20.8 | 17.7 | −15.0% | +9.3% |
+| 3.14 | `eagerMemory.peakKiB` | 398.7 | 428.6 | 431.3 | +0.6% | +8.2% |
+| 3.14 | `eagerMemory.retainedKiB` | 304.4 | 315.0 | 316.7 | +0.5% | +4.0% |
+| 3.14 | `streamedMemory.page1PeakKiB` | 42.4 | 41.8 | 45.2 | +8.0% | +6.7% |
+| 3.14 | `streamedMemory.page32PeakKiB` | 86.6 | 97.4 | 101.6 | +4.3% | +17.4% |
+| 3.14 | `streamedMemory.page128PeakKiB` | 238.8 | 283.9 | 293.5 | +3.4% | +22.9% |
+| 3.14 | `streamedMemory.retainedKiB` | 15.6 | 11.1 | 21.1 | +90.3% | +35.6% |
 
-Eager peak and retained memory sit where `after/` put them, within 0.5% on
-both runtimes; the page-32 and page-128 streamed peaks are within 3%; the
-3.14 page-1 peak (45.2 KiB against 41.8) and the two
-`streamedMemory.retainedKiB` cells are 10–45 KiB readings that moved by a few
-KiB in opposite directions between the captures — the retained cells back to
-`before/`'s figures — and are the smallest, most quantized cells of the
-workload. The eager peak on 3.14 reads
-426.7 KiB against the 425 KiB Budget Contract ceiling, the one memory advisory
-above, as `after/`'s 428.6 did. The cost over `before/` therefore stands as
-`after/`'s own, restated: eager peak +9.9% / +7.0%, eager retained +5.4% /
-+4.0%, and streamed page-128 peak +12% / +20% on 3.13 / 3.14 is the ownership
-of each delivered Charter's raw Structured Column in deferred read evidence —
-one owned `FrozenMap` tree per delivered row of the one bitemporal Entity among
-the delivery workloads, retained through `retain_document_value` for the
-delivered snapshot's lifetime under the complete-predecessor rule, attributed
-under *Open observations* above. No phase of the recovery added a copy or
-extended a lifetime there, and the other four delivery workloads' eager peak
-and retained memory are identical to `after/` within 0.3%.
+Eager peak and retained memory sit where `after/` put them, within 0.6% on both
+runtimes; the 3.14 eager peak reads 431.3 KiB against the 425 KiB Budget
+Contract ceiling, which is the `bitemporal-current.eagerMemory.peakKiB`
+advisory in the verbatim block, as `after/`'s 428.6 was. The streamed page
+peaks are 3 to 8% above `after/` and are readings this capture left exactly as
+it took them, database-backed cells for which no provider-free correspondence
+survived; `streamedMemory.retainedKiB` is a 10–20 KiB reading whose few-KiB
+movement in either direction between captures is the most quantized cell of the
+workload. The streamed peaks of `duplicate-include` carry the same signature
+and are the two memory-ceiling advisories beside it.
 
-**Re-derivation.** With every reading under the ceilings in force, the 154
-gates were re-derived from `recovered/` under the unchanged rule — the larger
-runtime reading at each address, scaled by 1.10, rounded up — and
-`spec/memory-gates.yaml` now names `recovered/portfolio.json` as its basis
-with the header, advisory allowances, and scaling domains verbatim. 46
-ceilings fell, 85 are unchanged to the byte, and 23 rose by at most 2.3%; the
-movements are itemized under *Basis* above.
-
-### Pass observations
-
-The capture carries the current vocabulary, `encodeManagedDocument` and
-`encodeManagedMany`, read as returns per row under *Limits*; both runtimes
-agree exactly on every counter of every case. `detachJsonContainer` is 0 on
-every case, as at `after/`. `applyPatches` is 1 on every changed Relational
-Document successor (`txtime.changed.document.*`,
-`bitemporal.interior.document.*`, every `ancestor.*.document.typed`) and 0
-everywhere else. The managed encoders read where the legacy names read zero:
-every categorical Columns case, every `plain.changed` case, and the changed
-Document successors pay 4 document returns and 1 Many return per row;
-`txtime.opening.document.*` pays 5 and 1; `bitemporal.interior.columns.*` 12
-and 3 and `bitemporal.interior.document.*` 4 and 1; `txtime.unchanged.document.*`
-pays none (an unchanged successor has nothing to encode); the geometry families count the root and every nested return —
-`geometry.many-N` Document N + 2 and Columns N + 1 beside one Many return
-(`many-32`: 34 and 33), `geometry.depth-N` Document N + 3 and Columns N + 2
-(`depth-8`: 11 and 10), the width and sparse levels 4 and 3; and each
-changed-ancestor Document successor pays one managed encoding for its one
-replaced subtree beside its one patch (`ancestor.*.document.typed` 1, 0, 1)
-where its Columns twin pays 3 and 1 with no patch. The legacy `encodeDocument`
-and `encodeMany` cells of `before/` and `after/` are unmatched in both
-comparisons — 184 rows missing on each side of each — and are not compared
-with these: they count different functions, and their historical zeros say
-nothing about how many encodings a row paid.
+**Re-derivation.** With every reading under the ceilings in force, the gates
+were re-derived from this capture under the unchanged rule — the larger runtime
+reading at each address, scaled by 1.10, rounded up — and
+`spec/memory-gates.yaml` names this `recovered/portfolio.json` as its basis with
+the header, advisory allowances, and scaling domains verbatim. 154 authored
+ceilings were rewritten and eight inserted, for 162 in all: 37 fell, 55 are
+unchanged to the byte, and 62 rose. The movements, the rises that are retention the
+tree is meant to hold, and the eight inserted addresses are itemized under
+*Basis* above.

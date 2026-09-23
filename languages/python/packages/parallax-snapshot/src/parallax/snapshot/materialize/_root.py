@@ -399,7 +399,6 @@ class RootView:
         member_rows = cast("list[tuple[object, ...]]", rows.member_rows)
         keys = cast("list[LogicalKey | None]", rows.keys)
         view_rows = cast("list[Sequence[object]]", rows.view_rows)
-        overwritten_edges = cast("list[Sequence[object]]", rows.overwritten_edges)
         witnesses = cast("list[object]", rows.witnesses)
         logical_ids = cast("list[int]", rows.logical_ids)
         for projection in reached:
@@ -410,7 +409,7 @@ class RootView:
             rows.issues.release(projection)
             keys[projection] = None
             view_rows[projection] = ()
-            overwritten_edges[projection] = ()
+            rows.overwritten_edges.release(projection)
             witnesses[projection] = None
             rows.decoders.release(projection)
             logical_ids[projection] = 0

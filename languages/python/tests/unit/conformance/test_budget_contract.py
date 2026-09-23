@@ -44,11 +44,8 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert contract.memory_scaling_arms == (200, 2_000)
 
 
-# A retained capture keeps the digest measured at its producing commit. The
-# Snapshot workload is unchanged and remains current; the authority migration
-# changed the source defining the write-lowering workload without a recapture,
-# so verification must name that member stale instead of making the historical
-# evidence claim new inputs.
+# The canonical capture is current at head: a change to any input a digest
+# covers requires a recapture, never an edit to the retained evidence.
 def test_committed_envelope_digests_preserve_their_provenance() -> None:
     repo = case_format.find_repo_root()
     portfolio = cast(
@@ -63,11 +60,9 @@ def test_committed_envelope_digests_preserve_their_provenance() -> None:
 
     assert provenance["budgetContractDigest"] == BudgetContract.load().digest
     assert provenance["workloadDigest"] == workload_digest()
-    assert write_provenance["workloadDigest"] != lowering_support.write_lowering_digest()
+    assert write_provenance["workloadDigest"] == lowering_support.write_lowering_digest()
     assert re.fullmatch(r"[0-9a-f]{64}", cast("str", provenance["lockDigest"]))
-    assert cost_report.verify(portfolio) == [
-        "the write-lowering envelope's workload digest is stale"
-    ]
+    assert cost_report.verify(portfolio) == []
 
 
 @pytest.mark.parametrize(
@@ -185,7 +180,7 @@ def test_every_memory_gate_is_the_basis_reading_under_the_stated_rule() -> None:
     assert gates.document() == derive_memory_gates(portfolio, gates.headroom)
     basis = _basis_addresses(portfolio)
     assert set(gates.addresses) == set(basis)
-    assert len(gates.addresses) == len(set(gates.addresses)) == 154
+    assert len(gates.addresses) == len(set(gates.addresses)) == 162
     for gate in gates.gates:
         assert gate.unit == basis[(gate.subject, gate.workload, gate.cell)]
         assert gate.max_bytes > 0

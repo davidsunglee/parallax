@@ -1600,6 +1600,34 @@ def test_a_matched_pair_is_compared_with_its_compatibility_stated_first(
     assert "Compatibility established" not in capsys.readouterr().out
 
 
+def test_an_amended_capture_is_stated_by_verification_and_by_every_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    base, head, *_rest, head_conditions = _pair(tmp_path, contract)
+    assert cost_report.amendment_beside(head) is None
+
+    head_conditions[cost_report.ADJUSTMENT_FIELD] = {
+        "remeasured": {"count": 470},
+        "derived": {"count": 8},
+    }
+    _rewrite(head.parent / cost_report.CONDITIONS_FILE, head_conditions)
+    amendment = (
+        "470 re-measured and 8 derived readings changed after the run its provenance names, "
+        f"recorded in the {cost_report.ADJUSTMENT_FIELD} of {cost_report.CONDITIONS_FILE}"
+    )
+
+    assert cost_report.main(["--verify", str(head)]) == 0
+    assert f"the capture is amended: {amendment}" in capsys.readouterr().out
+    assert cost_report.main(["--compare", str(base), str(head)]) == 0
+    assert f"- The head capture is amended: {amendment}." in capsys.readouterr().out
+    assert cost_report.main(["--compare", str(base), str(head), "--require-compatible"]) == 0
+    stated = capsys.readouterr().out
+    assert "Compatibility established over " in stated
+    assert f"- The head capture is amended: {amendment}." in stated
+
+
 def test_an_unmatched_pair_is_refused_before_any_arithmetic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -6861,7 +6861,9 @@ locking unions retain the core refusal.
   high-water mark of every keyed-write, predicate-acquisition, and
   model-preparation case, and the retained and peak readings of every
   provider-free geometry read and cold read-plan compilation, under both
-  layouts — beside the scaling domains whose per-unit readings must not grow
+  layouts, and of the cold plan of every guarded-control width, which the
+  instruments address by width rather than by layout — beside the scaling
+  domains whose per-unit readings must not grow
   with scale (the predicate-acquisition levels, per layout) and the advisory
   allowances timing and byte deltas are read against. Python code loads it
   through `parallax.conformance.budget.MemoryGates`; no gate, report, or test
@@ -6890,7 +6892,9 @@ locking unions retain the core refusal.
   window moves neither reading, and only the pass observations and advisory
   timing reflect it. The headroom is `1.10`, the Budget Contract's own
   `individualMax` for a memory cell; a gate is re-derived only from a clean
-  capture under the same rule, and never relaxed to admit a reading. The
+  capture — or from one amended under **Amended capture** below, whose
+  amendment the derivation reads exactly as it reads the run — under the same
+  rule, and never relaxed to admit a reading. The
   report's verifier states a reading past its gate as an advisory and never
   fails for it, because the gate blocks in the cost class and only there.
 - **Snapshot Delivery Budget Contract.**
@@ -6972,7 +6976,9 @@ locking unions retain the core refusal.
   script's diagnostic is printed and refuses `--out`, and the collector refuses
   an output directory inside the one the committed capture lives in, so a
   diagnostic can never be mistaken for evidence by having replaced it. The
-  capture path is unchanged by its presence. Pull
+  capture path is unchanged by its presence. A diagnostic reading reaches
+  committed evidence by one path only, the recorded amendment of **Amended
+  capture** below, which is what states it as one. Pull
   requests observe merge base and head on one assigned runner and main observes
   head, uploading commit-keyed envelopes and advisory summaries from a
   non-required CI job.
@@ -7019,20 +7025,50 @@ locking unions retain the core refusal.
   producing commit, so neither a
   dependency bump, a rebase, nor an instrument edit made after it may force
   another; comparability across such an edit is a judgement recorded beside
-  the evidence, not a source hash. The non-required cost-report CI
+  the evidence, not a source hash. The required `python-verify-cost` CI
   job verifies the canonical current portfolio against its checked-out head lock
   and reports freshness explicitly in the job summary, including a match even
-  when another verification check fails. Pull requests also check the event merge
+  when another verification check fails. It is required because what it fails
+  for is evidence that is not evidence, and the only answer to that is a
+  capture: a change to an input a workload digest covers blocks the pull
+  request making it until the evidence is retaken. Everything a capture may
+  drift past without ceasing to be evidence — a moved lock, a rebase, a
+  ceiling, a memory gate — is an advisory line and blocks nothing here. Pull requests also check the event merge
   commit's lock without moving the head or merge-base measurements. Verification
   failure preserves collection and artifact upload. Lock freshness is advisory
   and relative to the inspected checkout; required database-free gates retain
   Budget Contract and workload-catalog equality. Rebaselining replaces the
-  canonical portfolio with a clean capture whose Snapshot delivery member is
+  canonical portfolio with a clean capture — or with one amended under
+  **Amended capture** below — whose Snapshot delivery member is
   schema-authoritative under the revised contract.
-  Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
+  Observations never rewrite or ratchet the Budget Contract. Relaxing a Budget
+  Contract ceiling requires
   clean schema-authoritative Snapshot delivery envelopes under both the old and
   proposed contracts plus an explicit reviewed contract change and rationale for
-  every relaxed ceiling.
+  every relaxed ceiling; an amended capture establishes neither side of that
+  pair.
+- **Amended capture.** A capture is the single run its provenance names, with
+  one recorded exception. When the run measures a defect that is fixed before
+  the capture is committed, the readings that fix moves may be amended in
+  place rather than bought again with another run: re-measured through the
+  member's own instruments in a `--diagnostic` subset run with the fix in the
+  tree, or derived by shifting captured values and every captured sample by a
+  measured delta. Nothing else may be amended, and a reading left as captured
+  stays exactly as the run read it. The amendment is evidence only while it is
+  disclosed. An `adjustment` object at the top of the capture's
+  `conditions.json` is its full record: the fix and the reason for it, which
+  readings were re-measured and which derived, how each was obtained, what was
+  left as captured and why the correspondence survives there, where the
+  diagnostic documents behind it are kept, and every published verdict a
+  derived reading moved. Provenance still names the run's producing commit and
+  never the commit carrying the fix, so nothing but the `adjustment`
+  distinguishes an amended capture from a single run — which is why
+  `cost_report.py` states the amendment in `--verify` and in every `--compare`
+  rendering rather than leaving a reader to find it. What amending costs is
+  measurement regime: an amended reading was taken under a subset's import and
+  heap conditions rather than the whole portfolio's, and a gate derived from
+  it carries that. Trading a capture's runner hour for that is the owner's
+  judgement, recorded beside the evidence and reviewable from it.
 - **Complete verification command.** `just python-check` — all three class
   aggregates, ending with a summary block listing every check as run, failed, or
   skipped-with-reason.

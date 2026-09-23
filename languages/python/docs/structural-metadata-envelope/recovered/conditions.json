@@ -1,0 +1,175 @@
+{
+  "adjustment": {
+    "captured": {
+      "databaseBackedMemoryReadings": [
+        "3.13 conventional-fanout.streamedMemory.retainedKiB",
+        "3.13 conventional-fanout.streamedMemory.page1PeakKiB",
+        "3.13 conventional-fanout.streamedMemory.page32PeakKiB",
+        "3.13 conventional-fanout.streamedMemory.page128PeakKiB",
+        "3.13 duplicate-include.streamedMemory.retainedKiB",
+        "3.13 duplicate-include.streamedMemory.page1PeakKiB",
+        "3.13 duplicate-include.streamedMemory.page32PeakKiB",
+        "3.13 duplicate-include.streamedMemory.page128PeakKiB",
+        "3.13 document-heavy.eagerMemory.retainedKiB",
+        "3.13 document-heavy.eagerMemory.peakKiB",
+        "3.13 document-heavy.streamedMemory.retainedKiB",
+        "3.13 document-heavy.streamedMemory.page1PeakKiB",
+        "3.13 document-heavy.streamedMemory.page32PeakKiB",
+        "3.13 document-heavy.streamedMemory.page128PeakKiB",
+        "3.13 versioned-document.eagerMemory.retainedKiB",
+        "3.13 versioned-document.eagerMemory.peakKiB",
+        "3.13 versioned-document.streamedMemory.retainedKiB",
+        "3.13 versioned-document.streamedMemory.page1PeakKiB",
+        "3.13 versioned-document.streamedMemory.page32PeakKiB",
+        "3.13 versioned-document.streamedMemory.page128PeakKiB",
+        "3.13 bitemporal-current.eagerMemory.retainedKiB",
+        "3.13 bitemporal-current.eagerMemory.peakKiB",
+        "3.13 bitemporal-current.streamedMemory.retainedKiB",
+        "3.13 bitemporal-current.streamedMemory.page1PeakKiB",
+        "3.13 bitemporal-current.streamedMemory.page32PeakKiB",
+        "3.13 bitemporal-current.streamedMemory.page128PeakKiB",
+        "3.14 conventional-fanout.streamedMemory.retainedKiB",
+        "3.14 conventional-fanout.streamedMemory.page1PeakKiB",
+        "3.14 conventional-fanout.streamedMemory.page32PeakKiB",
+        "3.14 conventional-fanout.streamedMemory.page128PeakKiB",
+        "3.14 duplicate-include.streamedMemory.retainedKiB",
+        "3.14 duplicate-include.streamedMemory.page1PeakKiB",
+        "3.14 duplicate-include.streamedMemory.page32PeakKiB",
+        "3.14 duplicate-include.streamedMemory.page128PeakKiB",
+        "3.14 document-heavy.eagerMemory.retainedKiB",
+        "3.14 document-heavy.eagerMemory.peakKiB",
+        "3.14 document-heavy.streamedMemory.retainedKiB",
+        "3.14 document-heavy.streamedMemory.page1PeakKiB",
+        "3.14 document-heavy.streamedMemory.page32PeakKiB",
+        "3.14 document-heavy.streamedMemory.page128PeakKiB",
+        "3.14 versioned-document.eagerMemory.retainedKiB",
+        "3.14 versioned-document.eagerMemory.peakKiB",
+        "3.14 versioned-document.streamedMemory.retainedKiB",
+        "3.14 versioned-document.streamedMemory.page1PeakKiB",
+        "3.14 versioned-document.streamedMemory.page32PeakKiB",
+        "3.14 versioned-document.streamedMemory.page128PeakKiB",
+        "3.14 bitemporal-current.eagerMemory.retainedKiB",
+        "3.14 bitemporal-current.eagerMemory.peakKiB",
+        "3.14 bitemporal-current.streamedMemory.retainedKiB",
+        "3.14 bitemporal-current.streamedMemory.page1PeakKiB",
+        "3.14 bitemporal-current.streamedMemory.page32PeakKiB",
+        "3.14 bitemporal-current.streamedMemory.page128PeakKiB"
+      ],
+      "how": "left exactly as the capture read them",
+      "instanceState": "the instance-state member builds pages through the same PageBuilder; a whole re-measurement with the fix in place reproduced all 258 of its byte readings exactly, so it is left as captured because it is already what the fix reads",
+      "scope": "every timing, count and ratio reading, every instance-state and lifecycle-overhead reading, and the database-backed memory readings with no provider-free counterpart the correspondence survives"
+    },
+    "date": "2026-09-23",
+    "derived": {
+      "correspondence": {
+        "conventional-fanout.eagerMemory.peakKiB": "control-delivery-conventional-fanout.wire.eager.roots200.peakKiB",
+        "conventional-fanout.eagerMemory.retainedKiB": "control-delivery-conventional-fanout.wire.eager.roots200.retainedKiB",
+        "duplicate-include.eagerMemory.peakKiB": "control-delivery-duplicate-include.wire.eager.roots200.peakKiB",
+        "duplicate-include.eagerMemory.retainedKiB": "control-delivery-duplicate-include.wire.eager.roots200.retainedKiB"
+      },
+      "count": 8,
+      "how": "not measured: the captured value and every captured sample shifted by the measured delta of the provider-free control reading at the matching root count, which is what keeps value equal to the sample median",
+      "validation": "each correspondence was checked against a direct diagnostic reading of the database-backed cell: agreement within 0.117 KiB on 0.009% of the reading. The streamed cells carry no correspondence that survives the same check and are left as captured.",
+      "verdictChange": "one derived reading moved a published verdict: duplicate-include.eagerMemory.peakKiB on 3.14 reads 1531.439 KiB as captured, outside its 1500 KiB budget-contract.yaml memory ceiling, and 1393.369 KiB as derived, inside it, which is why --verify reports nineteen advisories and not twenty. That outcome rests on arithmetic over captured samples rather than on a measurement, though the direct diagnostic readings of that same cell corroborate the derivation on both runtimes to within 0.01% (3.14: 1393.432 measured against 1393.369 derived; 3.13: 1325.011 against 1324.948). No memory gate is affected: eagerMemory readings are taken in the live-delivery window, which is not one of GATED_WINDOWS."
+    },
+    "evidence": "$HOME/.local/share/parallax/evidence/cor-173/: remeasure.sh and remeasure.log with the diagnostic documents remeasure-{snapshot-delivery,write-lowering,instance-state}.json, spotcheck.sh with spotcheck-snapshot-delivery.json, amend.py and amendment.txt, and verify-run1-amended.txt",
+    "provenanceCommit": "the provenance every member names is the capture's producing commit, not the commit carrying the fix; the readings below were taken or derived after it",
+    "reason": "PageBuilder.add_claim allocated an unconditional per-projection list for _overwritten_edges, introduced at 46883551 and measured by this capture. The fix makes _overwritten_edges a sparse dict behind SparseEdges in packages/parallax-snapshot/src/parallax/snapshot/materialize/_page.py and _root.py.",
+    "remeasured": {
+      "count": 470,
+      "how": "a --diagnostic subset run of the member's own instruments, with the fix in the tree; value and samples are both the fresh reading",
+      "scope": "every memory reading in a window that needs no database: snapshot-delivery provider-free-delivery, read-plan-compilation, positional-materialization, control-delivery, read-plan-reuse and result-held-metadata, and every byte-unit write-lowering reading"
+    },
+    "schemaVersion": 1
+  },
+  "members": {
+    "instance-state": {
+      "runtimes": {
+        "3.13": {
+          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-instance-state-3.13/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.13.15"
+        },
+        "3.14": {
+          "executable": "/Users/david/.humanlayer/workspaces/cor-173-rebaseline-cost-portfolio-8fza6s/parallax/languages/python/.venv/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.14.7"
+        }
+      },
+      "sources": {
+        "tests/unit/_instance_state_support.py": "80f1f5a66eb3472a31cbef4ce1507328c43f9245476f83aff9754017934d348d",
+        "tests/unit/memory_instruments.py": "72a35a2f0c1e533c335464648eb1f1b91fe401af75d233e7461f1130d34751fb",
+        "tools/instance_state_overhead.py": "f32bc540af6d8be02d46a2ebbbbdd47b9cf8347fd7a282b656fdedb02a81339b",
+        "tools/instance_state_reading.py": "52423172aecbbef289fc090e5015f292b95709708c05df094f9902b9913a1855"
+      }
+    },
+    "lifecycle-overhead": {
+      "runtimes": {
+        "3.13": {
+          "reason": "the member recorded no identity for this runtime",
+          "status": "unavailable"
+        },
+        "3.14": {
+          "executable": "/Users/david/.humanlayer/workspaces/cor-173-rebaseline-cost-portfolio-8fza6s/parallax/languages/python/.venv/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.14.7"
+        }
+      },
+      "sources": {
+        "tools/lifecycle_overhead.py": "f05a5282078794b9d94a529bd722ef2d54bac926cd9c85277966c4ee65884619"
+      }
+    },
+    "snapshot-delivery": {
+      "runtimes": {
+        "3.13": {
+          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-snapshot-delivery-3.13/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.13.15"
+        },
+        "3.14": {
+          "executable": "/Users/david/.humanlayer/workspaces/cor-173-rebaseline-cost-portfolio-8fza6s/parallax/languages/python/.venv/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.14.7"
+        }
+      },
+      "sources": {
+        "tests/unit/_delivery_control_support.py": "ae358951103bad5ca975222606daf36f1a903ac6f8e1facf95376a73ff992ca8",
+        "tests/unit/_snapshot_materialization_support.py": "82ddfc23147e9c068bb4cfe505c3f21c14c27c0cdcce1e094dedd3ae8ebeaa2a",
+        "tests/unit/_structural_geometry_support.py": "e6cee5d6f8226e34fe39645058efd9e90ea8c7feeda40417e5a28627268cf91a",
+        "tests/unit/memory_instruments.py": "72a35a2f0c1e533c335464648eb1f1b91fe401af75d233e7461f1130d34751fb",
+        "tools/snapshot_delivery_overhead.py": "a9ae3a905a0e0fc3a9ba10da44476791e62d2f997e16b7bf2d485d09f428b3b1",
+        "tools/snapshot_delivery_reading.py": "d3a346ff41557426f35a86e1f3b7e056f177faf2a04bcd20d95f743eed5a2fec"
+      }
+    },
+    "write-lowering": {
+      "runtimes": {
+        "3.13": {
+          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-write-lowering-3.13/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.13.15"
+        },
+        "3.14": {
+          "executable": "/Users/david/.humanlayer/workspaces/cor-173-rebaseline-cost-portfolio-8fza6s/parallax/languages/python/.venv/bin/python",
+          "implementation": "CPython",
+          "status": "available",
+          "version": "3.14.7"
+        }
+      },
+      "sources": {
+        "tests/unit/_predicate_acquisition_support.py": "8eba0a947e9c8c87433dea2b63e6fc215305428d4bfd4cd59c0bd96a091b06bf",
+        "tests/unit/_structural_geometry_support.py": "e6cee5d6f8226e34fe39645058efd9e90ea8c7feeda40417e5a28627268cf91a",
+        "tests/unit/_write_lowering_support.py": "059ad352329d6754710b8b25f4a6d8db00fb7791e952673e45f635c774d96174",
+        "tests/unit/memory_instruments.py": "72a35a2f0c1e533c335464648eb1f1b91fe401af75d233e7461f1130d34751fb",
+        "tools/write_lowering_overhead.py": "a6492c4120cdd393ac62142dbbbe6f19f654c792000ea306e13e9555b5f3a73e",
+        "tools/write_lowering_reading.py": "63572d01df017401544d4f6862da0dcf29218b2a14acc0dacd9db1ab94e3556e"
+      }
+    }
+  },
+  "schemaVersion": 1
+}

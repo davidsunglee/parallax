@@ -1,0 +1,1917 @@
+{
+  "schemaVersion": 1,
+  "spans": [
+    {
+      "scope": "member",
+      "name": "snapshot-delivery",
+      "labels": {
+        "member": "snapshot-delivery"
+      },
+      "startedAt": "2026-09-23T19:29:51.765548+00:00",
+      "seconds": 3727.06107937498
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:29:52.035596+00:00",
+      "seconds": 0.16732341703027487
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T19:29:52.203073+00:00",
+      "seconds": 0.033153707976453006
+    },
+    {
+      "scope": "setup",
+      "name": "provisioner",
+      "labels": {
+        "member": "snapshot-delivery"
+      },
+      "startedAt": "2026-09-23T19:29:52.236475+00:00",
+      "seconds": 6.384198583080433
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "conventional-fanout",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:29:58.627175+00:00",
+      "seconds": 8.638726750039496
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "conventional-fanout",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:30:38.978079+00:00",
+      "seconds": 37.30205008306075
+    },
+    {
+      "scope": "workload",
+      "name": "conventional-fanout",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:29:58.627164+00:00",
+      "seconds": 279.0670978750568
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "duplicate-include",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:34:37.694995+00:00",
+      "seconds": 11.670894332928583
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "duplicate-include",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:35:22.200595+00:00",
+      "seconds": 37.13524658395909
+    },
+    {
+      "scope": "workload",
+      "name": "duplicate-include",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:34:37.694941+00:00",
+      "seconds": 294.3325734579703
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "document-heavy",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:39:32.028290+00:00",
+      "seconds": 5.252052207943052
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "document-heavy",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:40:11.160436+00:00",
+      "seconds": 12.558811958995648
+    },
+    {
+      "scope": "workload",
+      "name": "document-heavy",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:39:32.028250+00:00",
+      "seconds": 271.2424328329507
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "versioned-document",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:44:03.271393+00:00",
+      "seconds": 0.7250041250372306
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "versioned-document",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:44:33.846476+00:00",
+      "seconds": 6.695864625042304
+    },
+    {
+      "scope": "workload",
+      "name": "versioned-document",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:44:03.271350+00:00",
+      "seconds": 230.21426358399913
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "bitemporal-current",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:47:53.486226+00:00",
+      "seconds": 0.7358039169339463
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13",
+        "workload": "bitemporal-current",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:48:24.690111+00:00",
+      "seconds": 7.41268075001426
+    },
+    {
+      "scope": "workload",
+      "name": "bitemporal-current",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:47:53.486184+00:00",
+      "seconds": 235.9191262499662
+    },
+    {
+      "scope": "workload",
+      "name": "stress-columns",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:51:49.405896+00:00",
+      "seconds": 12.112695416086353
+    },
+    {
+      "scope": "workload",
+      "name": "stress-document",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:52:01.518666+00:00",
+      "seconds": 12.359125957940705
+    },
+    {
+      "scope": "workload",
+      "name": "geometry",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:52:13.877979+00:00",
+      "seconds": 217.46914329205174
+    },
+    {
+      "scope": "workload",
+      "name": "plan",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:55:51.347675+00:00",
+      "seconds": 18.21603954199236
+    },
+    {
+      "scope": "workload",
+      "name": "control",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T19:56:09.563811+00:00",
+      "seconds": 182.0438217089977
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "conventional-fanout",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T19:59:11.609933+00:00",
+      "seconds": 11.915730832959525
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "conventional-fanout",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T19:59:58.023031+00:00",
+      "seconds": 45.07214879198
+    },
+    {
+      "scope": "workload",
+      "name": "conventional-fanout",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T19:59:11.609911+00:00",
+      "seconds": 366.3822785000084
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "duplicate-include",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T20:05:17.993130+00:00",
+      "seconds": 13.469844916951843
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "duplicate-include",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T20:06:08.052752+00:00",
+      "seconds": 38.474806208047085
+    },
+    {
+      "scope": "workload",
+      "name": "duplicate-include",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:05:17.993079+00:00",
+      "seconds": 349.0148898749612
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "document-heavy",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T20:11:07.020401+00:00",
+      "seconds": 4.621115167043172
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "document-heavy",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T20:11:50.858833+00:00",
+      "seconds": 11.460158917005174
+    },
+    {
+      "scope": "workload",
+      "name": "document-heavy",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:11:07.020360+00:00",
+      "seconds": 311.4805845840601
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "versioned-document",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T20:16:18.502738+00:00",
+      "seconds": 0.5566449579782784
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "versioned-document",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T20:16:52.391244+00:00",
+      "seconds": 7.151151916012168
+    },
+    {
+      "scope": "workload",
+      "name": "versioned-document",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:16:18.502697+00:00",
+      "seconds": 266.51607816596515
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "bitemporal-current",
+        "roots": "200"
+      },
+      "startedAt": "2026-09-23T20:20:45.020280+00:00",
+      "seconds": 0.45234070799779147
+    },
+    {
+      "scope": "setup",
+      "name": "provision",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14",
+        "workload": "bitemporal-current",
+        "roots": "2000"
+      },
+      "startedAt": "2026-09-23T20:21:19.095420+00:00",
+      "seconds": 5.251744374982081
+    },
+    {
+      "scope": "workload",
+      "name": "bitemporal-current",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:20:45.020243+00:00",
+      "seconds": 270.98828304198105
+    },
+    {
+      "scope": "workload",
+      "name": "stress-columns",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:25:16.010021+00:00",
+      "seconds": 10.194093832978979
+    },
+    {
+      "scope": "workload",
+      "name": "stress-document",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:25:26.204214+00:00",
+      "seconds": 10.890768917044625
+    },
+    {
+      "scope": "workload",
+      "name": "geometry",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:25:37.095200+00:00",
+      "seconds": 181.41922200005502
+    },
+    {
+      "scope": "workload",
+      "name": "plan",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:28:38.515437+00:00",
+      "seconds": 17.982607166050002
+    },
+    {
+      "scope": "workload",
+      "name": "control",
+      "labels": {
+        "member": "snapshot-delivery",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:28:56.498189+00:00",
+      "seconds": 181.26615599996876
+    },
+    {
+      "scope": "setup",
+      "name": "close",
+      "labels": {
+        "member": "snapshot-delivery"
+      },
+      "startedAt": "2026-09-23T20:31:57.845804+00:00",
+      "seconds": 0.6263576250057667
+    },
+    {
+      "scope": "member",
+      "name": "lifecycle-overhead",
+      "labels": {
+        "member": "lifecycle-overhead"
+      },
+      "startedAt": "2026-09-23T20:31:58.884315+00:00",
+      "seconds": 14.5029113329947
+    },
+    {
+      "scope": "member",
+      "name": "instance-state",
+      "labels": {
+        "member": "instance-state"
+      },
+      "startedAt": "2026-09-23T20:32:13.394396+00:00",
+      "seconds": 19.095306749921292
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:13.633579+00:00",
+      "seconds": 0.2075593750923872
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:13.843646+00:00",
+      "seconds": 0.033924999996088445
+    },
+    {
+      "scope": "scenario",
+      "name": "shallow",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:13.877966+00:00",
+      "seconds": 1.1025940830586478
+    },
+    {
+      "scope": "scenario",
+      "name": "wide",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:14.980597+00:00",
+      "seconds": 1.3384997920366004
+    },
+    {
+      "scope": "scenario",
+      "name": "nested",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:16.319143+00:00",
+      "seconds": 2.2474404589738697
+    },
+    {
+      "scope": "scenario",
+      "name": "nullable",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:18.566634+00:00",
+      "seconds": 1.1329844580031931
+    },
+    {
+      "scope": "scenario",
+      "name": "partial",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:19.699664+00:00",
+      "seconds": 1.065018333029002
+    },
+    {
+      "scope": "scenario",
+      "name": "polymorphic",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:20.764728+00:00",
+      "seconds": 1.2541718749562278
+    },
+    {
+      "scope": "scenario",
+      "name": "warmed",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:22.018947+00:00",
+      "seconds": 0.9473504170309752
+    },
+    {
+      "scope": "scenario",
+      "name": "shallow",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:22.966344+00:00",
+      "seconds": 1.0491826659999788
+    },
+    {
+      "scope": "scenario",
+      "name": "wide",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:24.015572+00:00",
+      "seconds": 1.36206824996043
+    },
+    {
+      "scope": "scenario",
+      "name": "nested",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:25.377688+00:00",
+      "seconds": 2.3660689999815077
+    },
+    {
+      "scope": "scenario",
+      "name": "nullable",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:27.743814+00:00",
+      "seconds": 1.20367612503469
+    },
+    {
+      "scope": "scenario",
+      "name": "partial",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:28.947541+00:00",
+      "seconds": 1.1800553330685943
+    },
+    {
+      "scope": "scenario",
+      "name": "polymorphic",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:30.127645+00:00",
+      "seconds": 1.2906962080160156
+    },
+    {
+      "scope": "scenario",
+      "name": "warmed",
+      "labels": {
+        "member": "instance-state",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:31.418390+00:00",
+      "seconds": 0.9798220839584246
+    },
+    {
+      "scope": "member",
+      "name": "write-lowering",
+      "labels": {
+        "member": "write-lowering"
+      },
+      "startedAt": "2026-09-23T20:32:32.507084+00:00",
+      "seconds": 137.77996308298316
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13"
+      },
+      "startedAt": "2026-09-23T20:32:32.814923+00:00",
+      "seconds": 0.10641537501942366
+    },
+    {
+      "scope": "setup",
+      "name": "identity",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14"
+      },
+      "startedAt": "2026-09-23T20:32:32.921477+00:00",
+      "seconds": 0.03475904208607972
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:32.956500+00:00",
+      "seconds": 0.7445461249444634
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:33.701074+00:00",
+      "seconds": 0.6253664999967441
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:34.326478+00:00",
+      "seconds": 0.6259141670307145
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:34.952434+00:00",
+      "seconds": 0.6162589580053464
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:35.568733+00:00",
+      "seconds": 0.642763250041753
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:36.211536+00:00",
+      "seconds": 0.6037260419689119
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:36.815302+00:00",
+      "seconds": 0.6129802080104128
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:37.428319+00:00",
+      "seconds": 0.610055833007209
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:38.038412+00:00",
+      "seconds": 0.6012085829861462
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:38.639660+00:00",
+      "seconds": 0.6293821670114994
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:39.269091+00:00",
+      "seconds": 0.6157362909289077
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:39.884866+00:00",
+      "seconds": 0.6374044159892946
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:40.522307+00:00",
+      "seconds": 0.6249507090542465
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:41.147303+00:00",
+      "seconds": 0.6164244998944923
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:41.763767+00:00",
+      "seconds": 0.6410042919451371
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:42.404811+00:00",
+      "seconds": 0.6019618751015514
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:43.006813+00:00",
+      "seconds": 0.6139810420572758
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:43.620838+00:00",
+      "seconds": 0.6165580829838291
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:44.237435+00:00",
+      "seconds": 0.6419060829794034
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:44.879381+00:00",
+      "seconds": 0.6504417079268023
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-1.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:45.529860+00:00",
+      "seconds": 0.6116615830687806
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-1.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:46.141558+00:00",
+      "seconds": 0.6146415839903057
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-4.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:46.756240+00:00",
+      "seconds": 0.6446361669804901
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-4.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:47.400913+00:00",
+      "seconds": 0.6648532500257716
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-8.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:48.065804+00:00",
+      "seconds": 0.6805480000330135
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-8.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:48.746390+00:00",
+      "seconds": 0.6799737500259653
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-0.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:49.426399+00:00",
+      "seconds": 0.5996226660208777
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-0.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:50.026056+00:00",
+      "seconds": 0.6028057920048013
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-8.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:50.628897+00:00",
+      "seconds": 0.6608062089653686
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-8.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:51.289741+00:00",
+      "seconds": 0.6586372499587014
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-32.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:51.948416+00:00",
+      "seconds": 0.8657921249978244
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-32.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:52.814253+00:00",
+      "seconds": 0.8941837920574471
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-16.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:53.708489+00:00",
+      "seconds": 0.7211119590792805
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-16.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:54.429654+00:00",
+      "seconds": 0.721122125047259
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:55.150821+00:00",
+      "seconds": 0.9961027080425993
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:56.146964+00:00",
+      "seconds": 0.9732434999896213
+    },
+    {
+      "scope": "case",
+      "name": "geometry.sparse-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:57.120246+00:00",
+      "seconds": 0.6765157498884946
+    },
+    {
+      "scope": "case",
+      "name": "geometry.sparse-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:57.796798+00:00",
+      "seconds": 0.6652264159638435
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.depth-1.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:58.462060+00:00",
+      "seconds": 0.698309458908625
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.depth-1.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:59.160407+00:00",
+      "seconds": 0.664463207940571
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-16.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:32:59.824911+00:00",
+      "seconds": 0.6993351250421256
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-16.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:00.524283+00:00",
+      "seconds": 0.6904147919267416
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:01.214736+00:00",
+      "seconds": 0.9623274999903515
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:02.177102+00:00",
+      "seconds": 1.0128965839976445
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.sparse-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:03.190038+00:00",
+      "seconds": 0.7507538750069216
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.sparse-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:03.940832+00:00",
+      "seconds": 0.7160977079765871
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-8.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:04.656968+00:00",
+      "seconds": 1.3398304589791223
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-32.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:05.996842+00:00",
+      "seconds": 3.2197556250030175
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-128.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:09.216650+00:00",
+      "seconds": 11.907224958064035
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-8.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:21.123974+00:00",
+      "seconds": 1.3563999170437455
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-32.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:22.480415+00:00",
+      "seconds": 3.3578412500210106
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-128.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:33:25.838307+00:00",
+      "seconds": 11.79925841698423
+    },
+    {
+      "scope": "case",
+      "name": "response.insert.family.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "wire-insert-response"
+      },
+      "startedAt": "2026-09-23T20:33:37.637663+00:00",
+      "seconds": 0.5774270839756355
+    },
+    {
+      "scope": "case",
+      "name": "model.prepared",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "model-preparation"
+      },
+      "startedAt": "2026-09-23T20:33:38.215131+00:00",
+      "seconds": 4.6458170000696555
+    },
+    {
+      "scope": "case",
+      "name": "model.prepared.family",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.13",
+        "window": "model-preparation"
+      },
+      "startedAt": "2026-09-23T20:33:42.861008+00:00",
+      "seconds": 0.8301065840059891
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:43.691159+00:00",
+      "seconds": 0.6426772909471765
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:44.333874+00:00",
+      "seconds": 0.6431274589849636
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:44.977039+00:00",
+      "seconds": 0.6415381249971688
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:45.618619+00:00",
+      "seconds": 0.6316120410338044
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:46.250274+00:00",
+      "seconds": 0.6578135410090908
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:46.908127+00:00",
+      "seconds": 0.6309045830275863
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:47.539072+00:00",
+      "seconds": 0.6424104999750853
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:48.181523+00:00",
+      "seconds": 0.6375634169671685
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:48.819126+00:00",
+      "seconds": 0.6193624170264229
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.columns.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:49.438535+00:00",
+      "seconds": 0.6472656249534339
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:50.085841+00:00",
+      "seconds": 0.6450288339983672
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:50.730907+00:00",
+      "seconds": 0.6495615839958191
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:51.380507+00:00",
+      "seconds": 0.6462971660075709
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:52.026843+00:00",
+      "seconds": 0.6343207909958437
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:52.661201+00:00",
+      "seconds": 0.6583847920410335
+    },
+    {
+      "scope": "case",
+      "name": "txtime.opening.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:53.319623+00:00",
+      "seconds": 0.6153914169408381
+    },
+    {
+      "scope": "case",
+      "name": "txtime.changed.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:53.935055+00:00",
+      "seconds": 0.6226283750729635
+    },
+    {
+      "scope": "case",
+      "name": "txtime.unchanged.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:54.557723+00:00",
+      "seconds": 0.631931959069334
+    },
+    {
+      "scope": "case",
+      "name": "plain.changed.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:55.189695+00:00",
+      "seconds": 0.6153318340657279
+    },
+    {
+      "scope": "case",
+      "name": "bitemporal.interior.document.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:55.805066+00:00",
+      "seconds": 0.6410894580185413
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-1.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:56.446198+00:00",
+      "seconds": 0.6318379580043256
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-1.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:57.078075+00:00",
+      "seconds": 0.6350917499512434
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-4.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:57.713206+00:00",
+      "seconds": 0.6595803330419585
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-4.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:58.372832+00:00",
+      "seconds": 0.7394115830538794
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-8.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:59.112285+00:00",
+      "seconds": 0.723518833052367
+    },
+    {
+      "scope": "case",
+      "name": "geometry.depth-8.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:33:59.835843+00:00",
+      "seconds": 0.6982245000544935
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-0.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:00.534107+00:00",
+      "seconds": 0.6282715420238674
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-0.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:01.162426+00:00",
+      "seconds": 0.6133068340132013
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-8.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:01.775775+00:00",
+      "seconds": 0.6703745420090854
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-8.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:02.446192+00:00",
+      "seconds": 0.6676549169933423
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-32.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:03.113890+00:00",
+      "seconds": 0.8346350830979645
+    },
+    {
+      "scope": "case",
+      "name": "geometry.many-32.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:03.948572+00:00",
+      "seconds": 0.8320239998865873
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-16.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:04.780641+00:00",
+      "seconds": 0.6872196659678593
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-16.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:05.467902+00:00",
+      "seconds": 0.6879652079660445
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:06.155906+00:00",
+      "seconds": 0.9173098750179633
+    },
+    {
+      "scope": "case",
+      "name": "geometry.width-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:07.073255+00:00",
+      "seconds": 0.9408260000636801
+    },
+    {
+      "scope": "case",
+      "name": "geometry.sparse-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:08.014123+00:00",
+      "seconds": 0.6843790840357542
+    },
+    {
+      "scope": "case",
+      "name": "geometry.sparse-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:08.698540+00:00",
+      "seconds": 0.6801374999340624
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.depth-1.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:09.378717+00:00",
+      "seconds": 0.6482131669763476
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.depth-1.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:10.026972+00:00",
+      "seconds": 0.6506005410337821
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-16.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:10.677611+00:00",
+      "seconds": 0.6960668750107288
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-16.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:11.373718+00:00",
+      "seconds": 0.6965337089495733
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:12.070290+00:00",
+      "seconds": 0.9322630000533536
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.width-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:13.002593+00:00",
+      "seconds": 0.9417724589584395
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.sparse-64.columns.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:13.944406+00:00",
+      "seconds": 0.708190834033303
+    },
+    {
+      "scope": "case",
+      "name": "ancestor.sparse-64.document.typed",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "keyed-write"
+      },
+      "startedAt": "2026-09-23T20:34:14.652637+00:00",
+      "seconds": 0.7012739999918267
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-8.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:15.353949+00:00",
+      "seconds": 1.323914457927458
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-32.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:16.677905+00:00",
+      "seconds": 3.0295654580695555
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-128.columns",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:19.707522+00:00",
+      "seconds": 9.94353904190939
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-8.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:29.651153+00:00",
+      "seconds": 1.377943667001091
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-32.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:31.029149+00:00",
+      "seconds": 3.172261417028494
+    },
+    {
+      "scope": "case",
+      "name": "acquisition.rows-128.document",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "predicate-acquisition"
+      },
+      "startedAt": "2026-09-23T20:34:34.201466+00:00",
+      "seconds": 10.32064349995926
+    },
+    {
+      "scope": "case",
+      "name": "response.insert.family.wire",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "wire-insert-response"
+      },
+      "startedAt": "2026-09-23T20:34:44.522202+00:00",
+      "seconds": 0.6025220829760656
+    },
+    {
+      "scope": "case",
+      "name": "model.prepared",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "model-preparation"
+      },
+      "startedAt": "2026-09-23T20:34:45.124765+00:00",
+      "seconds": 4.231640459038317
+    },
+    {
+      "scope": "case",
+      "name": "model.prepared.family",
+      "labels": {
+        "member": "write-lowering",
+        "runtime": "3.14",
+        "window": "model-preparation"
+      },
+      "startedAt": "2026-09-23T20:34:49.356461+00:00",
+      "seconds": 0.8068320410093293
+    },
+    {
+      "scope": "collection",
+      "name": "python-report-cost",
+      "labels": {},
+      "startedAt": "2026-09-23T19:29:51.765437+00:00",
+      "seconds": 3898.533040874987
+    }
+  ],
+  "unavailable": []
+}

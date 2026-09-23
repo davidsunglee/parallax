@@ -154,6 +154,7 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
 
     assert len(rows.issues) == 2
     assert len(rows.decoders) == 2
+    assert len(rows.overwritten_edges) == 2
     projection_last, logical_last = root_last_uses(page)
     assert tuple(projection_last) == (0, 0)
     assert tuple(logical_last) == (0, 0)

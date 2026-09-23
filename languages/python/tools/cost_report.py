@@ -20,7 +20,10 @@ A workload digest covers what was measured — the frozen workload manifest and
 the fixture and model sources defining it — and never the instruments that
 measured it. A capture is taken once at its producing commit; the blocking
 memory gates are the cost class's, and whether a later instrument edit leaves
-two captures comparable is a judgement recorded beside the evidence.
+two captures comparable is a judgement recorded beside the evidence. A capture
+whose readings were changed after that run records the change in the
+``adjustment`` of its ``conditions.json``, and verification and comparison both
+state it rather than presenting the amended readings as the run's own.
 
 Comparison pairs readings only when their subject, runtime, window, workload,
 cell, and unit all agree, names every cell present on one side alone, and
@@ -1456,6 +1459,41 @@ def conditions_beside(portfolio: Path) -> Conditions | None:
     """The conditions written beside ``portfolio``, or absence when none was."""
     path = portfolio.parent / CONDITIONS_FILE
     return load_conditions(path) if path.exists() else None
+
+
+ADJUSTMENT_FIELD: Final = "adjustment"
+"""Where a capture's conditions record readings changed after the run."""
+
+
+def amendment_beside(portfolio: Path) -> str | None:
+    """How ``portfolio`` was amended after the run its provenance names, or
+    ``None`` when the capture is that run alone.
+
+    Provenance names a clean producing commit either way, so an amended capture
+    is distinguishable from a single run only here: every mode that states what
+    a capture is says this too, rather than presenting the amended readings as
+    the run's own.
+    """
+    path = portfolio.parent / CONDITIONS_FILE
+    if not path.exists():
+        return None
+    recorded = _object(_load(path), "conditions").get(ADJUSTMENT_FIELD)
+    if recorded is None:
+        return None
+    adjustment = _object(recorded, f"conditions {ADJUSTMENT_FIELD}")
+    changed: list[str] = []
+    for key, label in (("remeasured", "re-measured"), ("derived", "derived")):
+        entry = adjustment.get(key)
+        if entry is None:
+            continue
+        count = _object(entry, f"{ADJUSTMENT_FIELD} {key}").get("count")
+        if isinstance(count, int) and not isinstance(count, bool):
+            changed.append(f"{count} {label}")
+    detail = f"{' and '.join(changed)} readings" if changed else "readings"
+    return (
+        f"{detail} changed after the run its provenance names, recorded in the "
+        f"{ADJUSTMENT_FIELD} of {CONDITIONS_FILE}"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -3264,6 +3302,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         fresh, freshness = lock_freshness(document)
         if fresh:
             print(freshness)
+        amended = amendment_beside(args.verify)
+        if amended is not None:
+            print(f"the capture is amended: {amended}")
         for advisory in advisories(document):
             print(advisory)
         failures = verify(document, required=args.require_member)
@@ -3272,8 +3313,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1 if failures else 0
     if args.compare is not None:
         base, head = (_load(path) for path in args.compare)
+        amendments: list[str] = []
+        try:
+            for role, path in zip(("base", "head"), args.compare, strict=True):
+                amended = amendment_beside(path)
+                if amended is not None:
+                    amendments.append(f"- The {role} capture is amended: {amended}.")
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
         if not args.require_compatible:
-            print(compare(base, head), end="")
+            print(compare(base, head, amendments), end="")
             return 0
         subjects = [
             *(member.subject for member in MEMBERS if member.required),
@@ -3293,7 +3342,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for failure in checked.failures:
                 print(failure, file=sys.stderr)
             return 1
-        print(compare(base, head, compatibility_preface(subjects, checked)), end="")
+        print(compare(base, head, [*compatibility_preface(subjects, checked), *amendments]), end="")
         return 0
     if args.out is None:
         parser.error("--out is required when collecting")

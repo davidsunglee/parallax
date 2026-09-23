@@ -37,7 +37,7 @@ def test_ordinary_ci_verifies_committed_evidence_and_measures_nothing() -> None:
     workflow = _workflow()
     assert "python-report-cost" not in workflow["jobs"]
     job = _job()
-    assert job["continue-on-error"] is True
+    assert "continue-on-error" not in job
     assert "needs" not in job
     assert list(_steps(job)) == [
         "Identify the inspected head",
