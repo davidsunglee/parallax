@@ -1,0 +1,193 @@
+"""The RDS IAM Credential Source: a local presign, on one client, per attempt. Docker-free.
+
+No AWS is reached here and none is needed: a stub session hands out a stub
+client, which is the whole of what the record talks to. What is graded is the
+presign's inputs, that one client serves every resolution while each resolution
+signs anew, that a native failure becomes a refusal carrying no token, and that
+constructing the record runs no credential chain.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from typing import TYPE_CHECKING, cast
+
+import botocore.session
+import pytest
+from botocore.config import Config
+
+from parallax.aws import RdsIamCredentials
+from parallax.core.db_port import CredentialResolutionError, CredentialSource, Password
+
+if TYPE_CHECKING:
+    from botocore.session import Session
+
+_ENDPOINT = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
+
+
+class _StubClient:
+    """Stands in for the RDS client, recording what each presign was asked for."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.requests: list[dict[str, object]] = []
+        self._failure = failure
+
+    def generate_db_auth_token(
+        self, DBHostname: str, Port: int, DBUsername: str, Region: str
+    ) -> str:
+        self.requests.append(
+            {"DBHostname": DBHostname, "Port": Port, "DBUsername": DBUsername, "Region": Region}
+        )
+        if self._failure is not None:
+            raise self._failure
+        return f"token-{len(self.requests)}"
+
+
+class _StubSession:
+    """Stands in for a botocore session, recording every client it is asked for."""
+
+    def __init__(self, client: _StubClient | None = None) -> None:
+        self.client = client if client is not None else _StubClient()
+        self.created: list[tuple[str, str | None]] = []
+        self.configs: list[Config] = []
+
+    def create_client(self, service_name: str, region_name: str | None = None) -> _StubClient:
+        self.created.append((service_name, region_name))
+        return self.client
+
+    def set_default_client_config(self, client_config: Config) -> None:
+        self.configs.append(client_config)
+
+
+def _credentials(session: _StubSession) -> RdsIamCredentials:
+    return RdsIamCredentials(
+        host=_ENDPOINT,
+        port=5432,
+        user="orders_service",
+        region="us-east-1",
+        session=cast("Session", session),
+    )
+
+
+def test_the_presign_names_the_endpoint_the_login_and_the_region() -> None:
+    # A token proves nothing at an endpoint, a port, a user or a Region it was
+    # not signed for, so what the record was configured with is exactly what the
+    # request carries.
+    session = _StubSession()
+
+    _credentials(session).resolve()
+
+    assert session.created == [("rds", "us-east-1")]
+    assert session.client.requests == [
+        {
+            "DBHostname": _ENDPOINT,
+            "Port": 5432,
+            "DBUsername": "orders_service",
+            "Region": "us-east-1",
+        }
+    ]
+
+
+def test_every_resolution_signs_anew_on_the_one_client() -> None:
+    # Creating a client runs the AWS credential chain; signing on it does not.
+    # So the chain is paid once and each attempt gets a token of its own, which
+    # is what lets a pool outlive the fifteen minutes any one token lasts.
+    session = _StubSession()
+    credentials = _credentials(session)
+
+    produced = [credentials.resolve() for _ in range(3)]
+
+    assert len(session.created) == 1
+    assert len(session.client.requests) == 3
+    assert produced == [Password("token-1"), Password("token-2"), Password("token-3")]
+    assert all(isinstance(credential, Password) for credential in produced)
+    assert "token-1" not in repr(produced[0])
+
+
+def test_a_signing_failure_is_a_refusal_that_names_no_token() -> None:
+    native = RuntimeError("Unable to locate credentials")
+    session = _StubSession(_StubClient(failure=native))
+
+    with pytest.raises(CredentialResolutionError) as refused:
+        _credentials(session).resolve()
+
+    assert str(refused.value) == "RDS IAM token could not be generated"
+    assert refused.value.__cause__ is native
+
+
+def test_the_record_is_a_frozen_credential_source_equal_by_what_it_signs_for() -> None:
+    session = _StubSession()
+    credentials = _credentials(session)
+
+    assert isinstance(credentials, CredentialSource)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        credentials.host = "elsewhere"  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
+    assert credentials == _credentials(session)
+    assert credentials != dataclasses.replace(credentials, region="eu-west-1")
+    # The session is configuration too: two records resolving AWS credentials
+    # through different chains are different records.
+    assert credentials != dataclasses.replace(credentials, session=cast("Session", _StubSession()))
+    # A session can carry static keys and the signer is machinery, so neither
+    # reaches a log line through the generated repr.
+    assert "session" not in repr(credentials)
+    assert "signer" not in repr(credentials)
+
+
+def test_construction_resolves_no_aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Creating a client runs the credential chain, which on EC2 or ECS is a
+    # metadata-service call — configuration must own nothing and reach nothing,
+    # so the chain is paid on the first resolution and never before it.
+    sessions: list[_StubSession] = []
+
+    def _session() -> _StubSession:
+        sessions.append(_StubSession())
+        return sessions[-1]
+
+    monkeypatch.setattr(botocore.session, "get_session", _session)
+
+    credentials = RdsIamCredentials(
+        host=_ENDPOINT, port=5432, user="orders_service", region="us-east-1"
+    )
+    assert sessions == []
+
+    assert credentials.resolve() == Password("token-1")
+    assert len(sessions) == 1
+    assert sessions[0].created == [("rds", "us-east-1")]
+
+    credentials.resolve()
+    assert len(sessions) == 1
+
+
+def test_a_session_the_record_builds_bounds_every_client_it_creates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `resolve` runs where nothing above it can interrupt it, and the chain's
+    # own clients — STS and SSO included — take their bounds from the session's
+    # default configuration. What is graded is that nothing is left at
+    # botocore's defaults of sixty seconds a side and legacy retries, rather
+    # than the particular numbers chosen.
+    session = _StubSession()
+    monkeypatch.setattr(botocore.session, "get_session", lambda: session)
+
+    RdsIamCredentials(
+        host=_ENDPOINT, port=5432, user="orders_service", region="us-east-1"
+    ).resolve()
+
+    # botocore installs a Config's options as instance attributes in `__init__`
+    # and its published stubs declare none of them, so they are read off the
+    # instance dictionary rather than suppressed one by one.
+    (config,) = session.configs
+    bounds = vars(config)
+    assert 0 < bounds["connect_timeout"] < 60
+    assert 0 < bounds["read_timeout"] < 60
+    assert 0 < bounds["retries"]["max_attempts"] < 4
+
+
+def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
+    # It is the caller's session, carrying whatever bounds and whatever identity
+    # they built it with, so the record reconfigures nothing on it.
+    session = _StubSession()
+
+    _credentials(session).resolve()
+
+    assert session.configs == []

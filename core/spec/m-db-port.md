@@ -587,6 +587,15 @@ driver. What every ecosystem MUST preserve is the **direction**: above-seam code
 binds to the port, and concrete adapters are leaf production artifacts selected
 by the composition root.
 
+A **credential-provider artifact** — one identity integration's Credential
+Source, such as a cloud provider's database IAM tokens — is a **leaf beside the
+adapters**, never a layer above the seam: it produces configuration the
+composition root hands to an adapter, and it MUST NOT be required by the port,
+by an adapter, or by anything above them. Its engine-independent part MUST NOT
+depend on any adapter; an engine-specific slice of it MAY depend on that one
+concrete adapter, because what such a slice produces is that adapter's
+configuration rather than a runtime layer above the seam.
+
 A **concrete dialect strategy** — one database's pure SQL strings and parse
 functions — is a **different thing** from a **concrete adapter** — that database's
 driver-bound port implementation — even though both are per-database. Only the

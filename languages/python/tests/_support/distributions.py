@@ -12,6 +12,7 @@ PRODUCTION_PACKAGES: tuple[str, ...] = (
     "parallax-evolution",
     "parallax-snapshot",
     "parallax-postgres",
+    "parallax-aws",
 )
 ALL_PACKAGES: tuple[str, ...] = (*PRODUCTION_PACKAGES, "parallax-conformance")
 
@@ -22,6 +23,7 @@ TOP_PACKAGE_DIR: dict[str, str] = {
     "parallax-evolution": "parallax/evolution",
     "parallax-snapshot": "parallax/snapshot",
     "parallax-postgres": "parallax/postgres",
+    "parallax-aws": "parallax/aws",
     "parallax-conformance": "parallax/conformance",
 }
 
@@ -31,6 +33,7 @@ TOP_PACKAGE_NAMES: tuple[str, ...] = (
     "parallax.evolution",
     "parallax.snapshot",
     "parallax.postgres",
+    "parallax.aws",
     "parallax.conformance",
 )
 

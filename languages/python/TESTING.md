@@ -33,7 +33,7 @@ terminal-summary hook. Everything else it used to hold is in `_support/`.
 The unit surface mirrors the source tree. The test of
 `parallax/<pkg>/<sub>/<module>.py` lives at
 `tests/unit/<pkg>/<sub>/test_<module>*.py`, where `<pkg>` is one of `core`,
-`descriptor`, `evolution`, `snapshot`, `postgres`, `conformance`, with a suffix
+`descriptor`, `evolution`, `snapshot`, `postgres`, `aws`, `conformance`, with a suffix
 when several files serve one module; a test of a subpackage's own `__init__.py`
 sits in that subpackage's directory. Two more placements cover the rest: a test
 of `tools/<script>.py` goes to `tests/unit/tools/test_<script>.py`, and a

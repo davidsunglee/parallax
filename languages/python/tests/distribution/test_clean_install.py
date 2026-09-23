@@ -1,9 +1,9 @@
 """Clean-install production topology proofs (§8 / §10 `clean_install` marker).
 
-Each of the five §8 selective topologies is installed into a fresh uv venv
+Each of the six §8 selective topologies is installed into a fresh uv venv
 from the locally built wheels, and the installed distribution list + import
 space are probed to prove that unselected interchange, lifecycles, the driver,
-and the dev-only conformance tooling are all absent.
+the credential provider, and the dev-only conformance tooling are all absent.
 """
 
 from __future__ import annotations
@@ -87,6 +87,7 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert not _dist_installed(python, "pyyaml")
     assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
+    assert not _dist_installed(python, "botocore")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")
 
@@ -147,6 +148,7 @@ print(json.dumps({{"schema": schema, "document": export_json(from_yaml)}}))
     assert not _import_ok(python, "parallax.conformance")
     assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "psycopg")
+    assert not _dist_installed(python, "botocore")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")
 
@@ -168,6 +170,7 @@ def test_core_and_snapshot(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert not _dist_installed(python, "pyyaml")
     assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
+    assert not _dist_installed(python, "botocore")
 
 
 def test_core_snapshot_and_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
@@ -185,6 +188,7 @@ def test_core_snapshot_and_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> N
     assert not _import_ok(python, "parallax.conformance")
     assert not _dist_installed(python, "parallax-descriptor")
     assert not _dist_installed(python, "parallax-evolution")
+    assert not _dist_installed(python, "botocore")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")
 
@@ -210,5 +214,35 @@ def test_core_and_evolution(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert not _dist_installed(python, "pyyaml")
     assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
+    assert not _dist_installed(python, "botocore")
+    assert not _dist_installed(python, "testcontainers")
+    assert not _dist_installed(python, "parallax-conformance")
+
+
+def test_core_and_aws(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
+    python = _make_venv(tmp_path / "venv")
+    _install(python, wheelhouse, "parallax-aws")
+
+    assert _import_ok(python, "parallax.core")
+    assert _import_ok(python, "parallax.aws")
+    # The AWS credential chain arrives with the provider that declares it, so
+    # resolving a token has no optional-import failure branch.
+    assert _dist_installed(python, "botocore")
+    # A credential provider is a leaf beside the adapters, so selecting one
+    # selects no adapter: neither the Postgres wheel nor its driver is here,
+    # and the engine-specific slice is unreachable without the extra that
+    # brings that adapter in.
+    assert not _import_ok(python, "parallax.aws.postgres")
+    assert not _import_ok(python, "parallax.postgres")
+    assert not _dist_installed(python, "parallax-postgres")
+    assert not _dist_installed(python, "psycopg")
+    # No sibling interchange, lifecycle, evolution, or dev tooling either.
+    assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.evolution")
+    assert not _import_ok(python, "parallax.snapshot")
+    assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "parallax-evolution")
+    assert not _dist_installed(python, "parallax-snapshot")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")

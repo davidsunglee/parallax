@@ -6191,6 +6191,7 @@ come from `core/spec/modules.md`.
 
 | Enforcement scope | Allowed direct first-party dependencies |
 |---|---|
+| `parallax.aws` | `m-db-port` |
 | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
 | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
 | `parallax.core.db_port` | `parallax.core.diagnostics` |
@@ -6222,8 +6223,9 @@ come from `core/spec/modules.md`.
 Third-party packages are outside every scope, and a first-party grant says
 nothing about them. A **restricted external package** is one the framework
 confines to the scopes that own the substrate it provides — the Pydantic
-packages beneath an Entity value and the Psycopg packages beneath the Postgres
-adapter — and the table below is the whole of who may import each one
+packages beneath an Entity value, the Psycopg packages beneath the Postgres
+adapter, and botocore beneath the AWS credential provider — and the table below
+is the whole of who may import each one
 **directly**. The package column names the top-level import name, never a
 distribution or a submodule: import-linter forbids an external only as one
 top-level node and folds every submodule import into it, so `pydantic` covers
@@ -6279,6 +6281,7 @@ framework's own scopes.
 | `pydantic_core` | `parallax.core.entity._instance_state` |
 | `psycopg` | `parallax.postgres`, `parallax.conformance` |
 | `psycopg_pool` | `parallax.postgres` |
+| `botocore` | `parallax.aws` |
 
 A scope may declare **child enforcement scopes** over its own private
 implementation modules (*Child enforcement scopes*, below), and the table below
@@ -6636,6 +6639,7 @@ hatchling.
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `Principal`, `ScopedDatabase`, `InvalidPrincipalError`, `TransactionAuthorityError`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
+| `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source) | `botocore` (sole declarer) | `parallax-core` | `parallax.aws`: `RdsIamCredentials` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
@@ -6679,14 +6683,22 @@ hatchling.
   self-contained deployment the topology proof relies on is the deliberate
   default. The driver-free dialect strategy ships inside `parallax-core`
   (explicitly permitted by core), keeping `compile` Docker- and driver-free.
+- **Credential-provider manifest proof.** `parallax-aws` declares `parallax-core`
+  and `botocore` and nothing else, and it is the sole botocore declarer: the
+  built wheel's `Requires-Dist` is asserted to be exactly those two, and every
+  other clean-install fixture proves botocore absent. A credential provider is a
+  leaf beside the adapters rather than a layer above them — it produces
+  configuration the composition root hands to whichever adapter it selected — so
+  `parallax.aws` is granted `m-db-port` alone and the clean-install fixture
+  proves an installed provider brings no adapter and no driver with it.
 - **Composition root.** Application/test code constructs the adapter and calls
   `parallax.snapshot.connect(adapter=...)`; neither dependency leaks into
   common-runtime code, and no umbrella artifact exists.
-- **Clean-install and runtime-load checks.** Five uv-venv fixtures
+- **Clean-install and runtime-load checks.** Six uv-venv fixtures
   (`uv run pytest tests/distribution/test_clean_install.py`): core alone; core + descriptor; core +
-  evolution; core + snapshot; core + snapshot + postgres. Each inspects installed distributions
-  and import-probes to prove unselected interchange, lifecycle, adapter,
-  driver, conformance, benchmark, and container dependencies are absent from
+  evolution; core + snapshot; core + snapshot + postgres; core + aws. Each inspects installed
+  distributions and import-probes to prove unselected interchange, lifecycle, adapter,
+  driver, credential provider, conformance, benchmark, and container dependencies are absent from
   the installed and loaded production graph. The descriptor fixture also
   imports its packaged schema and exercises one JSON and one YAML round trip.
 
