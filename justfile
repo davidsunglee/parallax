@@ -32,8 +32,12 @@
 # runtimes other than Docker Desktop.
 
 # ===========================================================================
-# Configuration: module paths and the recipe listing.
+# Configuration: the recipe shell, module paths, and the recipe listing.
 # ===========================================================================
+
+# Every recipe body below is POSIX shell. `just` reaches for `sh -cu` by default
+# but for `cmd.exe` here, so this holds the whole file to one dialect.
+set windows-shell := ["sh", "-cu"]
 
 # Path to the reference harness module.
 harness := "reference-harness"

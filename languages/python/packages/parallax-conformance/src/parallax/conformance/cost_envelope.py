@@ -46,6 +46,11 @@ def _git(repo: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _has_sysconf_names(*names: str) -> bool:
+    available: Mapping[str, int] = getattr(os, "sysconf_names", {})
+    return all(name in available for name in names)
+
+
 def _sysctl(name: str) -> str | None:
     if sys.platform != "darwin":
         return None
@@ -91,7 +96,7 @@ class Provenance:
         memory = _sysctl("hw.memsize")
         if memory is not None:
             ram_gib = round(int(memory) / 1024**3)
-        elif "SC_PHYS_PAGES" in os.sysconf_names and "SC_PAGE_SIZE" in os.sysconf_names:
+        elif _has_sysconf_names("SC_PHYS_PAGES", "SC_PAGE_SIZE"):
             ram_gib = round(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024**3)
         else:
             ram_gib = 1

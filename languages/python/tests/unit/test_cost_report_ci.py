@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, cast
@@ -12,6 +13,9 @@ from cost_report import CANONICAL_PORTFOLIO
 from tests._support.repo import REPO_ROOT
 
 VERIFY_JOB = "python-verify-cost"
+SHIM_INTERPRETER = "/bin/sh"
+STEP_SHELL = "bash"
+STEP_SHELL_RUNNABLE = shutil.which(STEP_SHELL) is not None and Path(SHIM_INTERPRETER).exists()
 
 
 def _workflow() -> dict[str, Any]:
@@ -61,6 +65,10 @@ def test_the_blocking_memory_job_is_untouched_by_the_verify_only_change() -> Non
     assert step["run"] == "just python-check-cost ${{ matrix.shard }}"
 
 
+@pytest.mark.skipif(
+    not STEP_SHELL_RUNNABLE,
+    reason=f"grades a Linux CI step body, which needs {STEP_SHELL} and a {SHIM_INTERPRETER} shim",
+)
 @pytest.mark.parametrize("fresh", [True, False])
 def test_head_verification_failure_still_exposes_freshness_in_summary(
     tmp_path: Path, fresh: bool
@@ -72,12 +80,13 @@ def test_head_verification_failure_still_exposes_freshness_in_summary(
     uv = tmp_path / "uv"
     freshness = "lock freshness matches" if fresh else "stale snapshot-delivery evidence"
     uv.write_text(
-        f"#!/bin/sh\necho '{freshness}'\necho 'outside budget' >&2\nexit 1\n", encoding="utf-8"
+        f"#!{SHIM_INTERPRETER}\necho '{freshness}'\necho 'outside budget' >&2\nexit 1\n",
+        encoding="utf-8",
     )
     uv.chmod(0o755)
     summary = tmp_path / "summary.md"
     completed = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        [STEP_SHELL, "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
         env={
             **os.environ,
             "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
