@@ -5,8 +5,9 @@ from the locally built wheels, and the installed distribution list + import
 space are probed to prove that unselected interchange, lifecycles, the driver,
 the credential provider, and the dev-only conformance tooling are all absent.
 
-The last two are one topology either side of an extra: what the credential
-provider brings with it, and what selecting its engine-specific slice adds.
+The two AWS topologies are one either side of the `postgres` extra: what the
+credential provider brings with it on its own, and what selecting the extra
+adds.
 """
 
 from __future__ import annotations
