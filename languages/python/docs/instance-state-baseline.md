@@ -675,8 +675,8 @@ an outlier within it. Two readings bear against its being a surviving
 regression: the same three cells are 8.9% to 9.3% faster than this pair's own
 certified base, measured on one day through one instrument, and the 3.14 arm
 of the same comparison moves the other way. The +5.9% is read as the width of
-a cross-day comparison, and a successor re-measuring this window should expect
-3.13 at 256 roots to be the arm that reads highest.
+a cross-day comparison. That one runtime at one root count carried the arm is
+what this capture showed; one capture does not establish that it recurs.
 
 ### What the memo costs a retained result
 
