@@ -69,7 +69,7 @@ class _BoundedHelper(subprocess.Popen[bytes]):
 
     botocore waits on a profile's ``credential_process`` with no timeout of its
     own, and it waits where nothing above the source can interrupt it, so the
-    wait ends here and the helper is killed when it does.
+    wait ends here, and the helper is killed and let go of when it does.
     """
 
     def communicate(
@@ -81,10 +81,26 @@ class _BoundedHelper(subprocess.Popen[bytes]):
             )
         except subprocess.TimeoutExpired:
             self.kill()
-            # Reaping the killed helper waits on the helper alone; draining its
-            # pipes would wait on whatever else it left holding them open.
-            self.wait()
+            self._let_go()
             raise
+
+    def _let_go(self) -> None:
+        """Close the killed helper's pipes, then reap it.
+
+        The expiry travels out as the cause of a refusal a caller may hold on
+        to, and its traceback holds this helper, so a pipe still open here stays
+        open for as long as that refusal does. Closing the read ends is also
+        what ends a descendant the helper left behind: writing the credential
+        document is what such a process exists to do, and once it does there is
+        nothing reading. A descendant that writes nothing is one the helper
+        meant to outlive it, which is not the source's to kill. Reaping last
+        waits on the killed helper alone rather than on whatever else holds its
+        pipes.
+        """
+        for pipe in (self.stdout, self.stderr):
+            if pipe is not None:
+                pipe.close()
+        self.wait()
 
 
 class _BuildsProfileProviders(Protocol):
@@ -128,13 +144,13 @@ def _bounded_helpers(providers: list[CredentialProvider]) -> list[CredentialProv
     for provider in providers:
         if isinstance(provider, ProcessProvider):
             runs = cast("_RunsCredentialHelper", provider)
-            runs._popen = _BoundedHelper  # pyright: ignore[reportPrivateUsage]
+            runs._popen = _BoundedHelper  # pyright: ignore[reportPrivateUsage] - botocore takes the helper runner as a constructor argument and keeps it here
         elif isinstance(provider, AssumeRoleProvider):
             role = cast("_AssumesRole", provider)
-            builder = role._profile_provider_builder  # pyright: ignore[reportPrivateUsage]
+            builder = role._profile_provider_builder  # pyright: ignore[reportPrivateUsage] - botocore keeps an assume-role profile's provider builder here
             if builder is not None:
                 bounded = _BoundedProfileProviders(builder)
-                role._profile_provider_builder = bounded  # pyright: ignore[reportPrivateUsage]
+                role._profile_provider_builder = bounded  # pyright: ignore[reportPrivateUsage] - the wrapped builder goes back on the same attribute botocore reads
     return providers
 
 

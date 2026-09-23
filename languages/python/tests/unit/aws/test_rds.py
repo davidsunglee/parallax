@@ -29,6 +29,7 @@ from parallax.aws import RdsIamCredentials, _rds
 from parallax.core.db_port import CredentialResolutionError, CredentialSource, Password
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from botocore.session import Session
@@ -39,6 +40,22 @@ _UNANSWERING_HELPER = (
     f"{shlex.quote(sys.executable)} -c {shlex.quote('import time; time.sleep(300)')}"
 )
 _HELPER_BOUND = 1.0
+
+_BoundedHelper = _rds._BoundedHelper  # pyright: ignore[reportPrivateUsage] - the helper the record bounds is module-private and its timeout path is what these prove
+
+_WRAPPER_HELPER = (
+    "import subprocess, sys\n"
+    "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]])\n"
+    "import time; time.sleep(300)\n"
+)
+_WRAPPED_WORKER = (
+    "import os, pathlib, sys, time\n"
+    "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+    "for _ in range(600):\n"
+    "    sys.stdout.write('x' * 4096)\n"
+    "    sys.stdout.flush()\n"
+    "    time.sleep(0.05)\n"
+)
 
 
 class _StubClient:
@@ -289,3 +306,67 @@ def test_a_helper_reached_through_an_assume_role_source_profile_is_given_up_on_t
     )
 
     assert _refusal_from_a_helper_that_never_answers() < 30
+
+
+def _sleeping_helper() -> _BoundedHelper:
+    return _BoundedHelper(
+        [sys.executable, "-c", "import time; time.sleep(300)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _settles(condition: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_a_helper_given_up_on_leaves_no_pipe_of_its_own_open() -> None:
+    # The expiry leaves the process as the cause of a refusal the pool retains
+    # as `last_refusal`, and that traceback retains the helper. A pipe left open
+    # here would therefore stay open for as long as the refusal does, so giving
+    # up closes both ends the source holds and reaps what it killed.
+    helper = _sleeping_helper()
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        helper.communicate(None, 0.2)
+
+    assert helper.stdout is not None
+    assert helper.stderr is not None
+    assert helper.stdout.closed
+    assert helper.stderr.closed
+    assert helper.returncode is not None
+
+
+def test_a_helper_given_up_on_leaves_no_worker_writing_credentials_behind(
+    tmp_path: Path,
+) -> None:
+    # Killing the helper does not reach a worker it spawned, which inherited the
+    # pipe rather than the signal. Closing the read end is what ends it: writing
+    # the credential document is what such a process exists to do, and by then
+    # nothing is reading.
+    worker_pid = tmp_path / "worker.pid"
+    helper = _BoundedHelper(
+        [sys.executable, "-c", _WRAPPER_HELPER, _WRAPPED_WORKER, str(worker_pid)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert _settles(lambda: worker_pid.exists() and worker_pid.read_text() != "")
+    worker = int(worker_pid.read_text())
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        helper.communicate(None, 0.2)
+
+    assert _settles(lambda: not _alive(worker))
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
