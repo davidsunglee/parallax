@@ -594,7 +594,7 @@ class WireWalk[Node]:
     owner releases that state when its scope ends.
     """
 
-    __slots__ = ("_encode", "_includes", "_memo", "_reader", "_trusted")
+    __slots__ = ("_carrier", "_encode", "_includes", "_memo", "_reader", "_trusted")
 
     def __init__(
         self,
@@ -609,30 +609,30 @@ class WireWalk[Node]:
         self._encode = encode
         self._trusted = encode is encode_managed_wire or isinstance(encode, _SharedWireEncoder)
         self._memo = cast("WireMemo[Node]", IndexMemo()) if memo is None else memo
+        self._carrier = reader.occurrence_carrier()
 
-    def node(self, node: Node, token: RenderToken) -> _WireEntityNode:
+    def node(self, node: Node, token: RenderToken, layout: EntityLayout) -> _WireEntityNode:
         cached = self._memo.get(node, token)
         if cached is not None:
             return cast("_WireEntityNode", cached)
-        entity = self._build(node, token)
+        entity = self._build(node, token, layout)
         object.__setattr__(entity, "_source", self._reader.origin(node))
         self._memo.put(node, token, entity)
         return entity
 
     def position(self, node: Node, position: int) -> _WireEntityNode:
         """Render ``node`` at one admitted requested position."""
-        concrete = self._reader.layout(node).concrete
-        token = self._includes.render_token((position,), concrete)
+        layout = self._reader.layout(node)
+        token = self._includes.render_token((position,), layout.concrete)
         if token is None:  # pragma: no cover - explicit projection checks admission first
-            raise self._reader.admission_error(concrete)
-        return self.node(node, token)
+            raise self._reader.admission_error(layout.concrete)
+        return self.node(node, token, layout)
 
     def clear(self) -> None:
         self._memo.clear()
 
-    def _build(self, node: Node, token: RenderToken) -> _WireEntityNode:
+    def _build(self, node: Node, token: RenderToken, layout: EntityLayout) -> _WireEntityNode:
         reader = self._reader
-        layout = reader.layout(node)
         values = iter(reader.member_values(node))
         rendered: dict[str, WireValue] = {}
         for attribute, value in zip(layout.attributes, values, strict=False):
@@ -651,7 +651,7 @@ class WireWalk[Node]:
                 rendered[occurrence.identity.path[-1]] = _occurrence(
                     value,
                     occurrence,
-                    reader.occurrence_carrier(),
+                    self._carrier,
                     self._encode,
                     trusted=self._trusted,
                 )
@@ -683,11 +683,11 @@ class WireWalk[Node]:
         return self._admitted_node(cast("Node", value), candidates)
 
     def _admitted_node(self, node: Node, candidates: tuple[int, ...]) -> _WireEntityNode:
-        concrete = self._reader.layout(node).concrete
-        token = self._includes.render_token(candidates, concrete)
+        layout = self._reader.layout(node)
+        token = self._includes.render_token(candidates, layout.concrete)
         if token is None:  # pragma: no cover - fetched views hold admitted concretes
-            raise self._reader.admission_error(concrete)
-        return self.node(node, token)
+            raise self._reader.admission_error(layout.concrete)
+        return self.node(node, token, layout)
 
 
 def _put(rendered: dict[str, WireValue], key: str, value: WireValue) -> None:
