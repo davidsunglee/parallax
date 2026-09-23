@@ -82,13 +82,19 @@ the TLS requirement the factory would have stated is the caller's to spell.
 Signing is local — no AWS endpoint is reached to produce a token. What can block
 is botocore finding or refreshing the AWS credentials it signs with: the
 environment, a profile, an ECS task role, IMDSv2, IRSA, or SSO. The record
-bounds that I/O, because the seam requires a source to, and it creates its RDS
-client on first use rather than at construction, so composing an adapter stays
-free of I/O. A profile's `credential_process` is bounded too, by the record
-rather than by botocore, which waits on that command without a timeout: a helper
-that has not answered within a few seconds is killed and the attempt fails as a
-refusal. A helper that legitimately needs longer — one waiting on a person —
-belongs behind a session of your own, which is used exactly as given.
+bounds the network all of that reaches over, because the seam requires a source
+to, and it creates its RDS client on first use rather than at construction, so
+composing an adapter stays free of I/O.
+
+One thing it does not bound: a helper command a profile's `credential_process`
+names. botocore waits on that command with no timeout, and so does this record —
+the program is yours, and so is bounding its wait. Be exact about what an
+unbounded one costs, because it is not one connection: the RDS client is created
+once under a lock, so a helper that hangs holds every pool worker behind it and
+the application stops connecting rather than connects slowly. A helper that
+cannot promise to answer — one waiting on a person, or on a network of its own
+it has not bounded — belongs behind a session of your own, built on a chain that
+does not run it. An injected session is used exactly as given.
 
 There is no token cache and no refresh thread. A connection the server has
 already accepted is never disturbed by its token ageing out, and when a source

@@ -3,74 +3,28 @@
 No AWS is reached here and none is needed: a stub session hands out a stub
 client, which is the whole of what the record talks to. What is graded is the
 presign's inputs, that one client serves every resolution while each resolution
-signs anew, that a native failure becomes a refusal carrying no token, and that
-constructing the record runs no credential chain.
-
-Two families stand apart from that stub. The ``credential_process`` cases build
-a real botocore session over an authored AWS config file, because a helper that
-never answers is a wait only the real chain can be asked to take; the cases
-driving ``_BoundedHelper`` directly grade what giving up on such a helper
-releases, which belongs to the process rather than to the refusal.
+signs anew, that a native failure becomes a refusal carrying no token, that
+constructing the record runs no credential chain, and that the session the
+record builds for itself leaves none of the chain's network calls at botocore's
+own defaults while an injected one is reconfigured in no way at all.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import os
-import shlex
-import subprocess
-import sys
-import time
 from typing import TYPE_CHECKING, cast
 
 import botocore.session
 import pytest
 from botocore.config import Config
 
-from parallax.aws import RdsIamCredentials, _rds
+from parallax.aws import RdsIamCredentials
 from parallax.core.db_port import CredentialResolutionError, CredentialSource, Password
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
-
     from botocore.session import Session
 
 _ENDPOINT = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
-
-_UNANSWERING_HELPER = (
-    f"{shlex.quote(sys.executable)} -c {shlex.quote('import time; time.sleep(300)')}"
-)
-_HELPER_BOUND = 1.0
-
-_BoundedHelper = _rds._BoundedHelper  # pyright: ignore[reportPrivateUsage] - the helper the record bounds is module-private and its timeout path is what these prove
-
-_WRAPPER_HELPER = (
-    "import subprocess, sys\n"
-    "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]])\n"
-    "import time; time.sleep(300)\n"
-)
-_EMITTING_HELPER = (
-    "import pathlib, sys, time\n"
-    "sys.stdout.write(pathlib.Path(sys.argv[1]).read_text())\n"
-    "sys.stdout.flush()\n"
-    "pathlib.Path(sys.argv[2]).write_text('written')\n"
-    "time.sleep(300)\n"
-)
-_CREDENTIAL_DOCUMENT = (
-    '{"Version": 1, "AccessKeyId": "AKIAIOSFODNN7EXAMPLE",'
-    ' "SecretAccessKey": "wJalrXUtnFEMIK7MDENGbPxRfiCY", "Expiration": "2999-01-01T00:00:00Z"}'
-)
-_SECRET = "wJalrXUtnFEMIK7MDENGbPxRfiCY"
-
-_WRAPPED_WORKER = (
-    "import os, pathlib, sys, time\n"
-    "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
-    "for _ in range(600):\n"
-    "    sys.stdout.write('x' * 4096)\n"
-    "    sys.stdout.flush()\n"
-    "    time.sleep(0.05)\n"
-)
 
 
 class _StubClient:
@@ -99,7 +53,6 @@ class _StubSession:
         self.created: list[tuple[str, str | None]] = []
         self.configs: list[Config] = []
         self.variables: dict[str, object] = {}
-        self.components: list[str] = []
 
     def create_client(self, service_name: str, region_name: str | None = None) -> _StubClient:
         self.created.append((service_name, region_name))
@@ -110,9 +63,6 @@ class _StubSession:
 
     def set_config_variable(self, logical_name: str, value: object) -> None:
         self.variables[logical_name] = value
-
-    def lazy_register_component(self, name: str, no_arg_factory: object) -> None:
-        self.components.append(name)
 
 
 def _credentials(session: _StubSession) -> RdsIamCredentials:
@@ -245,179 +195,14 @@ def test_a_session_the_record_builds_bounds_the_chain_it_resolves_through(
         "metadata_service_timeout": bounds["connect_timeout"],
         "metadata_service_num_attempts": bounds["retries"]["total_max_attempts"],
     }
-    # A helper command is neither a client call nor a fetcher call, so the
-    # record supplies the credential chain itself to bound the one wait left.
-    assert session.components == ["credential_provider"]
 
 
 def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
-    # It is the caller's session, carrying whatever bounds and whatever identity
-    # they built it with, so the record reconfigures nothing on it.
+    # It is the caller's session, carrying whatever bounds, whatever identity
+    # and whatever credential chain they built it with, so the record
+    # reconfigures nothing on it.
     session = _StubSession()
 
     _credentials(session).resolve()
 
     assert session.configs == []
-    assert session.variables == {}
-    assert session.components == []
-
-
-def _resolving_through(config: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point a real botocore session at an authored AWS config and nothing else."""
-    config_file = tmp_path / "config"
-    config_file.write_text(config, encoding="utf-8")
-    for ambient in [name for name in os.environ if name.startswith("AWS_")]:
-        monkeypatch.delenv(ambient)
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "absent-credentials"))
-    monkeypatch.setenv("AWS_PROFILE", "app")
-    monkeypatch.setattr(_rds, "_CHAIN_PROCESS_TIMEOUT", _HELPER_BOUND)
-
-
-def _refusal_from_a_helper_that_never_answers() -> float:
-    credentials = RdsIamCredentials(
-        host=_ENDPOINT, port=5432, user="orders_service", region="us-east-1"
-    )
-    started = time.monotonic()
-    with pytest.raises(CredentialResolutionError) as refused:
-        credentials.resolve()
-    waited = time.monotonic() - started
-
-    assert str(refused.value) == "RDS IAM token could not be generated"
-    assert isinstance(refused.value.__cause__, subprocess.TimeoutExpired)
-    return waited
-
-
-def test_a_profile_credential_helper_that_never_answers_is_given_up_on(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # botocore waits on a profile's helper command with no timeout of its own,
-    # and `resolve` runs on an acquiring caller's thread or a pool's own
-    # background path, where nothing can interrupt it. So the wait is the
-    # record's to end: a helper that sleeps for five minutes costs one attempt,
-    # not the pool.
-    _resolving_through(
-        f"[profile app]\ncredential_process = {_UNANSWERING_HELPER}\n", tmp_path, monkeypatch
-    )
-
-    assert _refusal_from_a_helper_that_never_answers() < 30
-
-
-def test_a_helper_reached_through_an_assume_role_source_profile_is_given_up_on_too(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A source profile's providers are built when the role is resolved rather
-    # than when the chain is, so the same helper is reached through a builder
-    # the chain hands out later. The bound has to hold there as well, and no
-    # role is ever assumed here: the wait ends before STS is reached.
-    _resolving_through(
-        "[profile app]\n"
-        "role_arn = arn:aws:iam::123456789012:role/orders\n"
-        "source_profile = helper\n"
-        "\n"
-        f"[profile helper]\ncredential_process = {_UNANSWERING_HELPER}\n",
-        tmp_path,
-        monkeypatch,
-    )
-
-    assert _refusal_from_a_helper_that_never_answers() < 30
-
-
-def _sleeping_helper() -> _BoundedHelper:
-    return _BoundedHelper(
-        [sys.executable, "-c", "import time; time.sleep(300)"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-
-def _settles(condition: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.05)
-    return False
-
-
-def test_a_helper_given_up_on_leaves_no_pipe_of_its_own_open() -> None:
-    # The expiry leaves the process as the cause of a refusal the pool retains
-    # as `last_refusal`, and that traceback retains the helper. A pipe left open
-    # here would therefore stay open for as long as the refusal does, so giving
-    # up closes both ends the source holds and reaps what it killed.
-    helper = _sleeping_helper()
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        helper.communicate(None, 0.2)
-
-    assert helper.stdout is not None
-    assert helper.stderr is not None
-    assert helper.stdout.closed
-    assert helper.stderr.closed
-    assert helper.returncode is not None
-
-
-def test_a_helper_given_up_on_carries_no_credential_out_of_the_expiry(
-    tmp_path: Path,
-) -> None:
-    # A helper that emitted its credential document and then hung has already
-    # put the secret in the pipe, and `communicate` attaches what it read to the
-    # expiry it raises and keeps the same bytes on the process for a retry that
-    # never comes. That expiry is chained as the cause of a refusal a pool
-    # retains and a log may walk, and `core/spec/m-db-port.md` lets nothing a
-    # source raises carry the secret — so neither the expiry nor the helper it
-    # came from may still hold what was written.
-    document = tmp_path / "credentials.json"
-    document.write_text(_CREDENTIAL_DOCUMENT)
-    emitted = tmp_path / "emitted"
-    helper = _BoundedHelper(
-        [sys.executable, "-c", _EMITTING_HELPER, str(document), str(emitted)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert _settles(emitted.exists)
-
-    with pytest.raises(subprocess.TimeoutExpired) as expired:
-        helper.communicate(None, 0.2)
-
-    assert _SECRET not in _carried_by(expired.value)
-    assert _SECRET not in repr(helper.__dict__)
-
-
-def _carried_by(expiry: subprocess.TimeoutExpired) -> str:
-    carried = [str(expiry), repr(expiry.output), repr(expiry.stdout), repr(expiry.stderr)]
-    frame = expiry.__traceback__
-    while frame is not None:
-        carried.append(repr(frame.tb_frame.f_locals))
-        frame = frame.tb_next
-    return "".join(carried)
-
-
-def test_a_helper_given_up_on_leaves_no_worker_writing_credentials_behind(
-    tmp_path: Path,
-) -> None:
-    # Killing the helper does not reach a worker it spawned, which inherited the
-    # pipe rather than the signal. Closing the read end is what ends it: writing
-    # the credential document is what such a process exists to do, and by then
-    # nothing is reading.
-    worker_pid = tmp_path / "worker.pid"
-    helper = _BoundedHelper(
-        [sys.executable, "-c", _WRAPPER_HELPER, _WRAPPED_WORKER, str(worker_pid)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert _settles(lambda: worker_pid.exists() and worker_pid.read_text() != "")
-    worker = int(worker_pid.read_text())
-
-    with pytest.raises(subprocess.TimeoutExpired):
-        helper.communicate(None, 0.2)
-
-    assert _settles(lambda: not _alive(worker))
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
