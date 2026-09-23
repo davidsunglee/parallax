@@ -130,7 +130,10 @@ never disturbed because the credential that opened it has expired, so the seam
 has no refresh operation and no expiry field. A source MAY perform I/O and MUST
 bound it, because it runs where nothing above it can interrupt it: on a pooling
 runtime's own background path, or on an acquiring caller's thread ahead of the
-driver's own establishment limit. Nothing it raises may carry the secret. An
+driver's own establishment limit. That bound covers the I/O the source itself
+performs; a program an operator configured it to run is the operator's to bound,
+and a source that delegates to one MUST say so where that configuration is made.
+Nothing it raises may carry the secret. An
 implementation MUST report any other failure a source raises as a credential
 resolution failure with fixed text, with the original as its cause, so
 classification does not depend on a provider's discipline.
