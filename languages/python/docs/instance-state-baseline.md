@@ -550,6 +550,130 @@ methods together are the largest cumulative contributor the walk reaches, and
 they are: 14.2% of the walk against 13.5% for the next leg, on every one of four
 runs, corroborated untraced by an ablation that recovers 5.5% of the delivery.
 
+### The certified control-slice pair
+
+The cells that grade this ticket are the `control` workload group, which the
+report partitions as the `snapshot-controls` shard, so the pair is one
+control slice on one host rather than a whole portfolio. Base
+`1742bf4746a6a576fe5c83e585e48b8409141f2b` was measured through its own
+checkout's tool first and head `3dbaf824bf792cf184930fa4584f4a2c72a6a926`
+after, under request `local-8402785399af4c39933552d4422dfe2b` and pair
+`3d6ef9b3623f49d9a8cae94221161546`, 354.3 s and 347.0 s of collection on
+2026-09-23. The base is the merge-base with `main`: COR-170 had changed both
+snapshot-delivery instrument scripts and the lock, so a base before it would
+read through a different instrument than the head.
+
+Both sides report the same provenance - Mac17,4 / Apple M5 /
+macOS-26.6.2-arm64 / PostgreSQL 18.6, 3.13 = CPython 3.13.15 and 3.14 =
+CPython 3.14.7 - and the same workload, contract, and lock digests. The
+assembly paired all 206 control cells and left none unpaired. It planned ten
+shards and reports nine as not arrived, which is what a slice is: evidence
+about the slice, not an incomplete capture.
+
+### What the pair recovered
+
+Across the two provider-free delivery workloads, both root counts and both
+runtimes, direct Wire is faster and nothing is slower. Medians of the
+per-cell deltas against `1742bf47`:
+
+| Lane | Elapsed | Peak | Retained |
+|---|---:|---:|---:|
+| `wire.eager` | -5.5% | +0.0% | +0.000 KiB |
+| `wire.page32` | -4.9% | -0.0% | +0.000 KiB |
+| `typed.eager` | +0.1% | +0.0% | +0.000 KiB |
+| `typed.page32` | +0.3% | +0.0% | +0.000 KiB |
+
+Of 206 cells the tool reads 25 as faster, 7 as smaller, and 174 as within
+noise; it reads none as slower and none as larger. The guarded delivery
+controls, whose overlapping sibling positions ask the tree the most, move
+furthest: guarded Wire timing is a median 8.4% faster while guarded Typed
+timing stays within 0.3%. The Typed delivery cells are the control that says
+what changed: a Typed result that is never projected never enters the walk,
+and its timing does not move.
+
+The per-root slope is the reading that settles the ticket, because COR-112's
+regression moved the slope rather than an intercept. Two-point 200-to-2,000
+slopes, median over workloads and runtimes:
+
+| | eager us/root | page-32 us/root |
+|---|---:|---:|
+| `e372c69c`, before COR-112 | 60.0 | 63.8 |
+| `77ef7566`, after COR-112 | 65.6 | 69.4 |
+| `1742bf47`, this pair's base | 64.2 | 68.8 |
+| `3dbaf824`, this pair's head | 60.2 | 63.7 |
+
+The per-node publication cost COR-112 added is gone: the head slope sits on
+the pre-COR-112 slope on both delivery forms.
+
+Peak allocation did not move, which is what the Phase 1 ablation predicted
+and not a shortfall of the memo. The transients the three tree methods built
+were released as each node finished, so they never stood together and the
+high-water mark never saw them. COR-112's 9.0% eager peak rise has a cause
+elsewhere and this change does not address it.
+
+### Against the archived `e372c69c` baseline
+
+The head slice was also compared against the archived pre-COR-112 portfolio,
+which holds every control cell. Medians over the same delivery cells, beside
+what the COR-112 controls above recorded for the same comparison:
+
+| Cell group | COR-112 read | now |
+|---|---:|---:|
+| direct Wire eager elapsed | +9.4% | +0.7% |
+| direct Wire page-32 elapsed | +7.8% | +0.9% |
+| guarded Wire elapsed | +10.5% | +2.0% |
+| direct Wire eager peak | +9.0% | +8.7% |
+| direct Wire page-32 peak | +6.8% | +5.4% |
+| direct Wire eager retained | +0.016 KiB | +0.016 KiB |
+
+Every direct-Wire delivery timing cell is within the tool's 5% allowance.
+One guarded cell is not: 3.13 `control-guarded-3 wire.eager.roots256` reads
++5.9%, while its 3.14 twin reads -2.3% and the same cell is 9.0% faster than
+this pair's own base. It is one cell of twelve in a window whose median
+residual is +2.0%, taken from a nine-sample median against an archive
+captured on another day, and it is read as the width of that qualified
+comparison rather than as a surviving regression.
+
+### What the memo costs a retained result
+
+The memo rides with the `IncludeTree` into every Typed result envelope, and
+the `result-held-metadata` window prices it. Against `1742bf47` the `closed`
+reading rises by exactly 0.281 KiB (288 B) on both models and both runtimes,
+and the `shared` reading is exactly unchanged. The same fixed 0.281 KiB
+appears in `plan.cold` retained and peak at all three guard widths, and
+`plan.warm` retained is unchanged at 0.062 KiB. That the figure is one
+constant - independent of model, of guard width, and of root count - is the
+bound stated in `spec/python.md` and ADR 0012 read off the instrument: the
+memo is a function of the includes clause and the model, never of roots.
+
+This control holds an eager Typed result that is never projected, and only the
+Wire walk calls the three memoized methods, so 288 B is the three empty memo
+dicts a tree carries from construction. A projected result additionally holds
+the keys its own walk reached, which the flatness proof in
+`tests/unit/snapshot/handle/test_read_include_tree_memo_bound.py`
+pins as identical at both memory scaling arms. Against `e372c69c` the `closed`
+reading is 6.4 KiB larger on the small model and 12.5-12.7 KiB on the larger
+one, which is COR-112's metadata retention with this ticket's 0.281 KiB
+inside it.
+
+### The comparison against the archive is qualified, not certified
+
+The archived arithmetic is outside Git at
+`$HOME/.local/share/parallax/evidence/cor-172/comparison.md` (SHA-256
+`8f776b7b08d3141f528b2e2ae5a1e7945c24eafae99f20034f31191fb03a8347`), beside
+the pair's own base, head, and assembled outputs.
+
+`--require-compatible` refuses that comparison and reports four reasons, none
+of them a digest, because neither envelope reaches the digest check. The
+archived base carries `schemaVersion` 1 for both its snapshot-delivery and
+its write-lowering envelope, where the current schema requires 2. The head is
+a one-member control slice, so its snapshot-delivery matrix is not exact - it
+carries no cell for any of the five heavy workloads - and it carries no
+write-lowering envelope at all. Both are properties of comparing a slice
+against an older whole portfolio, not of the measurement; the certified
+reading is the `1742bf47` pair above, and this one is the ticket's stated
+tie back to the baseline it names.
+
 ## What the escalation block said
 
 Both rules the measurement contract names are computed by the report and printed,
