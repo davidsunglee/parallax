@@ -44,12 +44,13 @@ class _StubClient:
 
 
 class _StubSession:
-    """Stands in for a botocore session, recording every client it is asked for."""
+    """Stands in for a botocore session, recording what it is asked for and set to."""
 
     def __init__(self, client: _StubClient | None = None) -> None:
         self.client = client if client is not None else _StubClient()
         self.created: list[tuple[str, str | None]] = []
         self.configs: list[Config] = []
+        self.variables: dict[str, object] = {}
 
     def create_client(self, service_name: str, region_name: str | None = None) -> _StubClient:
         self.created.append((service_name, region_name))
@@ -57,6 +58,9 @@ class _StubSession:
 
     def set_default_client_config(self, client_config: Config) -> None:
         self.configs.append(client_config)
+
+    def set_config_variable(self, logical_name: str, value: object) -> None:
+        self.variables[logical_name] = value
 
 
 def _credentials(session: _StubSession) -> RdsIamCredentials:
@@ -158,14 +162,15 @@ def test_construction_resolves_no_aws_credentials(monkeypatch: pytest.MonkeyPatc
     assert len(sessions) == 1
 
 
-def test_a_session_the_record_builds_bounds_every_client_it_creates(
+def test_a_session_the_record_builds_bounds_the_chain_it_resolves_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # `resolve` runs where nothing above it can interrupt it, and the chain's
-    # own clients — STS and SSO included — take their bounds from the session's
-    # default configuration. What is graded is that nothing is left at
-    # botocore's defaults of sixty seconds a side and legacy retries, rather
-    # than the particular numbers chosen.
+    # `resolve` runs where nothing above it can interrupt it. The chain's own
+    # clients — STS and SSO included — take their bounds from the session's
+    # default configuration, and the instance metadata service, reached through
+    # a fetcher rather than a client, takes its from the session's config
+    # variables. What is graded is that neither is left at botocore's own
+    # defaults, rather than the particular numbers chosen.
     session = _StubSession()
     monkeypatch.setattr(botocore.session, "get_session", lambda: session)
 
@@ -180,7 +185,14 @@ def test_a_session_the_record_builds_bounds_every_client_it_creates(
     bounds = vars(config)
     assert 0 < bounds["connect_timeout"] < 60
     assert 0 < bounds["read_timeout"] < 60
-    assert 0 < bounds["retries"]["max_attempts"] < 4
+    # botocore reads `max_attempts` as retries after the initial request and
+    # `total_max_attempts` as the whole budget, so the budget is spelled whole.
+    assert "max_attempts" not in bounds["retries"]
+    assert 0 < bounds["retries"]["total_max_attempts"] < 4
+    assert session.variables == {
+        "metadata_service_timeout": bounds["connect_timeout"],
+        "metadata_service_num_attempts": bounds["retries"]["total_max_attempts"],
+    }
 
 
 def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
@@ -191,3 +203,4 @@ def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
     _credentials(session).resolve()
 
     assert session.configs == []
+    assert session.variables == {}

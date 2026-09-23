@@ -242,9 +242,10 @@ adapter = PostgresAdapter(
 ```
 
 A token lasts fifteen minutes and a pool lasts longer, which is the case the
-per-connection contract above exists for: the source is asked as each physical
-connection is established, and a connection already open is never disturbed by
-its token ageing out. There is no token cache and no refresh thread.
+per-connection contract above exists for: a connection already open is never
+disturbed by the token that opened it ageing out — `core/spec/m-db-port.md`,
+"Configuration carries where, and a Credential Source carries how", is where
+that rule lives. There is no token cache and no refresh thread.
 
 ## Retention
 

@@ -34,9 +34,12 @@ sign for is the one the application connects through.
 `params` keeps the rest of libpq's grammar open — `application_name`,
 `options`, `connect_timeout`, and `sslrootcert` with an `sslmode` of
 `verify-ca` or `verify-full`, which is what AWS's own certificate bundle is for.
-It may strengthen the TLS requirement and may not weaken it, and it may not
-restate `host`, `port`, `user`, `dbname` or `password`: a value the token was
-not signed for authenticates nothing. Both refusals are fixed text, because
+It may strengthen the TLS requirement and may not weaken it, it may not ask for
+the GSS encryption libpq would carry the login over in TLS's place, and it may
+not restate `host`, `port`, `user`, `dbname` or `password`: a value the token
+was not signed for authenticates nothing. `host` names one endpoint for the same
+reason — libpq reads a comma-separated list of them, and a token signed for the
+list authenticates at none of its members. Every refusal is fixed text, because
 `params` is a place other secrets live.
 
 ## The source on its own
@@ -81,7 +84,9 @@ is botocore finding or refreshing the AWS credentials it signs with: the
 environment, a profile, an ECS task role, IMDSv2, IRSA, or SSO. The record
 bounds that I/O, because the seam requires a source to, and it creates its RDS
 client on first use rather than at construction, so composing an adapter stays
-free of I/O.
+free of I/O. The one wait it cannot bound is a profile's `credential_process`:
+botocore waits on that command without a timeout, so a command that hangs hangs
+the connection attempt waiting on it.
 
 There is no token cache and no refresh thread. A connection the server has
 already accepted is never disturbed by its token ageing out, and when a source

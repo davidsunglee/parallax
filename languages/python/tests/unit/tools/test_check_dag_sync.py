@@ -1490,9 +1490,11 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope(linted_copy: 
 
 # --------------------------------------------------------------------------
 # Canary 4b: a credential provider is a LEAF beside the adapters. Only its
-# engine-specific slice is granted one, and these three are the whole proof:
-# the base slice may reach neither the adapter nor the driver, and the leaf may
-# reach both.
+# engine-specific slice is granted one, and these three are what lint-imports
+# proves of it: the base scope may reach neither the adapter nor the driver, and
+# the leaf may reach both. The fourth half — the base scope reaching the adapter
+# THROUGH the leaf, which the leaf's own exception withdraws from every contract
+# — is the leaf's isolation, graded over the files by `check_scope_ownership`.
 # --------------------------------------------------------------------------
 def test_an_adapter_import_outside_the_engine_slice_fails_lint_imports(linted_copy: Path) -> None:
     reported = broken_by(

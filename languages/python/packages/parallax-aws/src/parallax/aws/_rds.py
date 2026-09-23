@@ -35,8 +35,9 @@ _TOKEN_REFUSAL = "RDS IAM token could not be generated"
 
 # What one credential-chain call may cost before the source gives up. The chain
 # reaches the instance metadata service, an ECS task-role endpoint, STS or SSO,
-# and botocore's own default is sixty seconds with four retries — a wait the
-# seam forbids, because a source runs where nothing above it can interrupt it.
+# and botocore's own default is sixty seconds a side with five attempts — a wait
+# the seam forbids, because a source runs where nothing above it can interrupt
+# it. The budget is attempts in total, the first one included.
 _CHAIN_CONNECT_TIMEOUT = 2.0
 _CHAIN_READ_TIMEOUT = 2.0
 _CHAIN_ATTEMPTS = 2
@@ -55,20 +56,27 @@ class _RdsTokenClient(Protocol):
 
 
 def _bounded_session() -> Session:
-    """A botocore session whose every client bounds its own network calls.
+    """A botocore session whose credential chain bounds its own network calls.
 
-    The default client configuration reaches each client the session creates,
-    the STS and SSO clients the credential chain builds internally included, so
-    one setting covers every call a token resolution can make.
+    The default client configuration reaches every client the session creates,
+    the STS and SSO clients the chain builds internally included. The instance
+    metadata service is reached through a fetcher rather than a client and takes
+    its bounds from the session's own configuration, which is why that pair is
+    set beside the client default rather than covered by it.
+
+    One wait stays outside both: botocore runs a profile's ``credential_process``
+    and waits on it with no timeout, so there the bound is the command's.
     """
     session = botocore.session.get_session()
     session.set_default_client_config(
         Config(
             connect_timeout=_CHAIN_CONNECT_TIMEOUT,
             read_timeout=_CHAIN_READ_TIMEOUT,
-            retries={"max_attempts": _CHAIN_ATTEMPTS, "mode": "standard"},
+            retries={"total_max_attempts": _CHAIN_ATTEMPTS, "mode": "standard"},
         )
     )
+    session.set_config_variable("metadata_service_timeout", _CHAIN_CONNECT_TIMEOUT)
+    session.set_config_variable("metadata_service_num_attempts", _CHAIN_ATTEMPTS)
     return session
 
 
@@ -109,9 +117,9 @@ class RdsIamCredentials:
     for that endpoint. ``region`` is the token's credential scope.
 
     ``session`` is a botocore session to resolve AWS credentials through. Left
-    absent, the record builds one whose clients bound their own network calls;
-    an injected one is used exactly as given and never reconfigured, so its
-    owner keeps whatever bounds it was built with.
+    absent, the record builds one whose credential chain bounds its own network
+    calls; an injected one is used exactly as given and never reconfigured, so
+    its owner keeps whatever bounds it was built with.
     """
 
     host: str

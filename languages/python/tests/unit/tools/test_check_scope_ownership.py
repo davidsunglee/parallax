@@ -499,6 +499,32 @@ def test_a_production_module_importing_its_own_isolated_child_fails(
     assert own.main([]) == 0
 
 
+def test_the_credential_provider_may_not_reach_its_own_engine_slice(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The same edge with an artifact boundary riding on it. `parallax.aws.postgres`
+    # is the one module of the provider that imports an adapter, and the parent's
+    # contract excepts that import by name — which withdraws every chain running
+    # through it, a chain from the provider's own interface included. A module of
+    # `parallax.aws` re-exporting the factory would therefore make installing the
+    # provider load an adapter with `lint-imports` still green, and this is the
+    # half that rejects it.
+    intruder = _scratch_package_path("parallax-aws/src/parallax/aws/_intruder.py")
+    intruder.write_text(
+        '"""Written by a test: the provider reaching the slice that composes an adapter."""\n'
+        "\n"
+        "from parallax.aws.postgres import rds_postgres\n"
+        "\n"
+        "_ = rds_postgres\n"
+    )
+    try:
+        assert own.main([]) == 1
+    finally:
+        intruder.unlink()
+    assert "_intruder.py (imports parallax.aws.postgres" in capsys.readouterr().err
+    assert own.main([]) == 0
+
+
 def test_the_isolated_scope_may_import_its_own_parent(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -43,14 +43,42 @@ def _destination(adapter: PostgresAdapter) -> dict[str, str]:
 def test_the_destination_is_the_endpoint_the_token_is_signed_for_over_tls() -> None:
     # An IAM token is a password, so it travels over TLS; and it proves nothing
     # at a host, port or user other than the ones it was signed for. Stating
-    # both once is the whole reason this is a factory.
+    # both once is the whole reason this is a factory. `gssencmode` is part of
+    # stating the first: libpq prefers GSS encryption to TLS wherever it is
+    # available, whatever `sslmode` asks for, so TLS is required by switching
+    # the alternative off as well as by naming it.
     assert _destination(_adapter()) == {
         "host": _ENDPOINT,
         "port": "5432",
         "user": "orders_service",
         "dbname": "orders",
         "sslmode": "require",
+        "gssencmode": "disable",
     }
+
+
+@pytest.mark.parametrize("asked", ["require", "prefer", "allow"])
+def test_gss_encryption_in_tls_s_place_is_refused(asked: str) -> None:
+    with pytest.raises(ValueError) as refused:
+        _adapter(params={"gssencmode": asked, "options": "-c application_name=hunter2"})
+
+    assert str(refused.value) == (
+        "params must not enable gssencmode; an IAM token travels only over TLS."
+    )
+    assert "hunter2" not in str(refused.value)
+
+
+def test_a_host_naming_more_than_one_endpoint_is_refused() -> None:
+    # libpq reads a comma-separated `host` as a list of endpoints to try in
+    # turn, while the token would be signed for the literal list: every
+    # connection the adapter opened would present a token signed for somewhere
+    # else, and no attempt would authenticate.
+    with pytest.raises(ValueError) as refused:
+        _adapter(host=f"{_ENDPOINT},replica.cluster-abc.us-east-1.rds.amazonaws.com")
+
+    assert str(refused.value) == (
+        "host must name one endpoint; a token is signed for the host it names, not for a list."
+    )
 
 
 def test_the_credential_is_bound_to_the_same_endpoint_and_login() -> None:
@@ -75,6 +103,7 @@ def test_the_rest_of_libpq_s_grammar_stays_open() -> None:
     assert destination["application_name"] == "orders-api"
     assert destination["connect_timeout"] == "5"
     assert destination["sslmode"] == "require"
+    assert destination["gssencmode"] == "disable"
 
 
 def test_verification_stronger_than_require_is_the_caller_s_to_ask_for() -> None:

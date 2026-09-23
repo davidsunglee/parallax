@@ -646,11 +646,14 @@ class ChildScope:
 #   — a sibling shape such a row cannot reach — and takes from it the scopes
 #   whose sealed or isolated half it grades over the files.
 CHILD_SCOPES: Mapping[str, ChildScope] = {
-    # Ordinary: the generated rows are the whole of this pair's enforcement. The
-    # child's own row grants the adapter, and the parent's row forbids it with
-    # the child's edge excepted by name, so an adapter import anywhere in
-    # `parallax.aws` outside this one module is reported.
-    "parallax.aws.postgres": ChildScope(parent="parallax.aws", policy="ordinary"),
+    # Installing the credential provider must install no adapter, so the one
+    # module composing one has to stay unreachable from everything that does
+    # not select it. The parent's row excepts this child's adapter edge by
+    # name, and an exception withdraws every chain running through that edge —
+    # so the parent's own row could no longer report a module of `parallax.aws`
+    # reaching the adapter THROUGH this child. Isolation is what rejects that
+    # import instead, over the files, in the one place a contract cannot look.
+    "parallax.aws.postgres": ChildScope(parent="parallax.aws", policy="isolated"),
     # The four publication-side children of the Entity frontend are sealed
     # because their whole reason to exist is what they cannot reach: the
     # construction-input vocabulary both a row's producer and its reader are
