@@ -444,6 +444,112 @@ equal over a heap whose held bytes never differed. No threshold was weakened and
 the captured readings above are unaffected: the whole-heap mark serves the cost
 proofs alone and no reported figure is taken through it.
 
+## COR-172 profile and recovery
+
+The direct-Wire regression the controls above record was diagnosed from the code
+and never measured. This section holds what one profiled delivery says about it.
+
+### What was profiled, and on what
+
+One provider-free eager direct-Wire delivery, assembled exactly as the
+`control-delivery` window assembles one: the `conventional-fanout` catalog
+workload at 2,000 roots behind `CatalogPort`, wrapped in `_SoleRuntime` and
+opened as a `Database` over `ORDERS_MODEL`, with the root, the port and the login
+scope composed outside the reading. One `database.wire.find(...).results()` was
+delivered to warm the process and the read-plan cache, the port was reset, and a
+second was taken under `cProfile`. The script that did it is uncommitted and
+nothing it produced is checked in beyond this prose, following the precedent
+`structural-metadata-envelope/README.md` sets for attributing a per-node
+regression: these are readings, not evidence, and not one of the report's
+windows.
+
+Taken 2026-09-23 on the machine *Conditions* describes - Apple M5, 10 cores,
+32 GiB, darwin/arm64, macOS 26.6.2 build 25G83 - under CPython 3.14.7, the
+repository venv. Four runs of the same script agreed to within a tenth of a
+percentage point on every share below, and the table is the last of them.
+
+### Where the delivery's time goes
+
+The profiled delivery is 0.395 s, of which the whole Wire walk -
+`WireWalk.position` and everything beneath it - is 0.121 s, about 31%. The rest
+is the read, row conversion, and Root View construction.
+
+`render_token` is reached through `_admitted_node` and `position` rather than
+from `_build`, and the recursive `_related` leg contains the entire subtree below
+a node, so a ranking of `_build`'s literal direct callees would both miss the
+first and be swallowed by the second. The walk's own five frames are therefore
+read as pass-through, and every leg they reach is charged to that leg:
+
+| leg | calls | cumulative | share of the walk |
+|---|---:|---:|---:|
+| `_trusted_wire_scalar` | 14,000 | 16.3 ms | 13.5% |
+| **`IncludeTree.render_token`** | 12,000 | 9.1 ms | 7.5% |
+| `_BindingRange.__iter__` | 24,000 | 7.7 ms | 6.3% |
+| **`IncludeTree.child_groups`** | 12,000 | 7.0 ms | 5.8% |
+| `_frozen_mapping` | 12,000 | 6.1 ms | 5.1% |
+| `RootViewReader.layout` | 24,000 | 4.3 ms | 3.6% |
+| `RootViewReader.relationship` | 2,000 | 2.9 ms | 2.4% |
+| `IndexMemo.put` | 12,000 | 2.8 ms | 2.3% |
+| `RootViewReader.origin` | 12,000 | 2.7 ms | 2.3% |
+| `RootViewReader.member_values` | 12,000 | 2.4 ms | 2.0% |
+| `IndexMemo.get` | 12,000 | 2.4 ms | 2.0% |
+| `EntityLayout.attributes` | 12,000 | 2.1 ms | 1.7% |
+| `EntityLayout.occurrences` | 12,000 | 2.0 ms | 1.7% |
+| `typing.cast` | 52,000 | 1.9 ms | 1.6% |
+| **`IncludeTree.admitted_children`** | 2,000 | 1.0 ms | 0.8% |
+
+The three include-tree methods together are 17.1 ms: 14.2% of the walk and 4.3%
+of the delivery, and the largest single contributor, just above the 13.5% of
+per-attribute scalar conversion. Rendering 2,000 roots renders 12,000 nodes and
+asks the tree 26,000 questions to do it. The two reader calls the ticket names
+are visible beside them, one of them by its absence: `layout` is called 24,000
+times for 12,000 nodes, while `occurrence_carrier` never appears, because no
+Entity in this workload carries an occurrence. Hoisting it out of the occurrence
+loop is therefore invisible to this cell and will show, if anywhere, on a
+workload that has one.
+
+### The profiled share overstates a leg reached many times per row
+
+`snapshot-materialization-baseline.md` records the standing caveat, and here it
+bears directly on the ranking rather than decorating it: `cProfile` charges its
+own per-call bookkeeping to every call, so the tree methods' 26,000 calls are
+inflated more than the 14,000 of the leg they edge out. The order of the first
+two rows is a share of profiled time and not a magnitude, and the margin between
+them is smaller than the bookkeeping that separates them.
+
+### What an untraced ablation says
+
+So the profiled share was read for magnitude the way the two attributed
+regressions in `structural-metadata-envelope/README.md` were. Patched in the
+diagnostic process only, with nothing in the repository changed, `IncludeTree`'s
+three methods were given memoized bodies - the position's own canonical
+`children` mapping returned by reference for a single-position token, one shared
+empty mapping for `EMPTY_RENDER`, and a two-level dict over the existing
+derivations for everything else - and the same delivery was timed untraced,
+median of nine samples after three warm runs:
+
+| reading | as it stands | memoized | delta |
+|---|---:|---:|---:|
+| elapsed | 90.1 ms | 85.1 ms | -5.6% |
+| elapsed, second pairing | 90.0 ms | 85.1 ms | -5.5% |
+| `tracemalloc` peak | 12,206.8 KiB | 12,206.8 KiB | -0.0% |
+
+Two things follow, and they point in different directions. The derivation is
+real and worth about 5.5% of this delivery against the 9.4% median COR-112 cost
+direct Wire eager, so memoizing it recovers a substantial part of the timing
+regression but not the whole of it. It recovers none of the peak allocation: the
+transient dict, lists, tuples and proxies the three methods build are released as
+each node finishes, so they never stand together and the high-water mark does not
+see them. Whatever moved eager peak by 9.0% is not these allocations, and
+removing them will not bring it back.
+
+### The decision
+
+**Go.** The rule the profile was taken to answer is whether the three tree
+methods together are the largest cumulative contributor the walk reaches, and
+they are: 14.2% of the walk against 13.5% for the next leg, on every one of four
+runs, corroborated untraced by an ablation that recovers 5.5% of the delivery.
+
 ## What the escalation block said
 
 Both rules the measurement contract names are computed by the report and printed,
