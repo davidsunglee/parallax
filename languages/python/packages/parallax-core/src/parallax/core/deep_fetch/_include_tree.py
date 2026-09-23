@@ -7,10 +7,10 @@ select finite continuations. Nothing here retains executable query machinery.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
+from typing import Final, cast
 
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query._validated import ValidatedIncludePath
@@ -68,16 +68,42 @@ class PositionSeed:
     to_many: bool
 
 
-class IncludeTree:
-    """Immutable indexed positions for one validated query's finite includes."""
+_NO_CHILDREN: Final[Mapping[RelationshipViewKey, tuple[PositionId, ...]]] = MappingProxyType({})
 
-    __slots__ = ("_positions", "queried")
+_UNRESOLVED: Final = object()
+"""Miss marker for the render-token memo, because ``None`` is an answer it holds."""
+
+
+class IncludeTree:
+    """Immutable indexed positions for one validated query's finite includes.
+
+    :meth:`child_groups`, :meth:`admitted_children` and :meth:`render_token` are
+    pure functions of those positions, so each answers by reference where a
+    canonical answer already exists and memoizes on the tree what it must
+    derive: after the first call for a key, each answers in amortized constant
+    time and allocates nothing. This is not the per-node memo a published value
+    forbids. One tree belongs to one compiled plan and is shared by every result
+    of it, and a caller can only present keys drawn from that plan's positions
+    and the model's concretes, so the memo is bounded by the includes clause and
+    the model and never by roots or rendered nodes. Filling is idempotent, so
+    walks sharing one cached plan may race to store equal answers under one key
+    and need no lock.
+    """
+
+    __slots__ = ("_admitted", "_positions", "_tokens", "_unions", "queried")
 
     def __init__(self, queried: EntityIdentity, positions: Sequence[IncludePosition]) -> None:
         if not positions or positions[ROOT_POSITION].parent is not None:
             raise ValueError("an IncludeTree starts with its root position")
         self._positions = tuple(positions)
         self.queried = queried
+        self._unions: dict[
+            tuple[PositionId, ...], Mapping[RelationshipViewKey, tuple[PositionId, ...]]
+        ] = {}
+        self._admitted: dict[
+            tuple[PositionId, ...], dict[EntityIdentity, tuple[PositionId, ...]]
+        ] = {}
+        self._tokens: dict[tuple[PositionId, ...], dict[EntityIdentity, RenderToken | None]] = {}
 
     @property
     def positions(self) -> tuple[IncludePosition, ...]:
@@ -96,12 +122,55 @@ class IncludeTree:
     def child_groups(
         self, token: RenderToken
     ) -> Mapping[RelationshipViewKey, tuple[PositionId, ...]]:
-        """Children of every position denoted by ``token``, grouped by view."""
+        """Children of every position denoted by ``token``, grouped by view.
+
+        The terminal token and a lone position answer canonical structures the
+        tree already holds, so the caller receives a mapping it shares with
+        every other caller asking the same question.
+        """
         if token == EMPTY_RENDER:
-            return MappingProxyType({})
-        positions = (token,) if isinstance(token, int) else token
+            return _NO_CHILDREN
+        if isinstance(token, int):
+            return self._positions[token].children
+        union = self._unions.get(token)
+        if union is None:
+            union = self._unions[token] = self._union(token)
+        return union
+
+    def admitted_children(
+        self, candidates: tuple[PositionId, ...], source: EntityIdentity
+    ) -> tuple[PositionId, ...]:
+        by_source = self._admitted.get(candidates)
+        if by_source is None:
+            by_source = self._admitted[candidates] = {}
+        admitted = by_source.get(source)
+        if admitted is None:
+            admitted = by_source[source] = self._admit(candidates, source)
+        return admitted
+
+    def render_token(
+        self, candidates: tuple[PositionId, ...], concrete: EntityIdentity
+    ) -> RenderToken | None:
+        """The normalized continuation token admitted for one hydrated child.
+
+        Equal multi-position answers are one object, so a caller keying its own
+        state on the token compares interned tuples.
+        """
+        by_concrete = self._tokens.get(candidates)
+        if by_concrete is None:
+            by_concrete = self._tokens[candidates] = {}
+        held = by_concrete.get(concrete, _UNRESOLVED)
+        if held is not _UNRESOLVED:
+            return cast("RenderToken | None", held)
+        resolved = self._resolve_token(candidates, concrete)
+        by_concrete[concrete] = resolved
+        return resolved
+
+    def _union(
+        self, token: tuple[PositionId, ...]
+    ) -> Mapping[RelationshipViewKey, tuple[PositionId, ...]]:
         grouped: dict[RelationshipViewKey, list[PositionId]] = {}
-        for position in positions:
+        for position in token:
             for view, children in self._positions[position].children.items():
                 held = grouped.setdefault(view, [])
                 for child in children:
@@ -109,17 +178,16 @@ class IncludeTree:
                         held.append(child)
         return MappingProxyType({view: tuple(children) for view, children in grouped.items()})
 
-    def admitted_children(
-        self, candidates: Iterable[PositionId], source: EntityIdentity
+    def _admit(
+        self, candidates: tuple[PositionId, ...], source: EntityIdentity
     ) -> tuple[PositionId, ...]:
         return tuple(
             position for position in candidates if source in self._positions[position].source
         )
 
-    def render_token(
-        self, candidates: Iterable[PositionId], concrete: EntityIdentity
+    def _resolve_token(
+        self, candidates: tuple[PositionId, ...], concrete: EntityIdentity
     ) -> RenderToken | None:
-        """The normalized continuation token admitted for one hydrated child."""
         admitted = tuple(
             position for position in candidates if concrete in self._positions[position].target
         )

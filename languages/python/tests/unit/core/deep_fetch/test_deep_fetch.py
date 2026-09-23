@@ -580,6 +580,49 @@ def test_overlapping_guarded_positions_preserve_all_applicable_continuations() -
     } == {"pets[Cat]", "pets[Dog]"}
 
 
+def test_include_tree_answers_are_canonical_objects_rather_than_fresh_copies() -> None:
+    # Publication asks the tree the same handful of questions once per rendered
+    # node, so each answer is the one object the tree holds for that question: a
+    # lone position's own frozen children, one shared empty mapping for the
+    # terminal token, one union per multi-position token, and — including when
+    # the answer is `None` — one continuation per candidate group and concrete.
+    includes = _plan(
+        ANIMAL,
+        "Animal",
+        (
+            _path(
+                _seg("Animal.owner"),
+                _seg("Person.pets", ("Dog",)),
+                narrow=_guard("Dog", "WildBoar"),
+            ),
+            _path(
+                _seg("Animal.owner"),
+                _seg("Person.pets", ("Cat",)),
+                narrow=_guard("Cat", "Dog"),
+            ),
+        ),
+    ).includes
+    root = includes.root
+    owner_positions = next(iter(includes.position(root).children.values()))
+    dog = EntityIdentity("parallax.compatibility", "Dog")
+    person = EntityIdentity("parallax.compatibility", "Person")
+    elsewhere = EntityIdentity("elsewhere", "Person")
+
+    assert includes.child_groups(root) is includes.position(root).children
+    assert includes.child_groups(deep_fetch.EMPTY_RENDER) is includes.child_groups(
+        deep_fetch.EMPTY_RENDER
+    )
+
+    dog_positions = includes.admitted_children(owner_positions, dog)
+    assert includes.admitted_children(owner_positions, dog) is dog_positions
+    continuation = includes.render_token(dog_positions, person)
+    assert isinstance(continuation, tuple)
+    assert includes.render_token(dog_positions, person) is continuation
+    assert includes.render_token(dog_positions, elsewhere) is None
+    assert includes.render_token(dog_positions, elsewhere) is None
+    assert includes.child_groups(continuation) is includes.child_groups(continuation)
+
+
 def test_a_root_guard_naming_an_undeclared_subtype_is_rejected() -> None:
     # A guard denotes ONE position, exactly as a segment narrow does, so a member
     # the model does not declare resolves to no position rather than silently

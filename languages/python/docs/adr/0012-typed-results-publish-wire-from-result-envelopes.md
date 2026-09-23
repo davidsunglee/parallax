@@ -36,6 +36,17 @@ retained output, transient and peak allocation, fresh projection time, same-call
 reuse, and direct Wire publication beside the existing `model_dump` reading;
 structural cost tests reject surviving projection scaffolding.
 
+The retained IncludeTree memoizes the continuation answers the walk derives from
+it, so one plan derives each of them once rather than once per published node.
+That memo lives on the tree rather than in a side table keyed by plan, because
+the tree is what a result envelope and its projection hold: a side table would
+leave projection deriving the same answers again and would refill whenever plan
+caching evicted its key. Its keys are drawn from the plan's own positions and
+the accepted model's concretes, so it is bounded by the includes clause and the
+model and never by roots or published nodes — the bound the retained shape
+already carries. What a closed result keeps reachable therefore rises by a
+bounded amount and remains bounded metadata lifetime.
+
 Putting the operation on Entity was rejected. An Entity does not own the finite
 IncludeTree or original model position, and a cycle detector would derive shape
 from the object graph rather than from what the read requested. Installing a
