@@ -5,24 +5,40 @@ client, which is the whole of what the record talks to. What is graded is the
 presign's inputs, that one client serves every resolution while each resolution
 signs anew, that a native failure becomes a refusal carrying no token, and that
 constructing the record runs no credential chain.
+
+The last two build a real botocore session over an authored AWS config file,
+because a credential helper that never answers is a wait only the real chain
+can be asked to take.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import os
+import shlex
+import subprocess
+import sys
+import time
 from typing import TYPE_CHECKING, cast
 
 import botocore.session
 import pytest
 from botocore.config import Config
 
-from parallax.aws import RdsIamCredentials
+from parallax.aws import RdsIamCredentials, _rds
 from parallax.core.db_port import CredentialResolutionError, CredentialSource, Password
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from botocore.session import Session
 
 _ENDPOINT = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
+
+_UNANSWERING_HELPER = (
+    f"{shlex.quote(sys.executable)} -c {shlex.quote('import time; time.sleep(300)')}"
+)
+_HELPER_BOUND = 1.0
 
 
 class _StubClient:
@@ -51,6 +67,7 @@ class _StubSession:
         self.created: list[tuple[str, str | None]] = []
         self.configs: list[Config] = []
         self.variables: dict[str, object] = {}
+        self.components: list[str] = []
 
     def create_client(self, service_name: str, region_name: str | None = None) -> _StubClient:
         self.created.append((service_name, region_name))
@@ -61,6 +78,9 @@ class _StubSession:
 
     def set_config_variable(self, logical_name: str, value: object) -> None:
         self.variables[logical_name] = value
+
+    def lazy_register_component(self, name: str, no_arg_factory: object) -> None:
+        self.components.append(name)
 
 
 def _credentials(session: _StubSession) -> RdsIamCredentials:
@@ -193,6 +213,9 @@ def test_a_session_the_record_builds_bounds_the_chain_it_resolves_through(
         "metadata_service_timeout": bounds["connect_timeout"],
         "metadata_service_num_attempts": bounds["retries"]["total_max_attempts"],
     }
+    # A helper command is neither a client call nor a fetcher call, so the
+    # record supplies the credential chain itself to bound the one wait left.
+    assert session.components == ["credential_provider"]
 
 
 def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
@@ -204,3 +227,65 @@ def test_an_injected_session_is_used_exactly_as_it_was_given() -> None:
 
     assert session.configs == []
     assert session.variables == {}
+    assert session.components == []
+
+
+def _resolving_through(config: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point a real botocore session at an authored AWS config and nothing else."""
+    config_file = tmp_path / "config"
+    config_file.write_text(config, encoding="utf-8")
+    for ambient in [name for name in os.environ if name.startswith("AWS_")]:
+        monkeypatch.delenv(ambient)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "absent-credentials"))
+    monkeypatch.setenv("AWS_PROFILE", "app")
+    monkeypatch.setattr(_rds, "_CHAIN_PROCESS_TIMEOUT", _HELPER_BOUND)
+
+
+def _refusal_from_a_helper_that_never_answers() -> float:
+    credentials = RdsIamCredentials(
+        host=_ENDPOINT, port=5432, user="orders_service", region="us-east-1"
+    )
+    started = time.monotonic()
+    with pytest.raises(CredentialResolutionError) as refused:
+        credentials.resolve()
+    waited = time.monotonic() - started
+
+    assert str(refused.value) == "RDS IAM token could not be generated"
+    assert isinstance(refused.value.__cause__, subprocess.TimeoutExpired)
+    return waited
+
+
+def test_a_profile_credential_helper_that_never_answers_is_given_up_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # botocore waits on a profile's helper command with no timeout of its own,
+    # and `resolve` runs on an acquiring caller's thread or a pool's own
+    # background path, where nothing can interrupt it. So the wait is the
+    # record's to end: a helper that sleeps for five minutes costs one attempt,
+    # not the pool.
+    _resolving_through(
+        f"[profile app]\ncredential_process = {_UNANSWERING_HELPER}\n", tmp_path, monkeypatch
+    )
+
+    assert _refusal_from_a_helper_that_never_answers() < 30
+
+
+def test_a_helper_reached_through_an_assume_role_source_profile_is_given_up_on_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A source profile's providers are built when the role is resolved rather
+    # than when the chain is, so the same helper is reached through a builder
+    # the chain hands out later. The bound has to hold there as well, and no
+    # role is ever assumed here: the wait ends before STS is reached.
+    _resolving_through(
+        "[profile app]\n"
+        "role_arn = arn:aws:iam::123456789012:role/orders\n"
+        "source_profile = helper\n"
+        "\n"
+        f"[profile helper]\ncredential_process = {_UNANSWERING_HELPER}\n",
+        tmp_path,
+        monkeypatch,
+    )
+
+    assert _refusal_from_a_helper_that_never_answers() < 30

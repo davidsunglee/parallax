@@ -84,9 +84,11 @@ is botocore finding or refreshing the AWS credentials it signs with: the
 environment, a profile, an ECS task role, IMDSv2, IRSA, or SSO. The record
 bounds that I/O, because the seam requires a source to, and it creates its RDS
 client on first use rather than at construction, so composing an adapter stays
-free of I/O. The one wait it cannot bound is a profile's `credential_process`:
-botocore waits on that command without a timeout, so a command that hangs hangs
-the connection attempt waiting on it.
+free of I/O. A profile's `credential_process` is bounded too, by the record
+rather than by botocore, which waits on that command without a timeout: a helper
+that has not answered within a few seconds is killed and the attempt fails as a
+refusal. A helper that legitimately needs longer — one waiting on a person —
+belongs behind a session of your own, which is used exactly as given.
 
 There is no token cache and no refresh thread. A connection the server has
 already accepted is never disturbed by its token ageing out, and when a source

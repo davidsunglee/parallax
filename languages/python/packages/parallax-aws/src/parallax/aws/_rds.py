@@ -16,17 +16,20 @@ Source carries how".
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, cast
 
 import botocore.session
 from botocore.config import Config
+from botocore.credentials import AssumeRoleProvider, ProcessProvider, create_credential_resolver
 
 from parallax.core.db_port import CredentialResolutionError, Password
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
+    from botocore.credentials import CredentialProvider, CredentialResolver
     from botocore.session import Session
 
 __all__ = ["RdsIamCredentials"]
@@ -42,6 +45,12 @@ _CHAIN_CONNECT_TIMEOUT = 2.0
 _CHAIN_READ_TIMEOUT = 2.0
 _CHAIN_ATTEMPTS = 2
 
+# What a profile's `credential_process` may take before the source gives up on
+# it. A helper command makes a call of its own — a vault, an SSO endpoint, a
+# security key someone has to touch — so it is allowed longer than one socket
+# wait, and a deployment whose helper needs longer than this injects a session.
+_CHAIN_PROCESS_TIMEOUT = 5.0
+
 
 class _RdsTokenClient(Protocol):
     """The one RDS-client operation this module calls.
@@ -55,17 +64,105 @@ class _RdsTokenClient(Protocol):
     ) -> str: ...
 
 
-def _bounded_session() -> Session:
-    """A botocore session whose credential chain bounds its own network calls.
+class _BoundedHelper(subprocess.Popen[bytes]):
+    """A credential helper the source stops waiting on.
+
+    botocore waits on a profile's ``credential_process`` with no timeout of its
+    own, and it waits where nothing above the source can interrupt it, so the
+    wait ends here and the helper is killed when it does.
+    """
+
+    def communicate(
+        self, input: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        try:
+            return super().communicate(
+                input, _CHAIN_PROCESS_TIMEOUT if timeout is None else timeout
+            )
+        except subprocess.TimeoutExpired:
+            self.kill()
+            # Reaping the killed helper waits on the helper alone; draining its
+            # pipes would wait on whatever else it left holding them open.
+            self.wait()
+            raise
+
+
+class _BuildsProfileProviders(Protocol):
+    def providers(
+        self, profile_name: str, disable_env_vars: bool = False
+    ) -> list[CredentialProvider]: ...
+
+
+class _RunsCredentialHelper(Protocol):
+    """Where botocore's process provider keeps what it runs a helper with.
+
+    Both this and the builder below are taken as constructor arguments and kept
+    privately, so a chain botocore has already built is bounded through the
+    attributes it keeps them on — which no class a type checker can read.
+    """
+
+    _popen: type[subprocess.Popen[bytes]]
+
+
+class _AssumesRole(Protocol):
+    _profile_provider_builder: _BuildsProfileProviders | None
+
+
+class _BoundedProfileProviders:
+    """An assume-role source profile's providers, built with the same bound.
+
+    A source profile's chain is built when the role is resolved rather than when
+    the session's chain is, so a helper reached that way is bounded here.
+    """
+
+    def __init__(self, builder: _BuildsProfileProviders) -> None:
+        self._builder = builder
+
+    def providers(
+        self, profile_name: str, disable_env_vars: bool = False
+    ) -> list[CredentialProvider]:
+        return _bounded_helpers(self._builder.providers(profile_name, disable_env_vars))
+
+
+def _bounded_helpers(providers: list[CredentialProvider]) -> list[CredentialProvider]:
+    for provider in providers:
+        if isinstance(provider, ProcessProvider):
+            runs = cast("_RunsCredentialHelper", provider)
+            runs._popen = _BoundedHelper  # pyright: ignore[reportPrivateUsage]
+        elif isinstance(provider, AssumeRoleProvider):
+            role = cast("_AssumesRole", provider)
+            builder = role._profile_provider_builder  # pyright: ignore[reportPrivateUsage]
+            if builder is not None:
+                bounded = _BoundedProfileProviders(builder)
+                role._profile_provider_builder = bounded  # pyright: ignore[reportPrivateUsage]
+    return providers
+
+
+def _bounded_chain(session: Session, region: str) -> CredentialResolver:
+    """The session's credential chain, bounding every helper command it may run.
+
+    botocore builds this chain itself the first time a client is created, for
+    the region that client resolved; it is built here instead, for the region
+    the RDS client will be created in, so the ``credential_process`` providers
+    in it are bounded before anything can run them. It is built when botocore
+    asks for it rather than with the session, so an adapter that never connects
+    reads no configuration files.
+    """
+    resolver = create_credential_resolver(session, region_name=region)
+    _bounded_helpers(resolver.providers)
+    return resolver
+
+
+def _bounded_session(region: str) -> Session:
+    """A botocore session whose credential chain bounds its own waiting.
 
     The default client configuration reaches every client the session creates,
     the STS and SSO clients the chain builds internally included. The instance
     metadata service is reached through a fetcher rather than a client and takes
     its bounds from the session's own configuration, which is why that pair is
-    set beside the client default rather than covered by it.
-
-    One wait stays outside both: botocore runs a profile's ``credential_process``
-    and waits on it with no timeout, so there the bound is the command's.
+    set beside the client default rather than covered by it. A profile's
+    ``credential_process`` is neither: it is a command botocore waits on, and
+    the chain registered here is what bounds that wait.
     """
     session = botocore.session.get_session()
     session.set_default_client_config(
@@ -77,6 +174,7 @@ def _bounded_session() -> Session:
     )
     session.set_config_variable("metadata_service_timeout", _CHAIN_CONNECT_TIMEOUT)
     session.set_config_variable("metadata_service_num_attempts", _CHAIN_ATTEMPTS)
+    session.lazy_register_component("credential_provider", lambda: _bounded_chain(session, region))
     return session
 
 
@@ -101,7 +199,9 @@ class _TokenSigner:
     def client(self) -> _RdsTokenClient:
         with self._lock:
             if self._client is None:
-                session = self._session if self._session is not None else _bounded_session()
+                session = (
+                    self._session if self._session is not None else _bounded_session(self._region)
+                )
                 created: BaseClient = session.create_client("rds", region_name=self._region)
                 self._client = cast("_RdsTokenClient", created)
             return self._client
