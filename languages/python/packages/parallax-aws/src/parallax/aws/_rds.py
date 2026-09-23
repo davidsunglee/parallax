@@ -103,6 +103,10 @@ class _BoundedHelper(subprocess.Popen[bytes]):
         meant to outlive it, which is not the source's to kill. Reaping last
         waits on the killed helper alone rather than on whatever else holds its
         pipes.
+
+        Closing here is free because ``communicate`` read on this thread, as
+        POSIX's implementation does; one that reads on threads of its own
+        leaves a reader inside the pipe, and a close then waits on it.
         """
         for pipe in (self.stdout, self.stderr):
             if pipe is not None:
