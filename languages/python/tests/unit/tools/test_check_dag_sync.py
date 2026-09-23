@@ -1175,8 +1175,13 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
     assert "parallax.core.entity" not in adjacency["parallax.descriptor"]
     assert "parallax.core.entity" in forbidden["parallax.descriptor"]
     assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
+    # Both spellings of the one grant, because a grant is scope-wide while the
+    # spelling the child reaches it by is not derivable from the tables: this
+    # seam names a module beneath the granted scope, while `parallax.aws.postgres`
+    # names the granted scope's own interface.
     assert dag.child_grant_exceptions(adjacency, "parallax.descriptor") == [
-        "parallax.descriptor._hub -> parallax.core.entity.**"
+        "parallax.descriptor._hub -> parallax.core.entity",
+        "parallax.descriptor._hub -> parallax.core.entity.**",
     ]
     # Only the *direct* extra grant needs naming: ignoring the first hop also
     # withdraws every indirect chain that reaches further through it.
@@ -1481,6 +1486,48 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope(linted_copy: 
 
     assert "parallax.descriptor may import only its permitted dependencies BROKEN" in reported
     assert "not allowed to import parallax.core.entity" in reported
+
+
+# --------------------------------------------------------------------------
+# Canary 4b: a credential provider is a LEAF beside the adapters. Only its
+# engine-specific slice is granted one, and these three are the whole proof:
+# the base slice may reach neither the adapter nor the driver, and the leaf may
+# reach both.
+# --------------------------------------------------------------------------
+def test_an_adapter_import_outside_the_engine_slice_fails_lint_imports(linted_copy: Path) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.aws._rds",
+        "import parallax.postgres  # deliberate adapter violation",
+    )
+
+    assert "parallax.aws may import only its permitted dependencies BROKEN" in reported
+    assert "parallax.aws._rds -> parallax.postgres" in reported
+
+
+def test_a_driver_import_outside_the_engine_slice_fails_lint_imports(linted_copy: Path) -> None:
+    # The restricted-external contract is the half the first-party row cannot
+    # carry: a scope granted no adapter could still name the driver directly.
+    reported = broken_by(
+        linted_copy,
+        "parallax.aws._rds",
+        "import psycopg  # deliberate driver violation",
+    )
+
+    assert "Direct imports of psycopg require an explicit §7 grant BROKEN" in reported
+    assert "parallax.aws._rds -> psycopg" in reported
+
+
+def test_the_engine_slice_may_import_the_adapter_and_the_driver(linted_copy: Path) -> None:
+    # The positive half, which the two breaking canaries cannot prove: the
+    # grant is delegated to this one module rather than withdrawn from the
+    # package, so what the slice composes its configuration out of is reachable
+    # exactly where it is spelled.
+    kept_with(
+        linted_copy,
+        "parallax.aws.postgres",
+        "import parallax.postgres\nimport psycopg",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -2035,9 +2082,14 @@ def test_the_rendered_block_carries_the_external_contracts() -> None:
     assert "include_external_packages = true" in block
     for package in dag.RESTRICTED_EXTERNAL_GRANTS:
         assert f'name = "Direct imports of {package} require an explicit §7 grant"' in block
-    # Alerting is relaxed only where a delegated child grant is written, since a
-    # permission has no import to match yet and must not fail for lacking one.
-    assert block.count('unmatched_ignore_imports_alerting = "none"') == 1
+    # Alerting is relaxed in exactly the contracts that write an exception, and
+    # nowhere else: every exception is generated from a §7 grant as the pair of
+    # spellings that grant could be reached by, so at most one of the pair has
+    # an import to match and a permission may have none at all yet.
+    assert block.count('unmatched_ignore_imports_alerting = "none"') == block.count(
+        "ignore_imports = ["
+    )
+    assert block.count('unmatched_ignore_imports_alerting = "none"') > 1
     assert "parallax.core.entity._instance_state.** -> pydantic_core" in block
     assert 'name = "Unowned production interfaces import no restricted externals directly"' in block
     assert block.count("as_packages = false") == 1

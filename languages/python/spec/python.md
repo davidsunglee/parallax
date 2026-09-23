@@ -2300,7 +2300,12 @@ where the database is and is refused if it carries a password, while
 says how its login authenticates. A source is resolved while connections are
 established rather than at construction, so a token with a lifetime shorter than
 the pool's is a supported credential (`m-db-port`; ADR 0067). All four names are
-exported from `parallax.core.db_port`. Every `connect` over one configuration opens an INDEPENDENT runtime, so
+exported from `parallax.core.db_port`. A provider's source ships in a
+distribution of its own beside the adapter: `parallax-aws` carries
+`RdsIamCredentials`, and under its `postgres` extra
+`parallax.aws.postgres.rds_postgres(*, host, user, database, region, port=5432,
+params=None, session=None, **adapter_options)` returns a `PostgresAdapter`
+already carrying that source and the `sslmode` an IAM token requires (§8). Every `connect` over one configuration opens an INDEPENDENT runtime, so
 closing one root leaves another working. `db.close()` and using the root as a
 context manager are equivalent, both idempotent, and one of them is required:
 what a root holds is connections, and nothing above it can release them.
@@ -6192,6 +6197,7 @@ come from `core/spec/modules.md`.
 | Enforcement scope | Allowed direct first-party dependencies |
 |---|---|
 | `parallax.aws` | `m-db-port` |
+| `parallax.aws.postgres` | `m-db-port`, `parallax.postgres` |
 | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
 | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
 | `parallax.core.db_port` | `parallax.core.diagnostics` |
@@ -6279,9 +6285,9 @@ framework's own scopes.
 |---|---|
 | `pydantic` | `parallax.core.entity`, `parallax.core.entity._edit`, `parallax.core.entity._instance_state`, `parallax.core.entity._pydantic_storage`, `parallax.conformance` |
 | `pydantic_core` | `parallax.core.entity._instance_state` |
-| `psycopg` | `parallax.postgres`, `parallax.conformance` |
+| `psycopg` | `parallax.postgres`, `parallax.aws.postgres`, `parallax.conformance` |
 | `psycopg_pool` | `parallax.postgres` |
-| `botocore` | `parallax.aws` |
+| `botocore` | `parallax.aws`, `parallax.aws.postgres` |
 
 A scope may declare **child enforcement scopes** over its own private
 implementation modules (*Child enforcement scopes*, below), and the table below
@@ -6304,6 +6310,7 @@ for the scopes each policy governs.
 
 | Child enforcement scope | Parent enforcement scope | Import policy |
 |---|---|---|
+| `parallax.aws.postgres` | `parallax.aws` | ordinary |
 | `parallax.core.entity._construction_input` | `parallax.core.entity` | sealed |
 | `parallax.core.entity._edit` | `parallax.core.entity` | ordinary |
 | `parallax.core.entity._expressions` | `parallax.core.entity` | ordinary |
@@ -6639,7 +6646,7 @@ hatchling.
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `Principal`, `ScopedDatabase`, `InvalidPrincipalError`, `TransactionAuthorityError`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
-| `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source) | `botocore` (sole declarer) | `parallax-core` | `parallax.aws`: `RdsIamCredentials` |
+| `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source), `parallax.aws.postgres` (its engine-specific slice, behind the `postgres` extra) | `botocore` (sole declarer) | `parallax-core`; `parallax-postgres` under the `postgres` extra | `parallax.aws`: `RdsIamCredentials`; `parallax.aws.postgres`: `rds_postgres` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
@@ -6684,19 +6691,26 @@ hatchling.
   default. The driver-free dialect strategy ships inside `parallax-core`
   (explicitly permitted by core), keeping `compile` Docker- and driver-free.
 - **Credential-provider manifest proof.** `parallax-aws` declares `parallax-core`
-  and `botocore` and nothing else, and it is the sole botocore declarer: the
-  built wheel's `Requires-Dist` is asserted to be exactly those two, and every
-  other clean-install fixture proves botocore absent. A credential provider is a
-  leaf beside the adapters rather than a layer above them — it produces
+  and `botocore` unconditionally and nothing else, and it is the sole botocore
+  declarer: the built wheel's `Requires-Dist` is asserted to be exactly those
+  two beside the one requirement its `postgres` extra gates, and every other
+  clean-install fixture proves botocore absent. A credential provider is a leaf
+  beside the adapters rather than a layer above them — it produces
   configuration the composition root hands to whichever adapter it selected — so
   `parallax.aws` is granted `m-db-port` alone and the clean-install fixture
-  proves an installed provider brings no adapter and no driver with it.
+  proves an installed provider brings no adapter and no driver with it. Its
+  engine-specific slice `parallax.aws.postgres` composes that configuration for
+  one adapter and is therefore granted it, as a child enforcement scope wider
+  than its parent (§7) and as the one extra the manifest declares: selecting
+  the extra is what installs an adapter, and without it the slice is absent
+  from the import space.
 - **Composition root.** Application/test code constructs the adapter and calls
   `parallax.snapshot.connect(adapter=...)`; neither dependency leaks into
   common-runtime code, and no umbrella artifact exists.
-- **Clean-install and runtime-load checks.** Six uv-venv fixtures
+- **Clean-install and runtime-load checks.** Seven uv-venv fixtures
   (`uv run pytest tests/distribution/test_clean_install.py`): core alone; core + descriptor; core +
-  evolution; core + snapshot; core + snapshot + postgres; core + aws. Each inspects installed
+  evolution; core + snapshot; core + snapshot + postgres; core + aws; core + snapshot + postgres +
+  aws[postgres]. Each inspects installed
   distributions and import-probes to prove unselected interchange, lifecycle, adapter,
   driver, credential provider, conformance, benchmark, and container dependencies are absent from
   the installed and loaded production graph. The descriptor fixture also

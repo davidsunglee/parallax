@@ -516,6 +516,9 @@
   "parallax.aws": [
     "RdsIamCredentials"
   ],
+  "parallax.aws.postgres": [
+    "rds_postgres"
+  ],
   "parallax.snapshot": [
     "CheckedSnapshot",
     "DatabaseOptions",

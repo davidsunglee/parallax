@@ -185,6 +185,12 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # an application that never reaches a database over Postgres must be able to
     # install this provider without the driver arriving with it.
     "parallax.aws": frozenset({"parallax.core.db_port"}),
+    # The engine-specific leaf of that provider, and the only part of it granted
+    # an adapter. Composing a `PostgresAdapter` is producing configuration for a
+    # composition root, not layering a runtime above the seam, so the grant is
+    # wider than its parent's — and confining it to this one child is what keeps
+    # the row above enforceable rather than decorative.
+    "parallax.aws.postgres": frozenset({"parallax.core.db_port", "parallax.postgres"}),
     # The standard-library-only projection three scopes share. It grants
     # nothing, which is the whole of what it enforces: a detached diagnostic
     # value must be reachable from the database port, the execution lifecycle,
@@ -640,6 +646,11 @@ class ChildScope:
 #   — a sibling shape such a row cannot reach — and takes from it the scopes
 #   whose sealed or isolated half it grades over the files.
 CHILD_SCOPES: Mapping[str, ChildScope] = {
+    # Ordinary: the generated rows are the whole of this pair's enforcement. The
+    # child's own row grants the adapter, and the parent's row forbids it with
+    # the child's edge excepted by name, so an adapter import anywhere in
+    # `parallax.aws` outside this one module is reported.
+    "parallax.aws.postgres": ChildScope(parent="parallax.aws", policy="ordinary"),
     # The four publication-side children of the Entity frontend are sealed
     # because their whole reason to exist is what they cannot reach: the
     # construction-input vocabulary both a row's producer and its reader are
@@ -797,9 +808,14 @@ def root_packages() -> tuple[str, ...]:
 # reaches past every binding. `_construction_input`, `_expressions`, and
 # `_layout` are not granted, and so are contract sources of their own.
 #
-# `botocore` is granted to the AWS credential provider alone. It is the AWS
-# credential chain the provider needs rather than the token, which is signed
-# locally, and no other scope has any business resolving an AWS identity.
+# `botocore` is granted to the AWS credential provider alone, both of its
+# scopes by name because a parent's grant does not carry its declared children
+# and the engine-specific slice names a botocore session in its own signature.
+# It is the AWS credential chain the provider needs rather than the token, which
+# is signed locally, and no other scope has any business resolving an AWS
+# identity. That slice is granted `psycopg` too, for the canonical composer of
+# the connection string it hands the adapter; the manifest is untouched by that
+# grant, since the driver reaches it through `parallax-postgres`.
 #
 # The conformance harness is granted `pydantic` for its native edit witnesses —
 # fixtures that are deliberately Pydantic models exercising the Entity frontend
@@ -817,9 +833,9 @@ RESTRICTED_EXTERNAL_GRANTS: Mapping[str, frozenset[str]] = {
         }
     ),
     "pydantic_core": frozenset({"parallax.core.entity._instance_state"}),
-    "psycopg": frozenset({"parallax.postgres", CONFORMANCE_ROOT}),
+    "psycopg": frozenset({"parallax.postgres", "parallax.aws.postgres", CONFORMANCE_ROOT}),
     "psycopg_pool": frozenset({"parallax.postgres"}),
-    "botocore": frozenset({"parallax.aws"}),
+    "botocore": frozenset({"parallax.aws", "parallax.aws.postgres"}),
 }
 
 
@@ -1338,17 +1354,23 @@ def child_grant_exceptions(adjacency: Mapping[str, frozenset[str]], scope: str) 
     can neither forbid nor except what sits inside its own source package, and
     whatever the sibling reaches further is already reported from the sibling.
 
-    Entries are wildcarded over the granted scope's modules because the grant is
-    scope-wide while the concrete importee is not derivable here.
-    ``unmatched_ignore_imports_alerting`` defaults to ``error``, so an exception
-    cannot outlive the import it describes.
+    Two expressions per grant — the granted scope's own interface module and
+    ``grant.**`` — because the grant is scope-wide while which spelling the
+    descendant reaches it by is not derivable here: a child composing an
+    adapter's public value imports the package interface, while one reaching a
+    seam inside another scope imports a module beneath it. Only one of the pair
+    can match, so the contracts carrying these relax
+    ``unmatched_ignore_imports_alerting``; what keeps an exception from
+    outliving the import it describes is that it is generated from the §7 grant
+    rather than written down, so withdrawing the grant withdraws it.
     """
     reachable = transitive_closure(adjacency, scope)
     return sorted(
-        f"{child} -> {grant}.**"
+        expression
         for child in scope_descendants(scope)
         for grant in adjacency.get(child, frozenset())
         if grant not in reachable and not (scope_ancestors(grant) & (reachable | {scope}))
+        for expression in (f"{child} -> {grant}", f"{child} -> {grant}.**")
     )
 
 
@@ -1614,12 +1636,14 @@ def render_block(
         "include_external_packages = true",
     ]
     for scope in sorted(forbidden):
+        excepted = exceptions.get(scope, [])
         lines.extend(
             _render_forbidden_contract(
                 name=f"{scope} may import only its permitted dependencies",
                 sources=[scope],
                 forbidden=forbidden[scope],
-                ignore_imports=exceptions.get(scope, []),
+                ignore_imports=excepted,
+                unmatched_ignore_imports_alerting="none" if excepted else None,
             )
         )
     for package in sorted(RESTRICTED_EXTERNAL_GRANTS):

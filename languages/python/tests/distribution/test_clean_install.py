@@ -1,9 +1,12 @@
 """Clean-install production topology proofs (§8 / §10 `clean_install` marker).
 
-Each of the six §8 selective topologies is installed into a fresh uv venv
+Each of the seven §8 selective topologies is installed into a fresh uv venv
 from the locally built wheels, and the installed distribution list + import
 space are probed to prove that unselected interchange, lifecycles, the driver,
 the credential provider, and the dev-only conformance tooling are all absent.
+
+The last two are one topology either side of an extra: what the credential
+provider brings with it, and what selecting its engine-specific slice adds.
 """
 
 from __future__ import annotations
@@ -244,5 +247,30 @@ def test_core_and_aws(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert not _dist_installed(python, "parallax-descriptor")
     assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "parallax-snapshot")
+    assert not _dist_installed(python, "testcontainers")
+    assert not _dist_installed(python, "parallax-conformance")
+
+
+def test_core_snapshot_postgres_and_aws_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
+    python = _make_venv(tmp_path / "venv")
+    _install(python, wheelhouse, "parallax-snapshot", "parallax-aws[postgres]")
+
+    assert _import_ok(python, "parallax.core")
+    assert _import_ok(python, "parallax.snapshot")
+    # The extra is what selects the adapter, so the engine-specific slice and
+    # everything it composes are here together — the whole of what the
+    # `core + aws` fixture proves absent without it.
+    assert _import_ok(python, "parallax.aws")
+    assert _import_ok(python, "parallax.aws.postgres")
+    assert _import_ok(python, "parallax.postgres")
+    assert _dist_installed(python, "parallax-postgres")
+    assert _dist_installed(python, "psycopg")
+    assert _dist_installed(python, "botocore")
+    # Selecting an extra selects one requirement, not a wider install.
+    assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.evolution")
+    assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")

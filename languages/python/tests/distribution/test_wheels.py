@@ -240,11 +240,14 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
     wheelhouse: Wheelhouse,
 ) -> None:
     # §8 makes `parallax-aws` the sole botocore declarer and a LEAF beside the
-    # adapters. The exact set is what carries both halves: an adapter or a
-    # driver added to the manifest would make an application that installs a
-    # credential provider install a database driver with it, and the
+    # adapters. The exact sets are what carry both halves: an adapter or a
+    # driver added to the unconditional set would make an application that
+    # installs a credential provider install a database driver with it, and the
     # clean-install fixture that proves the same thing installs a wheel this
-    # assertion reads the declaration of.
+    # assertion reads the declaration of. The adapter the engine-specific slice
+    # composes is reachable only behind the `postgres` extra, which is the
+    # artifact-level statement that one module of this distribution needs it and
+    # the rest does not.
     with zipfile.ZipFile(wheelhouse.wheels["parallax-aws"]) as archive:
         metadata = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
         declared = archive.read(metadata).decode()
@@ -253,7 +256,12 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
         for line in declared.splitlines()
         if line.startswith("Requires-Dist:")
     }
-    assert requires == {"parallax-core", "botocore>=1.43.99"}
+    unconditional = {line for line in requires if ";" not in line}
+    gated = requires - unconditional
+    assert unconditional == {"parallax-core", "botocore>=1.43.99"}
+    assert {line.partition(";")[0].strip() for line in gated} == {"parallax-postgres"}
+    assert all('extra == "postgres"' in line.replace("'", '"') for line in gated), gated
+    assert "Provides-Extra: postgres" in declared
 
 
 def test_conformance_wheel_declares_console_script(wheelhouse: Wheelhouse) -> None:
