@@ -6,12 +6,12 @@
   "provenance": {
     "budgetContract": "schemaVersion: 1\nauthority:\n  machine: Mac17,4\n  cpu: Apple M5\n  cores: 10\n  ramGiB: 32\n  cpython: 3.14.7\n  postgres: \"18.6\"\nsampling:\n  timing:\n    warmups: 3\n    measured: 9\n    medianMeetsCeiling: true\n    secondSlowestMax: 1.25\n  memory:\n    children: 3\n    collectAtPageBoundary: true\n    medianMeetsCeiling: true\n    individualMax: 1.10\n    scalingArms: [200, 2000]\n    armGrowthMaxKiB: 16\nworkloads:\n  conventional-fanout:\n    fixture: benchmarks/stream.yaml\n    cells:\n      live:\n        eager: { maxMs: 12.5, minRootsPerSecond: 16000 }\n        page32: { maxMs: 20, minRootsPerSecond: 10000 }\n        page128: { maxMs: 15.5, minRootsPerSecond: 12903 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 2.5 }\n      providerFreeCpu:\n        eager: { maxMs: 10.5, minRootsPerSecond: 19048 }\n        page32: { maxMs: 13, minRootsPerSecond: 15385 }\n      eagerMemory: { retainedKiB: 800, peakKiB: 1350 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 256\n        page128PeakKiB: 768\n  duplicate-include:\n    fixture: benchmarks/duplicate-include.yaml\n    cells:\n      live:\n        eager: { maxMs: 18, minRootsPerSecond: 11111 }\n        page32: { maxMs: 24, minRootsPerSecond: 8333 }\n        page128: { maxMs: 22, minRootsPerSecond: 9091 }\n      firstResult:\n        page1: { maxMs: 1.5 }\n        page32: { maxMs: 3.0 }\n      providerFreeCpu:\n        eager: { maxMs: 14.5, minRootsPerSecond: 13793 }\n        page32: { maxMs: 17, minRootsPerSecond: 11765 }\n      eagerMemory: { retainedKiB: 820, peakKiB: 1500 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 320\n        page128PeakKiB: 1200\n  document-heavy:\n    fixture: benchmarks/document-layout.yaml\n    cells:\n      live:\n        eager: { maxMs: 22, minRootsPerSecond: 9091 }\n        page32: { maxMs: 28, minRootsPerSecond: 7143 }\n        page128: { maxMs: 27, minRootsPerSecond: 7407 }\n      firstResult:\n        page1: { maxMs: 2.0 }\n        page32: { maxMs: 3.5 }\n      eagerMemory: { retainedKiB: 975, peakKiB: 1900 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 96\n        page32PeakKiB: 400\n        page128PeakKiB: 1280\n  versioned-document:\n    fixture: benchmarks/versioned-document.yaml\n    cells:\n      live:\n        eager: { maxMs: 5.5, minRootsPerSecond: 36364 }\n        page32: { maxMs: 8, minRootsPerSecond: 25000 }\n        page128: { maxMs: 6.75, minRootsPerSecond: 29630 }\n      firstResult:\n        page1: { maxMs: 0.6 }\n        page32: { maxMs: 1.0 }\n      eagerMemory: { retainedKiB: 275, peakKiB: 475 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 336\n  bitemporal-current:\n    fixture: benchmarks/bitemporal-current.yaml\n    cells:\n      live:\n        eager: { maxMs: 6.5, minRootsPerSecond: 30769 }\n        page32: { maxMs: 10, minRootsPerSecond: 20000 }\n        page128: { maxMs: 8, minRootsPerSecond: 25000 }\n      firstResult:\n        page1: { maxMs: 1.0 }\n        page32: { maxMs: 1.25 }\n      eagerMemory: { retainedKiB: 330, peakKiB: 425 }\n      streamedMemory:\n        retainedKiB: 64\n        page1PeakKiB: 64\n        page32PeakKiB: 144\n        page128PeakKiB: 352\n  stress-columns:\n    fixture: benchmarks/materialization-stress-columns.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 175\n        minProjectionsPerSecond: 5714\n        retainedBPerProjection: 2800\n        transientBPerProjection: 3328\n        peakFor64KiB: 400\n        preparedSetKiB: 64\n  stress-document:\n    fixture: benchmarks/materialization-stress-document.yaml\n    cells:\n      stress:\n        maxUsPerProjection: 210\n        minProjectionsPerSecond: 4762\n        retainedBPerProjection: 3200\n        transientBPerProjection: 3328\n        peakFor64KiB: 425\n        preparedSetKiB: 80\n",
     "budgetContractDigest": "f128baab568d9a50e30e569fa12e5d77f6dc67f4b7407970b0af4790608a9257",
-    "commit": "b40912042df68beaa01eaa717665e9fe1c2b1b5c",
+    "commit": "93733e93fd7414780f14a092cb7487f09ddd0d5d",
     "cores": 10,
     "cpu": "Apple M5",
     "cpython": "3.14.7",
     "dirty": false,
-    "lockDigest": "bc31fd8f1c540887b91b19dc7c19f56d8c9a620d5bd9c0645ea3b6993bff66d2",
+    "lockDigest": "c6d88f6de4239e1aa2be609838725eea4a7fd5421743f483d6369abf3a5ede58",
     "machine": "Mac17,4",
     "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
     "postgres": "not-used",
@@ -24,28 +24,29 @@
       "windows": {
         "keyed-write": "Typed or Wire input through preparation, settlement, SQL lowering, production bind adaptation, and psycopg's document serialization; no database execution",
         "model-preparation": "one complete model preparation from the declared Entity Classes",
-        "predicate-acquisition": "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows through production acquisition to a buffered Materialized Write Group; no ingress preparation, JSON parsing, flush, or serialization"
+        "predicate-acquisition": "a prepared Bitemporal updateUntil predicate and freshly composed resolving rows through production acquisition to a buffered Materialized Write Group; no ingress preparation, JSON parsing, flush, or serialization",
+        "wire-insert-response": "one public tx.wire.insert of a nested, polymorphic Create Payload inside an open transaction, from the payload arriving to the frozen node it answers; no flush, lowering, or serialization"
       }
     },
-    "workloadDigest": "70ab6544ba63d592cc24ee7133a84e10ca7555ff488d9f8d8408df112a48da55"
+    "workloadDigest": "0a712bd8c7fe09799a61f0512ab44bfc0f74c901ab5ce6913c929cf3632072db"
   },
   "readings": [
     {
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        170.708,
-        172.958,
-        165.792,
-        163.542,
-        163.375,
-        165.75,
-        163.083,
-        164.667,
-        165.875
+        168.625,
+        165.542,
+        164.625,
+        161.0,
+        163.334,
+        169.125,
+        170.667,
+        163.291,
+        162.583
       ],
       "unit": "us/row",
-      "value": 165.75,
+      "value": 164.625,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.typed"
     },
@@ -57,10 +58,10 @@
         15042.0,
         15042.0,
         15042.0,
-        15042.0,
         14992.0,
         15042.0,
-        14992.0,
+        15042.0,
+        15042.0,
         15042.0
       ],
       "unit": "B/row",
@@ -72,10 +73,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2744.0
+        2794.0
       ],
       "unit": "B/row",
-      "value": 2744.0,
+      "value": 2794.0,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.typed"
     },
@@ -160,20 +161,146 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        205.667,
-        202.917,
-        198.875,
-        207.625,
-        212.083,
-        200.209,
-        199.75,
-        205.75,
-        198.083
+        207.333,
+        199.583,
+        196.959,
+        196.167,
+        194.167,
+        194.041,
+        193.375,
+        307.042,
+        194.417
       ],
       "unit": "us/row",
-      "value": 202.917,
+      "value": 196.167,
       "window": "keyed-write",
       "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.13",
+      "samples": [
+        14826.0,
+        14826.0,
+        14776.0,
+        14826.0,
+        14826.0,
+        14826.0,
+        14826.0,
+        14826.0,
+        14826.0
+      ],
+      "unit": "B/row",
+      "value": 14826.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.13",
+      "samples": [
+        3710.0
+      ],
+      "unit": "B/row",
+      "value": 3710.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.shapeOfDeclaration",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.entityShape",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.occurrenceShape",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedDocument",
+      "runtime": "3.13",
+      "samples": [
+        4.0
+      ],
+      "unit": "calls/row",
+      "value": 4.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedMany",
+      "runtime": "3.13",
+      "samples": [
+        1.0
+      ],
+      "unit": "calls/row",
+      "value": 1.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.applyPatches",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.detachJsonContainer",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.13",
+      "samples": [
+        202.833,
+        210.417,
+        193.917,
+        193.5,
+        194.333,
+        193.708,
+        201.958,
+        281.292,
+        194.125
+      ],
+      "unit": "us/row",
+      "value": 194.333,
+      "window": "keyed-write",
+      "workload": "txtime.unchanged.columns.typed"
     },
     {
       "cell": "transientBytes",
@@ -192,142 +319,16 @@
       "unit": "B/row",
       "value": 14826.0,
       "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "retainedBytes",
-      "runtime": "3.13",
-      "samples": [
-        3810.0
-      ],
-      "unit": "B/row",
-      "value": 3810.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.shapeOfDeclaration",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.entityShape",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.occurrenceShape",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedDocument",
-      "runtime": "3.13",
-      "samples": [
-        4.0
-      ],
-      "unit": "calls/row",
-      "value": 4.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedMany",
-      "runtime": "3.13",
-      "samples": [
-        1.0
-      ],
-      "unit": "calls/row",
-      "value": 1.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.applyPatches",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.detachJsonContainer",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "elapsedUs",
-      "runtime": "3.13",
-      "samples": [
-        213.75,
-        208.583,
-        205.25,
-        206.125,
-        200.125,
-        199.625,
-        201.583,
-        202.125,
-        199.916
-      ],
-      "unit": "us/row",
-      "value": 202.125,
-      "window": "keyed-write",
-      "workload": "txtime.unchanged.columns.typed"
-    },
-    {
-      "cell": "transientBytes",
-      "runtime": "3.13",
-      "samples": [
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0,
-        14826.0
-      ],
-      "unit": "B/row",
-      "value": 14826.0,
-      "window": "keyed-write",
       "workload": "txtime.unchanged.columns.typed"
     },
     {
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3810.0
+        3710.0
       ],
       "unit": "B/row",
-      "value": 3810.0,
+      "value": 3710.0,
       "window": "keyed-write",
       "workload": "txtime.unchanged.columns.typed"
     },
@@ -412,18 +413,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        171.042,
-        171.5,
-        168.791,
-        167.209,
-        167.333,
-        167.0,
-        166.083,
+        172.958,
+        173.125,
         166.708,
-        166.583
+        166.708,
+        169.458,
+        167.916,
+        166.834,
+        175.417,
+        173.25
       ],
       "unit": "us/row",
-      "value": 167.209,
+      "value": 169.458,
       "window": "keyed-write",
       "workload": "plain.changed.columns.typed"
     },
@@ -450,10 +451,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3024.0
+        2974.0
       ],
       "unit": "B/row",
-      "value": 3024.0,
+      "value": 2974.0,
       "window": "keyed-write",
       "workload": "plain.changed.columns.typed"
     },
@@ -538,18 +539,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        304.5,
-        280.791,
-        274.0,
-        279.625,
-        271.125,
-        274.416,
-        296.459,
-        270.583,
-        268.833
+        306.458,
+        289.416,
+        291.75,
+        301.791,
+        290.833,
+        292.75,
+        285.917,
+        297.708,
+        286.084
       ],
       "unit": "us/row",
-      "value": 274.416,
+      "value": 291.75,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -559,16 +560,16 @@
       "samples": [
         16164.0,
         16098.0,
-        16090.0,
-        15832.0,
-        15924.0,
-        15866.0,
+        15990.0,
+        15932.0,
+        15824.0,
         15816.0,
-        15766.0,
-        15866.0
+        15666.0,
+        15666.0,
+        15616.0
       ],
       "unit": "B/row",
-      "value": 15866.0,
+      "value": 15824.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -576,10 +577,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        5596.0
+        5546.0
       ],
       "unit": "B/row",
-      "value": 5596.0,
+      "value": 5546.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -664,18 +665,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        156.333,
-        158.584,
-        159.25,
-        151.875,
-        153.25,
-        154.167,
-        150.292,
-        151.166,
-        150.541
+        155.292,
+        153.541,
+        155.0,
+        208.167,
+        161.084,
+        154.791,
+        150.166,
+        150.417,
+        152.208
       ],
       "unit": "us/row",
-      "value": 153.25,
+      "value": 154.791,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.wire"
     },
@@ -685,7 +686,7 @@
       "samples": [
         14810.0,
         14810.0,
-        14810.0,
+        14760.0,
         14810.0,
         14810.0,
         14810.0,
@@ -702,10 +703,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2462.0
+        2562.0
       ],
       "unit": "B/row",
-      "value": 2462.0,
+      "value": 2562.0,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.wire"
     },
@@ -790,18 +791,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        196.125,
-        189.458,
-        185.916,
-        187.417,
-        187.042,
-        185.583,
-        184.5,
-        186.458,
-        185.167
+        188.125,
+        182.334,
+        209.291,
+        199.875,
+        184.75,
+        187.917,
+        185.75,
+        178.958,
+        296.875
       ],
       "unit": "us/row",
-      "value": 186.458,
+      "value": 187.917,
       "window": "keyed-write",
       "workload": "txtime.changed.columns.wire"
     },
@@ -809,6 +810,133 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
+        14626.0,
+        14626.0,
+        14626.0,
+        14626.0,
+        14626.0,
+        14626.0,
+        14576.0,
+        14626.0,
+        14626.0
+      ],
+      "unit": "B/row",
+      "value": 14626.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.13",
+      "samples": [
+        3610.0
+      ],
+      "unit": "B/row",
+      "value": 3610.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.shapeOfDeclaration",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.entityShape",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.occurrenceShape",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.encodeManagedDocument",
+      "runtime": "3.13",
+      "samples": [
+        4.0
+      ],
+      "unit": "calls/row",
+      "value": 4.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.encodeManagedMany",
+      "runtime": "3.13",
+      "samples": [
+        1.0
+      ],
+      "unit": "calls/row",
+      "value": 1.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.applyPatches",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "calls.detachJsonContainer",
+      "runtime": "3.13",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.wire"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.13",
+      "samples": [
+        179.541,
+        175.167,
+        172.375,
+        173.334,
+        172.25,
+        173.083,
+        173.25,
+        171.333,
+        308.125
+      ],
+      "unit": "us/row",
+      "value": 173.25,
+      "window": "keyed-write",
+      "workload": "txtime.unchanged.columns.wire"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.13",
+      "samples": [
+        14626.0,
         14626.0,
         14576.0,
         14626.0,
@@ -816,133 +944,6 @@
         14626.0,
         14626.0,
         14626.0,
-        14626.0,
-        14626.0
-      ],
-      "unit": "B/row",
-      "value": 14626.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "retainedBytes",
-      "runtime": "3.13",
-      "samples": [
-        3560.0
-      ],
-      "unit": "B/row",
-      "value": 3560.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.shapeOfDeclaration",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.entityShape",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.occurrenceShape",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.encodeManagedDocument",
-      "runtime": "3.13",
-      "samples": [
-        4.0
-      ],
-      "unit": "calls/row",
-      "value": 4.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.encodeManagedMany",
-      "runtime": "3.13",
-      "samples": [
-        1.0
-      ],
-      "unit": "calls/row",
-      "value": 1.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.applyPatches",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "calls.detachJsonContainer",
-      "runtime": "3.13",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.wire"
-    },
-    {
-      "cell": "elapsedUs",
-      "runtime": "3.13",
-      "samples": [
-        177.833,
-        191.959,
-        173.209,
-        180.5,
-        172.417,
-        172.917,
-        167.708,
-        169.666,
-        179.125
-      ],
-      "unit": "us/row",
-      "value": 173.209,
-      "window": "keyed-write",
-      "workload": "txtime.unchanged.columns.wire"
-    },
-    {
-      "cell": "transientBytes",
-      "runtime": "3.13",
-      "samples": [
-        14626.0,
-        14626.0,
-        14626.0,
-        14626.0,
-        14626.0,
-        14626.0,
-        14626.0,
-        14626.0,
         14626.0
       ],
       "unit": "B/row",
@@ -954,10 +955,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3660.0
+        3610.0
       ],
       "unit": "B/row",
-      "value": 3660.0,
+      "value": 3610.0,
       "window": "keyed-write",
       "workload": "txtime.unchanged.columns.wire"
     },
@@ -1042,18 +1043,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        143.75,
-        139.25,
-        136.084,
-        133.25,
-        135.667,
-        135.875,
-        139.791,
-        144.333,
-        133.791
+        150.375,
+        149.375,
+        189.292,
+        155.125,
+        150.875,
+        145.125,
+        141.167,
+        140.25,
+        140.292
       ],
       "unit": "us/row",
-      "value": 136.084,
+      "value": 149.375,
       "window": "keyed-write",
       "workload": "plain.changed.columns.wire"
     },
@@ -1168,18 +1169,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        253.208,
-        252.667,
-        250.625,
-        249.417,
-        254.458,
-        251.166,
-        247.792,
-        251.458,
-        245.75
+        270.916,
+        269.291,
+        264.208,
+        265.333,
+        272.125,
+        267.084,
+        261.416,
+        263.375,
+        264.583
       ],
       "unit": "us/row",
-      "value": 251.166,
+      "value": 265.333,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.wire"
     },
@@ -1190,11 +1191,11 @@
         15964.0,
         15848.0,
         15890.0,
-        15782.0,
-        15824.0,
-        15766.0,
+        15932.0,
+        15674.0,
         15816.0,
-        15616.0,
+        15716.0,
+        15766.0,
         15666.0
       ],
       "unit": "B/row",
@@ -1206,10 +1207,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        5542.0
+        5592.0
       ],
       "unit": "B/row",
-      "value": 5542.0,
+      "value": 5592.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.wire"
     },
@@ -1294,18 +1295,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        165.167,
-        168.417,
-        175.0,
-        159.042,
-        160.625,
-        161.666,
-        160.875,
-        159.833,
-        158.917
+        179.042,
+        176.292,
+        175.666,
+        171.25,
+        174.083,
+        169.958,
+        180.417,
+        171.083,
+        171.541
       ],
       "unit": "us/row",
-      "value": 160.875,
+      "value": 174.083,
       "window": "keyed-write",
       "workload": "txtime.opening.document.typed"
     },
@@ -1321,7 +1322,7 @@
         15042.0,
         15042.0,
         15042.0,
-        14992.0
+        15042.0
       ],
       "unit": "B/row",
       "value": 15042.0,
@@ -1332,10 +1333,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2744.0
+        2844.0
       ],
       "unit": "B/row",
-      "value": 2744.0,
+      "value": 2844.0,
       "window": "keyed-write",
       "workload": "txtime.opening.document.typed"
     },
@@ -1420,18 +1421,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        200.917,
-        198.875,
-        208.334,
-        193.167,
-        193.5,
-        194.667,
-        199.375,
-        204.791,
-        193.792
+        214.541,
+        212.291,
+        203.667,
+        202.125,
+        204.5,
+        208.0,
+        202.125,
+        212.916,
+        211.042
       ],
       "unit": "us/row",
-      "value": 198.875,
+      "value": 208.0,
       "window": "keyed-write",
       "workload": "txtime.changed.document.typed"
     },
@@ -1445,7 +1446,7 @@
         14826.0,
         14826.0,
         14826.0,
-        14826.0,
+        14776.0,
         14826.0,
         14826.0
       ],
@@ -1458,10 +1459,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3760.0
+        3710.0
       ],
       "unit": "B/row",
-      "value": 3760.0,
+      "value": 3710.0,
       "window": "keyed-write",
       "workload": "txtime.changed.document.typed"
     },
@@ -1546,18 +1547,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        205.791,
-        188.875,
-        183.541,
-        184.417,
-        185.708,
-        184.042,
-        190.208,
-        185.584,
-        183.583
+        200.125,
+        195.209,
+        203.208,
+        197.834,
+        191.208,
+        194.5,
+        189.084,
+        189.291,
+        204.917
       ],
       "unit": "us/row",
-      "value": 185.584,
+      "value": 195.209,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.typed"
     },
@@ -1584,10 +1585,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3810.0
+        3710.0
       ],
       "unit": "B/row",
-      "value": 3810.0,
+      "value": 3710.0,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.typed"
     },
@@ -1672,18 +1673,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        171.417,
-        162.166,
-        162.25,
-        161.292,
-        162.625,
-        171.625,
-        175.959,
-        160.875,
-        159.708
+        175.375,
+        170.584,
+        170.166,
+        170.875,
+        168.375,
+        170.833,
+        176.0,
+        167.167,
+        217.375
       ],
       "unit": "us/row",
-      "value": 162.25,
+      "value": 170.833,
       "window": "keyed-write",
       "workload": "plain.changed.document.typed"
     },
@@ -1692,13 +1693,13 @@
       "runtime": "3.13",
       "samples": [
         15138.0,
+        15138.0,
+        15138.0,
+        15138.0,
+        15138.0,
+        15138.0,
         15088.0,
         15138.0,
-        15138.0,
-        15138.0,
-        15088.0,
-        15138.0,
-        15088.0,
         15138.0
       ],
       "unit": "B/row",
@@ -1798,18 +1799,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        279.917,
-        275.458,
-        273.208,
-        270.375,
-        267.834,
-        266.792,
-        266.25,
-        266.917,
-        272.667
+        299.541,
+        309.834,
+        287.459,
+        285.375,
+        293.0,
+        291.333,
+        301.334,
+        286.375,
+        288.75
       ],
       "unit": "us/row",
-      "value": 270.375,
+      "value": 291.333,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -1817,18 +1818,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        15257.0,
-        15291.0,
-        15233.0,
-        15125.0,
-        14917.0,
-        14976.0,
-        14976.0,
-        14976.0,
-        15026.0
+        15207.0,
+        15191.0,
+        15283.0,
+        14975.0,
+        15017.0,
+        15109.0,
+        14909.0,
+        14909.0,
+        15209.0
       ],
       "unit": "B/row",
-      "value": 15026.0,
+      "value": 15109.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -1836,10 +1837,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        5796.0
+        5496.0
       ],
       "unit": "B/row",
-      "value": 5796.0,
+      "value": 5496.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -1924,18 +1925,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        154.333,
-        144.375,
-        139.5,
-        139.334,
-        142.25,
-        141.916,
+        161.209,
+        154.125,
         145.0,
-        143.042,
-        140.0
+        145.416,
+        143.584,
+        140.75,
+        144.042,
+        143.625,
+        147.5
       ],
       "unit": "us/row",
-      "value": 142.25,
+      "value": 145.0,
       "window": "keyed-write",
       "workload": "txtime.opening.document.wire"
     },
@@ -1962,10 +1963,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2512.0
+        2562.0
       ],
       "unit": "B/row",
-      "value": 2512.0,
+      "value": 2562.0,
       "window": "keyed-write",
       "workload": "txtime.opening.document.wire"
     },
@@ -2050,18 +2051,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        181.666,
-        179.334,
-        178.0,
-        174.75,
-        175.667,
-        172.75,
-        174.541,
-        174.5,
-        174.542
+        191.042,
+        184.959,
+        186.959,
+        182.167,
+        185.75,
+        187.584,
+        182.333,
+        283.208,
+        188.125
       ],
       "unit": "us/row",
-      "value": 174.75,
+      "value": 186.959,
       "window": "keyed-write",
       "workload": "txtime.changed.document.wire"
     },
@@ -2070,14 +2071,14 @@
       "runtime": "3.13",
       "samples": [
         14626.0,
+        14576.0,
+        14626.0,
         14626.0,
         14626.0,
         14626.0,
         14626.0,
         14576.0,
-        14626.0,
-        14626.0,
-        14626.0
+        14576.0
       ],
       "unit": "B/row",
       "value": 14626.0,
@@ -2088,10 +2089,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3660.0
+        3610.0
       ],
       "unit": "B/row",
-      "value": 3660.0,
+      "value": 3610.0,
       "window": "keyed-write",
       "workload": "txtime.changed.document.wire"
     },
@@ -2176,18 +2177,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        182.0,
-        180.792,
-        166.416,
-        164.125,
-        171.125,
-        164.375,
-        163.625,
-        174.375,
-        163.25
+        249.458,
+        181.042,
+        176.584,
+        180.458,
+        172.083,
+        171.333,
+        169.25,
+        171.0,
+        169.208
       ],
       "unit": "us/row",
-      "value": 166.416,
+      "value": 172.083,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.wire"
     },
@@ -2199,7 +2200,7 @@
         14626.0,
         14626.0,
         14626.0,
-        14626.0,
+        14576.0,
         14626.0,
         14626.0,
         14626.0,
@@ -2302,18 +2303,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        149.584,
-        153.791,
-        142.334,
-        141.0,
-        140.917,
-        141.375,
-        138.291,
-        140.666,
-        138.167
+        164.209,
+        162.042,
+        158.458,
+        157.917,
+        156.958,
+        156.458,
+        158.417,
+        155.5,
+        159.625
       ],
       "unit": "us/row",
-      "value": 141.0,
+      "value": 158.417,
       "window": "keyed-write",
       "workload": "plain.changed.document.wire"
     },
@@ -2325,8 +2326,8 @@
         14938.0,
         14938.0,
         14938.0,
-        14888.0,
-        14888.0,
+        14938.0,
+        14938.0,
         14938.0,
         14938.0,
         14938.0
@@ -2428,18 +2429,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        258.542,
-        259.792,
-        251.375,
-        248.75,
-        255.208,
-        249.75,
-        255.208,
-        254.125,
-        257.5
+        285.625,
+        272.75,
+        276.916,
+        269.625,
+        377.708,
+        270.625,
+        266.25,
+        364.5,
+        279.25
       ],
       "unit": "us/row",
-      "value": 255.208,
+      "value": 276.916,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.wire"
     },
@@ -2447,14 +2448,14 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        15053.0,
-        14937.0,
         14922.0,
-        14971.0,
+        15037.0,
+        14929.0,
+        14921.0,
+        14772.0,
         14922.0,
         14922.0,
         14922.0,
-        15005.0,
         14872.0
       ],
       "unit": "B/row",
@@ -2466,10 +2467,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        5542.0
+        5692.0
       ],
       "unit": "B/row",
-      "value": 5542.0,
+      "value": 5692.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.wire"
     },
@@ -2554,18 +2555,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        166.917,
-        161.417,
-        168.541,
-        160.75,
-        161.625,
-        159.666,
-        161.458,
-        169.375,
-        160.916
+        172.875,
+        170.709,
+        179.792,
+        166.25,
+        167.291,
+        175.041,
+        167.041,
+        163.917,
+        166.167
       ],
       "unit": "us/row",
-      "value": 161.458,
+      "value": 167.291,
       "window": "keyed-write",
       "workload": "geometry.depth-1.columns.typed"
     },
@@ -2580,8 +2581,8 @@
         14690.0,
         14690.0,
         14690.0,
-        14690.0,
-        14640.0
+        14640.0,
+        14690.0
       ],
       "unit": "B/row",
       "value": 14690.0,
@@ -2680,18 +2681,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        161.958,
-        162.0,
-        161.5,
-        160.5,
-        160.5,
-        157.292,
-        159.958,
-        159.125,
-        159.084
+        170.041,
+        169.334,
+        164.209,
+        162.25,
+        174.5,
+        169.958,
+        162.875,
+        165.708,
+        169.208
       ],
       "unit": "us/row",
-      "value": 160.5,
+      "value": 169.208,
       "window": "keyed-write",
       "workload": "geometry.depth-1.document.typed"
     },
@@ -2718,10 +2719,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2422.0
+        2472.0
       ],
       "unit": "B/row",
-      "value": 2422.0,
+      "value": 2472.0,
       "window": "keyed-write",
       "workload": "geometry.depth-1.document.typed"
     },
@@ -2806,18 +2807,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        204.583,
-        203.708,
-        211.584,
-        200.916,
-        202.709,
-        199.292,
-        197.375,
-        201.125,
-        209.209
+        226.958,
+        223.375,
+        210.458,
+        212.791,
+        207.917,
+        208.666,
+        220.041,
+        207.708,
+        207.333
       ],
       "unit": "us/row",
-      "value": 202.709,
+      "value": 210.458,
       "window": "keyed-write",
       "workload": "geometry.depth-4.columns.typed"
     },
@@ -2832,7 +2833,7 @@
         15426.0,
         15426.0,
         15426.0,
-        15376.0,
+        15426.0,
         15426.0
       ],
       "unit": "B/row",
@@ -2844,10 +2845,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3144.0
+        3194.0
       ],
       "unit": "B/row",
-      "value": 3144.0,
+      "value": 3194.0,
       "window": "keyed-write",
       "workload": "geometry.depth-4.columns.typed"
     },
@@ -2932,18 +2933,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        203.458,
-        205.042,
-        199.167,
-        197.125,
-        204.333,
-        201.875,
-        196.875,
-        209.625,
-        202.208
+        230.416,
+        218.542,
+        217.542,
+        215.875,
+        230.208,
+        216.291,
+        214.333,
+        214.0,
+        225.417
       ],
       "unit": "us/row",
-      "value": 202.208,
+      "value": 217.542,
       "window": "keyed-write",
       "workload": "geometry.depth-4.document.typed"
     },
@@ -2955,7 +2956,7 @@
         15426.0,
         15426.0,
         15426.0,
-        15376.0,
+        15426.0,
         15426.0,
         15426.0,
         15426.0,
@@ -3058,18 +3059,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        254.875,
-        258.458,
-        255.042,
-        249.917,
-        251.875,
-        261.375,
-        250.084,
-        250.417,
-        251.041
+        274.084,
+        270.833,
+        267.709,
+        263.125,
+        261.417,
+        261.0,
+        272.667,
+        273.333,
+        271.958
       ],
       "unit": "us/row",
-      "value": 251.875,
+      "value": 270.833,
       "window": "keyed-write",
       "workload": "geometry.depth-8.columns.typed"
     },
@@ -3081,7 +3082,7 @@
         16746.0,
         16746.0,
         16746.0,
-        16746.0,
+        16696.0,
         16746.0,
         16746.0,
         16746.0,
@@ -3184,18 +3185,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        257.584,
-        263.958,
-        262.917,
-        250.958,
-        250.417,
-        262.625,
-        250.667,
-        249.625,
-        259.708
+        273.292,
+        274.75,
+        270.792,
+        279.458,
+        271.333,
+        270.0,
+        264.709,
+        274.334,
+        269.583
       ],
       "unit": "us/row",
-      "value": 257.584,
+      "value": 271.333,
       "window": "keyed-write",
       "workload": "geometry.depth-8.document.typed"
     },
@@ -3222,10 +3223,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        4090.0
+        4040.0
       ],
       "unit": "B/row",
-      "value": 4090.0,
+      "value": 4040.0,
       "window": "keyed-write",
       "workload": "geometry.depth-8.document.typed"
     },
@@ -3310,18 +3311,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        140.458,
-        145.666,
-        145.042,
-        137.375,
-        135.834,
-        134.375,
-        137.875,
-        137.25,
-        134.958
+        145.584,
+        143.083,
+        142.125,
+        140.083,
+        139.208,
+        148.416,
+        142.375,
+        141.291,
+        142.0
       ],
       "unit": "us/row",
-      "value": 137.375,
+      "value": 142.125,
       "window": "keyed-write",
       "workload": "geometry.many-0.columns.typed"
     },
@@ -3332,9 +3333,9 @@
         14186.0,
         14186.0,
         14186.0,
+        14136.0,
         14186.0,
-        14186.0,
-        14186.0,
+        14136.0,
         14186.0,
         14186.0,
         14186.0
@@ -3436,18 +3437,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        145.208,
-        151.584,
-        138.25,
-        135.709,
-        135.0,
-        141.875,
-        133.0,
-        135.541,
-        133.959
+        147.042,
+        147.125,
+        142.792,
+        140.75,
+        142.5,
+        147.125,
+        141.5,
+        138.667,
+        140.625
       ],
       "unit": "us/row",
-      "value": 135.709,
+      "value": 142.5,
       "window": "keyed-write",
       "workload": "geometry.many-0.document.typed"
     },
@@ -3562,18 +3563,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        245.5,
-        229.75,
-        234.042,
-        237.667,
-        229.292,
-        226.167,
-        228.042,
-        224.417,
-        240.875
+        246.333,
+        243.583,
+        241.958,
+        239.709,
+        238.75,
+        237.125,
+        241.5,
+        239.083,
+        236.875
       ],
       "unit": "us/row",
-      "value": 229.75,
+      "value": 239.709,
       "window": "keyed-write",
       "workload": "geometry.many-8.columns.typed"
     },
@@ -3688,18 +3689,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        234.583,
-        238.583,
-        232.416,
-        234.25,
-        229.333,
-        227.375,
-        240.625,
-        227.333,
-        225.167
+        241.042,
+        244.459,
+        235.917,
+        247.459,
+        233.459,
+        233.0,
+        239.959,
+        240.375,
+        237.333
       ],
       "unit": "us/row",
-      "value": 232.416,
+      "value": 239.959,
       "window": "keyed-write",
       "workload": "geometry.many-8.document.typed"
     },
@@ -3713,7 +3714,7 @@
         16082.0,
         16082.0,
         16082.0,
-        16082.0,
+        16032.0,
         16082.0,
         16082.0
       ],
@@ -3726,10 +3727,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3864.0
+        3914.0
       ],
       "unit": "B/row",
-      "value": 3864.0,
+      "value": 3914.0,
       "window": "keyed-write",
       "workload": "geometry.many-8.document.typed"
     },
@@ -3814,18 +3815,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        499.708,
-        498.75,
-        499.875,
-        494.333,
-        497.083,
-        492.083,
-        494.291,
-        495.083,
-        504.25
+        545.584,
+        527.0,
+        528.667,
+        522.166,
+        521.334,
+        521.333,
+        521.834,
+        530.125,
+        519.25
       ],
       "unit": "us/row",
-      "value": 497.083,
+      "value": 522.166,
       "window": "keyed-write",
       "workload": "geometry.many-32.columns.typed"
     },
@@ -3835,9 +3836,9 @@
       "samples": [
         27290.0,
         27274.0,
-        27266.0,
+        27166.0,
         27258.0,
-        27200.0,
+        27250.0,
         27242.0,
         27242.0,
         27242.0,
@@ -3852,10 +3853,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        9482.0
+        9432.0
       ],
       "unit": "B/row",
-      "value": 9482.0,
+      "value": 9432.0,
       "window": "keyed-write",
       "workload": "geometry.many-32.columns.typed"
     },
@@ -3940,18 +3941,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        505.25,
-        497.0,
-        518.333,
-        498.084,
-        500.292,
-        499.208,
-        535.125,
-        500.541,
-        500.625
+        563.25,
+        556.917,
+        556.667,
+        560.208,
+        628.917,
+        562.125,
+        553.083,
+        552.0,
+        558.292
       ],
       "unit": "us/row",
-      "value": 500.541,
+      "value": 558.292,
       "window": "keyed-write",
       "workload": "geometry.many-32.document.typed"
     },
@@ -3959,7 +3960,7 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        27419.0,
+        27469.0,
         27453.0,
         27445.0,
         27437.0,
@@ -3970,7 +3971,7 @@
         27421.0
       ],
       "unit": "B/row",
-      "value": 27421.0,
+      "value": 27429.0,
       "window": "keyed-write",
       "workload": "geometry.many-32.document.typed"
     },
@@ -4066,18 +4067,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        252.041,
-        257.292,
-        250.833,
-        252.166,
-        250.292,
-        250.084,
-        253.917,
-        251.417,
-        250.791
+        287.625,
+        287.208,
+        284.833,
+        280.667,
+        281.5,
+        283.417,
+        278.625,
+        279.708,
+        282.5
       ],
       "unit": "us/row",
-      "value": 251.417,
+      "value": 282.5,
       "window": "keyed-write",
       "workload": "geometry.width-16.columns.typed"
     },
@@ -4088,11 +4089,11 @@
         15530.0,
         15530.0,
         15530.0,
+        15480.0,
         15530.0,
         15530.0,
         15530.0,
-        15530.0,
-        15530.0,
+        15480.0,
         15530.0
       ],
       "unit": "B/row",
@@ -4104,10 +4105,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3362.0
+        3312.0
       ],
       "unit": "B/row",
-      "value": 3362.0,
+      "value": 3312.0,
       "window": "keyed-write",
       "workload": "geometry.width-16.columns.typed"
     },
@@ -4192,18 +4193,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        273.666,
-        262.375,
-        270.458,
-        250.292,
-        248.833,
-        250.792,
-        261.083,
-        258.416,
-        249.958
+        284.792,
+        284.584,
+        284.792,
+        280.75,
+        276.625,
+        279.375,
+        278.333,
+        278.458,
+        278.083
       ],
       "unit": "us/row",
-      "value": 258.416,
+      "value": 279.375,
       "window": "keyed-write",
       "workload": "geometry.width-16.document.typed"
     },
@@ -4230,10 +4231,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3312.0
+        3362.0
       ],
       "unit": "B/row",
-      "value": 3312.0,
+      "value": 3362.0,
       "window": "keyed-write",
       "workload": "geometry.width-16.document.typed"
     },
@@ -4318,18 +4319,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        616.0,
-        616.5,
-        613.625,
-        609.375,
-        679.375,
-        620.292,
-        617.583,
-        619.916,
-        634.834
+        693.208,
+        690.5,
+        758.584,
+        692.458,
+        686.875,
+        686.791,
+        685.5,
+        684.375,
+        685.125
       ],
       "unit": "us/row",
-      "value": 617.583,
+      "value": 686.875,
       "window": "keyed-write",
       "workload": "geometry.width-64.columns.typed"
     },
@@ -4340,15 +4341,15 @@
         23361.0,
         23345.0,
         23337.0,
-        23329.0,
+        23279.0,
         23321.0,
-        23313.0,
-        23313.0,
         23263.0,
+        23313.0,
+        23313.0,
         23313.0
       ],
       "unit": "B/row",
-      "value": 23321.0,
+      "value": 23313.0,
       "window": "keyed-write",
       "workload": "geometry.width-64.columns.typed"
     },
@@ -4444,18 +4445,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        627.084,
-        618.417,
-        613.75,
-        628.416,
-        691.208,
-        617.75,
-        638.084,
-        621.083,
-        613.166
+        667.167,
+        732.083,
+        670.041,
+        664.75,
+        664.125,
+        662.042,
+        661.042,
+        659.625,
+        665.792
       ],
       "unit": "us/row",
-      "value": 621.083,
+      "value": 664.75,
       "window": "keyed-write",
       "workload": "geometry.width-64.document.typed"
     },
@@ -4469,8 +4470,8 @@
         24882.0,
         24874.0,
         24866.0,
-        24816.0,
-        24816.0,
+        24866.0,
+        24866.0,
         24866.0
       ],
       "unit": "B/row",
@@ -4570,18 +4571,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        213.0,
-        209.709,
-        209.5,
-        205.708,
-        217.333,
-        206.291,
-        205.417,
-        207.416,
-        206.0
+        223.75,
+        217.667,
+        217.083,
+        212.666,
+        214.875,
+        231.708,
+        212.958,
+        213.625,
+        213.042
       ],
       "unit": "us/row",
-      "value": 207.416,
+      "value": 214.875,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.columns.typed"
     },
@@ -4608,10 +4609,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2472.0
+        2522.0
       ],
       "unit": "B/row",
-      "value": 2472.0,
+      "value": 2522.0,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.columns.typed"
     },
@@ -4696,18 +4697,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        213.416,
-        207.125,
-        205.667,
-        207.75,
-        207.208,
-        202.0,
-        203.708,
-        206.042,
-        207.916
+        216.875,
+        218.209,
+        212.625,
+        217.375,
+        211.209,
+        210.833,
+        213.916,
+        214.583,
+        210.875
       ],
       "unit": "us/row",
-      "value": 207.125,
+      "value": 213.916,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.document.typed"
     },
@@ -4717,7 +4718,7 @@
       "samples": [
         14690.0,
         14690.0,
-        14690.0,
+        14640.0,
         14690.0,
         14690.0,
         14690.0,
@@ -4734,10 +4735,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2522.0
+        2472.0
       ],
       "unit": "B/row",
-      "value": 2522.0,
+      "value": 2472.0,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.document.typed"
     },
@@ -4822,18 +4823,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        205.833,
-        201.209,
-        208.916,
-        198.708,
-        198.458,
-        198.292,
-        197.0,
-        199.375,
-        196.792
+        229.958,
+        226.042,
+        223.333,
+        223.166,
+        222.75,
+        223.875,
+        223.541,
+        333.459,
+        225.375
       ],
       "unit": "us/row",
-      "value": 198.708,
+      "value": 223.875,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.columns.typed"
     },
@@ -4846,7 +4847,7 @@
         14602.0,
         14602.0,
         14602.0,
-        14602.0,
+        14552.0,
         14602.0,
         14602.0,
         14602.0
@@ -4948,18 +4949,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        207.833,
-        207.625,
-        201.791,
-        205.5,
-        202.291,
-        200.0,
-        200.125,
-        201.708,
-        199.667
+        237.0,
+        229.125,
+        225.459,
+        227.083,
+        226.792,
+        267.584,
+        230.458,
+        225.917,
+        241.375
       ],
       "unit": "us/row",
-      "value": 201.791,
+      "value": 229.125,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.document.typed"
     },
@@ -4986,10 +4987,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3586.0
+        3486.0
       ],
       "unit": "B/row",
-      "value": 3586.0,
+      "value": 3486.0,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.document.typed"
     },
@@ -5074,18 +5075,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        295.959,
-        292.709,
-        288.667,
-        287.167,
-        294.833,
-        289.0,
-        287.791,
-        304.25,
-        287.833
+        324.209,
+        314.791,
+        309.958,
+        310.291,
+        311.584,
+        312.167,
+        311.834,
+        413.375,
+        312.333
       ],
       "unit": "us/row",
-      "value": 289.0,
+      "value": 312.167,
       "window": "keyed-write",
       "workload": "ancestor.width-16.columns.typed"
     },
@@ -5097,11 +5098,11 @@
         15442.0,
         15442.0,
         15392.0,
+        15392.0,
         15442.0,
+        15392.0,
         15442.0,
-        15442.0,
-        15442.0,
-        15442.0
+        15392.0
       ],
       "unit": "B/row",
       "value": 15442.0,
@@ -5112,10 +5113,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        4326.0
+        4376.0
       ],
       "unit": "B/row",
-      "value": 4326.0,
+      "value": 4376.0,
       "window": "keyed-write",
       "workload": "ancestor.width-16.columns.typed"
     },
@@ -5200,18 +5201,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        294.209,
-        287.042,
-        277.833,
-        279.792,
-        284.25,
-        278.167,
-        277.75,
-        279.708,
-        277.875
+        297.708,
+        298.167,
+        287.625,
+        291.375,
+        288.333,
+        295.125,
+        291.166,
+        288.041,
+        291.375
       ],
       "unit": "us/row",
-      "value": 279.708,
+      "value": 291.375,
       "window": "keyed-write",
       "workload": "ancestor.width-16.document.typed"
     },
@@ -5326,18 +5327,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        656.167,
-        652.375,
-        648.666,
-        687.458,
-        657.416,
-        650.459,
-        649.833,
-        648.208,
-        646.5
+        691.5,
+        732.709,
+        685.583,
+        684.708,
+        683.791,
+        686.041,
+        681.541,
+        763.417,
+        674.542
       ],
       "unit": "us/row",
-      "value": 650.459,
+      "value": 685.583,
       "window": "keyed-write",
       "workload": "ancestor.width-64.columns.typed"
     },
@@ -5347,12 +5348,12 @@
       "samples": [
         25787.0,
         25771.0,
-        25763.0,
-        25705.0,
+        25713.0,
+        25755.0,
         25697.0,
-        25739.0,
-        25739.0,
         25689.0,
+        25739.0,
+        25739.0,
         25739.0
       ],
       "unit": "B/row",
@@ -5364,10 +5365,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        7836.0
+        7786.0
       ],
       "unit": "B/row",
-      "value": 7836.0,
+      "value": 7786.0,
       "window": "keyed-write",
       "workload": "ancestor.width-64.columns.typed"
     },
@@ -5452,18 +5453,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
+        633.958,
+        619.5,
+        614.541,
+        626.333,
+        619.542,
+        616.167,
+        611.833,
         626.625,
-        604.5,
-        593.416,
-        595.5,
-        587.625,
-        598.0,
-        592.584,
-        637.417,
-        631.542
+        637.334
       ],
       "unit": "us/row",
-      "value": 598.0,
+      "value": 619.542,
       "window": "keyed-write",
       "workload": "ancestor.width-64.document.typed"
     },
@@ -5472,17 +5473,17 @@
       "runtime": "3.13",
       "samples": [
         23940.0,
-        23874.0,
+        23924.0,
         23916.0,
         23908.0,
         23900.0,
         23892.0,
         23892.0,
-        23892.0,
-        23892.0
+        23842.0,
+        23842.0
       ],
       "unit": "B/row",
-      "value": 23892.0,
+      "value": 23900.0,
       "window": "keyed-write",
       "workload": "ancestor.width-64.document.typed"
     },
@@ -5490,10 +5491,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        7836.0
+        7686.0
       ],
       "unit": "B/row",
-      "value": 7836.0,
+      "value": 7686.0,
       "window": "keyed-write",
       "workload": "ancestor.width-64.document.typed"
     },
@@ -5578,18 +5579,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        252.333,
-        251.916,
-        247.5,
-        248.667,
-        262.75,
-        248.208,
-        246.667,
-        247.5,
-        246.0
+        282.167,
+        278.667,
+        275.292,
+        275.5,
+        274.667,
+        275.792,
+        286.333,
+        373.792,
+        282.959
       ],
       "unit": "us/row",
-      "value": 248.208,
+      "value": 278.667,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.columns.typed"
     },
@@ -5602,9 +5603,9 @@
         14602.0,
         14602.0,
         14602.0,
+        14602.0,
         14552.0,
-        14602.0,
-        14602.0,
+        14552.0,
         14602.0
       ],
       "unit": "B/row",
@@ -5616,10 +5617,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3636.0
+        3486.0
       ],
       "unit": "B/row",
-      "value": 3636.0,
+      "value": 3486.0,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.columns.typed"
     },
@@ -5704,18 +5705,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        261.375,
-        261.584,
-        252.166,
-        253.25,
-        264.542,
-        253.291,
-        261.292,
-        252.917,
-        253.875
+        281.5,
+        265.666,
+        264.375,
+        259.208,
+        266.959,
+        261.833,
+        262.083,
+        263.75,
+        264.417
       ],
       "unit": "us/row",
-      "value": 253.875,
+      "value": 264.375,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.document.typed"
     },
@@ -5742,10 +5743,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3586.0
+        3536.0
       ],
       "unit": "B/row",
-      "value": 3586.0,
+      "value": 3536.0,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.document.typed"
     },
@@ -5830,18 +5831,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        61.4635,
-        59.609375,
-        71.947875,
-        60.989625,
-        59.08325,
-        59.328125,
-        59.447875,
-        60.5365,
-        61.8385
+        60.984375,
+        60.3125,
+        61.578125,
+        61.697875,
+        166.755125,
+        63.328125,
+        60.6615,
+        59.708375,
+        59.90625
       ],
       "unit": "us/row",
-      "value": 60.5365,
+      "value": 60.984375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -5849,18 +5850,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        5660.375,
-        5665.0,
-        5629.125,
-        5579.125,
-        5666.625,
-        5610.375,
-        5613.375,
-        5658.75,
-        5618.0
+        5808.875,
+        5776.0,
+        5761.875,
+        5738.5,
+        5776.0,
+        5699.125,
+        5672.5,
+        5732.25,
+        5751.0
       ],
       "unit": "B/row",
-      "value": 5629.125,
+      "value": 5751.0,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -5868,10 +5869,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2386.75
+        2408.0
       ],
       "unit": "B/row",
-      "value": 2386.75,
+      "value": 2408.0,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -5879,18 +5880,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        40.9296875,
-        42.471375,
-        40.877625,
-        42.7200625,
-        43.13540625,
-        63.81640625,
-        42.08984375,
-        41.27475,
-        41.38803125
+        41.28125,
+        40.890625,
+        42.290375,
+        41.362,
+        41.64975,
+        41.352875,
+        40.716125,
+        42.3125,
+        42.11328125
       ],
       "unit": "us/row",
-      "value": 42.08984375,
+      "value": 41.362,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -5898,18 +5899,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        4028.71875,
-        4017.375,
-        3993.9375,
-        3987.6875,
-        3984.5625,
-        3995.5,
-        3963.09375,
-        3967.375,
-        3970.90625
+        4044.21875,
+        4003.59375,
+        3986.0,
+        3977.78125,
+        3985.59375,
+        3982.46875,
+        3982.875,
+        3978.1875,
+        3977.375
       ],
       "unit": "B/row",
-      "value": 3987.6875,
+      "value": 3982.875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -5917,10 +5918,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        1767.40625
+        1745.75
       ],
       "unit": "B/row",
-      "value": 1767.40625,
+      "value": 1745.75,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -5928,18 +5929,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        36.1357421875,
-        36.3017578125,
-        36.6813125,
-        36.28353125,
-        36.1497421875,
-        38.0638046875,
-        37.2314453125,
-        36.2861328125,
-        36.334640625
+        37.279625,
+        37.6809921875,
+        37.40625,
+        37.3772734375,
+        36.85384375,
+        37.9544296875,
+        37.75553125,
+        37.4674453125,
+        37.1240234375
       ],
       "unit": "us/row",
-      "value": 36.3017578125,
+      "value": 37.40625,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -5947,18 +5948,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        3549.4453125,
-        3525.2265625,
-        3505.6953125,
-        3501.5859375,
-        3493.9765625,
-        3489.96875,
-        3486.0625,
-        3487.3203125,
-        3488.015625
+        3531.6953125,
+        3514.5078125,
+        3489.3046875,
+        3494.7734375,
+        3489.6953125,
+        3490.4765625,
+        3486.3671875,
+        3493.703125,
+        3489.40625
       ],
       "unit": "B/row",
-      "value": 3493.9765625,
+      "value": 3490.4765625,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -5966,10 +5967,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        1582.421875
+        1584.2265625
       ],
       "unit": "B/row",
-      "value": 1582.421875,
+      "value": 1584.2265625,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -5977,18 +5978,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        64.765625,
-        73.921875,
-        66.4115,
-        63.15625,
-        62.630125,
-        62.802125,
-        63.171875,
-        63.03125,
-        70.770875
+        67.364625,
+        63.38025,
+        62.65625,
+        64.182375,
+        167.30725,
+        64.734375,
+        64.328125,
+        63.6615,
+        62.145875
       ],
       "unit": "us/row",
-      "value": 63.171875,
+      "value": 64.182375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -5996,18 +5997,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        7735.125,
-        7696.0,
-        7728.875,
-        7688.125,
-        7722.625,
-        7728.875,
-        7700.625,
-        7728.875,
-        7685.125
+        7831.25,
+        7800.0,
+        7785.875,
+        7792.125,
+        7779.625,
+        7779.625,
+        7800.0,
+        7793.75,
+        7785.875
       ],
       "unit": "B/row",
-      "value": 7722.625,
+      "value": 7792.125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -6015,10 +6016,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        3601.0
+        3581.5
       ],
       "unit": "B/row",
-      "value": 3601.0,
+      "value": 3581.5,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -6026,18 +6027,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        44.772125,
-        66.99740625,
-        44.6770625,
-        48.4986875,
-        46.78775,
-        45.30078125,
-        47.3671875,
-        45.08334375,
-        45.15884375
+        46.91015625,
+        46.04034375,
+        46.55209375,
+        45.42840625,
+        45.4544375,
+        48.58725,
+        47.43359375,
+        46.3854375,
+        47.02603125
       ],
       "unit": "us/row",
-      "value": 45.30078125,
+      "value": 46.55209375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -6045,18 +6046,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        6102.625,
-        6088.5625,
-        6072.9375,
-        6086.59375,
-        6094.40625,
-        6066.28125,
-        6077.96875,
-        6049.5,
-        6072.53125
+        6181.125,
+        6176.84375,
+        6169.4375,
+        6161.625,
+        6145.1875,
+        6131.9375,
+        6128.8125,
+        6127.59375,
+        6132.6875
       ],
       "unit": "B/row",
-      "value": 6077.96875,
+      "value": 6145.1875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -6064,10 +6065,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2933.5625
+        2940.78125
       ],
       "unit": "B/row",
-      "value": 2933.5625,
+      "value": 2940.78125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -6075,18 +6076,18 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        41.0992890625,
-        40.805015625,
-        40.5205078125,
-        40.6096953125,
-        41.3141328125,
-        40.98990625,
-        40.4033203125,
-        40.79915625,
-        41.107421875
+        44.2649765625,
+        41.8684921875,
+        41.5094375,
+        41.919921875,
+        41.2076875,
+        41.0318984375,
+        42.1031875,
+        43.6500625,
+        41.9811171875
       ],
       "unit": "us/row",
-      "value": 40.805015625,
+      "value": 41.919921875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -6094,18 +6095,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        5698.34375,
-        5663.4765625,
-        5653.421875,
-        5645.796875,
-        5631.8203125,
-        5643.9453125,
-        5641.703125,
-        5634.3671875,
-        5634.5703125
+        5694.5546875,
+        5660.078125,
+        5661.453125,
+        5642.2109375,
+        5647.2890625,
+        5646.3046875,
+        5638.203125,
+        5637.609375,
+        5633.2265625
       ],
       "unit": "B/row",
-      "value": 5643.9453125,
+      "value": 5646.3046875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -6113,10 +6114,10 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        2772.3203125
+        2769.4375
       ],
       "unit": "B/row",
-      "value": 2772.3203125,
+      "value": 2769.4375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -6124,18 +6125,67 @@
       "cell": "elapsedUs",
       "runtime": "3.13",
       "samples": [
-        3373.875,
-        3352.167,
-        3395.584,
-        3550.167,
-        3431.917,
-        3442.459,
-        3382.833,
-        3378.708,
-        3467.875
+        67.75,
+        67.041,
+        65.917,
+        67.208,
+        65.958,
+        174.708,
+        65.833,
+        65.584,
+        64.917
+      ],
+      "unit": "us/row",
+      "value": 65.958,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.13",
+      "samples": [
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0,
+        7712.0
+      ],
+      "unit": "B/row",
+      "value": 7712.0,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.13",
+      "samples": [
+        7632.0
+      ],
+      "unit": "B/row",
+      "value": 7632.0,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.13",
+      "samples": [
+        3347.125,
+        3357.541,
+        3451.458,
+        3410.917,
+        3372.0,
+        3345.125,
+        3337.417,
+        3332.75,
+        3457.875
       ],
       "unit": "us",
-      "value": 3395.584,
+      "value": 3357.541,
       "window": "model-preparation",
       "workload": "model.prepared"
     },
@@ -6143,18 +6193,18 @@
       "cell": "transientBytes",
       "runtime": "3.13",
       "samples": [
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0,
-        436144.0
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0,
+        436224.0
       ],
       "unit": "B",
-      "value": 436144.0,
+      "value": 436224.0,
       "window": "model-preparation",
       "workload": "model.prepared"
     },
@@ -6162,29 +6212,78 @@
       "cell": "retainedBytes",
       "runtime": "3.13",
       "samples": [
-        415992.0
+        416184.0
       ],
       "unit": "B",
-      "value": 415992.0,
+      "value": 416184.0,
       "window": "model-preparation",
       "workload": "model.prepared"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.13",
+      "samples": [
+        312.75,
+        313.208,
+        405.167,
+        321.709,
+        323.0,
+        309.167,
+        310.0,
+        307.417,
+        307.333
+      ],
+      "unit": "us",
+      "value": 312.75,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.13",
+      "samples": [
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0,
+        27136.0
+      ],
+      "unit": "B",
+      "value": 27136.0,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.13",
+      "samples": [
+        22256.0
+      ],
+      "unit": "B",
+      "value": 22256.0,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
     },
     {
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        186.208,
-        207.0,
-        191.0,
-        191.041,
-        190.958,
-        188.959,
-        185.5,
-        188.084,
-        185.208
+        181.375,
+        199.542,
+        189.125,
+        192.875,
+        198.625,
+        188.042,
+        187.25,
+        187.125,
+        187.417
       ],
       "unit": "us/row",
-      "value": 188.959,
+      "value": 188.042,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.typed"
     },
@@ -6193,11 +6292,11 @@
       "runtime": "3.14",
       "samples": [
         15554.0,
+        15554.0,
+        15554.0,
+        15554.0,
+        15554.0,
         15504.0,
-        15554.0,
-        15554.0,
-        15554.0,
-        15554.0,
         15504.0,
         15554.0,
         15554.0
@@ -6211,10 +6310,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2850.0
+        2800.0
       ],
       "unit": "B/row",
-      "value": 2850.0,
+      "value": 2800.0,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.typed"
     },
@@ -6299,20 +6398,146 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        206.167,
-        224.708,
-        228.75,
-        215.291,
-        214.791,
-        228.166,
-        213.125,
-        212.958,
-        213.542
+        211.542,
+        238.0,
+        223.834,
+        222.166,
+        225.916,
+        220.125,
+        220.459,
+        219.291,
+        219.5
       ],
       "unit": "us/row",
-      "value": 214.791,
+      "value": 220.459,
       "window": "keyed-write",
       "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.14",
+      "samples": [
+        15290.0,
+        15290.0,
+        15290.0,
+        15290.0,
+        15290.0,
+        15290.0,
+        15240.0,
+        15290.0,
+        15290.0
+      ],
+      "unit": "B/row",
+      "value": 15290.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.14",
+      "samples": [
+        3856.0
+      ],
+      "unit": "B/row",
+      "value": 3856.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.shapeOfDeclaration",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.entityShape",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.occurrenceShape",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedDocument",
+      "runtime": "3.14",
+      "samples": [
+        4.0
+      ],
+      "unit": "calls/row",
+      "value": 4.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedMany",
+      "runtime": "3.14",
+      "samples": [
+        1.0
+      ],
+      "unit": "calls/row",
+      "value": 1.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.applyPatches",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "calls.detachJsonContainer",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "txtime.changed.columns.typed"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.14",
+      "samples": [
+        211.583,
+        240.25,
+        225.167,
+        224.042,
+        223.625,
+        221.625,
+        220.333,
+        221.417,
+        220.708
+      ],
+      "unit": "us/row",
+      "value": 221.625,
+      "window": "keyed-write",
+      "workload": "txtime.unchanged.columns.typed"
     },
     {
       "cell": "transientBytes",
@@ -6323,133 +6548,7 @@
         15290.0,
         15290.0,
         15240.0,
-        15290.0,
-        15290.0,
-        15290.0,
-        15290.0
-      ],
-      "unit": "B/row",
-      "value": 15290.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "retainedBytes",
-      "runtime": "3.14",
-      "samples": [
-        3906.0
-      ],
-      "unit": "B/row",
-      "value": 3906.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.shapeOfDeclaration",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.entityShape",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.occurrenceShape",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedDocument",
-      "runtime": "3.14",
-      "samples": [
-        4.0
-      ],
-      "unit": "calls/row",
-      "value": 4.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedMany",
-      "runtime": "3.14",
-      "samples": [
-        1.0
-      ],
-      "unit": "calls/row",
-      "value": 1.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.applyPatches",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "calls.detachJsonContainer",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "txtime.changed.columns.typed"
-    },
-    {
-      "cell": "elapsedUs",
-      "runtime": "3.14",
-      "samples": [
-        211.167,
-        242.625,
-        219.333,
-        216.125,
-        226.958,
-        216.792,
-        213.917,
-        216.75,
-        212.708
-      ],
-      "unit": "us/row",
-      "value": 216.75,
-      "window": "keyed-write",
-      "workload": "txtime.unchanged.columns.typed"
-    },
-    {
-      "cell": "transientBytes",
-      "runtime": "3.14",
-      "samples": [
-        15290.0,
-        15290.0,
-        15290.0,
-        15290.0,
-        15290.0,
-        15290.0,
+        15240.0,
         15290.0,
         15290.0,
         15290.0
@@ -6551,18 +6650,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        170.583,
-        196.916,
-        182.417,
-        178.333,
-        179.75,
-        178.625,
-        181.458,
-        181.75,
-        176.417
+        182.834,
+        197.0,
+        186.333,
+        197.875,
+        194.667,
+        182.833,
+        183.916,
+        187.708,
+        184.875
       ],
       "unit": "us/row",
-      "value": 179.75,
+      "value": 186.333,
       "window": "keyed-write",
       "workload": "plain.changed.columns.typed"
     },
@@ -6677,18 +6776,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        286.917,
-        312.708,
-        314.708,
-        296.25,
-        296.375,
-        295.25,
-        308.833,
-        293.583,
-        299.375
+        295.666,
+        380.5,
+        326.166,
+        323.875,
+        311.25,
+        307.209,
+        306.5,
+        315.167,
+        307.0
       ],
       "unit": "us/row",
-      "value": 296.375,
+      "value": 311.25,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -6696,18 +6795,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        16122.0,
-        15956.0,
-        15898.0,
-        15590.0,
-        15582.0,
-        15674.0,
-        15924.0,
-        15674.0,
-        15674.0
+        16172.0,
+        16106.0,
+        15948.0,
+        15740.0,
+        15632.0,
+        15724.0,
+        15774.0,
+        15724.0,
+        15624.0
       ],
       "unit": "B/row",
-      "value": 15674.0,
+      "value": 15740.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -6715,10 +6814,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        5958.0
+        5808.0
       ],
       "unit": "B/row",
-      "value": 5958.0,
+      "value": 5808.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.typed"
     },
@@ -6803,18 +6902,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        154.625,
-        182.959,
-        166.375,
-        162.834,
-        161.459,
-        161.375,
-        174.416,
-        160.625,
-        160.25
+        161.958,
+        175.5,
+        171.292,
+        168.583,
+        166.458,
+        168.042,
+        172.625,
+        165.666,
+        166.25
       ],
       "unit": "us/row",
-      "value": 161.459,
+      "value": 168.042,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.wire"
     },
@@ -6826,7 +6925,7 @@
         15266.0,
         15266.0,
         15266.0,
-        15266.0,
+        15216.0,
         15266.0,
         15266.0,
         15266.0,
@@ -6841,10 +6940,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2660.0
+        2610.0
       ],
       "unit": "B/row",
-      "value": 2660.0,
+      "value": 2610.0,
       "window": "keyed-write",
       "workload": "txtime.opening.columns.wire"
     },
@@ -6929,18 +7028,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        188.042,
-        214.292,
-        192.708,
-        190.375,
-        196.625,
-        190.209,
-        195.0,
-        188.917,
-        188.875
+        195.834,
+        211.542,
+        202.417,
+        265.667,
+        209.959,
+        211.25,
+        200.5,
+        198.0,
+        206.625
       ],
       "unit": "us/row",
-      "value": 190.375,
+      "value": 206.625,
       "window": "keyed-write",
       "workload": "txtime.changed.columns.wire"
     },
@@ -6950,12 +7049,12 @@
       "samples": [
         15030.0,
         15030.0,
-        15030.0,
-        15030.0,
-        15030.0,
-        15030.0,
-        15030.0,
         14980.0,
+        15030.0,
+        15030.0,
+        15030.0,
+        15030.0,
+        15030.0,
         15030.0
       ],
       "unit": "B/row",
@@ -6967,10 +7066,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3648.0
+        3698.0
       ],
       "unit": "B/row",
-      "value": 3648.0,
+      "value": 3698.0,
       "window": "keyed-write",
       "workload": "txtime.changed.columns.wire"
     },
@@ -7055,18 +7154,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        186.125,
-        204.417,
-        198.75,
-        198.0,
-        195.958,
-        199.333,
-        195.0,
-        193.25,
-        193.667
+        205.208,
+        216.959,
+        208.958,
+        206.834,
+        209.209,
+        207.709,
+        210.542,
+        205.875,
+        205.375
       ],
       "unit": "us/row",
-      "value": 195.958,
+      "value": 207.709,
       "window": "keyed-write",
       "workload": "txtime.unchanged.columns.wire"
     },
@@ -7081,7 +7180,7 @@
         15030.0,
         15030.0,
         15030.0,
-        14980.0,
+        15030.0,
         15030.0
       ],
       "unit": "B/row",
@@ -7181,18 +7280,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        153.375,
-        169.917,
-        164.708,
-        164.375,
-        162.75,
-        163.0,
-        162.459,
-        162.208,
-        160.791
+        156.417,
+        174.416,
+        164.75,
+        162.708,
+        173.167,
+        169.084,
+        161.625,
+        161.917,
+        162.209
       ],
       "unit": "us/row",
-      "value": 162.75,
+      "value": 162.708,
       "window": "keyed-write",
       "workload": "plain.changed.columns.wire"
     },
@@ -7307,18 +7406,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        276.916,
-        287.042,
-        280.25,
-        278.833,
-        278.5,
-        280.166,
-        275.792,
-        280.625,
-        281.542
+        274.583,
+        294.958,
+        339.875,
+        293.792,
+        287.167,
+        296.959,
+        282.708,
+        282.167,
+        280.208
       ],
       "unit": "us/row",
-      "value": 280.166,
+      "value": 287.167,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.wire"
     },
@@ -7327,17 +7426,17 @@
       "runtime": "3.14",
       "samples": [
         15884.0,
-        15818.0,
-        15760.0,
-        15652.0,
-        15494.0,
-        15486.0,
-        15486.0,
+        15868.0,
+        15710.0,
+        15702.0,
+        15644.0,
         15636.0,
+        15536.0,
+        15436.0,
         15536.0
       ],
       "unit": "B/row",
-      "value": 15636.0,
+      "value": 15644.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.wire"
     },
@@ -7345,10 +7444,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        5646.0
+        5696.0
       ],
       "unit": "B/row",
-      "value": 5646.0,
+      "value": 5696.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.columns.wire"
     },
@@ -7433,18 +7532,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        179.791,
-        196.333,
-        188.5,
-        186.167,
-        185.833,
-        186.625,
-        184.833,
-        193.916,
-        184.542
+        180.667,
+        198.834,
+        194.209,
+        192.166,
+        188.291,
+        191.583,
+        187.208,
+        199.333,
+        198.25
       ],
       "unit": "us/row",
-      "value": 186.167,
+      "value": 192.166,
       "window": "keyed-write",
       "workload": "txtime.opening.document.typed"
     },
@@ -7454,12 +7553,12 @@
       "samples": [
         15554.0,
         15554.0,
-        15554.0,
-        15554.0,
         15504.0,
         15554.0,
         15554.0,
-        15504.0,
+        15554.0,
+        15554.0,
+        15454.0,
         15554.0
       ],
       "unit": "B/row",
@@ -7559,18 +7658,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        225.375,
-        239.0,
-        240.708,
-        230.333,
-        229.25,
-        227.917,
-        235.291,
-        225.958,
-        227.333
+        227.125,
+        252.0,
+        241.417,
+        237.833,
+        239.25,
+        244.584,
+        235.834,
+        234.709,
+        246.208
       ],
       "unit": "us/row",
-      "value": 229.25,
+      "value": 239.25,
       "window": "keyed-write",
       "workload": "txtime.changed.document.typed"
     },
@@ -7580,7 +7679,7 @@
       "samples": [
         15290.0,
         15290.0,
-        15290.0,
+        15240.0,
         15290.0,
         15290.0,
         15290.0,
@@ -7597,10 +7696,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3806.0
+        3906.0
       ],
       "unit": "B/row",
-      "value": 3806.0,
+      "value": 3906.0,
       "window": "keyed-write",
       "workload": "txtime.changed.document.typed"
     },
@@ -7685,18 +7784,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        207.25,
-        227.416,
-        220.709,
-        216.75,
-        224.958,
-        218.125,
-        213.375,
-        214.167,
-        214.0
+        215.25,
+        232.417,
+        222.584,
+        221.708,
+        220.125,
+        219.417,
+        220.833,
+        218.459,
+        217.125
       ],
       "unit": "us/row",
-      "value": 216.75,
+      "value": 220.125,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.typed"
     },
@@ -7712,7 +7811,7 @@
         15290.0,
         15290.0,
         15290.0,
-        15240.0
+        15290.0
       ],
       "unit": "B/row",
       "value": 15290.0,
@@ -7723,10 +7822,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3856.0
+        3806.0
       ],
       "unit": "B/row",
-      "value": 3856.0,
+      "value": 3806.0,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.typed"
     },
@@ -7811,18 +7910,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        185.5,
-        203.959,
-        195.041,
-        198.042,
-        192.833,
-        190.792,
-        192.125,
-        192.083,
-        196.292
+        185.625,
+        205.708,
+        205.084,
+        193.917,
+        194.583,
+        196.333,
+        190.75,
+        193.584,
+        190.584
       ],
       "unit": "us/row",
-      "value": 192.833,
+      "value": 193.917,
       "window": "keyed-write",
       "workload": "plain.changed.document.typed"
     },
@@ -7849,10 +7948,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3162.0
+        3112.0
       ],
       "unit": "B/row",
-      "value": 3162.0,
+      "value": 3112.0,
       "window": "keyed-write",
       "workload": "plain.changed.document.typed"
     },
@@ -7937,18 +8036,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        298.042,
-        340.791,
-        317.209,
-        313.334,
-        312.709,
-        321.958,
-        310.458,
-        314.666,
-        308.75
+        299.5,
+        331.625,
+        311.917,
+        315.875,
+        312.167,
+        324.042,
+        310.666,
+        309.084,
+        323.125
       ],
       "unit": "us/row",
-      "value": 313.334,
+      "value": 312.167,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -7957,17 +8056,17 @@
       "runtime": "3.14",
       "samples": [
         15490.0,
-        15390.0,
         15490.0,
-        15390.0,
+        15240.0,
         15490.0,
+        15240.0,
+        15340.0,
+        15440.0,
         15490.0,
-        15390.0,
-        15390.0,
-        15290.0
+        15390.0
       ],
       "unit": "B/row",
-      "value": 15390.0,
+      "value": 15440.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -7975,10 +8074,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        5808.0
+        5708.0
       ],
       "unit": "B/row",
-      "value": 5808.0,
+      "value": 5708.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.typed"
     },
@@ -8064,17 +8163,17 @@
       "runtime": "3.14",
       "samples": [
         158.458,
-        175.041,
-        166.959,
-        173.541,
-        174.792,
-        165.209,
-        167.125,
-        164.5,
-        165.833
+        224.833,
+        181.667,
+        179.042,
+        167.5,
+        164.083,
+        161.833,
+        162.709,
+        164.041
       ],
       "unit": "us/row",
-      "value": 166.959,
+      "value": 164.083,
       "window": "keyed-write",
       "workload": "txtime.opening.document.wire"
     },
@@ -8082,12 +8181,12 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
+        15216.0,
+        15216.0,
+        15216.0,
         15266.0,
         15266.0,
-        15266.0,
-        15266.0,
-        15266.0,
-        15266.0,
+        15216.0,
         15266.0,
         15266.0,
         15266.0
@@ -8101,10 +8200,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2560.0
+        2610.0
       ],
       "unit": "B/row",
-      "value": 2560.0,
+      "value": 2610.0,
       "window": "keyed-write",
       "workload": "txtime.opening.document.wire"
     },
@@ -8189,18 +8288,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        211.417,
-        219.083,
-        212.375,
-        207.125,
-        217.875,
-        207.875,
-        205.167,
-        205.541,
-        210.958
+        205.042,
+        225.042,
+        213.375,
+        211.375,
+        210.666,
+        221.583,
+        208.625,
+        208.334,
+        209.875
       ],
       "unit": "us/row",
-      "value": 210.958,
+      "value": 210.666,
       "window": "keyed-write",
       "workload": "txtime.changed.document.wire"
     },
@@ -8212,7 +8311,7 @@
         15030.0,
         15030.0,
         15030.0,
-        15030.0,
+        14980.0,
         15030.0,
         15030.0,
         15030.0,
@@ -8315,18 +8414,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        195.25,
-        208.791,
-        201.458,
-        201.125,
-        200.041,
-        197.125,
-        198.792,
-        195.75,
-        212.291
+        188.25,
+        212.208,
+        200.458,
+        198.166,
+        217.5,
+        198.208,
+        194.458,
+        199.125,
+        194.959
       ],
       "unit": "us/row",
-      "value": 200.041,
+      "value": 198.208,
       "window": "keyed-write",
       "workload": "txtime.unchanged.document.wire"
     },
@@ -8441,18 +8540,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        158.459,
-        175.375,
-        175.916,
-        176.958,
-        168.125,
-        167.625,
-        166.334,
-        165.625,
-        163.5
+        160.541,
+        191.0,
+        180.042,
+        172.417,
+        170.5,
+        169.917,
+        168.042,
+        168.542,
+        174.875
       ],
       "unit": "us/row",
-      "value": 167.625,
+      "value": 170.5,
       "window": "keyed-write",
       "workload": "plain.changed.document.wire"
     },
@@ -8479,10 +8578,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2954.0
+        2904.0
       ],
       "unit": "B/row",
-      "value": 2954.0,
+      "value": 2904.0,
       "window": "keyed-write",
       "workload": "plain.changed.document.wire"
     },
@@ -8567,18 +8666,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        292.25,
-        296.583,
-        290.75,
-        286.167,
-        302.667,
-        284.25,
-        285.041,
-        296.166,
-        282.584
+        274.541,
+        306.167,
+        289.458,
+        296.208,
+        290.625,
+        287.334,
+        293.791,
+        288.708,
+        286.791
       ],
       "unit": "us/row",
-      "value": 290.75,
+      "value": 289.458,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.wire"
     },
@@ -8588,11 +8687,11 @@
       "samples": [
         15370.0,
         15370.0,
+        15320.0,
         15370.0,
         15370.0,
         15370.0,
-        15370.0,
-        15370.0,
+        15320.0,
         15370.0,
         15370.0
       ],
@@ -8605,10 +8704,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        5646.0
+        5696.0
       ],
       "unit": "B/row",
-      "value": 5646.0,
+      "value": 5696.0,
       "window": "keyed-write",
       "workload": "bitemporal.interior.document.wire"
     },
@@ -8693,18 +8792,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        182.667,
-        216.833,
-        194.625,
-        195.625,
-        194.959,
-        187.416,
-        189.625,
-        189.042,
-        197.125
+        186.042,
+        198.875,
+        244.833,
+        201.667,
+        193.125,
+        190.458,
+        190.417,
+        189.125,
+        189.458
       ],
       "unit": "us/row",
-      "value": 194.625,
+      "value": 190.458,
       "window": "keyed-write",
       "workload": "geometry.depth-1.columns.typed"
     },
@@ -8731,10 +8830,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2528.0
+        2578.0
       ],
       "unit": "B/row",
-      "value": 2528.0,
+      "value": 2578.0,
       "window": "keyed-write",
       "workload": "geometry.depth-1.columns.typed"
     },
@@ -8819,18 +8918,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        184.959,
-        196.167,
-        190.042,
-        253.667,
-        197.667,
-        202.958,
-        186.125,
-        186.959,
-        187.416
+        185.792,
+        204.459,
+        191.042,
+        191.166,
+        193.459,
+        189.458,
+        188.25,
+        187.875,
+        184.667
       ],
       "unit": "us/row",
-      "value": 190.042,
+      "value": 189.458,
       "window": "keyed-write",
       "workload": "geometry.depth-1.document.typed"
     },
@@ -8846,7 +8945,7 @@
         15186.0,
         15186.0,
         15186.0,
-        15186.0
+        15136.0
       ],
       "unit": "B/row",
       "value": 15186.0,
@@ -8945,18 +9044,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        234.584,
-        243.833,
-        239.666,
-        235.917,
-        240.041,
-        238.583,
-        232.042,
-        232.875,
-        278.833
+        231.917,
+        243.084,
+        235.167,
+        269.708,
+        241.667,
+        244.958,
+        233.292,
+        232.5,
+        237.417
       ],
       "unit": "us/row",
-      "value": 238.583,
+      "value": 237.417,
       "window": "keyed-write",
       "workload": "geometry.depth-4.columns.typed"
     },
@@ -8983,10 +9082,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3200.0
+        3250.0
       ],
       "unit": "B/row",
-      "value": 3200.0,
+      "value": 3250.0,
       "window": "keyed-write",
       "workload": "geometry.depth-4.columns.typed"
     },
@@ -9071,18 +9170,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        223.541,
-        264.084,
-        233.875,
-        229.625,
-        228.5,
-        234.125,
-        226.583,
-        224.084,
-        224.917
+        222.917,
+        243.5,
+        232.917,
+        231.375,
+        235.5,
+        232.542,
+        231.375,
+        231.958,
+        230.0
       ],
       "unit": "us/row",
-      "value": 228.5,
+      "value": 231.958,
       "window": "keyed-write",
       "workload": "geometry.depth-4.document.typed"
     },
@@ -9091,13 +9190,13 @@
       "runtime": "3.14",
       "samples": [
         15858.0,
+        15808.0,
         15858.0,
         15858.0,
         15858.0,
         15858.0,
         15858.0,
-        15858.0,
-        15858.0,
+        15808.0,
         15858.0
       ],
       "unit": "B/row",
@@ -9197,18 +9296,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        287.083,
-        296.417,
-        291.167,
-        292.5,
-        283.625,
-        284.333,
-        284.667,
-        292.375,
-        283.166
+        310.667,
+        322.0,
+        323.042,
+        316.083,
+        310.375,
+        307.459,
+        318.792,
+        309.084,
+        316.083
       ],
       "unit": "us/row",
-      "value": 287.083,
+      "value": 316.083,
       "window": "keyed-write",
       "workload": "geometry.depth-8.columns.typed"
     },
@@ -9217,14 +9316,14 @@
       "runtime": "3.14",
       "samples": [
         17234.0,
-        17234.0,
-        17184.0,
-        17234.0,
         17184.0,
         17234.0,
         17234.0,
+        17184.0,
         17234.0,
-        17234.0
+        17234.0,
+        17234.0,
+        17184.0
       ],
       "unit": "B/row",
       "value": 17234.0,
@@ -9235,10 +9334,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        4046.0
+        4146.0
       ],
       "unit": "B/row",
-      "value": 4046.0,
+      "value": 4146.0,
       "window": "keyed-write",
       "workload": "geometry.depth-8.columns.typed"
     },
@@ -9323,18 +9422,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        293.166,
-        316.0,
-        294.917,
-        292.917,
-        289.958,
+        295.958,
+        319.042,
+        302.291,
+        372.708,
+        320.792,
+        303.917,
+        300.5,
         300.208,
-        287.25,
-        291.666,
-        293.0
+        286.375
       ],
       "unit": "us/row",
-      "value": 293.0,
+      "value": 302.291,
       "window": "keyed-write",
       "workload": "geometry.depth-8.document.typed"
     },
@@ -9347,7 +9446,7 @@
         17234.0,
         17234.0,
         17234.0,
-        17234.0,
+        17184.0,
         17234.0,
         17234.0,
         17234.0
@@ -9361,10 +9460,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        4096.0
+        4146.0
       ],
       "unit": "B/row",
-      "value": 4096.0,
+      "value": 4146.0,
       "window": "keyed-write",
       "workload": "geometry.depth-8.document.typed"
     },
@@ -9449,18 +9548,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        154.667,
-        170.75,
-        170.834,
-        167.709,
-        167.708,
-        163.042,
-        161.292,
-        160.875,
-        162.125
+        157.125,
+        171.333,
+        166.875,
+        169.375,
+        163.958,
+        164.458,
+        167.0,
+        164.25,
+        166.458
       ],
       "unit": "us/row",
-      "value": 163.042,
+      "value": 166.458,
       "window": "keyed-write",
       "workload": "geometry.many-0.columns.typed"
     },
@@ -9575,18 +9674,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        163.0,
-        181.291,
-        163.791,
-        160.417,
-        160.541,
-        158.167,
-        158.375,
-        158.958,
-        164.542
+        162.875,
+        168.375,
+        164.042,
+        162.125,
+        162.666,
+        226.958,
+        172.792,
+        165.542,
+        161.125
       ],
       "unit": "us/row",
-      "value": 160.541,
+      "value": 164.042,
       "window": "keyed-write",
       "workload": "geometry.many-0.document.typed"
     },
@@ -9596,13 +9695,13 @@
       "samples": [
         14674.0,
         14674.0,
-        14674.0,
-        14674.0,
-        14674.0,
         14624.0,
         14674.0,
         14674.0,
-        14674.0
+        14674.0,
+        14674.0,
+        14674.0,
+        14624.0
       ],
       "unit": "B/row",
       "value": 14674.0,
@@ -9701,18 +9800,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        252.791,
-        288.459,
-        265.0,
-        258.5,
-        256.166,
-        269.208,
-        258.084,
-        257.0,
-        267.417
+        257.75,
+        270.0,
+        267.583,
+        268.75,
+        263.209,
+        261.542,
+        263.958,
+        276.0,
+        261.875
       ],
       "unit": "us/row",
-      "value": 258.5,
+      "value": 263.958,
       "window": "keyed-write",
       "workload": "geometry.many-8.columns.typed"
     },
@@ -9827,18 +9926,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        258.041,
-        266.166,
-        259.292,
-        257.459,
-        264.167,
-        253.125,
-        255.833,
-        259.167,
-        265.0
+        256.542,
+        272.375,
+        268.208,
+        261.584,
+        266.625,
+        258.792,
+        259.25,
+        257.291,
+        259.917
       ],
       "unit": "us/row",
-      "value": 259.167,
+      "value": 259.917,
       "window": "keyed-write",
       "workload": "geometry.many-8.document.typed"
     },
@@ -9850,10 +9949,10 @@
         16578.0,
         16578.0,
         16578.0,
+        16528.0,
         16578.0,
         16578.0,
-        16578.0,
-        16578.0,
+        16528.0,
         16578.0
       ],
       "unit": "B/row",
@@ -9865,10 +9964,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3920.0
+        3970.0
       ],
       "unit": "B/row",
-      "value": 3920.0,
+      "value": 3970.0,
       "window": "keyed-write",
       "workload": "geometry.many-8.document.typed"
     },
@@ -9953,18 +10052,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        532.583,
-        607.458,
-        558.584,
-        542.0,
-        549.667,
-        541.333,
-        538.167,
-        536.834,
-        537.625
+        541.083,
+        558.375,
+        569.041,
+        551.75,
+        555.625,
+        549.917,
+        547.917,
+        564.084,
+        552.25
       ],
       "unit": "us/row",
-      "value": 541.333,
+      "value": 552.25,
       "window": "keyed-write",
       "workload": "geometry.many-32.columns.typed"
     },
@@ -9973,17 +10072,17 @@
       "runtime": "3.14",
       "samples": [
         27794.0,
-        27728.0,
+        27778.0,
         27770.0,
         27762.0,
         27754.0,
         27746.0,
-        27696.0,
         27746.0,
-        27696.0
+        27746.0,
+        27746.0
       ],
       "unit": "B/row",
-      "value": 27746.0,
+      "value": 27754.0,
       "window": "keyed-write",
       "workload": "geometry.many-32.columns.typed"
     },
@@ -10079,18 +10178,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        528.333,
-        544.917,
-        537.917,
-        534.125,
-        531.209,
-        532.458,
-        531.542,
-        587.5,
-        548.208
+        543.292,
+        561.875,
+        550.5,
+        558.041,
+        560.041,
+        559.166,
+        549.0,
+        599.333,
+        556.375
       ],
       "unit": "us/row",
-      "value": 534.125,
+      "value": 558.041,
       "window": "keyed-write",
       "workload": "geometry.many-32.document.typed"
     },
@@ -10100,16 +10199,16 @@
       "samples": [
         27965.0,
         27949.0,
-        27941.0,
+        27891.0,
         27933.0,
         27925.0,
         27917.0,
         27917.0,
-        27867.0,
+        27917.0,
         27917.0
       ],
       "unit": "B/row",
-      "value": 27925.0,
+      "value": 27917.0,
       "window": "keyed-write",
       "workload": "geometry.many-32.document.typed"
     },
@@ -10117,10 +10216,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        9538.0
+        9488.0
       ],
       "unit": "B/row",
-      "value": 9538.0,
+      "value": 9488.0,
       "window": "keyed-write",
       "workload": "geometry.many-32.document.typed"
     },
@@ -10205,18 +10304,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        275.0,
-        291.583,
-        285.75,
-        285.583,
+        280.209,
+        296.125,
+        303.833,
+        290.25,
+        295.292,
+        286.208,
         287.791,
-        279.792,
-        287.0,
-        282.792,
-        281.416
+        286.709,
+        286.541
       ],
       "unit": "us/row",
-      "value": 285.583,
+      "value": 287.791,
       "window": "keyed-write",
       "workload": "geometry.width-16.columns.typed"
     },
@@ -10224,10 +10323,10 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        16040.0,
         16090.0,
         16090.0,
         16090.0,
+        15990.0,
         16090.0,
         16090.0,
         16090.0,
@@ -10331,18 +10430,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        302.458,
-        320.791,
-        311.542,
-        310.291,
-        369.583,
-        324.75,
-        317.958,
-        308.334,
-        313.458
+        276.875,
+        294.25,
+        294.25,
+        291.834,
+        287.125,
+        286.167,
+        298.5,
+        283.792,
+        284.0
       ],
       "unit": "us/row",
-      "value": 313.458,
+      "value": 287.125,
       "window": "keyed-write",
       "workload": "geometry.width-16.document.typed"
     },
@@ -10369,10 +10468,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3418.0
+        3318.0
       ],
       "unit": "B/row",
-      "value": 3418.0,
+      "value": 3318.0,
       "window": "keyed-write",
       "workload": "geometry.width-16.document.typed"
     },
@@ -10457,18 +10556,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        671.375,
-        708.792,
-        720.25,
-        731.166,
-        715.125,
-        720.0,
-        704.875,
-        704.708,
-        722.708
+        676.5,
+        708.5,
+        679.208,
+        679.167,
+        690.542,
+        670.208,
+        676.042,
+        678.292,
+        681.709
       ],
       "unit": "us/row",
-      "value": 715.125,
+      "value": 679.167,
       "window": "keyed-write",
       "workload": "geometry.width-64.columns.typed"
     },
@@ -10477,17 +10576,17 @@
       "runtime": "3.14",
       "samples": [
         23865.0,
-        23799.0,
+        23849.0,
         23841.0,
         23833.0,
-        23775.0,
+        23825.0,
         23817.0,
         23817.0,
-        23767.0,
+        23817.0,
         23817.0
       ],
       "unit": "B/row",
-      "value": 23817.0,
+      "value": 23825.0,
       "window": "keyed-write",
       "workload": "geometry.width-64.columns.typed"
     },
@@ -10495,10 +10594,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        6678.0
+        6728.0
       ],
       "unit": "B/row",
-      "value": 6678.0,
+      "value": 6728.0,
       "window": "keyed-write",
       "workload": "geometry.width-64.columns.typed"
     },
@@ -10583,18 +10682,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        688.833,
-        708.083,
-        714.208,
-        687.958,
-        722.875,
-        718.458,
-        694.875,
-        688.375,
-        688.417
+        693.375,
+        681.25,
+        677.375,
+        683.5,
+        688.792,
+        679.333,
+        677.292,
+        684.167,
+        670.958
       ],
       "unit": "us/row",
-      "value": 694.875,
+      "value": 681.25,
       "window": "keyed-write",
       "workload": "geometry.width-64.document.typed"
     },
@@ -10610,7 +10709,7 @@
         25376.0,
         25426.0,
         25426.0,
-        25376.0
+        25426.0
       ],
       "unit": "B/row",
       "value": 25434.0,
@@ -10621,10 +10720,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        6728.0
+        6778.0
       ],
       "unit": "B/row",
-      "value": 6728.0,
+      "value": 6778.0,
       "window": "keyed-write",
       "workload": "geometry.width-64.document.typed"
     },
@@ -10709,18 +10808,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        244.917,
-        256.708,
+        237.75,
+        257.083,
+        242.875,
+        248.667,
+        241.625,
+        249.5,
+        240.708,
         253.958,
-        252.417,
-        252.708,
-        243.625,
-        244.25,
-        246.792,
-        244.542
+        243.375
       ],
       "unit": "us/row",
-      "value": 246.792,
+      "value": 243.375,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.columns.typed"
     },
@@ -10747,10 +10846,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2578.0
+        2528.0
       ],
       "unit": "B/row",
-      "value": 2578.0,
+      "value": 2528.0,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.columns.typed"
     },
@@ -10835,18 +10934,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        239.292,
-        254.375,
-        248.375,
-        244.5,
-        247.041,
-        245.958,
-        243.0,
-        241.458,
-        244.291
+        232.042,
+        253.959,
+        246.208,
+        245.584,
+        243.291,
+        241.083,
+        242.166,
+        244.708,
+        242.917
       ],
       "unit": "us/row",
-      "value": 244.5,
+      "value": 243.291,
       "window": "keyed-write",
       "workload": "geometry.sparse-64.document.typed"
     },
@@ -10861,7 +10960,7 @@
         15186.0,
         15186.0,
         15186.0,
-        15186.0,
+        15136.0,
         15186.0
       ],
       "unit": "B/row",
@@ -10961,18 +11060,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        224.708,
-        249.25,
-        236.0,
-        233.458,
-        232.375,
-        231.833,
-        231.25,
-        235.459,
-        231.166
+        229.917,
+        249.375,
+        235.25,
+        239.375,
+        232.875,
+        233.667,
+        240.166,
+        231.625,
+        232.667
       ],
       "unit": "us/row",
-      "value": 232.375,
+      "value": 233.667,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.columns.typed"
     },
@@ -10985,10 +11084,10 @@
         15066.0,
         15066.0,
         15066.0,
+        15016.0,
         15066.0,
         15066.0,
-        15066.0,
-        15016.0
+        15066.0
       ],
       "unit": "B/row",
       "value": 15066.0,
@@ -10999,10 +11098,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3632.0
+        3582.0
       ],
       "unit": "B/row",
-      "value": 3632.0,
+      "value": 3582.0,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.columns.typed"
     },
@@ -11087,18 +11186,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        258.292,
-        269.791,
-        269.042,
-        260.042,
-        268.292,
-        256.625,
-        264.125,
-        255.417,
-        263.292
+        228.084,
+        258.167,
+        239.291,
+        238.792,
+        242.375,
+        238.084,
+        240.167,
+        234.917,
+        242.291
       ],
       "unit": "us/row",
-      "value": 263.292,
+      "value": 239.291,
       "window": "keyed-write",
       "workload": "ancestor.depth-1.document.typed"
     },
@@ -11213,18 +11312,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        337.583,
-        354.375,
-        355.417,
-        343.041,
-        341.459,
-        348.792,
-        340.792,
-        341.917,
-        341.791
+        333.709,
+        403.583,
+        354.125,
+        334.375,
+        333.167,
+        334.875,
+        331.708,
+        329.75,
+        337.375
       ],
       "unit": "us/row",
-      "value": 341.917,
+      "value": 334.375,
       "window": "keyed-write",
       "workload": "ancestor.width-16.columns.typed"
     },
@@ -11233,12 +11332,12 @@
       "runtime": "3.14",
       "samples": [
         15970.0,
-        15970.0,
-        15970.0,
-        15970.0,
-        15970.0,
-        15970.0,
         15920.0,
+        15970.0,
+        15970.0,
+        15970.0,
+        15970.0,
+        15970.0,
         15970.0,
         15920.0
       ],
@@ -11339,18 +11438,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        315.333,
-        340.208,
-        328.541,
-        337.5,
-        322.541,
-        321.75,
-        323.208,
-        321.709,
-        391.583
+        314.25,
+        336.625,
+        327.167,
+        327.291,
+        325.916,
+        341.667,
+        322.958,
+        326.583,
+        320.417
       ],
       "unit": "us/row",
-      "value": 323.208,
+      "value": 326.583,
       "window": "keyed-write",
       "workload": "ancestor.width-16.document.typed"
     },
@@ -11365,8 +11464,8 @@
         15970.0,
         15970.0,
         15970.0,
-        15920.0,
-        15970.0
+        15970.0,
+        15920.0
       ],
       "unit": "B/row",
       "value": 15970.0,
@@ -11377,10 +11476,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        4522.0
+        4472.0
       ],
       "unit": "B/row",
-      "value": 4522.0,
+      "value": 4472.0,
       "window": "keyed-write",
       "workload": "ancestor.width-16.document.typed"
     },
@@ -11465,18 +11564,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        711.542,
-        753.167,
-        736.625,
-        717.208,
-        800.0,
-        747.708,
-        733.0,
-        720.25,
-        732.666
+        743.291,
+        746.625,
+        741.417,
+        737.208,
+        740.583,
+        735.625,
+        784.167,
+        745.708,
+        731.75
       ],
       "unit": "us/row",
-      "value": 733.0,
+      "value": 741.417,
       "window": "keyed-write",
       "workload": "ancestor.width-64.columns.typed"
     },
@@ -11485,19 +11584,145 @@
       "runtime": "3.14",
       "samples": [
         26307.0,
-        26291.0,
+        26241.0,
         26283.0,
-        26175.0,
+        26275.0,
         26267.0,
+        26159.0,
         26209.0,
-        26209.0,
-        26209.0,
+        26259.0,
         26209.0
       ],
       "unit": "B/row",
-      "value": 26209.0,
+      "value": 26259.0,
       "window": "keyed-write",
       "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.14",
+      "samples": [
+        7932.0
+      ],
+      "unit": "B/row",
+      "value": 7932.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.shapeOfDeclaration",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.entityShape",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.occurrenceShape",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedDocument",
+      "runtime": "3.14",
+      "samples": [
+        3.0
+      ],
+      "unit": "calls/row",
+      "value": 3.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.encodeManagedMany",
+      "runtime": "3.14",
+      "samples": [
+        1.0
+      ],
+      "unit": "calls/row",
+      "value": 1.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.applyPatches",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "calls.detachJsonContainer",
+      "runtime": "3.14",
+      "samples": [
+        0.0
+      ],
+      "unit": "calls/row",
+      "value": 0.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.columns.typed"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.14",
+      "samples": [
+        688.375,
+        691.875,
+        666.292,
+        665.333,
+        677.375,
+        662.375,
+        676.208,
+        671.166,
+        664.209
+      ],
+      "unit": "us/row",
+      "value": 671.166,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.document.typed"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.14",
+      "samples": [
+        24652.0,
+        24636.0,
+        24628.0,
+        24570.0,
+        24612.0,
+        24604.0,
+        24604.0,
+        24554.0,
+        24554.0
+      ],
+      "unit": "B/row",
+      "value": 24604.0,
+      "window": "keyed-write",
+      "workload": "ancestor.width-64.document.typed"
     },
     {
       "cell": "retainedBytes",
@@ -11508,132 +11733,6 @@
       "unit": "B/row",
       "value": 7882.0,
       "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.shapeOfDeclaration",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.entityShape",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.occurrenceShape",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedDocument",
-      "runtime": "3.14",
-      "samples": [
-        3.0
-      ],
-      "unit": "calls/row",
-      "value": 3.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.encodeManagedMany",
-      "runtime": "3.14",
-      "samples": [
-        1.0
-      ],
-      "unit": "calls/row",
-      "value": 1.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.applyPatches",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "calls.detachJsonContainer",
-      "runtime": "3.14",
-      "samples": [
-        0.0
-      ],
-      "unit": "calls/row",
-      "value": 0.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.columns.typed"
-    },
-    {
-      "cell": "elapsedUs",
-      "runtime": "3.14",
-      "samples": [
-        655.041,
-        674.458,
-        665.25,
-        658.625,
-        666.916,
-        719.0,
-        669.583,
-        659.167,
-        659.292
-      ],
-      "unit": "us/row",
-      "value": 665.25,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.document.typed"
-    },
-    {
-      "cell": "transientBytes",
-      "runtime": "3.14",
-      "samples": [
-        24652.0,
-        24586.0,
-        24628.0,
-        24570.0,
-        24562.0,
-        24554.0,
-        24554.0,
-        24554.0,
-        24604.0
-      ],
-      "unit": "B/row",
-      "value": 24570.0,
-      "window": "keyed-write",
-      "workload": "ancestor.width-64.document.typed"
-    },
-    {
-      "cell": "retainedBytes",
-      "runtime": "3.14",
-      "samples": [
-        7782.0
-      ],
-      "unit": "B/row",
-      "value": 7782.0,
-      "window": "keyed-write",
       "workload": "ancestor.width-64.document.typed"
     },
     {
@@ -11717,18 +11816,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        279.333,
-        299.292,
-        289.833,
-        286.25,
-        285.416,
-        286.916,
-        288.958,
-        283.625,
-        284.5
+        292.916,
+        300.667,
+        290.834,
+        290.042,
+        288.667,
+        288.792,
+        287.167,
+        290.792,
+        287.5
       ],
       "unit": "us/row",
-      "value": 286.25,
+      "value": 290.042,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.columns.typed"
     },
@@ -11755,10 +11854,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3582.0
+        3632.0
       ],
       "unit": "B/row",
-      "value": 3582.0,
+      "value": 3632.0,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.columns.typed"
     },
@@ -11843,18 +11942,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        294.417,
-        296.542,
-        293.375,
-        283.375,
-        292.292,
-        281.542,
-        290.75,
-        283.541,
-        286.042
+        274.458,
+        378.375,
+        308.291,
+        289.916,
+        295.375,
+        286.5,
+        285.959,
+        283.917,
+        294.75
       ],
       "unit": "us/row",
-      "value": 290.75,
+      "value": 289.916,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.document.typed"
     },
@@ -11881,10 +11980,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3682.0
+        3632.0
       ],
       "unit": "B/row",
-      "value": 3682.0,
+      "value": 3632.0,
       "window": "keyed-write",
       "workload": "ancestor.sparse-64.document.typed"
     },
@@ -11969,18 +12068,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        60.244875,
-        60.744875,
-        76.125,
-        60.5105,
-        60.604125,
-        59.234375,
-        58.80725,
-        61.401125,
-        60.00525
+        63.458375,
+        62.5365,
+        62.276125,
+        61.5885,
+        62.151,
+        61.802,
+        65.94275,
+        62.25,
+        61.099
       ],
       "unit": "us/row",
-      "value": 60.5105,
+      "value": 62.25,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -11988,18 +12087,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        5616.75,
-        5605.875,
-        5648.25,
-        5576.25,
-        5538.5,
-        5596.625,
-        5590.375,
-        5555.625,
-        5576.25
+        5798.375,
+        5776.375,
+        5773.375,
+        5784.25,
+        5738.875,
+        5740.5,
+        5746.75,
+        5740.5,
+        5756.0
       ],
       "unit": "B/row",
-      "value": 5590.375,
+      "value": 5756.0,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -12007,10 +12106,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2570.75
+        2565.125
       ],
       "unit": "B/row",
-      "value": 2570.75,
+      "value": 2565.125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.columns"
     },
@@ -12018,18 +12117,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        40.76825,
-        40.5169375,
-        40.34896875,
-        40.48046875,
-        40.65103125,
-        40.51434375,
-        40.65884375,
-        43.694,
-        41.78646875
+        41.97525,
+        44.928375,
+        46.19790625,
+        43.65625,
+        41.89975,
+        42.05596875,
+        41.3958125,
+        41.69271875,
+        43.33725
       ],
       "unit": "us/row",
-      "value": 40.65103125,
+      "value": 42.05596875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -12037,18 +12136,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        3900.78125,
-        3883.59375,
-        3866.40625,
-        3856.21875,
-        3818.71875,
-        3871.09375,
-        3830.46875,
-        3814.4375,
-        3826.9375
+        3884.71875,
+        3870.25,
+        3829.625,
+        3824.9375,
+        3814.0,
+        3817.53125,
+        3825.0,
+        3853.9375,
+        3842.25
       ],
       "unit": "B/row",
-      "value": 3856.21875,
+      "value": 3829.625,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -12056,10 +12155,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        1809.125
+        1812.8125
       ],
       "unit": "B/row",
-      "value": 1809.125,
+      "value": 1812.8125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.columns"
     },
@@ -12067,18 +12166,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        36.6910859375,
-        36.594078125,
-        40.4283828125,
-        37.2623671875,
-        36.541015625,
-        36.4166640625,
-        36.481765625,
-        37.3154296875,
-        36.76009375
+        43.1936875,
+        38.242515625,
+        38.5419921875,
+        38.407875,
+        39.3951875,
+        38.32259375,
+        38.4375,
+        38.0921171875,
+        38.9248046875
       ],
       "unit": "us/row",
-      "value": 36.6910859375,
+      "value": 38.4375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -12086,18 +12185,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        3364.1171875,
-        3340.6796875,
-        3314.3046875,
-        3313.7265625,
-        3318.0234375,
-        3313.3359375,
-        3297.8984375,
-        3305.5234375,
-        3305.7109375
+        3362.7734375,
+        3340.40625,
+        3314.625,
+        3317.4453125,
+        3306.3203125,
+        3310.8203125,
+        3306.21875,
+        3304.65625,
+        3295.9453125
       ],
       "unit": "B/row",
-      "value": 3313.7265625,
+      "value": 3310.8203125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -12105,10 +12204,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        1623.453125
+        1622.03125
       ],
       "unit": "B/row",
-      "value": 1623.453125,
+      "value": 1622.03125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.columns"
     },
@@ -12116,18 +12215,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        64.2135,
-        78.140625,
-        64.7395,
-        62.041625,
-        62.078125,
-        63.10425,
-        62.43225,
-        63.88025,
-        62.9375
+        69.7865,
+        69.854125,
+        68.854125,
+        67.5365,
+        68.34375,
+        74.015625,
+        73.515625,
+        78.322875,
+        73.24475
       ],
       "unit": "us/row",
-      "value": 63.10425,
+      "value": 69.854125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -12135,18 +12234,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        7771.0,
-        7756.875,
-        7758.5,
-        7736.5,
-        7752.25,
-        7742.75,
-        7764.75,
-        7749.0,
-        7716.125
+        7921.75,
+        7909.25,
+        7870.125,
+        7915.5,
+        7863.875,
+        7837.0,
+        7832.125,
+        7782.125,
+        7807.125
       ],
       "unit": "B/row",
-      "value": 7752.25,
+      "value": 7863.875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -12154,10 +12253,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3780.875
+        3823.875
       ],
       "unit": "B/row",
-      "value": 3780.875,
+      "value": 3823.875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-8.document"
     },
@@ -12165,18 +12264,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        44.0234375,
-        44.0859375,
-        43.52215625,
-        43.98828125,
-        43.8893125,
-        43.77734375,
-        43.622375,
-        49.3958125,
-        45.6263125
+        46.97525,
+        46.9791875,
+        46.09765625,
+        46.759125,
+        48.71225,
+        47.10546875,
+        49.44009375,
+        46.1328125,
+        46.01040625
       ],
       "unit": "us/row",
-      "value": 43.98828125,
+      "value": 46.97525,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -12184,18 +12283,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        5961.28125,
-        5952.3125,
-        5955.03125,
-        5953.46875,
-        5950.34375,
-        5947.21875,
-        5939.0,
-        5955.03125,
-        5950.34375
+        6006.4375,
+        6021.25,
+        6014.25,
+        6040.40625,
+        6047.0625,
+        6022.0625,
+        6008.0,
+        6005.625,
+        6004.0625
       ],
       "unit": "B/row",
-      "value": 5952.3125,
+      "value": 6014.25,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -12203,10 +12302,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        3012.3125
+        3014.4375
       ],
       "unit": "B/row",
-      "value": 3012.3125,
+      "value": 3014.4375,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-32.document"
     },
@@ -12214,18 +12313,18 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        40.873046875,
-        41.0540390625,
-        40.4147109375,
-        39.9615859375,
-        39.8720703125,
-        41.3330078125,
-        40.57259375,
-        40.319984375,
-        39.856765625
+        42.4775390625,
+        42.1705703125,
+        42.847328125,
+        42.8515625,
+        42.6783828125,
+        42.2779921875,
+        42.4228515625,
+        42.033203125,
+        42.1064453125
       ],
       "unit": "us/row",
-      "value": 40.4147109375,
+      "value": 42.4228515625,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -12233,18 +12332,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        5528.4375,
-        5489.171875,
-        5478.7265625,
-        5484.1953125,
-        5459.5859375,
-        5458.90625,
-        5454.96875,
-        5456.6484375,
-        5457.921875
+        5525.8203125,
+        5505.6953125,
+        5477.484375,
+        5463.8125,
+        5476.109375,
+        5459.9921875,
+        5455.796875,
+        5458.140625,
+        5455.796875
       ],
       "unit": "B/row",
-      "value": 5459.5859375,
+      "value": 5463.8125,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -12252,10 +12351,10 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        2813.5625
+        2812.4296875
       ],
       "unit": "B/row",
-      "value": 2813.5625,
+      "value": 2812.4296875,
       "window": "predicate-acquisition",
       "workload": "acquisition.rows-128.document"
     },
@@ -12263,18 +12362,67 @@
       "cell": "elapsedUs",
       "runtime": "3.14",
       "samples": [
-        3350.791,
-        3344.208,
-        3421.458,
-        3379.375,
-        3365.75,
-        3548.292,
-        3414.625,
-        3365.0,
-        3373.584
+        69.958,
+        67.959,
+        67.375,
+        68.167,
+        69.834,
+        73.291,
+        70.0,
+        66.834,
+        67.667
+      ],
+      "unit": "us/row",
+      "value": 68.167,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.14",
+      "samples": [
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0,
+        8766.0
+      ],
+      "unit": "B/row",
+      "value": 8766.0,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.14",
+      "samples": [
+        8852.0
+      ],
+      "unit": "B/row",
+      "value": 8852.0,
+      "window": "wire-insert-response",
+      "workload": "response.insert.family.wire"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.14",
+      "samples": [
+        3435.875,
+        3466.959,
+        3379.542,
+        3365.167,
+        3410.041,
+        3370.958,
+        3473.125,
+        3432.75,
+        3439.75
       ],
       "unit": "us",
-      "value": 3373.584,
+      "value": 3432.75,
       "window": "model-preparation",
       "workload": "model.prepared"
     },
@@ -12282,18 +12430,18 @@
       "cell": "transientBytes",
       "runtime": "3.14",
       "samples": [
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0,
-        434456.0
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0,
+        434528.0
       ],
       "unit": "B",
-      "value": 434456.0,
+      "value": 434528.0,
       "window": "model-preparation",
       "workload": "model.prepared"
     },
@@ -12301,12 +12449,61 @@
       "cell": "retainedBytes",
       "runtime": "3.14",
       "samples": [
-        427016.0
+        427208.0
       ],
       "unit": "B",
-      "value": 427016.0,
+      "value": 427208.0,
       "window": "model-preparation",
       "workload": "model.prepared"
+    },
+    {
+      "cell": "elapsedUs",
+      "runtime": "3.14",
+      "samples": [
+        326.5,
+        314.041,
+        308.542,
+        312.0,
+        316.625,
+        310.375,
+        310.208,
+        311.208,
+        310.625
+      ],
+      "unit": "us",
+      "value": 311.208,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
+    },
+    {
+      "cell": "transientBytes",
+      "runtime": "3.14",
+      "samples": [
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0,
+        26928.0
+      ],
+      "unit": "B",
+      "value": 26928.0,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
+    },
+    {
+      "cell": "retainedBytes",
+      "runtime": "3.14",
+      "samples": [
+        22584.0
+      ],
+      "unit": "B",
+      "value": 22584.0,
+      "window": "model-preparation",
+      "workload": "model.prepared.family"
     }
   ],
   "schemaVersion": 2,

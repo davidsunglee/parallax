@@ -146,17 +146,19 @@ it locally safe.
 | `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
 | `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6`, one cell per shard of the class, together the one run the command owns |
-| `python-verify-cost` | — | Advisory verification of the committed cost portfolio against the head lock and, on pull requests, the event-merge lock; non-required, and it measures nothing |
+| `python-verify-cost` | — | Required verification of the committed cost portfolio against the head lock and, on pull requests, the event-merge lock; it measures nothing |
 | `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` |
 
-The `python-verify-cost` job is advisory verification rather than a gate — it is
-a native step over the committed evidence, not a recipe — and the last job runs
+The `python-verify-cost` job gates the committed evidence rather than a recipe —
+it is a native step, so no local aggregate reaches it, and it fails only for
+evidence that is not evidence, which a change to a digested input makes and only
+a new capture answers. The last job runs
 a focused selector. `python-test-pydantic-floor`
 [`core/spec/language-testing.md`](core/spec/language-testing.md) §3 keeps out of
-every aggregate, so it is the one gate here that no local aggregate reaches and
-CI alone owns — the same division as the 3.13 `python-check-dbfree` leg, where
-CI owns the far end of a supported range and the local gate owns what the lock
-pins.
+every aggregate, so it is the one recipe here that no local aggregate reaches
+and CI alone owns — the same division as the 3.13 `python-check-dbfree` leg,
+where CI owns the far end of a supported range and the local gate owns what the
+lock pins.
 
 `secrets` and `commitlint` are event checks rather than repository verification
 gates, and stay native CI steps. The monthly `python-deps-refresh` workflow

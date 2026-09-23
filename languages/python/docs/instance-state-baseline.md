@@ -678,6 +678,11 @@ of the same comparison moves the other way. The +5.9% is read as the width of
 a cross-day comparison. That one runtime at one root count carried the arm is
 what this capture showed; one capture does not establish that it recurs.
 
+The two peak rows of that table are resolved, not carried forward. They were
+never a property of the delivery path, and the COR-173 section below is the
+reading that settles them: with the allocation behind them removed, the same
+cells read at parity with the archive.
+
 ### What the memo costs a retained result
 
 The memo rides with the `IncludeTree` into every Typed result envelope, and
@@ -722,6 +727,101 @@ write-lowering envelope at all. Both are properties of comparing a slice
 against an older whole portfolio, not of the measurement; the certified
 reading is the `1742bf47` pair above, and this one is the stated tie back
 to the `e372c69c` baseline.
+
+## COR-173 rebaseline against the archived `e372c69c` baseline
+
+The canonical cost portfolio was recaptured at `93733e93` and the whole capture
+compared against the same archived pre-COR-112 portfolio. Two things separate
+this reading from the one above. It is the whole `recovered/` capture, all four
+members and both runtimes, not a one-member control slice, so the delivery
+control cells are read beside every other cell the instruments take rather than
+on their own. And it is taken after the allocation that produced the peak
+readings in the table above was found and removed, which is what lets those
+rows close.
+
+The arithmetic is non-strict, for the reason the section above gives:
+`--require-compatible` refuses the archive before it reaches any digest,
+because both of the archive's required envelopes carry `schemaVersion` 1 where
+the current schema requires 2. The rendering is a plain `--compare` and is
+archived outside Git at
+`$HOME/.local/share/parallax/evidence/cor-173/comparison-e372c69c.md` (SHA-256
+`9d0b1cb47a517e560640ded1dd09c31313b5ab2eae5585a1bedd3fac043838f0`). Its
+preface states that the head capture is amended, as every rendering of this
+capture does; the amendment is recorded in full in the `adjustment` of
+`structural-metadata-envelope/recovered/conditions.json` and narrated in that
+envelope's README. The rendering taken before the fix is kept beside it as
+`comparison-e372c69c.as-captured.md` (SHA-256
+`8bb11216bf6fc809f29a767ea93c6a16d94aaf9737c34f1855bc78e29ffc6099`), which
+carries no such preface because it renders the capture as the run left it, so
+the movement the fix produced can be read off the pair.
+
+Medians over the same delivery cells, beside what the two readings above
+recorded for the same comparison:
+
+| Cell group | COR-112 read | COR-172 pair | `recovered/` |
+|---|---:|---:|---:|
+| direct Wire eager elapsed | +9.4% | +0.7% | +8.2% |
+| direct Wire page-32 elapsed | +7.8% | +0.9% | +6.6% |
+| guarded Wire elapsed | +10.5% | +2.0% | +8.9% |
+| direct Wire eager peak | +9.0% | +8.7% | 0.00% |
+| direct Wire page-32 peak | +6.8% | +5.4% | +0.02% |
+| direct Wire eager retained | +0.016 KiB | +0.016 KiB | +0.016 KiB |
+
+### The direct-Wire peak is resolved
+
+The peak was never a property of the delivery path. `PageBuilder.add_claim`
+allocated an unconditional per-projection list for `_overwritten_edges`,
+introduced at `46883551`, which the `e372c69c` tree predates - that tree's
+`_page.py` carries no `_overwritten_edges` at all, so the archive prices the
+Wire projection without it. COR-112 measured it as +9.0% eager and +6.8% page-32 and attributed
+it to the change as a whole; COR-172 recovered the timing and carried the same
+cells forward at +8.7% and +5.4% as an unexplained residual outside the include
+tree walk it had fixed. This capture measured it a third time, at +11.3% eager
+on `duplicate-include`, which is what made it worth diagnosing rather than
+recording again.
+
+Making `_overwritten_edges` a sparse `dict[int, list[object]]` behind a
+`SparseEdges` class, so a projection with no overwritten edge allocates
+nothing, returns the cells to their pre-regression values. Against the archive
+the eight direct-Wire eager peak cells read a median of 0.00%, spanning -0.03%
+to +0.01%, and the eight page-32 peak cells +0.02%, spanning -0.11% to +0.22% -
+in both cases the same reading the archive took, to within a tenth of a
+percent. These are measured readings, not derived: the `control-delivery`
+window needs no database, so every one of its cells was re-measured through the
+member's own instrument with the fix in the tree.
+
+No gate moved for them and none could: `control-delivery` is not one of
+`GATED_WINDOWS`, so no memory ceiling in `spec/memory-gates.yaml` has ever
+covered a direct-Wire delivery cell. The evidence for these cells is this
+comparison against the archive, as it was for COR-112 and COR-172.
+
+### What the result-held term reads, unchanged
+
+`result-held-metadata` is likewise ungated, and its `closed` readings against
+the archive are what the section above recorded, to the reading: +6.4 to
++6.5 KiB on the small model and +12.5 to +12.7 KiB on the larger one,
+which is COR-112's metadata retention with COR-172's 0.281 KiB memo floor
+inside it. The `shared` readings and the direct-Wire eager retained readings
+move by that memo floor alone, +0.016 KiB, exactly as the COR-172 pair read
+them. This capture adds no term here and removes none; it confirms the reading
+through a second instrument, on a whole portfolio rather than a control slice.
+
+### The timing is a cross-day whole-portfolio reading
+
+The three timing rows read several points above the COR-172 pair's, and they
+are not evidence that the recovered time was lost again. The pair above was a
+same-day base and head taken through one instrument in 354 s of collection; this
+is a 65-minute whole-portfolio capture with database provisioning between
+workloads, compared against a portfolio captured on another day. The residual is
+also asymmetric between runtimes in a way a code change would not be: over the
+fourteen direct and guarded Wire elapsed cells of each runtime the 3.13 median
+is +11.3% and the 3.14 median is +4.0%. Nor is it confined to this window - the
+geometry-read family reads about nine points higher against `before/` and
+`after/` than the outgoing capture read against the same two bases
+(`structural-metadata-envelope/README.md`, *Recovered capture*). The certified
+`1742bf47` pair remains the timing evidence for the recovery; this
+reading is the canonical portfolio's tie back to the `e372c69c` baseline, and
+its load-bearing rows are the memory ones.
 
 ## What the escalation block said
 

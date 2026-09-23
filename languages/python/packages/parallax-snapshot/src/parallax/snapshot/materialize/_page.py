@@ -202,6 +202,27 @@ class SparseIssues:
         self._count = 0
 
 
+class SparseEdges:
+    __slots__ = ("_count", "_values")
+
+    def __init__(self, count: int, values: dict[int, list[object]]) -> None:
+        self._count = count
+        self._values = values
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __getitem__(self, projection: int) -> Sequence[object]:
+        return self._values.get(projection, _NO_VIEWS)
+
+    def release(self, projection: int) -> None:
+        self._values.pop(projection, None)
+
+    def clear(self) -> None:
+        self._values.clear()
+        self._count = 0
+
+
 class DecoderRows:
     __slots__ = ("_count", "_values", "_witnesses")
 
@@ -337,7 +358,7 @@ class PageRows:
     keys: Sequence[LogicalKey | None]
     sources: Sequence[SourceLevel]
     view_rows: Sequence[Sequence[object]]
-    overwritten_edges: Sequence[Sequence[object]]
+    overwritten_edges: SparseEdges
     schema: ViewSchema
     roots: tuple[int, ...]
     pin: Pin
@@ -413,12 +434,12 @@ def release_page_rows(page: Page) -> None:
         rows.keys,
         rows.sources,
         rows.view_rows,
-        rows.overwritten_edges,
         rows.witnesses,
     ):
         if isinstance(values, list):
             values.clear()
     rows.issues.clear()
+    rows.overwritten_edges.clear()
     rows.decoders.clear()
     rows.judged_states.release()
 
@@ -558,7 +579,7 @@ class PageBuilder:
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
-        self._overwritten_edges: list[list[object]] = []
+        self._overwritten_edges: dict[int, list[object]] = {}
         self._identity: dict[LogicalKey, int] = {}
         self._first: list[int] = []
         self._claims: list[int | list[int]] = []
@@ -661,7 +682,6 @@ class PageBuilder:
         self._views.append(
             cast("list[object]", [ABSENT] * len(slots.slots)) if slots.slots else _NO_VIEWS
         )
-        self._overwritten_edges.append([])
         self._logical_ids.append(logical)
         self._keys.append(key)
         self._witnesses.append(witness)
@@ -700,7 +720,7 @@ class PageBuilder:
             raise ValueError("a view slot cannot belong to an empty source layout")
         existing = row[slot]
         if existing is not ABSENT:
-            self._overwritten_edges[projection].append(existing)
+            self._overwritten_edges.setdefault(projection, []).append(existing)
         row[slot] = value
 
     def finish(self, roots: tuple[int, ...], pin: Pin) -> Page:
@@ -744,7 +764,7 @@ class PageBuilder:
             keys=self._keys,
             sources=self._sources,
             view_rows=self._views,
-            overwritten_edges=self._overwritten_edges,
+            overwritten_edges=SparseEdges(count, self._overwritten_edges),
             schema=self._schema,
             roots=roots,
             pin=pin,
@@ -766,7 +786,7 @@ class PageBuilder:
         self._sources = []
         self._slots = []
         self._views = []
-        self._overwritten_edges = []
+        self._overwritten_edges = {}
         self._identity = {}
         self._first = []
         self._last_layout = None
