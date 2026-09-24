@@ -1337,6 +1337,39 @@ these are nineteen: the timing ceilings widen from six to fourteen and the
 memory ceilings from one to three, read below and against the timing the
 comparisons record.
 
+### Source drift since the capture
+
+`conditions.json` records a digest of every instrument and control source each
+member was measured through, and several have changed since. Each change is
+judged here as the manifest's rule above requires, and none of them moves a
+reading this capture holds. The digests still differ, so `--require-compatible`
+refuses a comparison against this capture for every member but
+lifecycle-overhead; these judgements are what a reader comparing across them
+relies on instead.
+
+- `90e4bcda` rewrote prose in the instance-state control
+  `tests/unit/_instance_state_support.py` and its instrument
+  `tools/instance_state_overhead.py`: docstrings in both, and one line of the
+  instrument's printed scope text. No measured statement changed.
+- COR-141 edited the shared instrument `tests/unit/memory_instruments.py`
+  (`60a9edc4`, `7d7f05c7`, `8b6ef9cb`, `e01c5e97`) and
+  `tools/instance_state_overhead.py` (`7d7f05c7`). The closure reading moved
+  onto the shared reachability walker; every reader refuses a process no
+  child-interpreter boundary started, checking on entry before any window
+  opens, and `instance_state_overhead.py` marks its children as that boundary
+  does; a child records which measurement it served once the measurement
+  returns; and the whole-heap and live-graph readers went. No capture tool calls
+  a removed reader, and the `retained`, `high_water`, and `allocation` readers
+  they do call measure exactly what they did.
+- COR-174 built `tools/instance_state_reading.py`'s projection Page through
+  `PageBuilder.add_claim` from a plain tuple, as
+  `parallax/snapshot/materialize/_prepared.py` does, when it deleted the
+  `PageBuilder.add` the instrument called, which wrapped the row in a decoder
+  closure. The Page is built before `tracemalloc` starts and is read only by the
+  `direct_wire` sample, so no memory reading moves; `compact.directWireNs` may
+  shift slightly, since decoding the root no longer calls that closure. The same
+  change edited only a docstring in `tools/write_lowering_overhead.py`.
+
 ### Against `before/`
 
 `comparison-before.md` is the rendering. Read as family medians of the paired
