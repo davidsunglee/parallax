@@ -143,6 +143,7 @@ from typing import Any, Final, Literal, NamedTuple, cast
 from durations import Spans, write_sidecar
 from interpreter_matrix import (
     IDENTITY_SCRIPT,
+    OWN_INTERPRETER_VARIABLE,
     ProbeRunner,
     RuntimeStatus,
     probe_identity,
@@ -479,10 +480,14 @@ def _child_environment(runtime: str) -> dict[str, str]:
     holds extension modules built for the wrong ABI, and its virtual environment
     would be resolved in preference to the one uv builds. So the path is dropped
     and the throwaway environment is named explicitly, which is also what keeps
-    uv from rebuilding the workspace's own ``.venv`` at the other minor.
+    uv from rebuilding the workspace's own ``.venv`` at the other minor. Either
+    child is marked as an interpreter of its own, which every reader requires.
     """
     if runtime == CURRENT_MINOR:
-        return os.environ | {"PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry)}
+        return os.environ | {
+            "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
+            OWN_INTERPRETER_VARIABLE: "1",
+        }
     environment = {
         name: value
         for name, value in os.environ.items()
@@ -491,7 +496,8 @@ def _child_environment(runtime: str) -> dict[str, str]:
     return environment | {
         "UV_PROJECT_ENVIRONMENT": str(
             Path(tempfile.gettempdir()) / f"parallax-instance-state-{runtime}"
-        )
+        ),
+        OWN_INTERPRETER_VARIABLE: "1",
     }
 
 

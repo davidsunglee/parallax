@@ -32,6 +32,9 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
 SUPPORTED_MINORS: Final = 2
 HASH_SEED: Final = "0"
+OWN_INTERPRETER_VARIABLE: Final = "PARALLAX_OWN_INTERPRETER"
+"""What marks a child as an interpreter of its own, spelled as
+``tests/unit/memory_instruments.py`` requires it before any reading."""
 IDENTITY_SCRIPT: Final = Path(__file__).resolve()
 METADATA_VERSION: Final = 1
 
@@ -80,12 +83,14 @@ def child_environment(runtime: str, namespace: str) -> dict[str, str]:
     here; a child of another minor must not, because this environment's extension
     modules were built for another ABI, so its path is dropped and uv is pointed at
     a throwaway environment named by ``namespace``. Coverage is never inherited,
-    and hashing is pinned so container sizes are the same in every child.
+    hashing is pinned so container sizes are the same in every child, and the
+    child is marked as an interpreter of its own, which every reader requires.
     """
     environment = {
         name: value for name, value in os.environ.items() if name not in _COVERAGE_VARIABLES
     }
     environment["PYTHONHASHSEED"] = HASH_SEED
+    environment[OWN_INTERPRETER_VARIABLE] = "1"
     if runtime == CURRENT_MINOR:
         environment["PYTHONPATH"] = os.pathsep.join(entry for entry in sys.path if entry)
         return environment

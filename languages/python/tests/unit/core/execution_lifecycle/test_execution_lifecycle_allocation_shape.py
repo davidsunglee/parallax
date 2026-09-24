@@ -27,6 +27,7 @@ built cache paid once is inside the window rather than before it.
 from __future__ import annotations
 
 import gc
+import os
 import subprocess
 import sys
 import tracemalloc
@@ -54,6 +55,7 @@ from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
     rows,
 )
 from tests.unit.memory_instruments import (
+    OWN_INTERPRETER_VARIABLE,
     REPEATS,
     Seam,
     allocation,
@@ -194,8 +196,9 @@ def _first_run_in_a_child(seam: str) -> tuple[int, int]:
     """:func:`~memory_instruments.first_run` for ``seam``, in a process that
     has run nothing else.
 
-    The child inherits this process's environment untouched, so every comparison
-    below grades two children that differ only in the seam they are asked for. It
+    The child inherits this process's environment, marked as an interpreter of
+    its own, so every comparison below grades two children that differ only in
+    the seam they are asked for. It
     needs no import root handed to it: ``python -m <this module>`` from the
     workspace root puts that root first on the child's path, and both support
     modules resolve under ``tests`` there as they do here.
@@ -206,6 +209,7 @@ def _first_run_in_a_child(seam: str) -> tuple[int, int]:
         capture_output=True,
         text=True,
         check=True,
+        env=os.environ | {OWN_INTERPRETER_VARIABLE: "1"},
     )
     kept, transient = report.stdout.split()
     return int(kept), int(transient)

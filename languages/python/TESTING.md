@@ -54,8 +54,10 @@ records the skip; `PARALLAX_REQUIRE_DB=1` makes it fail.
 The collection hook derives exactly one class from each item's resource needs:
 `db` from the live fixture closure, `cost` from the child-interpreter boundary,
 otherwise `dbfree`. Do not author those markers onto tests. Requiring both
-isolated resources is an error. The database and instrument access checkers
-enforce the resource boundaries.
+isolated resources is an error. The instrument-access checker requires the
+boundary on every test that calls a whole-interpreter reader directly; any other
+route fails at run time, because each reader refuses a process the boundary did
+not start.
 
 Use `just python-test-<surface>` for focused iteration, or select a module from
 this directory with `uv run pytest tests/<surface>/<path>`.
