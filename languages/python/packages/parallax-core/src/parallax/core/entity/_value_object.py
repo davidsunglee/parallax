@@ -5,14 +5,6 @@ from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core.base import FrozenMap, NeutralType, adopt_frozen_map
-from parallax.core.document_codec import (
-    MemberShape,
-    Occurrence,
-    OccurrenceCarrier,
-    encode_leaf,
-    encode_occurrence,
-)
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
@@ -39,7 +31,6 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     EntityIdentity,
-    Multiplicity,
     ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
     value_object_metadata,
@@ -48,7 +39,7 @@ from parallax.core.metamodel import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-__all__ = ["ValueObject", "ValueObjectMeta", "encode_value_object", "shape_of"]
+__all__ = ["ValueObject", "ValueObjectMeta", "shape_of"]
 
 _EDIT_RESOLUTION_SLOT: Final = "__parallax_value_object_edit_resolution__"
 
@@ -185,15 +176,6 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         del memo
         raise _use_edit(type(self), "__deepcopy__") from None
 
-    def __parallax_document__(self) -> Mapping[str, object]:
-        """This value as its canonical nested document.
-
-        Named for the capability rather than exported as a protocol import, so
-        the member serializer behind write rows and assignments can render a
-        member without importing this frontend.
-        """
-        return _document(self)
-
     def __parallax_authoring_names__(self) -> Iterable[str]:
         """Canonical names this value authored, borrowed for write preparation."""
         declared = shape_of(type(self))
@@ -320,84 +302,3 @@ def _member_metadata(
             ),
         )
     return members
-
-
-def encode_value_object(value: ValueObject | None) -> Mapping[str, object] | None:
-    """Encode a Value Object as its canonical nested document.
-
-    ``None`` passes through unchanged (an absent occurrence). Filtered by member
-    presence: a member the caller never populated is omitted rather than bound as
-    an explicit null, which is the same explicit-versus-defaulted distinction a
-    write row draws. A Many occurrence is
-    the one exception — it is never nullable, and its empty default serializes as
-    the empty array, the sole zero-element representation. Whether an omitted
-    required member is a defect belongs to write validation, not to this
-    serializer.
-
-    Every leaf is spelled by ``m-document-codec``, never by this frontend and never by
-    handing a runtime value to a JSON serializer, which is what left a ``Decimal``,
-    ``bytes``, ``date``, ``time``, ``datetime``, or ``UUID`` leaf with no storage form.
-    """
-    if value is None:
-        return None
-    return _document(value)
-
-
-def _document(value: ValueObject) -> Mapping[str, object]:
-    shape = shape_of(type(value)).document_shape
-    return cast(
-        "Mapping[str, object]",
-        encode_occurrence(
-            value,
-            shape,
-            Multiplicity.ONE,
-            _LIVE_VALUE_OBJECT,
-            encode_leaf=_encode_value_object_leaf,
-            build_object=_value_object_mapping,
-            build_array=_value_object_sequence,
-        ),
-    )
-
-
-_ABSENT_VALUE_OBJECT_MEMBER: Final = object()
-
-
-def _value_object_values(record: object, shape: MemberShape) -> Iterable[object]:
-    value = cast("ValueObject", record)
-    declared = shape_of(type(value))
-    bits = plan_of(type(value)).bits
-    for member in shape.members:
-        py_name = declared.name_to_py[member.name]
-        if (
-            isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
-        ) or is_present(value, bits[py_name]):
-            yield getattr(value, py_name)
-        else:
-            yield _ABSENT_VALUE_OBJECT_MEMBER
-
-
-def _value_object_elements(value: object) -> Iterable[object]:
-    return cast("tuple[ValueObject, ...]", value)
-
-
-def _encode_value_object_leaf(neutral_type: NeutralType, value: object) -> object:
-    if value is None:
-        return None
-    return encode_leaf(neutral_type, value)
-
-
-def _value_object_mapping(
-    entries: Iterable[tuple[str, object]],
-) -> FrozenMap[str, object]:
-    return adopt_frozen_map(dict(entries))
-
-
-def _value_object_sequence(values: Iterable[object]) -> tuple[object, ...]:
-    return tuple(values)
-
-
-_LIVE_VALUE_OBJECT: Final = OccurrenceCarrier(
-    absent=_ABSENT_VALUE_OBJECT_MEMBER,
-    values=_value_object_values,
-    elements=_value_object_elements,
-)

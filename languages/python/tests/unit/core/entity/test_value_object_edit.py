@@ -40,6 +40,7 @@ from parallax.core.entity._instance_state import (
 from parallax.core.metamodel import MODEL_ROOT
 from tests._support import value_object_models as vm
 from tests.unit.core.entity._compact_support import layout_slots
+from tests.unit.core.entity._value_object_document_support import stored_document
 
 _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
     {
@@ -70,7 +71,7 @@ def test_an_unset_optional_member_stays_absent_from_the_document() -> None:
     # published stores what was read.
     edited = _address().edit(city="Bergen")
     assert "geo" not in edited.model_fields_set
-    assert edited.__parallax_document__() == {
+    assert stored_document(edited) == {
         "street": "Storgata 1",
         "city": "Bergen",
         "phones": [{"type": "home", "number": "1"}],
@@ -82,14 +83,14 @@ def test_naming_a_nullable_member_none_stores_an_explicit_null() -> None:
     # and a null is what a caller authored.
     edited = _address().edit(geo=None)
     assert "geo" in edited.model_fields_set
-    assert edited.__parallax_document__()["geo"] is None
+    assert stored_document(edited)["geo"] is None
 
 
 def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
     geo = vm.Geo(country="NO", point=vm.Point(lat=59.9, lon=10.7))
     edited = _address().edit(geo=geo)
     assert edited.geo == geo
-    assert edited.__parallax_document__()["geo"] == {
+    assert stored_document(edited)["geo"] == {
         "country": "NO",
         "point": {"lat": 59.9, "lon": 10.7},
     }
@@ -97,7 +98,7 @@ def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
 
 def test_an_edit_replaces_a_many_occurrence_whole() -> None:
     edited = _address().edit(phones=(vm.Phone(type="work", number="2"),))
-    assert edited.__parallax_document__()["phones"] == ({"type": "work", "number": "2"},)
+    assert stored_document(edited)["phones"] == ({"type": "work", "number": "2"},)
 
 
 def test_an_edit_with_no_changes_is_legal_and_carries_the_same_state() -> None:

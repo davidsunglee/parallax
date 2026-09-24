@@ -24,7 +24,6 @@ from parallax.core.entity import (
     ElementAttributeExpr,
     EntityDefinitionError,
     Predicate,
-    encode_value_object,
 )
 from parallax.core.entity._declaration import shape_of
 from parallax.core.metamodel import (
@@ -39,6 +38,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate import QueryDefinitionError, serialize
 from tests._support import value_object_models as vm
+from tests.unit.core.entity._value_object_document_support import stored_document
 from tests.unit.core.entity.value_object_bad_models import (
     build_copy_verb_value_object,
     build_entity_only_option_value_object,
@@ -297,17 +297,16 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
 
 
 def test_the_document_omits_a_member_the_caller_never_set() -> None:
-    assert encode_value_object(vm.Geo(country="DE")) == {"country": "DE"}
-    assert encode_value_object(None) is None
+    assert stored_document(vm.Geo(country="DE")) == {"country": "DE"}
 
 
 def test_a_many_occurrence_always_renders_even_when_empty() -> None:
-    document = encode_value_object(vm.Address(street="a", city="b"))
+    document = stored_document(vm.Address(street="a", city="b"))
     assert document == {"street": "a", "city": "b", "phones": []}
 
     absent_many = vm.Address.model_construct(street="a", city="b")
     absent_many.__pydantic_fields_set__.discard("phones")
-    assert encode_value_object(absent_many) == {"street": "a", "city": "b", "phones": []}
+    assert stored_document(absent_many) == {"street": "a", "city": "b", "phones": []}
 
 
 def test_the_document_renders_nested_occurrences_recursively() -> None:
@@ -317,7 +316,7 @@ def test_the_document_renders_nested_occurrences_recursively() -> None:
         geo=vm.Geo(country="DE", point=vm.Point(lat=1.0, lon=2.0)),
         phones=(vm.Phone(type="home", number="1"),),
     )
-    assert encode_value_object(address) == {
+    assert stored_document(address) == {
         "street": "a",
         "city": "b",
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
