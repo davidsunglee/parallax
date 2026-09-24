@@ -72,7 +72,7 @@ from tests.unit.core.entity._compact_support import (
     raw_row,
     real_storage,
 )
-from tests.unit.core.entity._value_object_document_support import stored_document
+from tests.unit.core.entity._value_object_document_support import inserted_document
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -185,6 +185,10 @@ def build(request: pytest.FixtureRequest) -> Builder:
 
 def _codec() -> EntityRowCodec:
     return row_codec_for(PARITY_MODEL)
+
+
+def _stored_document(site: Site) -> Mapping[str, object]:
+    return inserted_document(PARITY_MODEL, Depot(id=1, label="A", site=site))
 
 
 def _site() -> Site:
@@ -434,14 +438,14 @@ def test_a_document_omits_a_member_the_value_never_populated(build: Builder) -> 
     # `tags` is the one exception under either backing: a Many occurrence is
     # never nullable and its empty default IS a value, so it is contributed
     # whether or not the value populated it.
-    assert stored_document(build(Site, city="Springfield")) == {
+    assert _stored_document(build(Site, city="Springfield")) == {
         "city": "Springfield",
         "tags": [],
     }
 
 
 def test_a_document_spells_a_member_populated_as_null(build: Builder) -> None:
-    assert stored_document(build(Site, city="Springfield", zip_code=None)) == {
+    assert _stored_document(build(Site, city="Springfield", zip_code=None)) == {
         "city": "Springfield",
         "zipCode": None,
         "tags": [],
@@ -453,7 +457,7 @@ def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder)
     # occurrence, and an occurrence inside an element of a Many. Presence is
     # resolved at every depth against the value standing there, so the arms agree
     # about a leaf populated at depth two and one left absent there.
-    document = stored_document(
+    document = _stored_document(
         build(
             Site,
             city="Springfield",
@@ -471,7 +475,7 @@ def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder)
 def test_a_document_derived_from_a_published_value_creates_no_storage_for_it() -> None:
     value = published(Site, city="Springfield", point=published(Point, lat=1.0))
     assert value.shouted == "SPRINGFIELD"
-    stored_document(value)
+    _stored_document(value)
     assert not carries_instance_storage(value)
     assert not carries_instance_storage(cast("Any", value).point)
     # Read last, because reading it is what creates it.
@@ -492,7 +496,7 @@ def test_a_value_object_edit_of_either_backing_yields_an_ordinary_value(build: B
 def test_a_value_object_edit_carries_presence_forward_exactly(build: Builder) -> None:
     edited = build(Site, city="Springfield").edit(zip_code="49007")
     assert edited.model_fields_set == {"city", "zip_code"}
-    assert stored_document(edited) == {
+    assert _stored_document(edited) == {
         "city": "Springfield",
         "zipCode": "49007",
         "tags": [],
@@ -504,7 +508,7 @@ def test_a_value_object_edit_that_authors_nothing_carries_presence_forward_too(
 ) -> None:
     edited = build(Site, city="Springfield").edit()
     assert edited.model_fields_set == {"city"}
-    assert stored_document(edited) == {"city": "Springfield", "tags": []}
+    assert _stored_document(edited) == {"city": "Springfield", "tags": []}
 
 
 def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Builder) -> None:
@@ -517,7 +521,7 @@ def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Buil
     assert restored == value
     assert restored.model_fields_set == {"city", "zip_code"}
     assert raw_row(restored) is None
-    assert stored_document(restored) == stored_document(value)
+    assert _stored_document(restored) == _stored_document(value)
 
 
 # --------------------------------------------------------------------------- #

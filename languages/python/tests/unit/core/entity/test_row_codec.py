@@ -45,7 +45,7 @@ from tests.unit._authored_storage_support import (
     stored_state,
 )
 from tests.unit.core.entity._compact_support import carries_instance_storage, published
-from tests.unit.core.entity._value_object_document_support import stored_document
+from tests.unit.core.entity._value_object_document_support import inserted_document
 
 _SPEC_CODES = frozenset(
     {
@@ -291,7 +291,7 @@ def test_full_row_borrows_a_value_object_without_rendering_its_containment_tree(
     profile = row_codec_for(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
     assert sample.profile is not None
     assert profile is sample.profile
-    document = stored_document(sample.profile)
+    document = inserted_document(mm.DOCUMENT_CODEC_MODEL, sample)
     assert document["day"] == "2026-01-01"
 
 
