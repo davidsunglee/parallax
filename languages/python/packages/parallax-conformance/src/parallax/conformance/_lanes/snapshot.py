@@ -43,7 +43,6 @@ from parallax.conformance._mechanism.model_facts import (
     case_entity,
     case_serving_model,
     load_case_metamodel,
-    read_pin,
 )
 from parallax.conformance._mechanism.transaction_control import (
     underlying,
@@ -59,7 +58,6 @@ from parallax.core.metamodel import (
     Multiplicity,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import Pin
@@ -362,7 +360,6 @@ def run_scenario(
                         # production seam that takes an Entity Identity.
                         identity = case_entity(model, query.target.canonical).identity
                         snapshot = underlying(partial(db.wire.find, query))
-                        pin = _find_step_pin(model, query)
                     except READ_ERRORS as exc:
                         raise EngineError(f"{case.path.name}: {exc}") from exc
                     emissions.extend(
@@ -378,7 +375,7 @@ def run_scenario(
                         step_graphs.append(observed)
                     results.append(
                         _ScenarioStepResult(
-                            _root_members(snapshot), pin, identity, materialized=True
+                            _root_members(snapshot), snapshot.pin, identity, materialized=True
                         )
                     )
         return ScenarioRun(emissions, round_trips, errors, rows_observed, step_graphs)
@@ -659,15 +656,6 @@ def _related_direction(
             f"{case.path.name}: {identity.name} declares no relationship {name!r} to navigate"
         )
     return direction
-
-
-def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
-    """A scenario read step's own query pin — the whole-graph as-of coordinates
-    the materialized view carries (`m-snapshot-read`), read from the SAME
-    Object Query the find executor consumes. This is the pin
-    :func:`_grade_mutate_step` hands the production write seam's finite-pin
-    rule, resolved exactly as the read path resolves it."""
-    return read_pin(query, model)
 
 
 def _grade_mutate_step(

@@ -11,7 +11,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.temporal_read import Pin, scans_validated_axis, validated_query_pin
+from parallax.core.temporal_read import scans_validated_axis
 from parallax.snapshot.handle import ServingModel, prepare_model
 from parallax.snapshot.handle._preflight import preflight
 
@@ -27,7 +27,6 @@ __all__ = [
     "load_case_domain_model",
     "load_case_metamodel",
     "model_path",
-    "read_pin",
     "read_scans",
 ]
 
@@ -210,16 +209,6 @@ def canonicalize_read(
         form == "graph",
     )
     return deep_fetch.plan(validated, model, projection=projection).root
-
-
-def read_pin(query: ObjectQueryNode, model: AcceptedMetamodel) -> Pin:
-    """The whole-graph pin a read of ``query`` attaches to its Snapshot.
-
-    Read off the Temporal Selections production's own gate (`handle.preflight`)
-    validates, so a lane grades the pin the read path resolves rather than one
-    re-derived from the authored clause.
-    """
-    return validated_query_pin(preflight(query, model=model, form="graph").temporal)
 
 
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
