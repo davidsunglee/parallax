@@ -38,7 +38,6 @@ from parallax.core.predicate import (
     PositionScope,
     check_attribute_reference,
     effective_set,
-    referenced_entities,
     relationship_target,
     resolve_subtype_selection,
     root_position,
@@ -47,7 +46,7 @@ from parallax.core.predicate import (
 )
 from parallax.core.wire import WireDecodingError, decode_wire
 
-__all__ = ["query_entities", "validate_include_path", "validate_object_query"]
+__all__ = ["validate_include_path", "validate_object_query"]
 
 
 def validate_object_query(
@@ -89,27 +88,6 @@ def validate_object_query(
         narrow_to=narrowed,
         limit=query.limit,
     )
-
-
-def query_entities(query: ObjectQueryNode) -> frozenset[str]:
-    """Every Entity spelling ``query`` names anywhere, exactly as authored.
-
-    A caller assembling a coherent model to validate ``query`` against needs each
-    of them, not only the queried target: an Include Path or a navigation names a
-    target the root's family does not otherwise reach.
-    """
-    names = {query.target.canonical, *referenced_entities(query.predicate)}
-    names.update(query.narrow_to or ())
-    for key in query.order_by:
-        entity, _, _member = key.attr.rpartition(".")
-        names.add(entity)
-    for path in query.includes:
-        names.update(path.applies_to or ())
-        for segment in path.segments:
-            entity, _, _member = segment.rel.rpartition(".")
-            names.add(entity)
-            names.update(segment.narrow_to)
-    return frozenset(names)
 
 
 def _narrowed_position(

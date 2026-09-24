@@ -94,7 +94,6 @@ __all__ = [
     "FRAMEWORK_NAME_PREFIX",
     "LIFECYCLE_STATE_SLOT",
     "RESERVED_MEMBER_NAMES",
-    "STANDARD_TEMPORAL_NAMES",
     "DeclarationKind",
     "EntityDeclaration",
     "EntityHeader",
@@ -358,13 +357,6 @@ def _python_spelling(canonical: str) -> str:
     """
     return default_column_name(canonical)
 
-
-STANDARD_TEMPORAL_NAMES: Final[tuple[str, ...]] = tuple(
-    _python_spelling(endpoint.name)
-    for _, endpoints in sorted(TEMPORAL_MEMBERS.items(), key=lambda item: item[0].value)
-    for endpoint in endpoints
-)
-"""The framework temporal member names as Python spells them, in canonical axis order."""
 
 _RESERVED_TEMPORAL_NAMES: Final[frozenset[str]] = frozenset(
     endpoint.name for endpoints in TEMPORAL_MEMBERS.values() for endpoint in endpoints

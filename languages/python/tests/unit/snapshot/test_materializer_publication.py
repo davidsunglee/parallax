@@ -55,6 +55,7 @@ from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot.handle import SnapshotMaterializationError
 from parallax.snapshot.handle._materialization import RowPublication
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize import (
@@ -1052,11 +1053,13 @@ def test_a_loaded_view_naming_a_direction_the_concrete_lacks_is_refused() -> Non
     fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrder.zzz")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrder.zzz", None)
-    with pytest.raises(GraphConstructionError) as refusal:
+    with pytest.raises(SnapshotMaterializationError) as refusal:
         fixture.materialize(order)
-    assert refusal.value.code == "entity-graph-invalid-member"
-    assert refusal.value.index == 0
-    assert refusal.value.identity == RelationshipIdentity(_ORDER_IDENTITY, "zzz")
+    cause = refusal.value.cause
+    assert isinstance(cause, GraphConstructionError)
+    assert cause.code == "entity-graph-invalid-member"
+    assert cause.index == 0
+    assert cause.identity == RelationshipIdentity(_ORDER_IDENTITY, "zzz")
 
 
 def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refused() -> None:
@@ -1069,11 +1072,13 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
     order = fixture.node("SnapOrder", _ORDER_ROW)
     fixture.attach(order, "parallax.compatibility.SnapOrderItem.statuses", ())
-    with pytest.raises(GraphConstructionError) as refusal:
+    with pytest.raises(SnapshotMaterializationError) as refusal:
         fixture.materialize(order)
-    assert refusal.value.code == "entity-graph-invalid-member"
-    assert refusal.value.index == 0
-    assert refusal.value.identity == foreign
+    cause = refusal.value.cause
+    assert isinstance(cause, GraphConstructionError)
+    assert cause.code == "entity-graph-invalid-member"
+    assert cause.index == 0
+    assert cause.identity == foreign
 
 
 def test_a_root_outside_the_page_is_refused_at_sealing() -> None:

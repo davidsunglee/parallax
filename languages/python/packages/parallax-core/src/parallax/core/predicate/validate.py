@@ -60,7 +60,6 @@ __all__ = [
     "PositionScope",
     "check_attribute_reference",
     "effective_set",
-    "referenced_entities",
     "relationship_target",
     "resolve_subtype_selection",
     "root_position",
@@ -69,63 +68,6 @@ __all__ = [
 ]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
-
-
-def referenced_entities(op: PredicateNode) -> frozenset[str]:
-    """The Entity spellings ``op`` names anywhere, exactly as authored — the Entity
-    prefix of every attribute / nested-path / relationship reference, plus every
-    ``narrow`` subtype alternative. A spelling may be bare or canonical; this
-    resolves neither.
-
-    A caller assembling a coherent model to validate ``op`` against needs every
-    Entity the predicate reaches, not only the query's own root: a navigation
-    names a target the root's family does not otherwise reach."""
-    names: set[str] = set()
-    _collect_entities(op, names)
-    return frozenset(names)
-
-
-def _class_of(reference: str) -> str:
-    entity, _ = split_reference(reference)
-    if entity is None:  # pragma: no cover - every position collected here bears an Entity
-        raise ValueError(f"{reference!r} carries no Entity spelling")
-    return entity
-
-
-def _collect_entities(op: PredicateNode, names: set[str]) -> None:
-    match op:
-        case All() | NoneOp():
-            return
-        case (
-            Comparison(attr=attr)
-            | Between(attr=attr)
-            | NullCheck(attr=attr)
-            | StringMatch(attr=attr)
-            | Membership(attr=attr)
-        ):
-            names.add(_class_of(attr))
-        case (
-            NestedComparison(path=path)
-            | NestedRange(path=path)
-            | NestedMembership(path=path)
-            | NestedStringMatch(path=path)
-            | NestedNullCheck(path=path)
-        ):
-            names.add(_class_of(path))
-        case NestedExists(path=path) | NestedNotExists(path=path):
-            names.add(_class_of(path))
-        case And(operands=operands) | Or(operands=operands):
-            for operand in operands:
-                _collect_entities(operand, names)
-        case Not(operand=operand) | Group(operand=operand):
-            _collect_entities(operand, names)
-        case Narrow(to=to, operand=operand):
-            names.update(to)
-            _collect_entities(operand, names)
-        case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
-            names.add(_class_of(rel))
-            if inner is not None:
-                _collect_entities(inner, names)
 
 
 class ModelRejectedError(ValueError):

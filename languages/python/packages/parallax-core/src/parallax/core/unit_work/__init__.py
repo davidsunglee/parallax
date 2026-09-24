@@ -178,7 +178,6 @@ from parallax.core.unit_work.strategy import (
     ValidTimeBound,
     ValidTimeWindow,
     VersionArithmetic,
-    actor_identity_to_audit_string,
     concurrency_preference,
 )
 from parallax.core.unit_work.temporal import TemporalAxes
@@ -367,7 +366,6 @@ __all__ = [
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",
-    "actor_identity_to_audit_string",
     "admits",
     "buffered_write",
     "claim_scope",

@@ -19,7 +19,7 @@ from parallax.core.object_query._nodes import (
     TemporalSelection,
 )
 from parallax.core.object_query.serde import ObjectQueryError, deserialize, serialize
-from parallax.core.object_query.validate import query_entities, validate_object_query
+from parallax.core.object_query.validate import validate_object_query
 
 __all__ = [
     "LATEST",
@@ -41,7 +41,6 @@ __all__ = [
     "canonical_includes",
     "deserialize",
     "object_query",
-    "query_entities",
     "serialize",
     "subtype_spelling",
     "validate_object_query",

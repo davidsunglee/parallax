@@ -50,7 +50,6 @@ __all__ = [
     "ValidTimeBound",
     "ValidTimeWindow",
     "VersionArithmetic",
-    "actor_identity_to_audit_string",
     "concurrency_preference",
 ]
 
@@ -114,13 +113,6 @@ class DatabaseLoginActor:
 
 
 type ActorIdentity = SubjectActor | DatabaseLoginActor
-
-
-def actor_identity_to_audit_string(actor: ActorIdentity) -> str:
-    """Project one Actor Identity to the neutral audit string exactly once."""
-    if isinstance(actor, SubjectActor):
-        return actor.value
-    return f"db-login:{actor.value}"
 
 
 @dataclass(frozen=True, slots=True)

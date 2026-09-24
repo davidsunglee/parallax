@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import NamedTuple, Protocol, cast
 
 from parallax.core.base import UnknownFamilyTag, admits_stored_scalar
-from parallax.core.document_codec import UNAVAILABLE
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import MemberIdentity, PrimaryKey
@@ -16,9 +15,6 @@ __all__ = ["IdentityClaim", "claim_identity"]
 
 
 class _AttributeRead(Protocol):
-    @property
-    def result_key(self) -> str: ...
-
     @property
     def temporal_end(self) -> bool: ...
 
@@ -32,12 +28,6 @@ class _Level(Protocol):
 
     @property
     def attribute_reads(self) -> tuple[_AttributeRead, ...]: ...
-
-    @property
-    def projected_by_position(self) -> tuple[bool, ...]: ...
-
-    @property
-    def host_checked(self) -> tuple[int, ...]: ...
 
     @property
     def host_checked_set(self) -> frozenset[int]: ...
@@ -59,30 +49,23 @@ class IdentityClaim(NamedTuple):
     key: LogicalKey | None
     witness: tuple[object, ...]
     identity_values: tuple[object, ...]
-    payload_values: tuple[object, ...]
     routing_values: tuple[object, ...]
     findings: tuple[StoredDataIssueInput, ...] = ()
 
 
 def claim_identity(
-    values: Mapping[str, object],
+    raw_values: tuple[object, ...],
     level: _Level,
     *,
     unknown_family_tag: UnknownFamilyTag | None = None,
-    classified_members: frozenset[str] = frozenset(),
-    witness_values: tuple[object, ...] | None = None,
-    raw_member_values: tuple[object, ...] | None = None,
     correlation_members: tuple[MemberIdentity, ...] = (),
 ) -> IdentityClaim:
-    """Build a logical-key claim and decoded routing values without judging payload."""
+    """Build a logical-key claim and decoded routing values from one row's
+    positional witness, laid out by ``level.layout``, without judging payload."""
     layout = level.layout
-    raw_values = (
-        _raw_member_values(values, level) if raw_member_values is None else raw_member_values
-    )
     identity_positions = level.identity_positions
     routing_positions = level.routing_positions(correlation_members)
     host_checked = level.host_checked_set
-    witness = raw_values if witness_values is None else witness_values
     if unknown_family_tag is None and host_checked.isdisjoint(routing_positions):
         identity_values = _values_at(raw_values, identity_positions)
         key = (
@@ -94,7 +77,7 @@ def claim_identity(
                 _values_at(raw_values, layout.temporal_starts),
             )
         )
-        return IdentityClaim(key, witness, identity_values, raw_values, raw_values)
+        return IdentityClaim(key, raw_values, identity_values, raw_values)
 
     routing: list[object] | None = None
     findings: list[StoredDataIssueInput] = []
@@ -107,7 +90,7 @@ def claim_identity(
             continue
         if position not in host_checked:
             continue
-        value = _identity_value(raw, position, classified_members, level)
+        value = _identity_value(raw, position, level)
         admission = admits_stored_scalar(
             value,
             attribute.type,
@@ -144,7 +127,7 @@ def claim_identity(
     routed: Sequence[object] = raw_values if routing is None else routing
     identity_values = _values_at(routed, identity_positions)
     routing_values = raw_values if routing is None else tuple(routing)
-    common = (witness, identity_values, raw_values, routing_values, tuple(findings))
+    common = (raw_values, identity_values, routing_values, tuple(findings))
     if (
         unknown_family_tag is not None
         or any(issue.code.startswith("stored-data-primary-key-") for issue in findings)
@@ -161,31 +144,11 @@ def claim_identity(
     )
 
 
-def _raw_member_values(values_by_key: Mapping[str, object], level: _Level) -> tuple[object, ...]:
-    layout = level.layout
-    values: list[object] = []
-    for position, attribute in enumerate(layout.attributes):
-        contract = level.attribute_reads[position] if level.attribute_reads else None
-        key = attribute.storage.name if contract is None else contract.result_key
-        values.append(values_by_key.get(key, ABSENT))
-    for occurrence, projected in zip(layout.occurrences, level.projected_by_position, strict=True):
-        values.append(values_by_key.get(occurrence.storage.name) if projected else ABSENT)
-    return tuple(values)
-
-
-def _identity_value(
-    raw: object,
-    position: int,
-    classified_members: frozenset[str],
-    level: _Level,
-) -> object:
+def _identity_value(raw: object, position: int, level: _Level) -> object:
     if raw is ABSENT:  # pragma: no cover - claim_identity handles absent positions before dispatch
         return raw
     attribute = level.layout.attributes[position]
     contract = level.attribute_reads[position] if level.attribute_reads else None
-    key = attribute.storage.name if contract is None else contract.result_key
-    if key in classified_members:
-        return ABSENT if raw is UNAVAILABLE else raw
     if contract is None or not contract.encoded or raw is None:
         return raw
     try:

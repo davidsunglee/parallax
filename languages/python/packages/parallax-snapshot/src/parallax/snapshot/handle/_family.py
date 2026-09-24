@@ -11,12 +11,11 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
+from parallax.core.storage_layout import EntityLayoutView
 from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
     "assignment_member",
-    "axis_columns",
     "comparison_shape",
     "declaring",
     "entity_layout",
@@ -24,9 +23,7 @@ __all__ = [
     "family_primary_key",
     "is_temporal",
     "members",
-    "slot_column",
     "tx_time_axis",
-    "valid_time_axis",
     "version_attribute",
 ]
 
@@ -102,17 +99,6 @@ def tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
     return axis
 
 
-def valid_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
-    """``declaring_entity``'s Valid-Time as-of axis (its start/end attribute
-    references). Family-wide and root-owned like every axis, so resolve through
-    :func:`declaring` first; raises :class:`ValueError` when the entity declares no
-    Valid-Time dimension (callers guard on a Bitemporal declaring Entity)."""
-    axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
-    if axis is None:  # pragma: no cover - callers guard on a Bitemporal declaring Entity
-        raise ValueError(f"{declaring_entity.identity.canonical}: no Valid-Time axis")
-    return axis
-
-
 def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
     """``entity``'s canonical selection over its physical Table Layout, or
     ``None`` when it owns no rows (an abstract family position, or an Entity the
@@ -123,28 +109,6 @@ def entity_layout(model: Metamodel, entity: EntityMetadata) -> EntityLayoutView 
     table-per-hierarchy discriminator assignment, so nothing downstream
     reassembles a column sequence from declarations."""
     return storage_layout.view(model).entity(entity.identity)
-
-
-def slot_column(layout: EntityLayoutView, contributor: ColumnContributor) -> str:
-    """The physical Column ``contributor`` occupies in ``layout``'s Table.
-
-    An operation selects its identities semantically — model primary key,
-    version attribute, temporal bound — and maps each one here. Raises
-    :class:`ValueError` when the Table Layout retains no slot for it."""
-    slot = layout.layout.contribution(contributor)
-    if slot is None:  # pragma: no cover - a selected contributor always has a slot
-        raise ValueError(f"{layout.entity.canonical}: {contributor} occupies no physical Column")
-    return slot.column.name
-
-
-def axis_columns(layout: EntityLayoutView, axis: AsOfAxisMetadata) -> tuple[str, str]:
-    """The physical ``(start, end)`` Columns ``axis``'s bound Attributes occupy in
-    ``layout``'s Table — the interval bounds a temporal write reads and stamps.
-
-    Temporal axes are family-wide and root-owned, so the bound Attributes are
-    declared on the root while their slots live in the row-owning Entity's own
-    Table."""
-    return slot_column(layout, axis.start_attribute), slot_column(layout, axis.end_attribute)
 
 
 def version_attribute(

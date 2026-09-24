@@ -90,11 +90,6 @@ class Pin:
     tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
 
-    @property
-    def is_empty(self) -> bool:
-        """Whether no axis is pinned (both axes scanned, or a non-temporal read)."""
-        return self.tx_time is None and self.valid_time is None
-
 
 class Edge:
     """A temporal milestone's **edge** — the finite from-instant on every declared axis.

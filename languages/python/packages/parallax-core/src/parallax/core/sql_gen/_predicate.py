@@ -189,9 +189,9 @@ class EntityScope:
 
         The single consultant of :attr:`unaliased` — every reference to a column
         of the active target must route through here so a write's bare-column
-        form can never be bypassed. :meth:`column_of` and :meth:`subject_of` are
+        form can never be bypassed. :meth:`column_of` and :meth:`subject_for` are
         the attribute-resolving front doors; a Structured Column is not an
-        ``Attribute`` and so has no `attr_ref` to resolve, but it is just as much
+        ``Attribute`` and so has no Attribute to resolve, but it is just as much
         this target's own column and takes the same rendering decision, which is
         why :meth:`document_root` returns a rendered reference rather than a name.
 
@@ -229,10 +229,6 @@ class EntityScope:
                 f"{self.layout.table.name!r}, so it cannot carry a join correlation"
             )
         return self.own_column(placement.slot.column.name)
-
-    def subject_of(self, attr_ref: str) -> MemberSubject:
-        """Resolve a framework-generated reference before entering identity lowering."""
-        return self.subject_for(self.entity_attribute(attr_ref))
 
     def subject_for(self, attribute: AttributeMetadata) -> MemberSubject:
         """Render a validated Attribute without revisiting its authored spelling.
@@ -388,14 +384,6 @@ ResolutionScope = EntityScope | ElementScope
 # owns (its Storage Location), and neither member lookup below cares, so the walk
 # takes the union rather than branching on depth.
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
-
-# The flat `nested*` family — the sub-grammar legal in EITHER scope, resolved
-# path-relatively against an entity's document column or element-relatively against
-# an unnested element. One alias, because every function below takes the whole
-# family and differs only in how it resolved the extraction.
-_FlatNested = (
-    NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck
-)
 
 
 def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:

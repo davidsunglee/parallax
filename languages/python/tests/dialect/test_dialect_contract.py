@@ -37,7 +37,6 @@ from parallax.core.base import (
 )
 from parallax.core.dialect import (
     DIALECT_CATALOG,
-    INFINITY,
     POSTGRES,
     ColumnDdl,
     Dialect,
@@ -120,12 +119,12 @@ def test_bytes_projection_shape(dialect: Dialect) -> None:
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_document_read_parsing_uses_the_boolean_discriminator_first(dialect: Dialect) -> None:
-    assert dialect.parse_document_read(False, object()) is SQL_NULL
-    assert dialect.parse_document_read(True, None) == PresentDocument(None)
+    assert dialect.parse_owned_document_read(False, object()) is SQL_NULL
+    assert dialect.parse_owned_document_read(True, None) == PresentDocument(None)
     with pytest.raises(ValueError, match="must be a SQL boolean"):
-        dialect.parse_document_read(1, None)
+        dialect.parse_owned_document_read(1, None)
     with pytest.raises(ValueError, match="portable JSON value"):
-        dialect.parse_document_read(True, object())
+        dialect.parse_owned_document_read(True, object())
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
@@ -292,14 +291,6 @@ def test_document_path_is_the_dialects_own_mutation_path_spelling(dialect: Diale
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_structural_document_equality(dialect: Dialect) -> None:
-    # Postgres `jsonb` normalizes on storage, so `=` is already structural;
-    # MariaDB's `json` is a text alias and needs `json_equals`. Obtaining the
-    # comparison through the seam is what stops one assertion meaning two things.
-    assert dialect.document_equals("t0.payload", "?") == "t0.payload = ?"
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_placeholder_translation(dialect: Dialect) -> None:
     assert dialect.to_driver_sql("select t0.id from t where t0.id = ?") == (
         "select t0.id from t where t0.id = %s"
@@ -323,28 +314,16 @@ def test_a_literal_percent_is_escaped_for_the_driver_parameter_style(dialect: Di
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_from_driver_sql_reverses_percent_escaping(dialect: Dialect) -> None:
-    # Undoubling is the inverse of the escape above. It shares one left-to-right
-    # pass with the placeholder recovery because the two spellings overlap from
-    # both sides: the `%%` a `%s` was just recovered out of must not be read as
-    # an escape, and an escaped `%` standing before an `s` must not be read
-    # tail-first as a bind.
-    canonical = 'update "t%s" t0 set "rate%" = ? where t0.id = ?'
-    assert dialect.from_driver_sql(dialect.to_driver_sql(canonical)) == canonical
-    modulo = "select t0.rate%s from t t0 where t0.id = ?"
-    assert dialect.from_driver_sql(dialect.to_driver_sql(modulo)) == modulo
-
-
-@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_from_driver_sql_reverses_placeholder_translation(dialect: Dialect) -> None:
-    # `from_driver_sql` is `to_driver_sql`'s reverse:
-    # the conformance engine's materializing-predicate-write capture reports
-    # ACTUAL driver SQL it did not itself lower, so it round-trips that text back
-    # to canonical `?`-placeholder form before joining it with every other
-    # (canonically-lowered) emission.
-    canonical = "select t0.id from t where t0.id = ?"
-    assert dialect.from_driver_sql(dialect.to_driver_sql(canonical)) == canonical
-    assert dialect.from_driver_sql("select t0.id from t where t0.id = %s") == canonical
+def test_an_escaped_percent_never_reads_as_a_placeholder(dialect: Dialect) -> None:
+    # The escape and the placeholder overlap from both sides: a literal `%s` —
+    # the modulo operator applied to a column named `s` — escapes to `%%s`, whose
+    # tail spells a placeholder, so each must stay distinguishable from the other.
+    assert dialect.to_driver_sql('update "t%s" t0 set "rate%" = ? where t0.id = ?') == (
+        'update "t%%s" t0 set "rate%%" = %s where t0.id = %s'
+    )
+    assert dialect.to_driver_sql("select t0.rate%s from t t0 where t0.id = ?") == (
+        "select t0.rate%%s from t t0 where t0.id = %s"
+    )
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
@@ -356,8 +335,7 @@ def test_error_classification(dialect: Dialect) -> None:
     assert dialect.classify("00000") is None
 
 
-def test_infinity_sentinel_and_lookup() -> None:
-    assert INFINITY == "infinity"
+def test_dialect_lookup() -> None:
     assert dialect_for("postgres") is POSTGRES
     with pytest.raises(ValueError, match="unsupported dialect"):
         dialect_for("mariadb")

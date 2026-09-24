@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "APPLICATION_ASSIGNED",
-    "COLUMNS",
     "MAX",
     "NOT_PRIMARY_KEY",
     "TABLE_PER_CONCRETE_SUBTYPE",
@@ -186,10 +185,6 @@ carries one here under any layout."""
 class Columns:
     """Conventional layout: each mapped Attribute owns its own Column and each
     top-level Value Object occurrence its own Structured Column."""
-
-
-# The shared :class:`Columns` instance, on the same value-object terms.
-COLUMNS: Final[Columns] = Columns()
 
 
 @dataclass(frozen=True, slots=True)

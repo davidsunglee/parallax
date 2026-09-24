@@ -30,9 +30,13 @@ from parallax.snapshot.materialize import (
     RootView,
     classify_roots,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
-from tests.unit.snapshot._snapshot_page_support import identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import (
+    convert_mapping,
+    identity_of,
+    layout_of,
+)
 
 
 class _RecordingObserver:
@@ -89,10 +93,7 @@ def _row(order_id: int) -> dict[str, object]:
 
 def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     builder = PageBuilder(ViewSchema.of(), observer)
-    roots = tuple(
-        convert_row(_row(order_id), _context(), builder, source=ROOT_LEVEL)
-        for order_id in order_ids
-    )
+    roots = tuple(convert_mapping(_row(order_id), _context(), builder) for order_id in order_ids)
     return builder.finish(roots, Pin())
 
 

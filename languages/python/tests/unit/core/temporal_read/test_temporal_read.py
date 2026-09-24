@@ -501,8 +501,6 @@ def test_pin_reports_only_pinned_axes() -> None:
     pin = Pin(tx_time=LATEST)
     assert pin.tx_time is LATEST
     assert pin.valid_time is None
-    assert not pin.is_empty
-    assert Pin().is_empty
 
 
 def test_query_pin_reads_both_bitemporal_axes() -> None:

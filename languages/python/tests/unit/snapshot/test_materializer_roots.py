@@ -12,10 +12,15 @@ from parallax.core.entity._model import model_of
 from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView, _convert
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._page import page_rows, root_last_uses
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
-from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import (
+    PageFixture,
+    convert_mapping,
+    identity_of,
+    layout_of,
+)
 
 
 def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
@@ -54,7 +59,7 @@ def _page(
     source_count = max((source for source, _row in occurrences), default=0) + 1
     builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))))
     roots = tuple(
-        convert_row(row, _context(), builder, source=source) for source, row in occurrences
+        convert_mapping(row, _context(), builder, source=source) for source, row in occurrences
     )
     return builder.finish(roots, Pin()), roots
 
@@ -209,8 +214,8 @@ def publish_roots(page: Any, observer: RecordingObserver) -> Iterator[object]:
 def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
     observer = RecordingObserver()
     builder = PageBuilder(ViewSchema.of(), observer)
-    first = convert_row(_order(1), _context(), builder, source=ROOT_LEVEL)
-    second = convert_row(_order(2), _context(), builder, source=ROOT_LEVEL)
+    first = convert_mapping(_order(1), _context(), builder)
+    second = convert_mapping(_order(2), _context(), builder)
     page = builder.finish((first, second), Pin())
 
     assert list(publish_roots(page, observer)) == [0, 1]

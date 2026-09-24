@@ -76,7 +76,7 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize import (
     _wire as wire_materialize,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -94,7 +94,12 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit.snapshot._snapshot_page_support import documents_of, identity_of, layout_of
+from tests.unit.snapshot._snapshot_page_support import (
+    convert_mapping,
+    documents_of,
+    identity_of,
+    layout_of,
+)
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
@@ -427,16 +432,15 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
 
 def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() -> None:
     # The same document reaching conversion with no member preclassified, which is
-    # the arm `convert_row` takes for a caller that supplies no classified set. Its
+    # the arm a level with no classified members takes. Its
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_row(
+    ref = convert_mapping(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
-        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
@@ -454,11 +458,10 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_row(
+    ref = convert_mapping(
         {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
-        source=ROOT_LEVEL,
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),

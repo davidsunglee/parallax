@@ -24,7 +24,6 @@ from parallax.core.base import STRING, Decimal
 from parallax.core.dialect import PhysicalIndexName
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
-    COLUMNS,
     MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
@@ -33,6 +32,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     Cardinality,
     Column,
+    Columns,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
     Document,
@@ -578,7 +578,7 @@ _JOIN_SPELLING = {"source": f"{_ORDER_SPELLING}.id", "target": f"{_ORDER_SPELLIN
     ("fact", "expected"),
     [
         (_ORDER, _ORDER_SPELLING),
-        (COLUMNS, "columns"),
+        (Columns(), "columns"),
         (Document(Column("doc")), {"document": {"column": "doc"}}),
         (NOT_PRIMARY_KEY, False),
         (PrimaryKey(APPLICATION_ASSIGNED), {"generation": "application-assigned"}),

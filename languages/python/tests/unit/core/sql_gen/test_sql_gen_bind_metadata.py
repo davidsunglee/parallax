@@ -56,7 +56,9 @@ def test_entity_scope_reference_front_doors_resolve_direct_members() -> None:
     scope = EntityScope(_builder(), entity, view.layout)
 
     assert scope.column_of(f"{entity.identity.canonical}.id") == "t0.id"
-    assert scope.subject_of(f"{entity.identity.canonical}.id").compared == "t0.id"
+    assert scope.subject_for(
+        scope.entity_attribute(f"{entity.identity.canonical}.id")
+    ).compared == ("t0.id")
 
 
 def test_declaring_helper_bounds_a_missing_inheritance_position(
