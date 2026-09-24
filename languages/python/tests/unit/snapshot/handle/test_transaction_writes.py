@@ -2,7 +2,7 @@
 
 The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
-elimination, the shared `validate_write` model-aware rejection matrix, the typed
+elimination, the shared model-aware keyed-write rejection matrix, the typed
 KEYED temporal-window family (`update`/`terminate`/`update_until`/
 `terminate_until`, and `insert`/`insert_until`), keyed window-order
 validation, and the prior-observation license enforced at the developer verb.
@@ -462,7 +462,7 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The model-aware `validate_write` rejection matrix the corpus's own          #
+# The model-aware keyed-write rejection matrix the corpus's own               #
 # `when.write` cases carry (m-value-object-039..044 / m-inheritance-086..089) #
 # is stated at the producer both keyed ingresses prepare through, in          #
 # `test_write_instructions.py`: no keyed VERB reaches those rows, because the  #

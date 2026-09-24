@@ -911,7 +911,8 @@ def _prepare_managed_write(
     participant's own accepted Metadata carries only its OWN attributes —
     m-inheritance "Inherited members"). Sibling-branch and
     framework-owned-metadata fields are already caught more specifically, and
-    FIRST, by `validate_write`'s subtype rules — this gate only ever sees
+    FIRST, by ``inheritance.validate_subtype_write`` in
+    :func:`_preflight_write_shape` — this gate only ever sees
     whatever THAT pass left unexamined, so widening it to the whole family never
     re-opens a hole the more specific check already closes. A predicate write's
     assignment `attr` must name a `target.entity` member, same family-effective
