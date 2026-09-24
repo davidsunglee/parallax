@@ -28,7 +28,6 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
@@ -50,7 +49,6 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteAssignment,
     WriteObservation,
-    WriteRejectedError,
     instructions,
     observed_state_key,
     whole,
@@ -58,7 +56,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
 )
-from parallax.core.unit_work.write_settlement import assigned_many_path
+from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.snapshot.handle._family import (
     assignment_member,
     comparison_shape,
@@ -332,7 +330,7 @@ def buffer_predicate_instruction(
     if not temporal and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
-        _reject_readless_document_many(meta, entity, instruction)
+        reject_readless_document_many(entity, instruction)
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
@@ -345,35 +343,6 @@ def buffer_predicate_instruction(
         version_attr,
         attempt,
     )
-
-
-def _reject_readless_document_many(
-    meta: Metamodel, entity: EntityMetadata, instruction: PreparedPredicateWrite
-) -> None:
-    layout = entity_layout(meta, entity)
-    if layout is None:  # pragma: no cover - accepted entities always have a layout view
-        return
-    assigned = {
-        assignment_member(assignment.attr) for assignment in instruction.managed_assignments
-    }
-    for name in assigned:
-        occurrence = entity.value_object(name)
-        if occurrence is None:
-            continue
-        placement = layout.layout.placement(occurrence.identity)
-        assignment = next(
-            item for item in instruction.managed_assignments if assignment_member(item.attr) == name
-        )
-        nested_many = assigned_many_path(occurrence, assignment.value)
-        if isinstance(placement, DocumentPath) and (
-            occurrence.multiplicity is Multiplicity.MANY or nested_many is not None
-        ):
-            path = name if nested_many is None else ".".join((name, *nested_many))
-            raise WriteRejectedError(
-                "predicate-write-readless-document-many-unsupported",
-                f"{entity.identity.canonical}.{path}: a readless predicate write cannot assign "
-                "a document-resident `many` occurrence",
-            )
 
 
 def _materialize_predicate_write(

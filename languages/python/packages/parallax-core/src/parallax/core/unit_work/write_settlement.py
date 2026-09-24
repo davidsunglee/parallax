@@ -110,7 +110,6 @@ __all__ = [
     "WritePlanningError",
     "WritePlanningResult",
     "WriteSettlement",
-    "assigned_many_path",
     "plan_temporal_close",
     "reject_readless_document_many",
 ]
