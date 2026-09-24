@@ -1,217 +1,186 @@
 # Parallax
 
-Parallax is a language-neutral specification and executable compatibility
-corpus for building feature-rich object-relational mappers. The core defines
-observable behavior—data modeling, queries, SQL, transactions, temporal
-semantics, and object materialization—while each language target is free to
-offer an idiomatic developer API and implementation architecture.
+Parallax is an object-relational mapper for applications that need rich domain
+models, explicit transactions, and a reliable history of how their data changes.
+It combines typed queries and immutable object graphs with batched writes,
+optimistic concurrency, and first-class temporal data.
 
-That separation makes multiple implementations possible without reducing
-portability to a lowest-common-denominator interface. A target selects a named
-**Conformance Slice**, records its language-specific decisions, and proves the
-claim by compiling and running the shared corpus against real databases.
+The current implementation is **Python with PostgreSQL**. You declare
+Pydantic-based entity classes, query through their attributes and relationships,
+and receive frozen instances of your own types. Reads return complete snapshots
+of the requested object graph; accessing a relationship never silently triggers
+another database query.
 
-Parallax is informed by the bitemporal ORM
-[Reladomo](https://github.com/goldmansachs/reladomo). It follows Reladomo's
-runtime semantics where the core spec adopts them, while expressing the
-contract independently of Java or any other host language.
+Start with the [Python Usage Guide](languages/python/docs/usage-guide.md) for
+executable examples, or the
+[PostgreSQL lifecycle guide](languages/python/docs/postgresql-lifecycle.md) for
+connection and application setup.
 
-## What Parallax Covers
+## Model Your Domain
 
-Parallax focuses on the parts of ORM behavior that are difficult to reproduce
-consistently across languages:
+Use entity classes to describe scalar attributes, primary keys, and to-one or
+to-many relationships. Nested, immutable value objects let you model structured
+data without turning every component into a separate entity. They can be stored
+in JSON-backed columns and queried through their declared fields.
 
-- **Temporal data:** transaction-time audit histories, full bitemporal valid-
-  and transaction-time axes, latest and as-of reads, history and range queries, and
-  bounded corrections implemented as rectangle splits.
-- **Expressive queries and object graphs:** composable predicates, grouping,
-  ordering, limits, relationship navigation and existence tests, eager deep
-  fetch, subtype narrowing, and whole-graph temporal pinning. Canonical SQL,
-  bind order, and round-trip counts are part of the observable contract.
-- **Efficient, correct writes:** a unit of work buffers writes, coalesces or
-  cancels compatible changes, batches DML, orders it around dependencies, and
-  flushes when read-your-own-writes requires it. The contract also covers read
-  locks, optimistic conflicts, bounded retry, and rollback-only behavior.
-- **Rich modeling:** relationships, generated primary keys, nested value
-  objects, and closed inheritance families mapped with
-  table-per-hierarchy or table-per-concrete-subtype strategies.
-- **Portable proof:** schemas and compatibility cases pin the neutral model and
-  query forms, emitted SQL, returned rows and graphs, final table state,
-  errors, and concurrency observations. Implementations are graded against the
-  same evidence rather than against another implementation's internals.
+Parallax also supports generated primary keys, read-only entities, document
+storage, and closed inheritance families. Inheritance can use a shared table or
+a table per concrete subtype, while queries can narrow a family to particular
+subtypes and their attributes.
 
-Capability modules remain independently specified, and named slices compose
-them into honest implementation-sized claims. Deferred areas are explicit in
-the [module catalog](core/spec/modules.md) and
-[slice catalog](core/spec/slices.md).
+## Query Objects and Relationships
 
-## Python: The Primary Worked Example
+Build typed expressions from your entity classes: compose filters, test whether
+related objects exist, order and limit results, and explicitly include the
+relationships you want to load. Query construction itself performs no I/O.
 
-[`languages/python/`](languages/python/) implements the complete
-[`slice-snapshot-1`](core/spec/slices.md#snapshot-conformance-slice) claim for
-Postgres. It is Python-first and SQLModel-inspired: developers declare
-Pydantic-based entity classes, build typed expressions from those classes, and
-receive fully materialized `Snapshot[T]` results made from frozen instances of
-their own entity types.
+For example, with application entities already declared:
 
-The Snapshot lifecycle executes a query once and returns a closed, immutable
-object graph. Included relationships are eager, graph-local identity preserves
-shared nodes and cycles, temporal coordinates pin the whole graph, and
-accessing an unloaded relationship never issues surprise SQL. Explicit
-transactions provide buffered and batched writes, optimistic and locking
-modes, retry, primary-key generation, inheritance routing, JSON-backed value
-objects, and audit-only and bitemporal write verbs through the Postgres adapter.
+```python
+# Orders with at least one qualifying item.
+query = Order.where(Order.items.exists(OrderItem.quantity >= 4))
 
-The implementation is split into a lifecycle-neutral core, the Snapshot
-extension, the psycopg Postgres adapter, and development-only conformance
-tooling. Start with the document that matches what you want to learn:
-
-- [Python Usage Guide](languages/python/docs/usage-guide.md) — tested examples
-  of the public API, generated from the API Conformance Suite.
-- [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md)
-  — how connections are pooled, held and released, and what a deployment has to
-  decide because of it: retention, timeouts, process and application-server
-  lifetime, connection budgeting, and pool observation.
-- [Python binding](languages/python/spec/python.md) — Python-specific public
-  decisions and the independently checked dependency and artifact contracts.
-- [Python testing map](languages/python/TESTING.md) — where each test surface
-  lives, which fixtures reach a database, and which command owns which gate.
-
-## How The Contract Fits Together
-
-The contract has complementary owners:
-
-1. **The core specification** defines language-neutral behavioral modules,
-   their legal dependency graph, and the deployable seams implementations must
-   preserve.
-2. **Schemas and the compatibility corpus** encode canonical descriptors,
-   fixtures, queries, writes, optimized SQL, independent reference SQL, and
-   expected observations.
-3. **Language binding documents** record additional public language choices and
-   select a canonical slice. Signatures and types live in code; commands and
-   quality thresholds live in executable configuration. Source and artifact
-   topology declarations retain their independent implementation checks.
-
-Glossaries navigate these owners. ADRs and research preserve historical
-rationale; they do not add contracts to reconcile on every code change.
-
-Each implementation proves its claim in two complementary ways:
-
-- The **conformance adapter** exposes `describe`, `compile`, and `run`; its SQL
-  and observations are compared directly with the corpus.
-- The **API Conformance Suite** drives the idiomatic developer API through the
-  shipped database adapter and renders a tested Usage Guide.
-
-The Python reference harness validates that the core artifacts are internally
-consistent and executes their authored SQL against real databases. It is not
-an ORM and its internals are non-normative; language implementations bind to
-the spec, schemas, corpus, and conformance-adapter contract.
-
-## Repository Map
-
-| Path | Purpose |
-| --- | --- |
-| [`core/spec/`](core/spec/) | Behavioral modules, dependency graph, slice catalog, and language-spec template |
-| [`core/schemas/`](core/schemas/) | JSON Schemas for models, queries, cases, writes, and conformance envelopes |
-| [`core/compatibility/`](core/compatibility/) | Canonical models, fixtures, cases, and benchmark workloads |
-| [`languages/python/`](languages/python/) | Primary worked implementation: the Postgres Snapshot slice |
-| [`reference-harness/`](reference-harness/) | Non-normative oracle that validates and executes the core corpus |
-| [`docs/adr/`](docs/adr/) | Cross-cutting architecture decisions |
-| [`IMPLEMENTING.md`](IMPLEMENTING.md) | Finding contract owners and implementing a target |
-| [`TESTING.md`](TESTING.md) | Operational map of the verification commands and how to run them |
-| [`justfile`](justfile) | Root orchestration for validation and implementation checks |
-
-## Running And Inspecting The Project
-
-Run commands from the repository root. Inspect the exact capabilities and case
-membership of the Python claim:
-
-```bash
-just core-show-slice slice-snapshot-1
+# A bounded, ordered result.
+query = Order.where(Order.active.is_(True)).order_by(Order.qty.desc()).limit(20)
 ```
 
-Every public recipe reads `<scope>-<operation>[-<qualifier>]`, so its scope, its
-effect, and whether it mutates anything are readable from the name alone. Run
-the complete repository merge gate with:
+Included relationships are fetched eagerly. Shared objects and cycles preserve
+identity within the returned graph, and unloaded relationships are explicit
+rather than lazy database calls. The `Snapshot[T]` result envelope provides
+accessors for exactly one, optional one, or multiple roots. Context-managed
+streams support paged delivery when you do not want to materialize the entire
+result at once.
+
+Applications that need a data-oriented boundary can use the Wire API with
+canonical query documents and immutable mapping results. Typed and Wire access
+share the same execution semantics; an existing typed snapshot can also be
+projected to Wire data without another database call.
+
+## Treat History as Part of the Model
+
+Parallax supports both transaction-time audit histories and full bitemporal
+models:
+
+- **Transaction time** records when a fact was stored in the database, letting
+  you ask what the system knew at a past instant.
+- **Valid time** records when a fact applies in the domain, letting you model
+  effective dates independently of when a change was recorded.
+
+Read the latest state, query as of a particular instant, or inspect histories
+and time ranges. Temporal coordinates carry through the requested object graph
+so related data is read at the same temporal perspective.
+
+```python
+from datetime import UTC, datetime
+
+query = Balance.where(Balance.all).as_of(
+    tx_time=datetime(2024, 4, 1, tzinfo=UTC)
+)
+```
+
+Temporal writes preserve history rather than overwriting it. Bitemporal
+operations support effective-dated changes and bounded corrections: change a
+value for a particular interval while preserving the portions before and after
+it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-update-until-splits-headmiddletail)
+shows an update restricted to a date range.
+
+## Make Changes Through Explicit Transactions
+
+Returned objects are immutable. Insert new values, use `edit(...)` and an
+explicit update to persist changes, or delete an entity through the transaction.
+Writes are explicit rather than inferred from mutation of a live object graph.
+
+Transactions buffer changes in a unit of work, coalesce or cancel compatible
+operations, batch database writes, and order them around dependencies. Reads
+inside the transaction flush pending work when needed to observe your own
+changes. Set-based operations support changes selected by a query as well as
+changes to individually loaded entities.
+
+Concurrency controls include optimistic conflict detection, locking reads, and
+configurable isolation. Transactions run through callbacks so retryable failures
+can replay the transaction body within a configured bound. Nested calls join an
+eligible active transaction; a failed joined body cannot be caught and then
+accidentally committed by its caller.
+
+## Integrate with Your Application
+
+The PostgreSQL adapter uses psycopg and supports pooled and on-demand connection
+retention. A `Database` root owns its runtime; explicit scopes select execution
+authority and transaction options. Credential sources can refresh credentials
+when establishing connections, and the optional AWS integration supplies RDS IAM
+authentication.
+
+Lifecycle observation hooks expose execution activity without attaching a log
+to every returned object. Read-plan reuse avoids rebuilding eligible plans,
+while explicit connection and stream lifetimes make resource ownership visible
+to the application.
+
+See the [PostgreSQL lifecycle guide](languages/python/docs/postgresql-lifecycle.md)
+for deployment choices, connection budgeting, timeouts, and pool observation.
+The [Python binding](languages/python/spec/python.md) records the precise
+Python-specific contracts behind the API.
+
+## Developing Parallax
+
+The implementation lives in [`languages/python/`](languages/python/).
+[`TESTING.md`](TESTING.md) explains verification;
+[`languages/python/TESTING.md`](languages/python/TESTING.md) covers Python test
+placement and fixtures. Run the repository merge gate from the root:
 
 ```bash
 just check
 ```
 
-[`TESTING.md`](TESTING.md) is the operational map: which command owns which gate,
-how to iterate with focused commands, and how CI covers the same graph.
-`just --list` prints the full catalog.
+Database-backed checks require Docker. `just --list` lists the available
+commands; use the testing map for focused iteration.
 
-Docker must be available for database-backed commands. Testcontainers locates
-the daemon by itself under Docker Desktop and on CI, where the socket sits at
-`/var/run/docker.sock`. Alternative runtimes such as OrbStack, Colima, and
-Podman place it elsewhere and publish it through a Docker CLI context. Point
-Testcontainers at the socket once instead of exporting `DOCKER_HOST` per shell:
+For a Docker runtime that exposes its socket through a CLI context rather than
+the default socket, inspect the endpoint:
 
 ```bash
 docker context inspect --format '{{ .Endpoints.docker.Host }}'
 ```
 
-Write that endpoint to `~/.testcontainers.properties` as a `docker.host` entry,
-for example `docker.host=unix:///Users/you/.orbstack/run/docker.sock`. The file
-is per-machine and untracked; both clients read it.
+Set that endpoint as `docker.host` in your per-machine, untracked
+`~/.testcontainers.properties`, for example
+`docker.host=unix:///Users/you/.orbstack/run/docker.sock`.
 
-## Extending Parallax
+## A Shared Specification, Tested Against Real Databases
 
-The workflows below are intentionally brief. Their linked documents remain the
-source of truth for sequencing and detailed requirements.
+Behind the ORM is a language-neutral behavioral specification and an executable
+compatibility corpus. They make the difficult parts—temporal corrections,
+transaction boundaries, SQL generation, and object materialization—explicit and
+testable. Parallax is informed by the bitemporal ORM
+[Reladomo](https://github.com/goldmansachs/reladomo); adopted semantics are
+expressed independently of Java or any other host language.
 
-### Define A Conformance Slice
+The Python implementation proves the
+[`slice-snapshot-1`](core/spec/slices.md#snapshot-conformance-slice) capability
+set against PostgreSQL. Shared cases check emitted SQL, returned graphs, final
+table state, errors, and concurrency observations. A separate API suite drives
+the idiomatic Python interface and generates the usage guide from selected
+executable examples. The reference harness validates the corpus against real
+databases; it is not the ORM implementation.
 
-A slice is an exact, named compatibility-corpus claim—not a package plan or a
-new module tier. Define its canonical `describe` envelope in
-[`core/spec/slices.md`](core/spec/slices.md), tag every included case
-explicitly, and let the profile gate derive and verify the capability union.
-Only the slice catalog names slices; behavioral module specs remain independent
-of who claims them.
+This foundation also allows other language implementations to offer their own
+idiomatic APIs while sharing behavioral contracts. It does not imply that every
+language or database described by the core has a shipped ORM adapter.
 
-Inspect and verify the result with:
+For contributors exploring that foundation:
 
-```bash
-just core-show-slice <slice-name>
-just core-check-slice-profiles
-```
+- [Core overview](core/spec/00-overview.md), [module catalog](core/spec/modules.md),
+  and [slice catalog](core/spec/slices.md) describe the behavior and capability
+  boundaries.
+- [Schemas](core/schemas/) and [compatibility cases](core/compatibility/) hold
+  serialized forms and concrete expected observations.
+- [Implementing Parallax](IMPLEMENTING.md) explains contract ownership and how
+  to build or extend a language implementation.
 
-### Build A Language Implementation
-
-Follow [`IMPLEMENTING.md`](IMPLEMENTING.md) rather than copying an existing
-runtime. In outline:
-
-1. Select a canonical slice and use the core overview, module catalog, and
-   conformance-adapter contract to identify the required behavior.
-2. Start a language binding from the template. Settle public decisions before
-   implementing the affected surface; do not describe private implementation
-   structure in the binding.
-3. Implement in module-dependency order, keeping the required runtime,
-   lifecycle, and database-adapter seams.
-4. Prove the claim through both the conformance adapter and the idiomatic API
-   Conformance Suite against a real database.
-
-Validate its claim and topology declarations with:
+Inspect the Python capability set with:
 
 ```bash
-just core-show-language-spec languages/<target>/spec/<target>.md
+just core-show-slice slice-snapshot-1
 ```
-
-### Adding Or Changing Behavior
-
-Update the owning core rule when portable behavior changes, and the schemas,
-fixtures, and cases only where their contracts change. An internal refactor
-normally needs none of those edits. Follow the owning
-[case-format contract](core/spec/m-case-format.md) for the fields each supported
-case shape carries.
-
-Use the [module catalog](core/spec/modules.md),
-[case-format specification](core/spec/m-case-format.md), and existing corpus
-shapes as the authoring references. Add benchmark coverage when a change makes
-performance characteristics such as query shape, round trips, write shape, or
-memory part of the claim, then run the smallest relevant gates followed by
-`just check` when feasible.
 
 ## License
 
