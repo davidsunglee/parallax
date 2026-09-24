@@ -398,21 +398,25 @@ def test_compiled_read_is_an_equatable_hashable_value() -> None:
 
 def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() -> None:
     compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-    materializer = cast("Any", compiled)._materializer
 
     with pytest.raises(ValueError, match="duplicate result key 'id'"):
-        dataclasses.replace(materializer, result_keys=("id", "id"))
+        dataclasses.replace(compiled, result_keys=("id", "id"))
     with pytest.raises(ValueError, match="does not match row arity"):
-        materializer.header(())
-    with pytest.raises(ValueError, match="does not match row arity"):
-        materializer.identity_header(())
+        compiled.row_identity(())
     with pytest.raises(KeyError, match="missing"):
         compiled.raw_member_of((), compiled.target, "missing")
 
 
+def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
+    compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+
+    assert compiled.coordinate_reads == ()
+    assert compiled.row_coordinates(((), ())) == (None, None)
+
+
 def test_compiled_read_repr_is_exact_and_stable() -> None:
-    # The default generated dataclass repr, pinned exactly. The materializer is a
-    # stored FIELD, not a closure, which is why it reprs at all — a stored
+    # The default generated dataclass repr, pinned exactly. The row stages are a
+    # stored FIELD, not a closure, which is why they repr at all — a stored
     # callable would print an address and make this untestable. A plain record
     # still names what its rows resolve to: an identity fixed at compile time,
     # which is all its rows can name.
@@ -425,10 +429,9 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         f"resolved_position=({order},), "
         "documents=(), projected_documents=(), document_reads=(), "
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
-        f"_materializer=RowMaterializer(stages=RowStages(resolve=FixedIdentity(entity={order}), "
-        f"shared_document=None, direct_documents=None), resolvable=({order},), "
-        "coordinate_reads=(), result_keys=('id', 'name', 'sku', 'qty', "
-        "'price', 'active', 'ordered_on')))"
+        "coordinate_reads=(), "
+        f"_stages=RowStages(resolve=FixedIdentity(entity={order}), "
+        "shared_document=None, direct_documents=None))"
     )
 
 

@@ -499,12 +499,11 @@ def test_an_encoded_physical_identity_joins_in_its_lossless_result_form() -> Non
 
 
 def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:
-    # A document-resident member claims no Column, so its own spelling reaches
-    # the row only through the fan-out — which writes it AFTER the driver row
-    # arrives. An alias colliding with it would be overwritten by the decoded
-    # member before the coordinate is lifted off, taking the ordering
-    # expression's answer with it and deleting the member. The reservation set
-    # therefore covers every result key an authored name reaches, not the
+    # A document-resident member claims no Column, so no projected Column
+    # reserves its spelling. An alias colliding with it would make one result key
+    # name both the member and the ordering expression's answer, and publication
+    # lifting the coordinate off would take the member with it. The reservation
+    # set therefore covers every result key an authored name reaches, not the
     # Column spellings alone.
     model = formed(_SEEK_SPELLED_MEMBER)
     compiled = compile_entity_query(
@@ -523,9 +522,10 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         "parallax_seek_1": 3,
         "parallax_seek_2": 1,
     }
-    values, _findings, _classified = compiled.decode_payload(row)
-    assert values["parallax_seek_0"] == 3
-    assert compiled.row_header(row)[3] == ContinuationCoordinate((3, 1))
+    beacon = compiled.target
+    assert compiled.raw_member_of(row, beacon, "parallax_seek_0") == 3
+    assert compiled.publication_keys(beacon, None) == ("id",)
+    assert compiled.row_coordinates((row,)) == (ContinuationCoordinate((3, 1)),)
 
 
 def test_a_corrupt_text_compared_carrier_still_reports_the_text_it_crossed_as() -> None:

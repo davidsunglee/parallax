@@ -422,24 +422,21 @@ def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> N
 
 
 def test_a_missing_shared_document_occurrence_is_classified_as_sql_null() -> None:
-    compiled = _compiled(REGISTER, "Register")
-    identity = target(REGISTER, "Register").identity
+    node = _register({key: value for key, value in _ADA.items() if key != "marks"})
 
-    value, findings = compiled.classify_member_of(
-        {"payload": PresentDocument({})}, identity, "marks"
+    assert node.members["marks"] == ()
+    assert node.issues == ()
+
+
+def test_a_direct_document_occurrence_is_classified_under_the_concrete_its_row_names() -> None:
+    node = _converted(
+        _prepared(CRAFT, "Craft"),
+        {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"})},
     )
 
-    assert value == []
-    assert findings == ()
-
-
-def test_a_direct_document_occurrence_can_be_classified_from_its_compiled_read() -> None:
-    compiled = _compiled(CRAFT, "Craft")
-    tug = target(CRAFT, "Tug").identity
-
-    assert compiled.classify_member_of(
-        {"berth": _stored_document({"quay": "7"})}, tug, "berth"
-    ) == ({"quay": "7"}, ())
+    assert node.concrete == target(CRAFT, "Tug").identity
+    assert node.members["berth"] == {"quay": "7"}
+    assert node.issues == ()
 
 
 def test_a_classified_member_is_carried_as_the_transform_classified_it() -> None:

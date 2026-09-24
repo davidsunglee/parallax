@@ -32,6 +32,7 @@ from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._document_layout_support import columns_model, document_model, entity
+from tests.unit.core.sql_gen._classified_member_support import classified_member
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -110,12 +111,11 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
         "select t0.id, not t0.payload is null, t0.payload from marker t0"
     )
     assert compiled.structured_column == "payload"
-    # The column is still never a result field: it fans out no member here and the
-    # raw value leaves the row all the same.
+    # The column is still never a result field: it carries no member here and the
+    # raw value leaves the published row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}
     row = {"id": 1, "payload": PresentDocument(document)}
-    values, _findings, _classified = compiled.decode_payload(row)
-    assert values == {"id": 1}
+    assert compiled.publication_keys(compiled.target, None) == ("id",)
     assert compiled.row_identity(row)[3] == document
 
 
@@ -133,7 +133,7 @@ def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs
     assert compiled.statement.sql == "select t0.id from marker t0"
 
 
-def test_a_direct_document_carrier_is_classified_during_payload_decode() -> None:
+def test_a_direct_document_carrier_is_classified_by_its_compiled_classifier() -> None:
     # Under Columns layout the adapter still folds every adjacent document pair.
     # An occurrence stored with the wrong container kind is classified at the compiled-read
     # seam, retained as provenance for graph publication, and refused by the flat lane.
@@ -141,9 +141,9 @@ def test_a_direct_document_carrier_is_classified_during_payload_decode() -> None
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     row = {**_COLUMNS_ROW, "tags": PresentDocument({})}
-    values, findings, classified = compiled.decode_payload(row)
-    assert values["tags"] == []
-    assert classified.issuperset({"address", "tags"})
+    tags, findings = classified_member(compiled, row, "tags")
+    assert tags == []
+    assert compiled.classified_members(compiled.target).issuperset({"address", "tags"})
     assert [(finding.code, finding.path) for finding in findings] == [
         ("many-wrong-kind", ("tags",))
     ]
@@ -166,7 +166,7 @@ def test_a_direct_document_classifies_nested_invalid_state(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     row = {**_COLUMNS_ROW, "address": address}
-    _values, findings, _classified = compiled.decode_payload(row)
+    _address, findings = classified_member(compiled, row, "address")
     assert [(finding.code, finding.path) for finding in findings] == [expected]
 
 
@@ -196,7 +196,7 @@ def test_a_required_direct_document_member_is_classified_before_publication() ->
         oa.All(), model, POSTGRES, entity(model, "Required"), result_form="instance"
     )
     row = {"id": 1, "address": PresentDocument({})}
-    _values, findings, _classified = compiled.decode_payload(row)
+    _address, findings = classified_member(compiled, row, "address")
     assert [(finding.code, finding.path) for finding in findings] == [
         ("required-member-absent", ("address", "city"))
     ]
@@ -207,7 +207,7 @@ def test_a_direct_document_column_requires_a_folded_document_read() -> None:
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.decode_payload({**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+        classified_member(compiled, {**_COLUMNS_ROW, "address": {"city": "Oslo"}}, "address")
 
 
 def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() -> None:
@@ -218,7 +218,6 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     )
 
     assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is SQL_NULL
-    assert document.classify_member_of(_DOCUMENT_ROW, person, "display_name") == ("Ada", ())
     display_name = document.raw_member_classifier(person, "display_name")
     assert display_name(document.raw_member_of(_DOCUMENT_ROW, person, "display_name")) == (
         "Ada",
@@ -244,14 +243,8 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         document.raw_member_of(_DOCUMENT_ROW, person, "missing")
     with pytest.raises(KeyError, match="missing"):
         document.raw_member_of(_DOCUMENT_ROW, marker, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        document.classify_member_of(_DOCUMENT_ROW, marker, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        document.classify_member_of(_DOCUMENT_ROW, person, "missing")
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         document.raw_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        document.classify_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
 
     columns = compile_read(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
@@ -272,10 +265,6 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         classify_address({"city": "Oslo"})
     with pytest.raises(KeyError, match="missing"):
         columns.raw_member_classifier(person, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        columns.classify_member_of(_COLUMNS_ROW, person, "missing")
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        columns.classify_member_of({**_COLUMNS_ROW, "address": {}}, person, "address")
 
 
 def test_the_compiled_read_names_the_occurrences_a_row_can_carry_under_either_layout() -> None:
@@ -307,21 +296,22 @@ def test_row_form_keeps_position_documents_separate_from_selected_occurrences() 
 
 def test_the_raw_document_is_never_a_result_field() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    values, _findings, _classified = compiled.decode_payload(_DOCUMENT_ROW)
-    assert "payload" not in values
+    assert "payload" not in compiled.publication_keys(compiled.target, None)
 
 
-def test_payload_decode_refuses_a_raw_document_outside_the_database_port_contract() -> None:
+def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.decode_payload({"id": 1, "payload": _DOCUMENT_VALUE})
+        compiled.row_identity({"id": 1, "payload": _DOCUMENT_VALUE})
 
 
 def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    values, _findings, classified = compiled.decode_payload({"id": 1, "payload": SQL_NULL})
-    assert values["display_name"] is None
-    assert classified == frozenset({"display_name", "score", "joined_on"})
+    row = {"id": 1, "payload": SQL_NULL}
+    assert classified_member(compiled, row, "display_name") == (None, ())
+    assert compiled.classified_members(compiled.target) == frozenset(
+        {"display_name", "score", "joined_on"}
+    )
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -352,13 +342,15 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
         oa.All(), model, POSTGRES, entity(model, "Holder"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.decode_payload({"id": 1, "payload": {"profile": {"label": "x"}}})
+        compiled.raw_member_of(
+            {"id": 1, "payload": {"profile": {"label": "x"}}}, compiled.target, "profile"
+        )
 
 
 def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
     compiled = _instance_form(entity(DOCUMENT, "Marker"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.decode_payload({"id": 1, "payload": {}})
+        compiled.row_identity({"id": 1, "payload": {}})
 
 
 @pytest.mark.parametrize(

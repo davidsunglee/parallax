@@ -335,7 +335,7 @@ class Materializer:
             plan=plan,
             prepared=prepared_rows,
             rows=list(driver_rows),
-            coordinates=tuple(compiled_read.row_header(row)[3] for row in driver_rows),
+            coordinates=compiled_read.row_coordinates(driver_rows),
             temporal=query.temporal,
             observer=self.observer,
         )

@@ -145,201 +145,10 @@ class AttributeReadContract:
     encoded: bool
 
 
-# One shared empty set answers every row whose concrete had nothing classified,
-# so a read that judges nothing allocates nothing per row to say so.
-_NOTHING_CLASSIFIED: frozenset[str] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class RowMaterializer:
-    """Compiled ordinal access and deferred payload stages for one read."""
-
-    stages: _RowStages
-    resolvable: tuple[EntityIdentity, ...]
-    coordinate_reads: tuple[str, ...]
-    result_keys: tuple[str, ...]
-    index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        if len(set(self.result_keys)) != len(self.result_keys):
-            duplicate = next(
-                key
-                for position, key in enumerate(self.result_keys)
-                if key in self.result_keys[:position]
-            )
-            raise ValueError(f"duplicate result key {duplicate!r}")
-        object.__setattr__(
-            self, "index_by_key", {key: index for index, key in enumerate(self.result_keys)}
-        )
-
-    def header(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[
-        EntityIdentity,
-        str | None,
-        UnknownFamilyTag | None,
-        ContinuationCoordinate | None,
-        object | None,
-    ]:
-        """Resolve one positional row identity without allocating a carrier."""
-        if isinstance(row, tuple) and len(row) != len(self.result_keys):
-            raise ValueError(
-                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
-            )
-        resolved, variant, unknown_tag, document = self.identity_header(row)
-        return resolved, variant, unknown_tag, self._coordinate(row), document
-
-    def identity_header(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
-        """Resolve identity and document provenance without a coordinate."""
-        if isinstance(row, tuple) and len(row) != len(self.result_keys):
-            raise ValueError(
-                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
-            )
-        stages = self.stages
-        source = stages.resolve
-        resolved, variant, unknown_tag = source.resolve_value(
-            None if source.column is None else self._value(row, source.column)
-        )
-        shared = stages.shared_document
-        document = (
-            None
-            if shared is None
-            else _observed_document(self._value(row, stages.result_key(resolved, shared.column)))
-        )
-        return resolved, variant, unknown_tag, document
-
-    def raw_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-    ) -> object:
-        shared = self.stages.shared_document
-        if shared is not None:
-            try:
-                return shared.raw_member_from(
-                    self._value(row, self.stages.result_key(resolved, shared.column)),
-                    resolved,
-                    key,
-                )
-            except KeyError:
-                pass
-        return self._value(row, self.stages.result_key(resolved, key))
-
-    def raw_member_classifier(
-        self,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-        build_many: Callable[[Iterable[object]], object] | None = None,
-    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        """Prepare one classified member's row-independent decoding walk."""
-        shared = self.stages.shared_document
-        if shared is not None:
-            try:
-                return shared.located_classifier(
-                    resolved,
-                    key,
-                    build_object=build_object,
-                    build_many=build_many,
-                )
-            except KeyError:
-                pass
-        direct = self.stages.direct_documents
-        if direct is None:
-            raise KeyError(key)
-        return direct.member_classifier(
-            resolved,
-            key,
-            build_object=build_object,
-            build_many=build_many,
-        )
-
-    def classify_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        shared = self.stages.shared_document
-        if shared is not None:
-            try:
-                return shared.classify_member_from(
-                    self._value(row, self.stages.result_key(resolved, shared.column)),
-                    resolved,
-                    key,
-                )
-            except KeyError:
-                pass
-        direct = self.stages.direct_documents
-        if direct is None:
-            raise KeyError(key)
-        return direct.classify_member_from(
-            self._value(row, self.stages.result_key(resolved, key)), resolved, key
-        )
-
-    def decode_payload(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity
-    ) -> tuple[dict[str, object], tuple[DocumentFinding, ...], frozenset[str]]:
-        values = (
-            dict(row)
-            if isinstance(row, Mapping)
-            else {key: row[position] for position, key in enumerate(self.result_keys)}
-        )
-        stages = self.stages
-        stages.resolve.resolve(values)
-        shared = stages.shared_document
-        findings = () if shared is None else shared.fan_out(values, resolved)
-        classified = stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
-        if stages.direct_documents is not None:
-            direct, complete = stages.direct_documents.classify(values, resolved)
-            findings += direct
-            if not complete:
-                classified = frozenset(key for key in classified if key in values)
-        for alias in self.coordinate_reads:
-            values.pop(alias, None)
-        return values, findings, classified
-
-    def _value(self, row: Row | Mapping[str, object], key: str) -> object:
-        if isinstance(row, tuple):
-            try:
-                return row[self.index_by_key[key]]
-            except KeyError as error:
-                raise KeyError(key) from error
-        return row[key]
-
-    def _coordinate(self, row: Row | Mapping[str, object]) -> ContinuationCoordinate | None:
-        if not self.coordinate_reads:
-            return None
-        return ContinuationCoordinate(
-            tuple(inert_scalar(self._value(row, alias)) for alias in self.coordinate_reads)
-        )
-
-
-def _row_materializer(
-    stages: _RowStages,
-    position: tuple[EntityIdentity, ...],
-    coordinate_reads: tuple[str, ...],
-    result_keys: tuple[str, ...],
-) -> RowMaterializer:
-    """The materializer for a read of ``position``.
-
-    The identity source in ``stages`` is the one owner of what a row names, so
-    what a row can name is the position and whatever that source reaches past
-    it: a fixed identity reaches the one Entity the position is, a tag map the
-    family root and every concrete its pairs map — the whole composed family for
-    a homogeneous read, the position alone for a heterogeneous shared document —
-    and a variant literal every branch of its union.
-    """
-    return RowMaterializer(
-        stages,
-        tuple(dict.fromkeys((*position, *stages.resolvable))),
-        coordinate_reads,
-        result_keys,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class CompiledRead:
     """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
-    under, and the materializer that turns its driver rows into observed ones.
+    under, and the row stages that name and locate what its driver rows carry.
 
     Self-contained by design: everything a caller needs to turn driver rows into
     observed rows travels WITH the compiled statement. Every materializing
@@ -367,22 +176,20 @@ class CompiledRead:
     selected; conversion receives that subset so an unrequested occurrence is
     never judged merely because the position could have carried it.
 
-    Three facts a caller reads off this read are the materializer's own, so one
-    owner answers them and nothing can disagree. ``coordinate_reads`` is the
-    hidden result aliases this statement allocated to capture one Continuation
-    Order coordinate per ordering term, in term order — empty for every read that
-    pages through nothing; publishing it here is what makes this compiler the
-    only interpreter of a carrier, since the expressions were chosen here.
-    ``resolvable`` closes the set of Entities this read's rows can name, so a
-    consumer preparing one structure per such Entity prepares them all at once
-    instead of on the first row that reaches one — it reaches past
-    ``resolved_position`` for a family read, whose unrecognized tag names the
-    family root rather than any concrete in the position. ``structured_column``
-    is the Structured Column this read projected, or absence when it projected
-    none, under `Columns` layout and for a `Document`-layout read whose members
-    are all direct; the fan-out drops that column from a row's values, so a
-    caller retaining the stored document (`m-unit-work`'s Predecessor Row) reads
-    it by this name off the driver row rather than out of the materialized one.
+    ``coordinate_reads`` is the hidden result aliases this statement allocated
+    to capture one Continuation Order coordinate per ordering term, in term
+    order — empty for every read that pages through nothing; publishing it here
+    is what makes this compiler the only interpreter of a carrier, since the
+    expressions were chosen here. ``resolvable`` closes the set of Entities this
+    read's rows can name, so a consumer preparing one structure per such Entity
+    prepares them all at once instead of on the first row that reaches one: the
+    position and whatever the row identity source reaches past it, which for a
+    family read includes the family root an unrecognized tag names.
+    ``structured_column`` is the Structured Column this read projected, or
+    absence when it projected none, under `Columns` layout and for a
+    `Document`-layout read whose members are all direct; publication drops that
+    column from a row's keys, so a caller retaining the stored document
+    (`m-unit-work`'s Predecessor Row) reads it by this name off the driver row.
     """
 
     statement: LoweredStatement
@@ -393,22 +200,33 @@ class CompiledRead:
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_keys: tuple[str, ...]
+    coordinate_reads: tuple[str, ...]
     _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
         repr=False
     )
-    _materializer: RowMaterializer
+    _stages: _RowStages
+    resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
+    _index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
 
-    @property
-    def coordinate_reads(self) -> tuple[str, ...]:
-        return self._materializer.coordinate_reads
-
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        return self._materializer.resolvable
+    def __post_init__(self) -> None:
+        index_by_key = {key: index for index, key in enumerate(self.result_keys)}
+        if len(index_by_key) != len(self.result_keys):
+            duplicate = next(
+                key
+                for position, key in enumerate(self.result_keys)
+                if key in self.result_keys[:position]
+            )
+            raise ValueError(f"duplicate result key {duplicate!r}")
+        object.__setattr__(self, "_index_by_key", index_by_key)
+        object.__setattr__(
+            self,
+            "resolvable",
+            tuple(dict.fromkeys((*self.resolved_position, *self._stages.resolvable))),
+        )
 
     @property
     def structured_column(self) -> str | None:
-        return self._materializer.stages.structured_column
+        return self._stages.structured_column
 
     def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]:
         """The compiled Attribute contracts for one resolved concrete Entity.
@@ -423,26 +241,57 @@ class CompiledRead:
         """
         return next((reads for identity, reads in self._scalar_contracts if identity == entity), ())
 
-    def row_header(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[
-        EntityIdentity,
-        str | None,
-        UnknownFamilyTag | None,
-        ContinuationCoordinate | None,
-        object | None,
-    ]:
-        return self._materializer.header(row)
-
     def row_identity(
         self, row: Row | Mapping[str, object]
     ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
-        return self._materializer.identity_header(row)
+        """The Entity one row names, its `familyVariant` spelling, the stored tag no
+        composed concrete claimed, and the row's shared document."""
+        if isinstance(row, tuple) and len(row) != len(self.result_keys):
+            raise ValueError(
+                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
+            )
+        stages = self._stages
+        source = stages.resolve
+        resolved, variant, unknown_tag = source.resolve_value(
+            None if source.column is None else self._value(row, source.column)
+        )
+        shared = stages.shared_document
+        document = (
+            None
+            if shared is None
+            else _observed_document(self._value(row, stages.result_key(resolved, shared.column)))
+        )
+        return resolved, variant, unknown_tag, document
+
+    def row_coordinates(
+        self, rows: Sequence[Row | Mapping[str, object]]
+    ) -> tuple[ContinuationCoordinate | None, ...]:
+        """Each row's Continuation Order coordinate; absence for every row of a read
+        that pages through nothing."""
+        aliases = self.coordinate_reads
+        if not aliases:
+            return (None,) * len(rows)
+        return tuple(
+            ContinuationCoordinate(
+                tuple(inert_scalar(self._value(row, alias)) for alias in aliases)
+            )
+            for row in rows
+        )
 
     def raw_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
     ) -> object:
-        return self._materializer.raw_member_of(row, resolved, key)
+        shared = self._stages.shared_document
+        if shared is not None:
+            try:
+                return shared.raw_member_from(
+                    self._value(row, self._stages.result_key(resolved, shared.column)),
+                    resolved,
+                    key,
+                )
+            except KeyError:
+                pass
+        return self._value(row, self._stages.result_key(resolved, key))
 
     def raw_member_classifier(
         self,
@@ -452,7 +301,22 @@ class CompiledRead:
         build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
         build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        return self._materializer.raw_member_classifier(
+        """Prepare one classified member's row-independent decoding walk."""
+        shared = self._stages.shared_document
+        if shared is not None:
+            try:
+                return shared.located_classifier(
+                    resolved,
+                    key,
+                    build_object=build_object,
+                    build_many=build_many,
+                )
+            except KeyError:
+                pass
+        direct = self._stages.direct_documents
+        if direct is None:
+            raise KeyError(key)
+        return direct.member_classifier(
             resolved,
             key,
             build_object=build_object,
@@ -461,7 +325,7 @@ class CompiledRead:
 
     def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None:
         """Return a shared-document member key, or answer no shared carrier."""
-        shared = self._materializer.stages.shared_document
+        shared = self._stages.shared_document
         if shared is None:
             return None
         try:
@@ -471,32 +335,27 @@ class CompiledRead:
 
     def classified_members(self, resolved: EntityIdentity) -> frozenset[str]:
         """Member keys whose projected document carriers require classification."""
-        return self._materializer.stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
+        return self._stages.classified_by_entity.get(resolved, frozenset())
 
     def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None:
         """The direct positional result ordinal for ``key``, when it has one."""
         if key in self.classified_members(resolved):
             return None
-        rendered = self._materializer.stages.result_key(resolved, key)
-        return self._materializer.index_by_key.get(rendered)
+        return self._index_by_key.get(self._stages.result_key(resolved, key))
 
     def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
         """The logical flat-row keys left by structural materialization stages."""
-        return self._materializer.stages.publication_keys(
+        return self._stages.publication_keys(
             self.result_keys, self.coordinate_reads, resolved, variant
         )
 
-    def classify_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-    ) -> tuple[object, tuple[DocumentFinding, ...]]:
-        return self._materializer.classify_member_of(row, resolved, key)
-
-    def decode_payload(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[dict[str, object], tuple[DocumentFinding, ...], frozenset[str]]:
-        """Decode one row into the flat publication lane's result mapping."""
-        resolved, _variant, _unknown, _document = self.row_identity(row)
-        return self._materializer.decode_payload(row, resolved)
+    def _value(self, row: Row | Mapping[str, object], key: str) -> object:
+        if isinstance(row, tuple):
+            try:
+                return row[self._index_by_key[key]]
+            except KeyError as error:
+                raise KeyError(key) from error
+        return row[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -798,13 +657,9 @@ def _compile_read_arm(
             position_documents if result_form == "instance" else (),
             document_reads,
             (*result_keys, *captured),
+            captured,
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
-            _row_materializer(
-                stages,
-                plan_position,
-                captured,
-                (*result_keys, *captured),
-            ),
+            stages,
         )
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
@@ -846,13 +701,9 @@ def _compile_read_arm(
         query.projection.value_objects,
         document_reads,
         (*result_keys, *captured),
+        captured,
         _scalar_read_contracts(model, facet, storage, dialect, position),
-        _row_materializer(
-            stages,
-            position,
-            captured,
-            (*result_keys, *captured),
-        ),
+        stages,
     )
 
 

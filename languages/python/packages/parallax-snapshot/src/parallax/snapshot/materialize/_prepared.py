@@ -34,16 +34,6 @@ class _CompiledRead(Protocol):
 
     def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]: ...
 
-    def row_header(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[
-        EntityIdentity,
-        str | None,
-        UnknownFamilyTag | None,
-        object | None,
-        object | None,
-    ]: ...
-
     def row_identity(
         self, row: Row | Mapping[str, object]
     ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]: ...
