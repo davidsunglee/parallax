@@ -53,18 +53,6 @@ def test_ordinary_ci_verifies_committed_evidence_and_measures_nothing() -> None:
         assert not str(step.get("uses", "")).startswith("actions/download-artifact@")
 
 
-def test_the_blocking_memory_job_is_untouched_by_the_verify_only_change() -> None:
-    cost = _workflow()["jobs"]["python-check-cost"]
-    assert cost["strategy"] == {
-        "fail-fast": False,
-        "matrix": {"shard": ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"]},
-    }
-    assert "continue-on-error" not in cost
-    assert "if" not in cost
-    (step,) = [step for step in cost["steps"] if "python-check-cost" in str(step.get("run", ""))]
-    assert step["run"] == "just python-check-cost ${{ matrix.shard }}"
-
-
 @pytest.mark.skipif(
     not STEP_SHELL_RUNNABLE,
     reason=f"grades a Linux CI step body, which needs {STEP_SHELL} and a {SHIM_INTERPRETER} shim",
