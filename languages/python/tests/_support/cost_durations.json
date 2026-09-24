@@ -24,8 +24,6 @@
  "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_a_key_derivation_costs_the_same_whatever_else_the_model_declares": 1.6,
  "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_a_materialized_groups_plan_keeps_nothing_per_resolved_row": 1.1,
  "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_a_model_scoped_planner_keeps_nothing_per_entity": 1.0,
- "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_a_planner_keeps_nothing_per_entity_it_has_settled": 6.5,
- "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_settling_a_materialized_group_constructs_nothing_per_resolved_row": 0.6,
  "tests/unit/core/unit_work/test_write_planning_allocation_shape.py::test_settling_a_write_adds_nothing_per_entity_to_a_flush": 15.2,
  "tests/unit/core/wire/test_wire_literal_conversion_allocation_shape.py::test_decimal_and_number_conversion_have_bounded_allocation_shape": 1.1,
  "tests/unit/core/wire/test_wire_literal_conversion_allocation_shape.py::test_typed_bind_metadata_stays_structural_as_bind_counts_grow": 6.4,

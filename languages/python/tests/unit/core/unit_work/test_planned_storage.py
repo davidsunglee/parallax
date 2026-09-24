@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-import functools
 from collections.abc import Mapping, Sequence, Sized
-from collections.abc import Set as AbstractSet
 from decimal import Decimal
-from types import MappingProxyType, ModuleType
-from typing import Any, Protocol, cast, runtime_checkable
+from types import MappingProxyType
+from typing import Any, cast
 
 import pytest
 
@@ -83,10 +81,10 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.observe import adopt_predecessor_row
 from parallax.core.unit_work.planned import adopt_planned_row
 from parallax.core.unit_work.planner import (
-    FamilyFacts,  # forbidden-plan-context regression only
+    FamilyFacts,  # producer-reach regression only
 )
 from parallax.core.unit_work.write_settlement import (
-    WriteSettlement,  # forbidden-plan-context regression only
+    WriteSettlement,  # producer-reach regression only
 )
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
 from tests._support import mirrored_models as mm
@@ -101,6 +99,7 @@ from tests._support.db_port import (
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.root_ownership import own_root
 from tests.unit._document_layout_support import PERSON, document_model
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 
@@ -624,43 +623,11 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 
 
 # --------------------------------------------------------------------------- #
-# Finalizing: a Materialized Write Group's segment carries no group,          #
-# Transaction Instant, Write Planner, settlement module, model, facet,        #
-# strategy, entity-resolution context, or temporal-strategy answer past       #
-# `finalize()`, and a temporal group's topology and instant are both          #
-# resolved during `finalize()`, never on step access.                         #
+# Finalizing: a Write Plan may retain what a producer produced for one        #
+# settled write, never the producer; a temporal group's topology and instant  #
+# are both resolved during `finalize()`, never on step access.                #
 # --------------------------------------------------------------------------- #
-@runtime_checkable
-class _ModelSeam(Protocol):
-    """Whatever answers the accepted Metamodel's own seam, by shape.
-
-    :class:`~parallax.core.metamodel.Metamodel` is a structural Protocol the
-    repository has more than one implementation of, so recognizing only the
-    concrete class one live accepted model answers with would let an alternate
-    implementation past the rule vacuously. What makes something the model is
-    the seam it answers — enumerate its Entities, resolve an arbitrary Identity,
-    hand back an arbitrary module's facet — and that is what this matches.
-
-    Every member of that seam, not the subset that would suffice to tell the
-    model from what a plan holds today. A runtime-checkable Protocol matches on
-    member PRESENCE, so a subset makes this a trap for a produced value that
-    later grows the same names: an Inheritance Facet and an Entity View both
-    answer ``entity`` already, and a plan is supposed to hold the second one.
-    Matching the whole seam is what keeps that margin wider than one name.
-    """
-
-    @property
-    def entities(self) -> Sequence[object]: ...
-    def entity(self, identity: object, /) -> object: ...
-    def facet(self, key: object, /) -> object: ...
-
-
-# A segment may retain what a producer PRODUCED for one settled write and
-# never the producer. `_ModelSeam` stands for the accepted Metamodel whatever
-# class answers it, with the concrete class a live accepted model answers with
-# named beside it so the rule still holds if an implementation ever stops
-# matching the seam by shape.
-_FORBIDDEN_PLAN_CONTEXT = (
+_PRODUCER_CLASSES = (
     MaterializedWriteGroup,
     TransactionInstant,
     WritePlanner,
@@ -671,7 +638,6 @@ _FORBIDDEN_PLAN_CONTEXT = (
     ConcurrencyStrategy,
     TemporalStrategy,
     AuditStrategy,
-    _ModelSeam,
     type(_BALANCE),
 )
 
@@ -682,241 +648,39 @@ _COMPILED_FACET_KEYS: tuple[FacetKey[object], ...] = tuple(
 )
 """Every key an accepted built-in model installs a compiled facet under.
 
-Derived from the manifest rather than listed, so a module that starts compiling
-a facet is covered by these proofs the moment its row demands one — and each key
-carries its OWNER's own decision procedure for "is this value my facet?", which
-is what makes recognition exact for a facet no shape distinguishes (an
-Optimistic Lock Facet answers one lookup) as well as for one that has several.
+Each key carries its owner's own decision procedure for "is this value my
+facet?", which recognizes a facet no shape distinguishes.
 """
 
 
 def _is_producer(value: object) -> bool:
-    """Whether ``value`` is something a settled step could still consult for an
-    answer, rather than an answer already produced for it.
-
-    An Inheritance Entity View, a resolved instant, or a Version Arithmetic
-    answers from what it was handed; the model and any facet the accepted model
-    carries resolve an arbitrary Identity or member set, which is what makes
-    them producers a plan must not reach.
-    """
-    return isinstance(value, _FORBIDDEN_PLAN_CONTEXT) or any(
+    return isinstance(value, _PRODUCER_CLASSES) or any(
         key.accepts(value) for key in _COMPILED_FACET_KEYS
     )
 
 
-def _reachable_from(segment: object) -> list[object]:
-    """Every value one Step Segment CAPTURED: its own fields, everything nested
-    inside them through further values' own state and through tuples, mappings,
-    and other containers, and — for a callable — every channel a Python callable
-    can carry a captured value on.
-
-    Captured rather than reachable by any route at all, because that is what the
-    rule is about: a plan must not retain what settling was handed, and what a
-    class or a module holds under its own name is there whether or not a plan
-    was ever built. So the walk stops at a class and at a module, and the claim
-    is bounded to what settling put on the segment.
-
-    A segment holds its settled facts as one nested value rather than as copied
-    fields, and a producer smuggled into a plan sits one container deep as
-    readily as one field deep — inside a tuple of resolved successors, a column
-    of retained cells, an assignment mapping's values. Descending through both
-    is what keeps the rule a claim about everything a step access can reach.
-    Every value's own attribute state is walked rather than only a dataclass's
-    declared fields, because a plain object is as capable of holding a producer
-    as a frozen one, in ``__dict__`` or in a slot. Each object is visited once,
-    by identity, so a shared subgraph is walked once and a cyclic one
-    terminates.
-
-    A segment that defers to a callable over live planning machinery (rather
-    than holding already-settled data) hides in whichever channel that callable
-    captured it on, and they are not interchangeable: ``lambda: planner``
-    captures a closure cell, ``planner.finalize`` binds a ``__self__``,
-    ``lambda p=planner: p`` and ``lambda *, p=planner: p`` capture positional
-    and keyword defaults that neither of the first two carry,
-    ``partial(f, planner)`` holds its own function and arguments, and a callable
-    OBJECT carries none of those — it holds the producer as instance state or
-    closes over it in the ``__call__`` its class defines. All of them are
-    walked, because a claim about a captured producer that only one of them
-    would catch is not a claim about the segment.
-    """
-    reached: list[object] = []
-    seen: set[int] = set()
-
-    def walk_state(value: Any) -> None:
-        instance_dict = getattr(value, "__dict__", None)
-        if isinstance(instance_dict, Mapping):
-            for item in cast("Mapping[str, Any]", instance_dict).values():
-                walk(item)
-        for owner in type(value).__mro__:
-            declared = cast("Any", getattr(owner, "__slots__", ()))
-            names = (declared,) if isinstance(declared, str) else cast("Sequence[str]", declared)
-            for name in names:
-                walk(getattr(value, name, None))
-
-    def walk_captures(value: Any) -> None:
-        self_obj = getattr(value, "__self__", None)
-        if self_obj is not None:
-            walk(self_obj)
-        function = getattr(value, "__func__", value)
-        for cell in cast("tuple[Any, ...]", getattr(function, "__closure__", None) or ()):
-            walk(cell.cell_contents)
-        for default in cast("tuple[Any, ...]", getattr(function, "__defaults__", None) or ()):
-            walk(default)
-        keyword_defaults = cast(
-            "Mapping[str, Any]", getattr(function, "__kwdefaults__", None) or {}
-        )
-        for default in keyword_defaults.values():
-            walk(default)
-        implementation = next(
-            (
-                owner.__dict__["__call__"]
-                for owner in type(value).__mro__
-                if "__call__" in owner.__dict__
-            ),
-            None,
-        )
-        if implementation is not None:
-            walk(implementation)
-        if isinstance(value, functools.partial):
-            partial = cast("functools.partial[Any]", value)
-            walk(partial.func)
-            for argument in partial.args:
-                walk(argument)
-            for argument in partial.keywords.values():
-                walk(argument)
-
-    def walk(value: object) -> None:
-        if id(value) in seen:
-            return
-        seen.add(id(value))
-        reached.append(value)
-        if isinstance(value, str | bytes | bytearray | ModuleType | type):
-            return
-        walk_state(value)
-        if isinstance(value, Mapping):
-            for key_value, item in cast("Mapping[object, object]", value).items():
-                walk(key_value)
-                walk(item)
-        elif isinstance(value, Sequence | AbstractSet):
-            for item in cast("Sequence[object] | AbstractSet[object]", value):
-                walk(item)
-        untyped = cast("Any", value)
-        if callable(untyped):
-            walk_captures(untyped)
-
-    for field in dataclasses.fields(cast("Any", segment)):
-        walk(getattr(segment, field.name))
-    return reached
-
-
-def _binds_anything(*values: object, **held: object) -> tuple[object, ...]:
-    return (*values, *held.values())
-
-
-class _HoldingCallable:
-    def __init__(self, held: object) -> None:
-        self.held = held
-
-    def __call__(self) -> object:
-        return self.held
-
-
-class _SlottedCallable:
-    __slots__ = ("held",)
-
-    def __init__(self, held: object) -> None:
-        self.held = held
-
-    def __call__(self) -> object:
-        return self.held
-
-
-def _callable_closing_over(held: object) -> object:
-    class Closing:
-        def __call__(self) -> object:
-            return held
-
-    return Closing()
-
-
-@dataclasses.dataclass(frozen=True)
-class _CapturingSegment:
-    """A stand-in segment whose fields capture one value on every channel a
-    Python callable has, for grading the walk the two proofs below depend on."""
-
-    closure: object
-    bound: object
-    default: object
-    keyword_default: object
-    partial_argument: object
-    partial_keyword: object
-    instance_state: object
-    slot_state: object
-    call_closure: object
-
-
-def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> None:
-    # The two proofs below assert that NOTHING reachable from a settled segment
-    # is a producer, so what they rule out is exactly what the walk reaches. A
-    # capture channel it skipped would leave a segment deferring to live
-    # planning machinery passing them, so each channel is graded here against a
-    # value only that channel carries.
-    captured = [object() for _ in range(9)]
-    (
-        closure_value,
-        bound_value,
-        default,
-        keyword_default,
-        argument,
-        keyword,
-        attribute_value,
-        slot_value,
-        call_closure_value,
-    ) = captured
-    segment = _CapturingSegment(
-        closure=lambda: closure_value,
-        bound=[bound_value].count,
-        default=lambda held=default: held,
-        keyword_default=lambda *, held=keyword_default: held,
-        partial_argument=functools.partial(_binds_anything, argument),
-        partial_keyword=functools.partial(_binds_anything, held=keyword),
-        instance_state=_HoldingCallable(attribute_value),
-        slot_state=_SlottedCallable(slot_value),
-        call_closure=_callable_closing_over(call_closure_value),
-    )
-
-    reached = _reachable_from(segment)
-
-    for value in captured:
-        assert any(item is value for item in reached)
+def _reachable_from_segments(plan: WritePlan) -> list[object]:
+    return [value for segment in plan.steps.segments for value in reachable_objects(segment)]
 
 
 def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
-    # The proofs below rule out a producer by asking `_is_producer` of every
-    # reachable value, so a facet it failed to recognize would be a facet a plan
-    # could retain unnoticed — an Optimistic Lock Facet answers one lookup and a
-    # Temporal Facet another, and neither shares the Inheritance Facet's shape.
+    # A plan may reach nothing `_is_producer` recognizes, so every facet an
+    # accepted model carries must count as a producer, while what a facet
+    # produced for one settled write must not.
     facets = [_BALANCE.facet(key) for key in _COMPILED_FACET_KEYS]
     assert len(facets) == len(_COMPILED_FACET_KEYS) > 1
 
     for facet in facets:
         assert _is_producer(facet)
     assert _is_producer(_BALANCE)
-    # What a facet PRODUCED for one settled write is not the facet: a plan may
-    # keep the compiled view of one Entity and the arithmetic a strategy fixed.
     entity = _BALANCE.entities[0]
     assert not _is_producer(inheritance.view(_BALANCE).entity(entity.identity))
     assert not _is_producer(VersionArithmetic(initial=1, increment=1))
 
 
 def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> None:
-    # The Write Plan a Materialized Write Group settles into must not be able
-    # to re-derive a step from live planning machinery: no segment field (nor
-    # any closure a callable field captures) may be the group itself, the
-    # attempt's Transaction Instant, or the Write Planner — every semantic
-    # fact a step needs is already decided by the time `finalize()` returns
-    # (`m-unit-work` "The Write Plan ... MUST NOT retain ... a private
-    # group").
+    # A Write Plan retains no producer: no private group, Transaction Instant,
+    # planner, strategy, Metamodel, or facet is reachable from any segment.
     rows = [
         (
             row_id,
@@ -942,17 +706,11 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         .plan
     )
-    walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
-    for value in walked:
-        assert not _is_producer(value)
-    # The rule is about everything a step access can reach, and a segment's
-    # settled facts are one nested value rather than copied fields. The
-    # resolved instant lives there and nowhere else, so seeing it is what says
-    # the walk descended rather than stopping at the segment's own six fields.
+    walked = _reachable_from_segments(plan)
+    assert not [value for value in walked if _is_producer(value)]
+    # The resolved instant and the key columns' slices sit nested inside the
+    # segment, so reaching them shows the walk descended.
     assert any(isinstance(value, dt.datetime) for value in walked)
-    # And a container hides a value as well as a field does: the key columns
-    # are a TUPLE of Column Slices, so reaching one of them says the walk
-    # descends through collections rather than only through dataclass fields.
     assert any(isinstance(value, ColumnSlice) for value in walked)
 
 
@@ -979,18 +737,11 @@ def _segment_fields(segment: object) -> dict[str, object]:
 
 
 def test_a_versioned_segment_settles_produced_values_and_reaches_no_producer() -> None:
-    # The same rule the temporal segment above is held to, on the arm that
-    # settles a version rather than a milestone: a strategy's version arithmetic
-    # is a value the Concurrency Strategy PRODUCED for this mutation — it
-    # consults nothing, so advancing an observed version by its already-fixed
-    # step restates the strategy's settled answer rather than reaching a fresh
-    # one — so the segment may hold it, while the strategy that answered it
-    # stays unreachable (`m-unit-work` "A Write Plan MAY retain an immutable
-    # value a strategy ... produced").
+    # A Write Plan may retain the version arithmetic the Concurrency Strategy
+    # produced for this mutation, and never the strategy that produced it.
     plan = _account_plan(_version_group("Account", "id", [(1, 1), (2, 1)], assigned=9.00))
-    walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
-    for value in walked:
-        assert not _is_producer(value)
+    walked = _reachable_from_segments(plan)
+    assert not [value for value in walked if _is_producer(value)]
     assert any(isinstance(value, VersionArithmetic) for value in walked)
     assert any(isinstance(value, ColumnSlice) for value in walked)
 
