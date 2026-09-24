@@ -13,32 +13,21 @@ from __future__ import annotations
 
 import ast
 import re
-import runpy
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-import snapshot_delivery_overhead as snapshot_report
-import write_lowering_overhead as write_report
 from check_database_access import ENTRY_POINT_FIXTURE
-from interpreter_matrix import supported_minors
-from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContract, MemoryGates
 from tests._support import cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
-from tests.unit import _delivery_control_support as control_support
-from tests.unit import _memory_gate_support as gate_support
-from tests.unit.memory_instruments import (
-    OWN_INTERPRETER_VARIABLE,
-    require_own_interpreter,
-    takes_its_own_interpreter,
-)
+from tests.unit._session_selection_support import WHOLE_CLASS, selections
+from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
@@ -46,7 +35,6 @@ ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 COST_JOB = "python-check-cost"
-WHOLE_CLASS = "1/1"
 
 # The primary semantic surfaces, each one directory under `tests/`.
 SURFACES = frozenset(
@@ -112,39 +100,6 @@ def test_an_items_class_agrees_with_what_it_requires(
         assert _classes_of(item) == expected, item.nodeid
 
 
-def test_a_reader_refuses_a_process_no_boundary_started(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
-    with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
-        require_own_interpreter("a reader")
-
-
-_BOUNDARY_PROBE = (
-    "import sys\n\n"
-    "from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement\n\n\n"
-    "@in_a_child_interpreter\n"
-    "def boundary_probe() -> None:\n"
-    "    pass\n"
-)
-_SERVER_ENTRY_POINT = '\n\nif __name__ == "__main__":\n    serve_one_measurement(sys.argv[1])\n'
-
-
-def _boundary_probe(tmp_path: Path, source: str) -> Callable[[], None]:
-    path = tmp_path / "boundary_probe.py"
-    path.write_text(source, encoding="utf-8")
-    return runpy.run_path(str(path))["boundary_probe"]
-
-
-def test_a_child_serving_its_measurement_passes(tmp_path: Path) -> None:
-    _boundary_probe(tmp_path, _BOUNDARY_PROBE + _SERVER_ENTRY_POINT)()
-
-
-def test_a_child_that_serves_nothing_fails_its_test(tmp_path: Path) -> None:
-    with pytest.raises(AssertionError, match="exited without serving it"):
-        _boundary_probe(tmp_path, _BOUNDARY_PROBE)()
-
-
 def test_only_the_derivation_names_a_scheduling_class() -> None:
     # A module authoring a class would restore the second source of truth the
     # derivation exists to remove, and could give one item two classes.
@@ -170,51 +125,6 @@ def _deployed_cells() -> list[str]:
     return [str(cell) for cell in _cost_job()["strategy"]["matrix"]["shard"]]
 
 
-def _selection(expression: str | None, shard: str) -> list[str]:
-    """The items one session selects under ``--shard shard``, narrowed to
-    ``-m expression`` when one is given, in collection order.
-
-    A shard is a property of a whole session, so it is read off a session of
-    its own rather than off the one grading it.
-    """
-    narrowing = [] if expression is None else ["-m", expression]
-    collected = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            *narrowing,
-            "--shard",
-            shard,
-            "--collect-only",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=PY_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [line for line in collected.stdout.splitlines() if "::" in line]
-
-
-def _selections(requests: Sequence[tuple[str | None, str]]) -> list[list[str]]:
-    """One :func:`_selection` per request, the sessions run side by side.
-
-    Each session collects the whole tree, so the batch performs one collection
-    per request however it is run; waiting on them together overlaps their wall
-    times and nothing else. What the sessions share is the checkout, the
-    environment, and the tracked durations file, which each of them only reads —
-    none of them passes ``--store-cost-durations`` — so running them at once
-    cannot race.
-    """
-    expressions = [expression for expression, _ in requests]
-    shards = [shard for _, shard in requests]
-    with ThreadPoolExecutor(max_workers=len(requests)) as sessions:
-        return list(sessions.map(_selection, expressions, shards))
-
-
 def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
     # The cells are every index of one count, parsed as the hook parses `--shard`.
     # Their parts, computed in process from what the hook computes them from — the
@@ -230,7 +140,7 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # Halfway along the vector: neither the first nor the last cell, so a hook
     # that ran one end of the vector whatever cell it was given fails here.
     spot_checked = cells[len(cells) // 2]
-    cost_class, whole, under_one_cell = _selections(
+    cost_class, whole, under_one_cell = selections(
         [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, spot_checked)]
     )
     shard_of = cost_durations.shard_of_each(
@@ -278,87 +188,6 @@ def test_a_session_given_a_malformed_shard_stops_with_the_usage_error() -> None:
     )
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--shard expects I/N" in completed.stderr
-
-
-# --------------------------------------------------------------------------
-# The memory gates the class owns
-# --------------------------------------------------------------------------
-def test_every_memory_gate_is_owned_by_one_collected_cost_item() -> None:
-    # A ceiling in `spec/memory-gates.yaml` blocks only through an item CI runs
-    # in the cost class. The ownership table names each gate's item by module
-    # and function, so ownership is graded here against the class as a real
-    # session collects it — never inferred from a report member's registration
-    # — and the table is a partition: every gate claimed, none twice.
-    (cost_class,) = _selections([("cost", WHOLE_CLASS)])
-    collected = set(cost_class)
-    for owner in gate_support.OWNERS:
-        assert owner.nodeid in collected, owner.nodeid
-        assert owner.gates(), owner.nodeid
-    assert gate_support.unowned_gates() == ()
-
-
-def _gated_by_the_instruments() -> dict[tuple[str, str, str], str]:
-    """Every address the instruments read in a gated window, with the unit it is
-    read in: the static matrices every capture is validated against, so the set
-    is known without measuring anything."""
-    contract = BudgetContract.load()
-    predicted = {
-        (snapshot_report.SUBJECT, workload, cell): snapshot_report.unit(cell)
-        for _runtime, workload, cell in snapshot_report.addresses(contract, supported_minors())
-        if snapshot_report.is_memory_cell(cell)
-        and snapshot_report.window_of(cell, workload) in GATED_WINDOWS
-    }
-    predicted.update(
-        ((write_report.SUBJECT, case, metric), write_report.unit_of(window, metric))
-        for case, window in write_report.WINDOWS.items()
-        if window in GATED_WINDOWS
-        for metric in write_report.METRICS
-        if write_report.unit_of(window, metric) in BYTE_UNITS
-    )
-    return predicted
-
-
-def test_the_owners_partition_every_address_the_instruments_gate() -> None:
-    # The gates are a capture's output, so an address the instruments gained
-    # since the basis was taken carries no gate yet and the partition above
-    # cannot see it: it would fail first at the next rebaseline, where no
-    # implementation may land. Grading the table against the addresses the
-    # instruments read instead of the ones the file names moves that failure to
-    # the change that widens the matrix. Measuring nothing is what keeps this
-    # database-free and inside the merge gate.
-    predicted = _gated_by_the_instruments()
-    authored = MemoryGates.load()
-    assert set(authored.addresses) <= set(predicted)
-    document: Any = yaml.safe_load(authored.path.read_text(encoding="utf-8"))
-    for (subject, workload, cell), unit in sorted(predicted.items()):
-        document["gates"].setdefault(subject, {}).setdefault(workload, {}).setdefault(
-            cell, {"unit": unit, "maxBytes": 1}
-        )
-    over_predicted = MemoryGates.from_bytes(authored.path, yaml.safe_dump(document).encode("utf-8"))
-    assert set(over_predicted.addresses) == set(predicted)
-    assert gate_support.unowned_gates(over_predicted) == ()
-
-
-def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:
-    # A claim is only as good as the reading behind it, and the sole control
-    # reading any owner's child takes is a cold read-plan compilation. The
-    # cold-plan owner claims the guarded include workloads by workload, so
-    # gating a warm-plan or delivery window would hand it addresses it cannot
-    # read while the partition above still reports every gate claimed.
-    arms = BudgetContract.load().memory_scaling_arms
-    claimed = [
-        (workload, cell)
-        for subject, workload, cell in _gated_by_the_instruments()
-        if workload.startswith(control_support.CONTROL_PREFIX)
-        and any(
-            owner.subject == subject and owner.selects(workload) for owner in gate_support.OWNERS
-        )
-    ]
-    assert claimed
-    for workload, cell in claimed:
-        control = control_support.control_address(workload, cell, arms)
-        assert isinstance(control, control_support.GuardedPlanControl), (workload, cell)
-        assert control.phase == "cold", (workload, cell)
 
 
 # --------------------------------------------------------------------------

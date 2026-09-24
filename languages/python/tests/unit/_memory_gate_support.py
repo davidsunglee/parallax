@@ -3,7 +3,7 @@
 `spec/memory-gates.yaml` states one blocking ceiling per byte-unit reading
 address of the structural windows. A ceiling blocks only through a test the
 cost class collects and CI runs, so every gate is assigned here to exactly one
-such item, by module and function name, and the scheduling-partition suite
+such item, by module and function name, and ``test_memory_gate_ownership.py``
 grades that each named item is collected in the cost class and that the
 assignments partition the gates. Registration of a report member establishes no
 ownership; this table does.
@@ -128,7 +128,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
     ),
 )
 """Every memory-gate owner. Together they claim each gate exactly once, which
-the scheduling-partition suite grades against the loaded gates."""
+``test_memory_gate_ownership.py`` grades against the loaded gates."""
 
 
 def owner_of(test: Callable[[], None]) -> GateOwner:
