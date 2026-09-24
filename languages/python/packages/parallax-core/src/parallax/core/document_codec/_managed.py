@@ -14,8 +14,6 @@ from parallax.core.metamodel import Multiplicity
 
 __all__ = [
     "EffectiveChangeSet",
-    "canonical_managed_document",
-    "canonical_named_members",
     "classify_effective_change",
 ]
 
@@ -36,54 +34,6 @@ class EffectiveChangeSet:
     restored: frozenset[str]
 
 
-def canonical_managed_document(
-    shape: MemberShape, document: Mapping[str, object] | None
-) -> Mapping[str, object] | None:
-    """``document`` reduced to the one form its shape gives its logical value.
-
-    Only declared members contribute; an undeclared key is dropped. Presence is
-    preserved at every containment depth — a member the document omits stays
-    omitted and one it holds as ``None`` stays ``None`` — so the distinction an
-    assignment makes between removing a member and storing a null survives.
-
-    A ``many`` is the one member with no absent state to preserve: an omitted key,
-    a ``None``, and an empty collection are three spellings of one zero value, and
-    all three canonicalize to the empty collection at every depth. A ``one`` is
-    canonicalized recursively and a ``many`` element-wise in stored order.
-
-    Unlike :func:`~parallax.core.document_codec.reduce_declared_members`, which
-    reads encoded leaves and refuses a shape it cannot decode against, this reads
-    managed leaves, passes each through untouched, and refuses nothing: a value
-    contradicting its declared shape passes through as itself and compares
-    unequal to any well-formed one.
-
-    The answer is ``document`` itself when the document is already canonical, and
-    shares every nested container the canonical form did not have to rebuild.
-    Container type is not a criterion: a tuple and a list are both canonical
-    sequence carriers, and a mapping proxy and a dict both canonical mapping ones,
-    so a frozen carrier is answered as itself. A root that is no mapping at all is
-    the same contradiction one nested position deep and is answered the same way,
-    as itself, rather than reduced to a document it never was.
-    """
-    if not _is_document(document):
-        return document
-    return _canonical_document(shape, document)
-
-
-def canonical_named_members(
-    shape: MemberShape, document: Mapping[str, object] | None
-) -> Mapping[str, object] | None:
-    """Canonicalize only the top-level members ``document`` names.
-
-    Undeclared keys are dropped, but an omitted top-level ``many`` remains
-    omitted. A named occurrence is still canonicalized recursively as the
-    complete value its assignment replaces.
-    """
-    if not _is_document(document):
-        return document
-    return _canonical_document(shape, document, fill_missing_many=False)
-
-
 def classify_effective_change(
     shape: MemberShape,
     authored: Mapping[str, object],
@@ -101,11 +51,12 @@ def classify_effective_change(
     are one logical value at this boundary, whatever the member's kind, which is
     the collapse the encoded operations deliberately leave to a consumer.
 
-    Below that top level presence is the shape's, through
-    :func:`canonical_managed_document`: an omitted declared leaf or ``one`` inside
-    an assigned occurrence differs from an explicit null and can therefore be an
-    effective change, while an omitted ``many`` is that occurrence's empty
-    collection.
+    Below that top level presence is the shape's: only declared members
+    contribute, an omitted declared leaf or ``one`` inside an assigned occurrence
+    differs from an explicit null and can therefore be an effective change, and
+    an omitted, null, or empty ``many`` is one value, that occurrence's empty
+    collection. Managed leaves compare as they are, so a value contradicting its
+    declared shape is compared as itself rather than refused.
     """
     effective: set[str] = set()
     restored: set[str] = set()
@@ -123,19 +74,14 @@ def classify_effective_change(
     return EffectiveChangeSet(effective=frozenset(effective), restored=frozenset(restored))
 
 
-def _canonical_document(
-    shape: MemberShape,
-    document: Mapping[str, object],
-    *,
-    fill_missing_many: bool = True,
-) -> Mapping[str, object]:
+def _canonical_document(shape: MemberShape, document: Mapping[str, object]) -> Mapping[str, object]:
     rebuilt: dict[str, object] = {}
     document_names = iter(document)
     document_name: object = next(document_names, _EXHAUSTED)
     changed = False
     for member in shape.members:
         if member.name not in document:
-            if fill_missing_many and _is_many(member):
+            if _is_many(member):
                 rebuilt[member.name] = []
                 changed = True
             continue

@@ -43,25 +43,16 @@ __all__ = [
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
-    "LocatedMemberInput",
     "RawLocatedMemberInput",
     "SetLeaf",
     "SetValue",
     "Unavailable",
     "apply_patches",
     "comparison_text",
-    "decode_located_member_classified",
     "decode_occurrence_classified",
-    "decode_path",
-    "decode_path_classified",
-    "encode_candidate",
-    "encode_document",
-    "encode_many",
-    "locate_entity_member",
     "locate_raw_entity_member",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
-    "reduce_declared_members_classified",
 ]
 
 
@@ -136,10 +127,6 @@ class DecodedMember:
     findings: tuple[DocumentFinding, ...] = ()
 
 
-type LocatedMemberInput = SqlNull | Missing | PresentDocument
-"""A direct member carrier after physical location but before classification."""
-
-
 class _PresentJsonNull:
     __slots__ = ()
 
@@ -188,13 +175,6 @@ def _mapping_output(shape: MemberShape, values: Iterable[object]) -> dict[str, o
 
 def _list_output(values: Iterable[object]) -> list[object]:
     return list(values)
-
-
-def locate_entity_member(document: DocumentValue, member: str) -> Missing | PresentDocument:
-    """Locate one direct Entity member in a raw Entity document carrier."""
-    if _is_document_object(document) and member in document:
-        return PresentDocument(cast("DocumentValue", document[member]))
-    return MISSING
 
 
 def locate_raw_entity_member(document: DocumentValue, member: str) -> RawLocatedMemberInput:
@@ -246,20 +226,6 @@ def prepared_raw_member_classifier(
         )
 
     return classify_occurrence
-
-
-def decode_located_member_classified(
-    shape: MemberShape,
-    located: LocatedMemberInput,
-    member_name: str,
-) -> DecodedMember:
-    """Classify one direct member independently of its physical carrier."""
-    member = shape.member(member_name)
-    if member is None:
-        raise KeyError(f"{member_name!r} names no member of the shape")
-    if isinstance(located, (SqlNull, Missing)):
-        return _classify_member(member, MISSING, (member_name,))
-    return _classify_member(member, located.document, (member_name,))
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,42 +293,6 @@ def decode_occurrence_classified(
     return DecodedMember(Present(output), (*classified.findings, *findings))
 
 
-def decode_path_classified(
-    shape: MemberShape, document: DocumentValue, path: Sequence[str]
-) -> DecodedMember:
-    """Classify one requested path without raising for contradictory stored state."""
-    resolve(shape, path)
-    if not _is_document_object(document):
-        first = shape.member(path[0])
-        if first is None:  # pragma: no cover - resolve proved the first segment
-            raise KeyError(f"{path[0]!r} names no member of the shape")
-        return _classify_member(first, MISSING, (path[0],))
-    current = cast("Mapping[str, DocumentValue]", document)
-    scope = shape
-    for depth, name in enumerate(path):
-        member = scope.member(name)
-        if member is None:  # pragma: no cover - resolve proved every segment
-            raise KeyError(f"{'.'.join(path)!r}: {name!r} names no member of the shape")
-        classified = _classify_member(member, current.get(name, MISSING), tuple(path[: depth + 1]))
-        if depth == len(path) - 1:
-            return classified
-        if not isinstance(member, Occurrence):  # pragma: no cover - resolve proved the path
-            raise KeyError(f"{'.'.join(path)!r}: the path continues past the leaf {name!r}")
-        if member.multiplicity is Multiplicity.MANY:
-            raise KeyError(
-                f"{'.'.join(path)!r}: {name!r} is a `many` occurrence, and a path never "
-                "addresses an array position — decode an element against its own shape"
-            )
-        if not isinstance(classified.presence, Present):
-            return DecodedMember(classified.presence, classified.findings)
-        value = classified.presence.value
-        if not _is_document_object(value):  # pragma: no cover - a present One is an object
-            return DecodedMember(UNAVAILABLE, classified.findings)
-        current = cast("Mapping[str, DocumentValue]", value)
-        scope = member.shape
-    raise AssertionError("a classified document path is nonempty")  # pragma: no cover
-
-
 def _classify_member(
     member: Leaf | Occurrence,
     raw: object | Missing,
@@ -394,29 +324,6 @@ def _classify_member(
         return DecodedMember(Present(decode_leaf(member.type, raw)))
     except LeafEncodingError:
         return DecodedMember(UNAVAILABLE, (DocumentFinding("leaf-undecodable", path, raw),))
-
-
-def reduce_declared_members_classified(
-    shape: MemberShape,
-    document: object,
-    *,
-    build_object: _ObjectOutput = _mapping_output,
-    build_many: _ManyOutput = _list_output,
-) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """Interpret one requested occurrence into caller-selected final containers.
-
-    With the default builders this is the dictionary reduction a READ applies, so
-    which members it keys is the read
-    contract (`m-snapshot-read` *What a materialized value carries*) rather than an
-    option: a member the document holds contributes its decoded value, a member it
-    omits contributes nothing unless it is a ``many`` — whose omitted and JSON-null
-    spellings are one zero value keyed as ``[]`` — and a classified position
-    contributes what its verdict collapses to. The one entry that is not a value is
-    an undecodable leaf, keyed as `UNAVAILABLE` so a materializing caller can tell it
-    from a decoded one and leave that member out. Presence preservation belongs to
-    the plain reduction, whose consumer is the mutation comparison's authored side.
-    """
-    return _decoded_object_output(shape, document, build_object, build_many)
 
 
 def _decoded_occurrence_output(
@@ -569,56 +476,6 @@ applying one produces a document whose own shape would read it back as invalid
 stored data."""
 
 
-def encode_document(shape: MemberShape, values: Mapping[str, Presence]) -> FrozenMap[str, object]:
-    """One complete document, from ``shape`` and one presence per applicable member.
-
-    The whole bind a consumer stores: an insert, a fresh Value Object column value, and
-    a fixture document all come from here. Members are emitted in the shape's own
-    order, so one set of values always produces one document. An occurrence member's
-    value is written in place as the occurrence's own document, which this function
-    (for a ``ONE``) or :func:`encode_many` (for a ``MANY``) produced from that
-    occurrence's shape, so one complete document composes from the leaves up.
-
-    A ``MANY`` member is never null: ``MISSING``, ``NULL``, and an empty array all
-    write ``[]``, the sole zero-element representation.
-    """
-    document: dict[str, object] = {}
-    for member in shape.members:
-        presence = values.get(member.name, MISSING)
-        if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
-            document[member.name] = (
-                retain_document_value(presence.value) if isinstance(presence, Present) else ()
-            )
-            continue
-        if isinstance(presence, Missing):
-            continue
-        if isinstance(presence, ExplicitNull):
-            document[member.name] = None
-            continue
-        document[member.name] = (
-            retain_document_value(encode_leaf(member.type, presence.value))
-            if isinstance(member, Leaf)
-            else retain_document_value(presence.value)
-        )
-    return adopt_frozen_map(document)
-
-
-def encode_many(
-    shape: MemberShape, elements: Sequence[Mapping[str, Presence]]
-) -> tuple[FrozenMap[str, object], ...]:
-    """The one document a ``MANY`` occurrence stores: the ordered array whose elements
-    are, in the sequence's own order, the :func:`encode_document` of each element's
-    values against that occurrence's shape.
-
-    It exists because :func:`encode_document` builds one object from one value mapping
-    while a ``MANY`` is a *sequence* of them — without it, a ``many`` occurrence would
-    have exactly one construction route, a consumer assembling the array itself, which
-    is the one JSON structure this module would then not own. An empty sequence yields
-    ``[]``.
-    """
-    return tuple(encode_document(shape, element) for element in elements)
-
-
 def encode_managed_document(
     shape: MemberShape, values: Mapping[str, object]
 ) -> FrozenMap[str, object]:
@@ -652,119 +509,6 @@ def encode_managed_many(
     return tuple(encode_managed_document(shape, element) for element in elements)
 
 
-def decode_path(shape: MemberShape, document: object, path: Sequence[str]) -> Presence:
-    """One known path's presence, resolved against ``shape``.
-
-    The declared Neutral Type comes from the model rather than from the caller: a leaf
-    path answers with that leaf's value decoded by its declared type rather than by the
-    JSON value's own shape, and an occurrence path answers with that occurrence's own
-    document exactly as stored, unknown keys included. A path naming no member of
-    ``shape`` is a caller error, not an absence.
-
-    For a ``MANY`` the returned document is the array, and each of its elements is
-    itself a document over that same shape — the elements are decoded one at a time by
-    passing an element back here with the occurrence's own shape, which is what makes a
-    ``many`` traversable without an element index.
-
-    Stored content that contradicts the shape — a required path that is absent or JSON
-    null, an occurrence holding something other than the object or array its
-    multiplicity stores, a leaf that is no declared-type value's document encoding
-    (:func:`~parallax.core.document_codec.encode_leaf`'s own codomain) — is **invalid
-    stored data** and raises. This module defines no repair and no defaulting, so a
-    not-present answer here always means the row is genuinely not carrying that member
-    rather than that the codec chose a value for it.
-    """
-    member = resolve(shape, path)
-    many = isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
-    holder = _holder(shape, document, path)
-    raw: object | Missing = MISSING if holder is None else holder.get(path[-1], MISSING)
-    if many:
-        if isinstance(raw, Missing) or raw is None:
-            return Present([])
-        if not _is_document_array(raw):
-            raise _invalid(
-                path, f"holds {raw!r}, which is not the array a `many` occurrence stores"
-            )
-        return Present(_isolated_document_container(raw))
-    if isinstance(raw, Missing):
-        if holder is not None and not member.nullable:
-            raise _invalid(path, "is required and its key is absent")
-        return MISSING
-    if raw is None:
-        if not member.nullable:
-            raise _invalid(path, "is required and its key holds JSON null")
-        return NULL
-    if isinstance(member, Occurrence):
-        if not _is_document_object(raw):
-            raise _invalid(
-                path, f"holds {raw!r}, which is not the object a `one` occurrence stores"
-            )
-        return Present(_isolated_document_container(raw))
-    try:
-        return Present(decode_leaf(member.type, raw))
-    except LeafEncodingError as exc:
-        raise _invalid(
-            path, f"holds {raw!r}, which is no {member.type!r} value's document encoding"
-        ) from exc
-
-
-def _invalid(path: Sequence[str], detail: str) -> ValueError:
-    return ValueError(f"{'.'.join(path)!r} {detail} — invalid stored data")
-
-
-def _holder(
-    shape: MemberShape, document: object, path: Sequence[str]
-) -> Mapping[str, object] | None:
-    """The object that would carry ``path``'s last key, or ``None`` when an ancestor
-    occurrence is not present.
-
-    Descent stops with ``None`` only where the ancestor's own declaration admits its
-    absence: a **nullable** ``ONE`` occurrence whose key is absent or holds JSON null
-    is a presence state the shape names, so a path below one names nothing rather than
-    contradicting the shape — and a required member below such an ancestor is not a
-    missing required path, because the whole subtree is legitimately absent. A
-    **required** occurrence absent or null is itself the missing required path and
-    raises, named at its own depth rather than at the leaf below it. A key present
-    with a value of the wrong kind raises too, because answering "not present" there
-    would invent an absence the row does not hold.
-
-    A path descending through a ``MANY`` is a caller error rather than stored data: an
-    element is decoded by passing it back with the occurrence's own shape, so a path
-    never addresses an array position.
-    """
-    if not _is_document_object(document):
-        raise _invalid(path, f"is read out of {document!r}, which is not a document object")
-    current = document
-    scope = shape
-    for depth, name in enumerate(path[:-1]):
-        occurrence = scope.member(name)
-        if not isinstance(occurrence, Occurrence):  # pragma: no cover - resolve() proved it
-            raise KeyError(f"{'.'.join(path)!r}: the path continues past the leaf {name!r}")
-        if occurrence.multiplicity is Multiplicity.MANY:
-            raise KeyError(
-                f"{'.'.join(path)!r}: {name!r} is a `many` occurrence, and a path never "
-                "addresses an array position — decode an element against its own shape"
-            )
-        held = current.get(name, MISSING)
-        if isinstance(held, Missing) or held is None:
-            if not occurrence.nullable:
-                raise _invalid(
-                    path[: depth + 1],
-                    "is required and its key is absent"
-                    if isinstance(held, Missing)
-                    else "is required and its key holds JSON null",
-                )
-            return None
-        if not _is_document_object(held):
-            raise _invalid(
-                path[: depth + 1],
-                f"holds {held!r}, which is not the object a `one` occurrence stores",
-            )
-        current = held
-        scope = occurrence.shape
-    return current
-
-
 def comparison_text(neutral_type: NeutralType, value: object) -> str:
     """The exact characters a dialect's text extraction returns for ``value``'s
     encoding — the literal SQL binds where the member's declared type compares as
@@ -783,45 +527,6 @@ def comparison_text(neutral_type: NeutralType, value: object) -> str:
             "own type system through a dialect cast, which binds the managed value"
         )
     return cast("str", encode_leaf(neutral_type, value))
-
-
-def encode_candidate(
-    shape: MemberShape, constraints: Mapping[tuple[str, ...], object]
-) -> FrozenMap[str, object]:
-    """The containment candidate a to-many equality binds: the object carrying exactly
-    the constrained paths, each at its declared position under ``shape`` and spelled by
-    the encoding table, and no other key.
-
-    Containment compares JSON **values**, so neither comparison form is what it binds:
-    a ``boolean`` in the form its cast comparison binds is MariaDB's ``1``, and a
-    candidate ``{"flag": 1}`` matches no element storing a JSON boolean, while a
-    ``decimal(p, s)`` in that form is a JSON number and ``{"amt": 1.50}`` matches no
-    element storing the exact digit string ``"1.50"``.
-
-    A candidate is a probe, never a document a row holds. A path the constraints do not
-    name is left **unconstrained** rather than absent, so it contributes no key at all —
-    including a ``MANY`` member, which therefore contributes no ``[]``. Each named path
-    MUST reach a leaf, and a path descending through a ``ONE`` occurrence nests exactly
-    as the stored document nests.
-
-    One constrained path is one candidate key, and that is a precondition on the
-    caller: a consumer holding two constraints on one path either collapses them when
-    the values are equal or refuses the predicate before it reaches here, because a
-    dropped constraint yields a probe that matches elements the predicate excludes,
-    silently.
-    """
-    if not constraints:
-        raise ValueError("a containment candidate carries at least one constrained path")
-    candidate: dict[str, object] = {}
-    for path, value in constraints.items():
-        member = resolve(shape, path)
-        if not isinstance(member, Leaf):
-            raise ValueError(f"{'.'.join(path)!r} does not reach a leaf of the shape")
-        nest = candidate
-        for name in path[:-1]:
-            nest = cast("dict[str, object]", nest.setdefault(name, {}))
-        nest[path[-1]] = retain_document_value(encode_leaf(member.type, value))
-    return cast("FrozenMap[str, object]", _adopt_document_builder(candidate))
 
 
 def apply_patches(

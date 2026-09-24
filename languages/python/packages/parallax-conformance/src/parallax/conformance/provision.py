@@ -8,17 +8,14 @@ from typing import TYPE_CHECKING, cast
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
 from parallax.core import storage_layout
-from parallax.core.base import JSON, TIMESTAMP, NeutralType
+from parallax.core.base import JSON, TIMESTAMP, NeutralType, retain_document_value
 from parallax.core.db_port import DatabaseRuntime, JsonDocument, Password
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
-    NULL,
     Leaf,
     MemberShape,
     Occurrence,
-    Presence,
-    Present,
-    encode_document,
+    encode_leaf,
     occurrence_shape,
 )
 from parallax.core.metamodel import (
@@ -131,17 +128,34 @@ def _fixture_member(
 def fixture_document(
     shape: MemberShape, row: Mapping[str, object], *, preserve_unknown: bool = True
 ) -> object:
-    """One fixture row's Structured Column, composed through the codec.
+    """One fixture row's Structured Column, with every declared leaf spelled by the codec.
 
     Each document-resident member is authored in the row under its own member
     name, in the very spelling it would take if the layout had given it a Column
     of its own — a leaf as the neutral wire value, an occurrence as that
     occurrence's own document — so one fixture file describes one logical row
-    under either layout. The codec then spells every leaf and fixes presence: an
-    omitted key stays absent, an authored null becomes JSON null, and a `many`
-    occurrence always contributes its array.
+    under either layout. An omitted key stays absent, an authored null becomes
+    JSON null, and a `many` occurrence always contributes its array.
+
+    A fixture seeds stored data rather than writing through the framework, so an
+    occurrence document keeps undeclared keys and a value contradicting its
+    member's kind is stored as authored: the write path's encoder produces
+    neither, and corpus cases read both back.
     """
-    encoded = encode_document(shape, _fixture_values(shape, row))
+    document: dict[str, object] = {}
+    for member in shape.members:
+        many = isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+        raw = row.get(member.name)
+        if raw is None:
+            if many:
+                document[member.name] = ()
+            elif member.name in row:
+                document[member.name] = None
+        elif isinstance(member, Leaf):
+            document[member.name] = encode_leaf(member.type, fixture_literal(member.type, raw))
+        else:
+            document[member.name] = _fixture_occurrence(member, raw)
+    encoded = cast("Mapping[str, object]", retain_document_value(document))
     if not preserve_unknown:
         return encoded
     declared = {member.name for member in shape.members}
@@ -150,23 +164,6 @@ def fixture_document(
         return encoded
     canonical = encode_wire(JSON, decode_wire(JSON, cast("WireValue", unknown)))
     return {**encoded, **cast("Mapping[str, object]", canonical)}
-
-
-def _fixture_values(shape: MemberShape, row: Mapping[str, object]) -> dict[str, Presence]:
-    values: dict[str, Presence] = {}
-    for member in shape.members:
-        if member.name not in row:
-            continue
-        raw = row[member.name]
-        if raw is None:
-            values[member.name] = NULL
-            continue
-        if isinstance(member, Leaf):
-            value = fixture_literal(member.type, raw)
-        else:
-            value = _fixture_occurrence(member, raw)
-        values[member.name] = Present(value)
-    return values
 
 
 def _fixture_occurrence(member: Occurrence, raw: object) -> object:
