@@ -36,14 +36,11 @@ wide Continuation Order is priced on a grid of its own: the width costs the plan
 once and the page decision releases its per-root coordinates after retaining the
 one boundary needed to continue.
 
-**The third exclusion has no executable witness here, by construction.** What the
-database and its driver hold for a delivery — server-side cursors, connection
-buffers, a driver's own result-set materialization — is outside the bound and
-outside every window below: the port these readings run against answers each page
-from a counter, so there is nothing of a driver's for any of them to see. A real
-port that read the whole result before answering the first page would leave every
-figure here unchanged, which is the exclusion restated as a property of the
-instrument rather than demonstrated by it.
+**The third exclusion is the port's, by construction.** What the database and its
+driver hold for a delivery — server-side cursors, connection buffers, a driver's
+own result-set materialization — is outside the bound, and the port these
+readings run against answers each page from a counter, so every reading below
+grades Parallax's own working set alone.
 
 **The exclusions are what make the retention readings mean anything.** A bound
 that excluded nothing would be a claim about the caller's program rather than
@@ -68,18 +65,6 @@ delivery banks one item into per PAGE is not, and past the first page it adds no
 survivor of any kind. So the census is also taken over every survivor whatever
 defined its type, and over the REFERENCES those survivors hold, where a container
 gaining one reference per page moves the count.
-
-**What the seven readings still do not prove.** Nothing here sees a transient
-smaller than the region it is allocated in — a high-water mark is a maximum, so an
-allocation that never takes the process above an earlier moment of the same
-publication is invisible however it scales, which is why the page grid the peak
-is read across is thirty-two-fold rather than convenient. Nothing here sees what
-a real driver holds, for the reason given above. The second and third layers are
-priced together rather than apart, for the reason given above that too. The
-fan-out grid REJECTS growth super-linear in one root's node count rather than
-proving the bound: eight points admit any quadratic coefficient small enough to
-stay under the linear term across them, and `_PEAK_FANOUTS` records how small
-that is.
 
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
