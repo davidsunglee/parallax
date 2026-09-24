@@ -30,10 +30,17 @@ def test_a_test_carrying_the_boundary_calls_its_reader_legally(tmp_path: Path) -
     assert _findings(tmp_path, source) == []
 
 
-def test_a_module_holding_a_boundary_but_serving_nothing_is_a_finding(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "entry",
+    ["", f'\n\nif __name__ == "main":\n    {guard.SERVER}()\n'],
+    ids=["no-server", "misspelled-main-guard"],
+)
+def test_a_module_holding_a_boundary_but_serving_nothing_is_a_finding(
+    entry: str, tmp_path: Path
+) -> None:
     source = (
-        f"from memory_instruments import {READER}, {guard.BOUNDARY}\n\n\n"
-        f"@{guard.BOUNDARY}\ndef test_probe():\n    {READER}(seam)\n"
+        f"from memory_instruments import {READER}, {guard.BOUNDARY}, {guard.SERVER}\n\n\n"
+        f"@{guard.BOUNDARY}\ndef test_probe():\n    {READER}(seam)\n{entry}"
     )
     (finding,) = _findings(tmp_path, source)
     assert guard.SERVER in finding.message
