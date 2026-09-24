@@ -59,6 +59,7 @@ from parallax.core.unit_work import (
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
+    SystemClock,
     TemporalColumns,
     TemporalStrategy,
     TransactionInstant,
@@ -630,6 +631,8 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 _PRODUCER_CLASSES = (
     MaterializedWriteGroup,
     TransactionInstant,
+    FixedClock,
+    SystemClock,
     WritePlanner,
     WriteSettlement,
     FamilyFacts,
@@ -665,8 +668,8 @@ def _reachable_from_segments(plan: WritePlan) -> list[object]:
 
 def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
     # A plan may reach nothing `_is_producer` recognizes, so every facet an
-    # accepted model carries must count as a producer, while what a facet
-    # produced for one settled write must not.
+    # accepted model carries, and the clock, must count as a producer, while
+    # what either produced for one settled write must not.
     facets = [_BALANCE.facet(key) for key in _COMPILED_FACET_KEYS]
     assert len(facets) == len(_COMPILED_FACET_KEYS) > 1
 
@@ -676,11 +679,14 @@ def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
     entity = _BALANCE.entities[0]
     assert not _is_producer(inheritance.view(_BALANCE).entity(entity.identity))
     assert not _is_producer(VersionArithmetic(initial=1, increment=1))
+    instant = inert_instant()
+    assert _is_producer(instant.clock)
+    assert not _is_producer(instant.value())
 
 
 def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> None:
     # A Write Plan retains no producer: no private group, Transaction Instant,
-    # planner, strategy, Metamodel, or facet is reachable from any segment.
+    # clock, planner, strategy, Metamodel, or facet is reachable from any segment.
     rows = [
         (
             row_id,

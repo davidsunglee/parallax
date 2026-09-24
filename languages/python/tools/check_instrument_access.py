@@ -37,6 +37,7 @@ import ast
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeIs
 
 _TOOL = "tools/check_instrument_access.py"
 WORKSPACE = Path(__file__).resolve().parents[1]
@@ -161,14 +162,35 @@ def _called_readers(function: _Function, readers: dict[str, str], modules: set[s
     return called
 
 
-def _calls(tree: ast.Module, name: str) -> bool:
+def _main_guard(node: ast.stmt) -> TypeIs[ast.If]:
+    """Whether *node* is ``if __name__ == "__main__":`` exactly, the one spelling
+    whose body runs in the child the boundary starts and nowhere else."""
+    if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+        return False
+    test = node.test
+    named = isinstance(test.left, ast.Name) and test.left.id == "__name__"
+    compared = len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+    main = test.comparators[0]
+    return named and compared and isinstance(main, ast.Constant) and main.value == "__main__"
+
+
+def _serves(tree: ast.Module, modules: set[str]) -> bool:
+    """Whether *tree*'s ``__main__`` block calls the server, by name or off the
+    instruments module."""
     return any(
         isinstance(node, ast.Call)
         and (
-            (isinstance(node.func, ast.Name) and node.func.id == name)
-            or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+            (isinstance(node.func, ast.Name) and node.func.id == SERVER)
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == SERVER
+                and _dotted(node.func.value) in modules
+            )
         )
-        for node in ast.walk(tree)
+        for guard in tree.body
+        if _main_guard(guard)
+        for statement in guard.body
+        for node in ast.walk(statement)
     )
 
 
@@ -235,13 +257,14 @@ def audit(root: Path) -> list[Finding]:
                         f"rest of the suite shares",
                     )
                 )
-        if any(_decorated(node) for node in functions) and not _calls(tree, SERVER):
+        if any(_decorated(node) for node in functions) and not _serves(tree, modules):
             findings.append(
                 Finding(
                     relative,
                     1,
-                    f"this module holds a `@{BOUNDARY}` measurement but never calls "
-                    f"`{SERVER}`, so the child it starts can serve nothing",
+                    f"this module holds a `@{BOUNDARY}` measurement but its "
+                    f'`if __name__ == "__main__":` block never calls `{SERVER}`, so the '
+                    f"child it starts can serve nothing",
                 )
             )
     return findings
