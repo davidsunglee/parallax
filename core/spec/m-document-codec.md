@@ -505,16 +505,11 @@ it does change is the position each patch names, whole.
   and a `many`'s elements additionally have no identity by which stored and
   supplied elements could be matched.
 
-The exported declared-member reduction is the dictionary-output form of the one
-classified traversal that walks a whole encoded document against its shape — the
-others above build a document, read one path, or write the positions their
-patches name. It decodes leaves by declared Neutral Type, reduces a `one`
-recursively and a `many` element-wise, and excludes every key the shape does not
-declare. Positional materialization supplies its own construction pair to this
-same traversal instead of reducing to dictionaries and walking those dictionaries
-again. An encoded assignment comparison retains the unclassified reduction below,
-whose presence and malformed-content contract is different. Consumers MUST NOT
-implement another local classified traversal or local reduction.
+The declared-member reduction reads a whole encoded document against its shape,
+where the operations above build a document, read one path, or write the
+positions their patches name. It decodes each leaf by its declared Neutral Type,
+reduces a `one` recursively and a `many` element-wise, and excludes every key the
+shape does not declare.
 
 The reduction takes one option that narrows its result. **Presence preservation**
 asks which members *this document* holds, which the source answers by itself: a
@@ -609,10 +604,7 @@ containment depth — an omitted member stays omitted and a null one stays null 
 and the same `many` exception applies: an omitted key, a null, and an empty
 collection are one zero value and all three answer the empty collection. A `one`
 is canonicalized recursively and a `many` element-wise in stored order. It is the
-declared-member reduction's managed counterpart and, like it, the one operation
-that walks a whole managed document against its shape: a consumer that fills a
-`many`'s zero or drops an unknown key by hand is implementing a second reduction,
-which this module already forbids.
+declared-member reduction's managed counterpart.
 
 `classifyEffectiveChange` is the one operation answering whether an assignment
 changes anything, and every consumer that asks that question asks it here. It
