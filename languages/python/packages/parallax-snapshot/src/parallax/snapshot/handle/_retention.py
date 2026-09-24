@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Protocol, cast
 
 from parallax.core.base import retain_document_value
@@ -25,10 +24,8 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle._family import (
     declaring,
-    entity_layout,
     family_primary_key,
     is_temporal,
-    members,
     tx_time_axis,
     version_attribute,
 )
@@ -38,7 +35,6 @@ __all__ = [
     "ObservedRows",
     "ReadSources",
     "deferred_evidence",
-    "retain_evidence",
 ]
 
 
@@ -48,13 +44,10 @@ class _ObservedRow:
 
     ``node`` is the Page occurrence this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
-    ``entity`` is the row's own resolved concrete Entity. ``state`` arrives in
-    exactly one of two namings, and in neither until the Page judges that
-    occurrence: an :class:`EntityStateRow` is the declared-name view over its
-    shared positional Entity State, and any other mapping is the
-    physical-column-keyed snapshot a direct fixture supplied, remapped to
-    declared names only when the row is retained. ``document`` is the raw
-    Structured Column under Relational Document Layout.
+    ``entity`` is the row's own resolved concrete Entity. ``state`` is absent
+    until the Page judges that occurrence, and is then the declared-name
+    :class:`EntityStateRow` view over its shared positional Entity State.
+    ``document`` is the raw Structured Column under Relational Document Layout.
 
     It holds neither a raw driver row nor a materialized node, so an observation
     outlives the read that produced it without pinning either.
@@ -62,7 +55,7 @@ class _ObservedRow:
 
     node: int
     entity: EntityIdentity
-    state: EntityStateRow | Mapping[str, object] | None
+    state: EntityStateRow | None
     document: object | None
 
 
@@ -73,29 +66,15 @@ class ObservedRows:
     """What one :func:`~parallax.snapshot.handle.find` collects for the write
     side while its rows are still live.
 
-    Occurrence references paired with their row provenance: graph-form reads use
-    :meth:`observe_occurrence` and receive their members only from the judged,
-    Page-owned Entity State, while direct unit-work fixtures may supply a
-    physical-column-keyed mapping through :meth:`observe_row`. Iteration is the
-    only way out and :func:`retain_evidence` is the only consumer.
+    Occurrence references paired with their row provenance, recorded through
+    :meth:`observe_occurrence`: each receives its members only from the judged,
+    Page-owned Entity State, and :func:`deferred_evidence` is the only consumer.
     """
 
     __slots__ = ("_rows",)
 
     def __init__(self) -> None:
         self._rows: list[_PendingObservation] = []
-
-    def observe_row(
-        self,
-        node: int,
-        entity: EntityIdentity,
-        columns: Mapping[str, object],
-        document: object | None,
-    ) -> None:
-        """Snapshot one materialized row's observable state, keyed by physical
-        column. ``columns`` stays the caller's, so a later edit to it cannot reach
-        the recorded observation."""
-        self._rows.append(_ObservedRow(node, entity, dict(columns), document))
 
     def observe_occurrence(
         self,
@@ -105,13 +84,6 @@ class ObservedRows:
     ) -> None:
         """Record a projection whose columns will come from its judged Entity State."""
         self._rows.append(node if document is None else _ObservedRow(node, entity, None, document))
-
-    def __iter__(self) -> Iterator[_ObservedRow]:
-        """Every row observed so far, in the order the executor materialized them
-        (root first, then each level in plan order). Nothing outside this module
-        can name what is yielded, and nothing addresses a hint by that order:
-        :func:`retain_evidence` keys its answer by each row's own projection."""
-        return (observed for observed in self._rows if isinstance(observed, _ObservedRow))
 
 
 type ReadSources = Mapping[int, ReadOrigin]
@@ -198,6 +170,8 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._primary_key = primary_key
         self._ledger = ledger
         self._participation = None if ledger is None else ledger.participation
+        # One observed state, one retained observation within this pass, so two
+        # projections of one row answer one claim exactly as graph aliases do.
         self._pass_states: dict[ObservedStateKey, RetainedObservation] = {}
         self._pin = pin
         self._resolved: list[ReadOrigin | None] = [None] * len(retained)
@@ -314,7 +288,41 @@ def deferred_evidence(
     ledger: ObservationLedger | None,
     pin: Pin,
 ) -> ReadSources:
-    """A mapping that retains evidence as valid judged states become reachable."""
+    """A mapping that retains evidence as valid judged states become reachable
+    (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
+
+    Each projection's Read Origin resolves when first read. Versioned and
+    temporal evidence comes from the Entity State the Page judged for that
+    projection (``admitted``), viewed by declared member name, and is retained
+    only once that state is reachable and valid.
+
+    Evidence is addressed by the exact state it is about
+    (:func:`~parallax.core.unit_work.observed_state_key`), so a second read of
+    one primary key that resolves to a different version or milestone is
+    evidence about the row it saw rather than an overwrite of the first read's.
+    The identity half is the :class:`~parallax.core.unit_work.ObjectKey` a later
+    keyed write computes, over the row's own resolved concrete Entity (never
+    family-normalized to the root), which is what ``tx.update(copy)`` resolves
+    its instance's class to.
+
+    An unversioned Non-Temporal row observes no state, yet still yields a Read
+    Origin naming the object and the participation its read licensed, which is
+    the whole of what an effective-Locking write asks of it.
+
+    ``pin`` is the read's whole-graph as-of coordinate and no part of the
+    evidence, so two pins selecting one milestone retain one state. Each hint of
+    a temporal row carries it instead, where it answers whether the value may be
+    written at all rather than which state a write settles against.
+
+    ``ledger`` is the participating unit of work, absent for a standalone read.
+    It supplies the participation each hint carries and answers evidence it
+    already holds for a state this read saw again; a standalone read stamps no
+    participation.
+
+    Under Relational Document Layout a temporal observation also retains the
+    row's raw Structured Column, so a successor is patched from what the row
+    held rather than rebuilt from the members this model declares.
+    """
     return _DeferredReadSources(
         meta,
         observations,
@@ -324,87 +332,6 @@ def deferred_evidence(
         ledger=ledger,
         pin=pin,
     )
-
-
-def retain_evidence(
-    meta: Metamodel,
-    observations: ObservedRows,
-    *,
-    ledger: ObservationLedger | None,
-    pin: Pin | None = None,
-) -> ReadSources:
-    """Retain the observed version/temporal-milestone of every VERSIONED or
-    TEMPORAL row :func:`find` materialized, onto the values that observed them
-    (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
-
-    Evidence is addressed by the exact state it is about
-    (:func:`~parallax.core.unit_work.observed_state_key`), so a second read of
-    one primary key that resolves to a DIFFERENT version or milestone is
-    evidence about the row it actually saw rather than an overwrite of the first
-    read's, and a live value keeps the state IT observed however often the row
-    is read again. The identity half is the SAME
-    :class:`~parallax.core.unit_work.ObjectKey` a subsequent keyed write's own
-    :func:`~parallax.core.unit_work.object_key` computes — the Entity here is the
-    row's OWN resolved concrete Entity (never family-normalized to the root),
-    which is what a developer's later ``tx.update(copy)`` resolves its instance's
-    own class to; the coordinate half is derived from the observation itself.
-
-    Every observed row also yields a Read Origin, including an UNVERSIONED
-    Non-Temporal row, which observes no state: what its hint carries is the
-    object it denotes and the participation its read licensed, which is the whole
-    of what an effective-Locking write asks of it. A row whose (family-effective)
-    primary key, version column, or Transaction-Time interval is absent from its
-    own observed columns is defensively skipped — never reachable for a
-    well-formed corpus model, but this seam takes no data on faith. A versioned
-    entity is never also temporal (`m-opt-lock`/`m-descriptor`: the two are
-    mutually exclusive), so each row takes exactly one branch.
-
-    The statement's own as-of coordinates are deliberately no part of that
-    EVIDENCE. What a write settles against is the state its value came from, and
-    that state is what the key names; the pin that selected it is a property of
-    the read, so two pins selecting one milestone retain one indistinguishable
-    piece of evidence. The pin rides each hint instead (``pin`` below), where it
-    answers a different question — whether this value may be written at all —
-    rather than which state a write settles against.
-
-    ``find`` is always INSTANCE-form, which projects every applicable Column, so
-    an observed row's columns are the COMPLETE persisted row a Predecessor Row
-    requires. Under Relational Document Layout the read ALSO carried the row's raw
-    Structured Column past the fan-out that decoded those members, and a temporal
-    observation retains it (`m-unit-work`) so a successor is patched from what the
-    row held rather than rebuilt from the members this model declares — at no
-    extra query, because the predecessor read already materialized it.
-
-    ``ledger`` is the participating unit of work, absent for a standalone read.
-    Its two answers are the participation each hint carries and the evidence it
-    already holds for a state this read saw again; a standalone read stamps no
-    participation and shares nothing beyond this one pass.
-
-    ``pin`` is the read's own whole-graph as-of coordinate, which each hint
-    carries for a TEMPORAL row and leaves absent otherwise — the same rule the
-    typed materializer applies to a node's own lifecycle state, so a Typed node
-    and a Wire node of one row answer the same pin to the finite-Transaction-Time
-    refusal every keyed verb runs.
-    """
-    participation = None if ledger is None else ledger.participation
-    hints: dict[int, ReadOrigin] = {}
-    # One observed state, one retained observation within this pass, so two
-    # projections of one row answer one claim exactly as graph aliases do.
-    pass_states: dict[ObservedStateKey, RetainedObservation] = {}
-    shapes: dict[EntityIdentity, _ObservationShape | None] = {}
-    for observed in observations:
-        origin = _retain_observed(
-            meta,
-            observed,
-            participation=participation,
-            pass_states=pass_states,
-            shapes=shapes,
-            ledger=ledger,
-            pin=pin,
-        )
-        if origin is not None:
-            hints[observed.node] = origin
-    return MappingProxyType(hints)
 
 
 def _retain_observed(
@@ -437,9 +364,7 @@ def _retain_observed(
 @dataclass(frozen=True, slots=True)
 class _ObservationShape:
     """The family facts one concrete Entity's rows are read through, every
-    member named by its DECLARED name; ``member_columns`` is the physical
-    translation a column-keyed source is remapped through before any of the
-    others is read."""
+    member named by its DECLARED name."""
 
     identity: EntityIdentity
     declaring: EntityMetadata
@@ -447,7 +372,6 @@ class _ObservationShape:
     version_member: str | None
     temporal: bool
     tx_start_member: str | None
-    member_columns: Mapping[str, tuple[str, bool]]
 
 
 class _StandaloneObservedEvidence:
@@ -527,9 +451,6 @@ def _observation_shape(meta: Metamodel, identity: EntityIdentity) -> _Observatio
     if entity is None:  # pragma: no cover - a materialized row resolved within this model
         return None
     declaring_entity = declaring(meta, entity)
-    layout = entity_layout(meta, entity)
-    if layout is None:  # pragma: no cover - a materialized node always owns rows
-        return None
     version_attr = version_attribute(meta, declaring_entity)
     temporal = is_temporal(declaring_entity)
     return _ObservationShape(
@@ -541,7 +462,6 @@ def _observation_shape(meta: Metamodel, identity: EntityIdentity) -> _Observatio
         version_member=None if version_attr is None else version_attr.identity.name,
         temporal=temporal,
         tx_start_member=(tx_time_axis(declaring_entity).start_attribute.name if temporal else None),
-        member_columns=members(layout),
     )
 
 
@@ -556,11 +476,6 @@ def _observed_object(
     The evidence is absent for an unversioned Non-Temporal row, which observes
     no state; the object and the declaring root are answered either way, because
     a hint names the object whether or not a state stands behind it.
-
-    The row is read by declared member name throughout: a judged positional
-    state arrives already viewed that way, and a physical-column-keyed source is
-    remapped through the shape's own column translation before any member is
-    read.
     """
     shape = shapes.get(observed.entity)
     if shape is None and observed.entity not in shapes:
@@ -568,14 +483,9 @@ def _observed_object(
         shapes[observed.entity] = shape
     if shape is None:
         return None
-    state = observed.state
-    if state is None:  # pragma: no cover - deferred retention supplies judged state
+    members = observed.state
+    if members is None:  # pragma: no cover - deferred retention supplies judged state
         return None
-    members = (
-        state
-        if isinstance(state, EntityStateRow)
-        else EntityStateRow.remap(shape.member_columns, state)
-    )
     if not shape.primary_key or any(  # pragma: no cover - defends a malformed model/projection
         name not in members for name in shape.primary_key
     ):
@@ -615,10 +525,9 @@ def _temporal_observation(
     values"; `m-value-object` "the document rides every chained/split row
     whole").
 
-    ``members`` is the row's state keyed by DECLARED member name — a judged
-    positional state viewed directly, or a physical-column-keyed source already
-    remapped — and it is retained as that view: nothing here copies, renders, or
-    re-keys it. Every value passes through EXACTLY as the row carries it, which
+    ``members`` is the judged positional state viewed by DECLARED member name,
+    and it is retained as that view: nothing here copies, renders, or re-keys
+    it. Every value passes through EXACTLY as the row carries it, which
     for a scalar or interval column is exactly what the port returned (a real
     ``timestamptz`` column may be a driver-native ``datetime.datetime`` or the
     native-infinity sentinel, never pre-rendered to a wire string here) — the

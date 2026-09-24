@@ -104,15 +104,6 @@ class EntityStateRow(Mapping[str, object]):
         row._absent = absent
         return row
 
-    @classmethod
-    def remap(
-        cls,
-        members: Mapping[str, tuple[str, bool]],
-        state: Mapping[str, object],
-    ) -> EntityStateRow:
-        """View physical state keys through their logical member names."""
-        return cls(_RemappedMembers(members, state))
-
     def __getitem__(self, key: str) -> object:
         members = self._members
         if members is not None:
@@ -176,32 +167,6 @@ class EntityStateRow(Mapping[str, object]):
         if shape is None:
             return super().items()
         return _DeclaredItems(self, shape.members, self._values, self._absent)
-
-
-class _RemappedMembers(Mapping[str, object]):
-    __slots__ = ("_members", "_state")
-
-    def __init__(
-        self,
-        members: Mapping[str, tuple[str, bool]],
-        state: Mapping[str, object],
-    ) -> None:
-        self._members = members
-        self._state = state
-
-    def __getitem__(self, key: str) -> object:
-        column, _is_value_object = self._members[key]
-        return self._state[column]
-
-    def __iter__(self) -> Iterator[str]:
-        return (
-            name
-            for name, (column, _is_value_object) in self._members.items()
-            if column in self._state
-        )
-
-    def __len__(self) -> int:
-        return sum(1 for _name in self)
 
 
 class _EntityDocumentRow(Mapping[str, object]):

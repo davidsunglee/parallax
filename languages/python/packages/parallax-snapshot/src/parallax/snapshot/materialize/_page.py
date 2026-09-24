@@ -71,11 +71,6 @@ type StoredDataIssueCode = Literal[
 ]
 """The closed internal stored-data issue vocabulary for snapshot reads."""
 
-_INVALID_KEY_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
-    {"stored-data-primary-key-null", "stored-data-primary-key-undecodable"}
-)
-"""The codes that leave a projection with no usable Page-local identity."""
-
 
 @dataclass(frozen=True, slots=True)
 class StoredDataIssueInput:
@@ -204,19 +199,17 @@ class DecoderRows:
         self._count = 0
 
 
-class JudgedStates(Mapping[LogicalKey, list[tuple[int, EntityState]]]):
-    """Dense logical-node-indexed state groups with a mapping inspection view."""
+class JudgedStates:
+    """Dense logical-node-indexed judged Entity States: one for a singleton
+    claim, and one per witness-distinct state for a grouped claim."""
 
-    __slots__ = ("_claims", "_groups", "_keys")
+    __slots__ = ("_claims", "_groups")
 
-    def __init__(
-        self,
-        keys: tuple[LogicalKey | None, ...],
-        claims: Sequence[int | tuple[int, ...]],
-    ) -> None:
-        self._keys = list(keys)
+    def __init__(self, claims: Sequence[int | tuple[int, ...]]) -> None:
         self._claims = claims if isinstance(claims, list) else list(claims)
-        self._groups: list[EntityState | list[tuple[int, EntityState]] | None] = [None] * len(keys)
+        self._groups: list[EntityState | list[tuple[int, EntityState]] | None] = [None] * len(
+            self._claims
+        )
 
     def singleton(self, logical: int) -> EntityState | None:
         group = self._groups[logical]
@@ -234,47 +227,12 @@ class JudgedStates(Mapping[LogicalKey, list[tuple[int, EntityState]]]):
             raise ValueError("a singleton judged state has no witness-distinct group")
         return group
 
-    def _mapping_value(self, logical: int) -> list[tuple[int, EntityState]] | None:
-        group = self._groups[logical]
-        if group is None:
-            return None
-        if isinstance(group, EntityState):
-            claim = self._claims[logical]
-            if not isinstance(claim, int):  # pragma: no cover - claim shape is fixed
-                raise ValueError("a grouped claim cannot hold singleton state")
-            return [(claim, group)]
-        return group
-
-    def __getitem__(self, key: LogicalKey) -> list[tuple[int, EntityState]]:
-        for logical, candidate in enumerate(self._keys):
-            if candidate == key and (group := self._mapping_value(logical)):
-                return group
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[LogicalKey]:
-        return (
-            key
-            for key, group in zip(self._keys, self._groups, strict=True)
-            if key is not None and group is not None
-        )
-
-    def __len__(self) -> int:
-        return sum(group is not None for group in self._groups)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Mapping):
-            return False
-        comparable = cast("Mapping[object, object]", other)
-        return dict(self.items()) == dict(comparable.items())
-
     def release(self) -> None:
         self._groups.clear()
-        self._keys.clear()
         self._claims.clear()
 
     def release_logical(self, logical: int) -> None:
         self._groups[logical] = None
-        self._keys[logical] = None
         self._claims[logical] = 0
 
 
@@ -350,10 +308,6 @@ class Page:
     def root_count(self) -> int:
         """The number of result positions this Page carries."""
         return len(self._rows.roots)
-
-    @property
-    def judged_states(self) -> Mapping[LogicalKey, list[tuple[int, EntityState]]]:
-        return self._rows.judged_states
 
     @property
     def observer(self) -> object | None:
@@ -463,11 +417,11 @@ class PageBuilder:
     """One materialization's accumulation arrays and Page-local identity scope.
 
     Two roles, and the second is a deliberate concession rather than an
-    accumulating surface. It **accumulates**: an already-decoded row is appended
-    with :meth:`add`, an identity-first occurrence with :meth:`add_claim`, a
-    level's fan-back is recorded with :meth:`write_view`, and :meth:`finish`
-    publishes the lot. It also **answers** three questions about rows it already
-    holds — :meth:`member_value`, :meth:`concrete_of`, and :meth:`resolve` —
+    accumulating surface. It **accumulates**: an identity-first occurrence is
+    appended with :meth:`add_claim`, a level's fan-back is recorded with
+    :meth:`write_view`, and :meth:`finish` publishes the lot. It also
+    **answers** three questions about rows it already holds —
+    :meth:`member_value`, :meth:`concrete_of`, and :meth:`resolve` —
     because a read level gathers its keys, filters its parents, and resolves a
     back-reference against exactly those rows, and until finishing nothing else
     holds them. Nothing beyond that fan-out may reach for the three.
@@ -531,52 +485,6 @@ class PageBuilder:
         self._witnesses: list[object] = []
         self._sealed = False
 
-    def add(
-        self,
-        source: SourceLevel,
-        layout: EntityLayout,
-        member_values: tuple[object, ...],
-        issues: tuple[StoredDataIssueInput, ...] = (),
-    ) -> int:
-        """Append one converted projection of ``source`` and answer its index.
-
-        ``source`` is the plan level that produced the row, which together with
-        the layout's own Entity decides the view row this projection carries: a
-        fixed-width row of ``ABSENT`` slots, each one a level below ``source``
-        will write.
-
-        The logical-node ID is assigned here from the already decoded identity
-        positions and the layout's key rule. Duplicates within one Entity family
-        share an ID; a projection whose key did not decode takes an ID of its own
-        and keeps its diagnosis, so it shares with nothing — not even a second
-        read of the identical unreadable row.
-
-        This is the adapter for rows whose conversion is already complete: it
-        derives identity from the supplied members and records the same tuple as
-        both raw witness and deferred result. Identity-first provider reads call
-        :meth:`add_claim` directly. In both paths a Root View compares every claim
-        for the logical node before invoking a decoder, then shares one Page-owned
-        Entity State among equal witnesses.
-        """
-        key = (
-            None
-            if _keyless(issues)
-            else LogicalKey(
-                layout.family,
-                layout.key_of(member_values),
-                tuple(member_values[position] for position in layout.temporal_starts),
-            )
-        )
-        return self.add_claim(
-            source,
-            layout,
-            key,
-            member_values,
-            member_values,
-            issues,
-            lambda: (member_values, issues),
-        )
-
     def add_claim(
         self,
         source: SourceLevel,
@@ -588,7 +496,16 @@ class PageBuilder:
         decode: Callable[[], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]
         | tuple[object, ...],
     ) -> int:
-        """Append an identity claim without judging its payload."""
+        """Append an identity claim without judging its payload, and answer its
+        projection index.
+
+        Claims under one ``key`` share a logical node; a claim with no key keeps
+        its own, so it shares with nothing — not even a second claim of the
+        identical unreadable row. A Root View compares every claim's
+        ``witness`` for a logical node before invoking ``decode``, then shares one
+        Page-owned Entity State among equal witnesses. ``decode`` is either the
+        deferred payload judgment or the member row it would produce.
+        """
         self._require_open()
         if source == self._last_source and layout is self._last_layout:
             slots = cast("SourceViewLayout", self._last_slots)
@@ -708,9 +625,7 @@ class PageBuilder:
             schema=self._schema,
             roots=roots,
             pin=pin,
-            judged_states=JudgedStates(
-                tuple(self._keys[first] for first in self._first), sealed_claims
-            ),
+            judged_states=JudgedStates(sealed_claims),
             observer=self._observer,
             witnesses=self._witnesses,
             source_ordinals=source_ordinals,
@@ -777,11 +692,6 @@ class PageBuilder:
     def _require_open(self) -> None:
         if self._sealed:
             raise ValueError("this page builder finished its arrays into a Page and holds nothing")
-
-
-def _keyless(issues: tuple[StoredDataIssueInput, ...]) -> bool:
-    """Whether ``issues`` leave a projection with no usable Page-local identity."""
-    return any(issue.code in _INVALID_KEY_CODES for issue in issues)
 
 
 def _require_edge(value: object, count: int) -> None:
