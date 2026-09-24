@@ -540,59 +540,21 @@ def test_durations_with_no_mean_between_them_are_a_usage_error(tmp_path: Path) -
         cost_durations.known(path)
 
 
-def _stored_over_two_entries(
-    path: Path, *, collected_the_whole_class: bool, collected: Sequence[str], succeeded: bool
-) -> dict[str, float]:
-    """A file holding a renamed and a kept item after a session with those facts
-    stores its one observation of the kept one over it."""
+def _stored_over_two_entries(path: Path, *, replace: bool) -> dict[str, float]:
+    """A file holding a renamed and a kept item after a store of one observation
+    of the kept one over it."""
     path.write_text('{"a::renamed": 5.0, "a::kept": 2.0}\n', encoding="utf-8")
-    cost_durations.store(
-        {"a::kept": 3.04},
-        collected_the_whole_class=collected_the_whole_class,
-        collected=collected,
-        succeeded=succeeded,
-        path=path,
-    )
+    cost_durations.store({"a::kept": 3.04}, replace=replace, path=path)
     return cost_durations.known(path)
 
 
-def test_a_session_that_measured_the_whole_class_replaces_the_stored_durations(
-    tmp_path: Path,
-) -> None:
-    # Such a session measured every item there is, so an entry it did not observe
-    # names an item that has been deleted or renamed and would otherwise go on
-    # weighing a shard that will never run it again.
-    stored = _stored_over_two_entries(
-        tmp_path / "cost_durations.json",
-        collected_the_whole_class=True,
-        collected=["a::kept"],
-        succeeded=True,
-    )
+def test_a_replacing_store_drops_every_item_it_did_not_observe(tmp_path: Path) -> None:
+    stored = _stored_over_two_entries(tmp_path / "cost_durations.json", replace=True)
     assert stored == {"a::kept": 3.0}
 
 
-@pytest.mark.parametrize(
-    ("collected_the_whole_class", "collected", "succeeded"),
-    [
-        pytest.param(False, ["a::kept"], True, id="a-narrower-selection"),
-        pytest.param(True, ["a::kept", "a::unreached"], True, id="an-item-never-reached"),
-        pytest.param(True, ["a::kept"], False, id="an-unsuccessful-session"),
-    ],
-)
-def test_a_session_that_measured_less_than_the_whole_class_merges(
-    collected_the_whole_class: bool, collected: Sequence[str], succeeded: bool, tmp_path: Path
-) -> None:
-    # Collecting the whole class is not measuring it: a session narrowed after
-    # collection reports a call for fewer items than it was handed, and one that
-    # ends badly may report none at all. Either way the entries it did not
-    # observe are the only record of the items it did not run, so each of the
-    # three conditions alone decides between replacing the file and merging.
-    stored = _stored_over_two_entries(
-        tmp_path / "cost_durations.json",
-        collected_the_whole_class=collected_the_whole_class,
-        collected=collected,
-        succeeded=succeeded,
-    )
+def test_a_merging_store_keeps_every_item_it_did_not_observe(tmp_path: Path) -> None:
+    stored = _stored_over_two_entries(tmp_path / "cost_durations.json", replace=False)
     assert stored == {"a::renamed": 5.0, "a::kept": 3.0}
 
 
