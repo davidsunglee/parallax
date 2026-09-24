@@ -30,7 +30,8 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity import METAMODEL_DEFINITION_CODES, MetamodelLookupError
+from parallax.core.entity import MetamodelLookupError
+from parallax.core.entity._errors import METAMODEL_DEFINITION_CODES
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.model_formation import MetamodelValidationError

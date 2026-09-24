@@ -11,7 +11,7 @@ from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wi
 from parallax.snapshot.materialize._evidence import freeze_evidence
 from parallax.snapshot.materialize._page import LogicalKey, StoredDataIssueInput
 
-__all__ = ["IdentityClaim", "claim_identity"]
+__all__ = ["claim_identity"]
 
 
 class _AttributeRead(Protocol):

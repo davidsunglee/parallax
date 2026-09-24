@@ -8,11 +8,11 @@ from parallax.core.base import retain_document_value
 from parallax.core.unit_work.observe import PredecessorRow, adopt_predecessor_row
 
 __all__ = [
-    "ChunkedColumn",
     "ChunkedColumnBuilder",
     "ColumnSlice",
     "PredecessorColumns",
     "PredecessorShape",
+    "freeze_retained_value",
     "whole",
 ]
 

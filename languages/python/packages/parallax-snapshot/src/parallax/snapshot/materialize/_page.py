@@ -31,17 +31,18 @@ __all__ = [
     "Page",
     "PageBuilder",
     "PageRows",
-    "RelationshipViewKey",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "dedupe_issues",
     "exact_stored_equal",
     "judged_state",
+    "layout_order_key",
     "page_edges",
     "page_rows",
     "release_page_rows",
     "root_last_uses",
     "same_witness",
+    "stored_order_key",
 ]
 
 _NO_VIEWS: Final[tuple[()]] = ()

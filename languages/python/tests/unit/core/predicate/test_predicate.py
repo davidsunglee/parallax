@@ -19,11 +19,8 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.core import predicate
-from parallax.core.predicate import (
-    QUERY_DEFINITION_CODES,
-    CanonicalDocumentError,
-    QueryDefinitionError,
-)
+from parallax.core.predicate import CanonicalDocumentError, QueryDefinitionError
+from parallax.core.predicate._nodes import QUERY_DEFINITION_CODES
 from tests._support.corpus import case_document
 from tests._support.repo import REPO_ROOT
 

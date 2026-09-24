@@ -23,7 +23,7 @@ from parallax.core.entity._instance_state import is_present, named_state, plan_o
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import EntityIdentity
 
-__all__ = ["AuthoredRow", "EntityRowCodec"]
+__all__ = ["EntityRowCodec"]
 
 
 _NO_RECORD: Final = object()

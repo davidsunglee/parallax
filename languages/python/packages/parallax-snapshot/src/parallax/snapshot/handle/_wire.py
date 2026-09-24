@@ -17,9 +17,7 @@ from parallax.snapshot.handle._wire_writes import (
 from parallax.snapshot.materialize import WireEntity
 
 __all__ = [
-    "WireChanges",
     "WireDatabaseView",
-    "WirePredicateTarget",
     "WireTransactionView",
 ]
 

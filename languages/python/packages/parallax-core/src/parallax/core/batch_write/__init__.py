@@ -14,9 +14,6 @@ from parallax.core.metamodel import (
 
 __all__ = [
     "collapses",
-    "delete_collapses",
-    "insert_collapses",
-    "update_collapses",
 ]
 
 _INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})

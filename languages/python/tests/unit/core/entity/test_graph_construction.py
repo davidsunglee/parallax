@@ -27,7 +27,6 @@ import pytest
 from parallax.core import Attr, Bitemporal, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
-    GRAPH_CONSTRUCTION_CODES,
     UNLOADED,
     EntityGraphWriter,
     GraphConstructionError,
@@ -37,6 +36,7 @@ from parallax.core.entity import (
     relationship_value_of,
 )
 from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._errors import GRAPH_CONSTRUCTION_CODES
 from parallax.core.entity._model import DomainModel
 from parallax.core.metamodel import (
     EntityIdentity,

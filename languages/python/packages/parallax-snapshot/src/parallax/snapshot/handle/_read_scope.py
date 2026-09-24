@@ -63,14 +63,10 @@ from parallax.snapshot.handle._retention import ObservationLedger
 from parallax.snapshot.handle._stream import SnapshotStream, StreamRead, check_batch_size
 
 __all__ = [
-    "ReadInputs",
     "ReadScope",
     "WireQuery",
-    "materializing",
     "participating_read_scope",
-    "publication_for",
     "standalone_read_scope",
-    "wire_query_node",
 ]
 
 type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]

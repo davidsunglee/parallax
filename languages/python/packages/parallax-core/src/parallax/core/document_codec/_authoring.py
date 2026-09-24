@@ -17,13 +17,9 @@ from parallax.core.metamodel import (
 __all__ = [
     "BORROWED_SOURCE_ACCESS",
     "MAPPING_SOURCE_ACCESS",
-    "LeafNormalizer",
-    "PreparedAuthoring",
-    "PreparedMemberAuthoring",
     "SourceAccess",
     "prepare_authoring",
     "prepare_member_authoring",
-    "validate_authoring",
     "validate_member_authoring",
 ]
 

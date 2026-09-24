@@ -14,7 +14,6 @@ from parallax.core.unit_work.planned import (
 )
 
 __all__ = [
-    "AddressedTarget",
     "CardinalityCorruptionError",
     "MissingTargetError",
     "OptimisticLockConflictError",

@@ -27,6 +27,7 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     Metamodel,
     NestedValueObjectMetadata,
@@ -40,6 +41,7 @@ from parallax.core.predicate._validated import (
     ValidatedPredicate,
     deferred_membership,
 )
+from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
@@ -48,6 +50,7 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.storage_layout import _compile as storage_layout_compile
 from tests._support import fake_metamodel
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
@@ -669,14 +672,14 @@ def test_optimistic_and_default_reads_take_no_lock() -> None:
 # --------------------------------------------------------------------------- #
 def _fake_model() -> Metamodel:
     base = fake_metamodel.parity_model()
-    inheritance_facet = inheritance.compile_facet(base)
+    inheritance_facet = inheritance_compile.compile_facet(base)
     return fake_metamodel.parity_model(
         {
             inheritance.FACET_KEY: inheritance_facet,
-            storage_layout.FACET_KEY: storage_layout.compile_facet(
-                base, inheritance_facet, relationship.compile_facet(base)
+            storage_layout.FACET_KEY: storage_layout_compile.compile_facet(
+                base, inheritance_facet, relationship_compile.compile_facet(base)
             ),
-            relationship.FACET_KEY: relationship.compile_facet(base),
+            relationship.FACET_KEY: relationship_compile.compile_facet(base),
         }
     )
 

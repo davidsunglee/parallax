@@ -34,12 +34,9 @@ from parallax.evolution.model_evolution._values import (
 )
 
 __all__ = [
-    "AxisKey",
-    "CollectionOrder",
     "EntityFacts",
     "Matching",
     "Occurrence",
-    "Paired",
     "RelationshipFacts",
     "match",
 ]

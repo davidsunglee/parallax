@@ -13,7 +13,6 @@ from parallax.core.document_codec._shape import (
 from parallax.core.metamodel import Multiplicity
 
 __all__ = [
-    "EffectiveChangeSet",
     "classify_effective_change",
 ]
 

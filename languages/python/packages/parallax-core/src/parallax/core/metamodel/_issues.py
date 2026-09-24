@@ -25,11 +25,9 @@ __all__ = [
     "MetamodelIssue",
     "ModelLocation",
     "ModelLocationKey",
-    "ModelRoot",
     "RelationshipLocation",
     "ValueObjectAttributeLocation",
     "ValueObjectLocation",
-    "canonical_issue_key",
     "canonical_location_key",
     "sort_issues",
 ]

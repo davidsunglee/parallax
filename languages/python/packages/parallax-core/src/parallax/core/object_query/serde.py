@@ -21,7 +21,7 @@ from parallax.core.predicate import CanonicalDocumentError, canonical_subtype_se
 from parallax.core.predicate import deserialize as deserialize_predicate
 from parallax.core.predicate import serialize as serialize_predicate
 
-__all__ = ["ObjectQueryError", "deserialize", "serialize"]
+__all__ = ["deserialize", "serialize"]
 
 
 class ObjectQueryError(CanonicalDocumentError):

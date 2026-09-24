@@ -21,6 +21,7 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "WriteObservation",
+    "adopt_predecessor_row",
 ]
 
 

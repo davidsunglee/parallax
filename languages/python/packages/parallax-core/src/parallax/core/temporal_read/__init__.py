@@ -28,11 +28,7 @@ from parallax.core.predicate._validated import (
 from parallax.core.predicate._validated import (
     managed_comparison as _managed_comparison,
 )
-from parallax.core.temporal_read._compile import (
-    MODEL_COMPILER,
-    TemporalReadModelCompiler,
-    compile_facet,
-)
+from parallax.core.temporal_read._compile import MODEL_COMPILER
 from parallax.core.temporal_read._facet import (
     FACET_KEY,
     NON_TEMPORAL,
@@ -56,14 +52,16 @@ __all__ = [
     "Pin",
     "TemporalFacet",
     "TemporalReadError",
-    "TemporalReadModelCompiler",
     "TemporalShape",
     "TransactionTimeOnly",
     "UndeclaredAxisError",
-    "compile_facet",
+    "inject_resolved_as_of",
     "milestone_edge_from_members",
     "milestone_edge_of",
+    "resolved_pinned_instants",
+    "scans_validated_axis",
     "validated_hop_as_of_terms",
+    "validated_query_pin",
     "view",
 ]
 

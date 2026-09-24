@@ -60,8 +60,8 @@ from parallax.core.object_query._validated import (
     ValidatedObjectQuery,
 )
 from parallax.core.predicate import All, Comparison, Or, PredicateNode
-from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._context import LoweredStatement
 from parallax.descriptor import _records
 from tests.unit._corpus_model_support import corpus, formed
 from tests.unit._corpus_model_support import model as accepted_model

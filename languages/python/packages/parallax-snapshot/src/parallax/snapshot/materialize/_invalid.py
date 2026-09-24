@@ -14,7 +14,6 @@ __all__ = [
     "MISSING_STORED_VALUE",
     "InvalidData",
     "InvalidDataError",
-    "MissingStoredValue",
     "StoredDataIssue",
 ]
 

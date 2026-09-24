@@ -27,6 +27,7 @@ __all__ = [
     "Invalidated",
     "ReleaseUnconfirmed",
     "Returned",
+    "StartupPhase",
 ]
 
 type CleanupPhase = Literal["inspect", "restore", "dispose", "return"]

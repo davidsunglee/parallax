@@ -18,7 +18,7 @@ from parallax.core.base._neutral import (
     NeutralType,
 )
 
-__all__ = ["NEUTRAL_FROM_PYTHON", "infer_neutral_type"]
+__all__ = ["infer_neutral_type"]
 
 NEUTRAL_FROM_PYTHON: Final[Mapping[type, NeutralType]] = {
     bool: BOOLEAN,

@@ -67,7 +67,6 @@ from parallax.snapshot.handle import (
     Database,
     ScopedDatabase,
     Transaction,
-    _materialization,
     _read_plan,
 )
 from parallax.snapshot.handle import _stream as stream_module
@@ -832,14 +831,8 @@ def test_a_delivery_compiles_each_structural_statement_once(
 ) -> None:
     root_compiles = 0
     child_compiles = 0
-    compile_root = cast("Callable[..., Any]", vars(_materialization)["compile_read"])
     prepare_root = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
     compile_child = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
-
-    def counting_root(*args: Any, **kwargs: Any) -> Any:
-        nonlocal root_compiles
-        root_compiles += 1
-        return compile_root(*args, **kwargs)
 
     def counting_prepared_root(*args: Any, **kwargs: Any) -> Any:
         nonlocal root_compiles
@@ -851,7 +844,6 @@ def test_a_delivery_compiles_each_structural_statement_once(
         child_compiles += 1
         return compile_child(*args, **kwargs)
 
-    monkeypatch.setattr(_materialization, "compile_read", counting_root)
     monkeypatch.setattr(_read_plan, "compile_read", counting_prepared_root)
     monkeypatch.setattr(_read_plan, "compile_template", counting_child)
     port = ScriptedAdapter(

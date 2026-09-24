@@ -45,7 +45,6 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     DatabaseLoginActor,
-    EscapedTransactionError,
     FixedClock,
     MissingTargetError,
     OptimisticLockConflictError,
@@ -60,6 +59,7 @@ from parallax.core.unit_work import (
     WritePlanner,
     run_unit_of_work,
 )
+from parallax.core.unit_work.uow import EscapedTransactionError
 from parallax.snapshot import DatabaseOptions, ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,

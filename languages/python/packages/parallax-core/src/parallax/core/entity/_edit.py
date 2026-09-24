@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 __all__ = [
     "Resolution",
     "derive",
-    "partition_declared",
     "unresolved_member_violation",
     "use_edit",
 ]

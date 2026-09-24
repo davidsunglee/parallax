@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parallax.core.object_query._canonical import canonical_includes, object_query, subtype_spelling
+from parallax.core.object_query._canonical import object_query, subtype_spelling
 from parallax.core.object_query._nodes import (
     LATEST,
     TX_TIME,
@@ -18,7 +18,7 @@ from parallax.core.object_query._nodes import (
     TemporalDimensionConstant,
     TemporalSelection,
 )
-from parallax.core.object_query.serde import ObjectQueryError, deserialize, serialize
+from parallax.core.object_query.serde import deserialize, serialize
 from parallax.core.object_query.validate import validate_object_query
 
 __all__ = [
@@ -32,13 +32,11 @@ __all__ = [
     "IncludeSegment",
     "Latest",
     "MutationSelection",
-    "ObjectQueryError",
     "ObjectQueryNode",
     "OrderKey",
     "TemporalDimension",
     "TemporalDimensionConstant",
     "TemporalSelection",
-    "canonical_includes",
     "deserialize",
     "object_query",
     "serialize",

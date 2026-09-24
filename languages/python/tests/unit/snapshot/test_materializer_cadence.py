@@ -13,13 +13,13 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
+from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materialization import (
     INERT,
     FlatPageRead,
     MaterializationObserver,
     Materializer,
-    compile_read,
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]

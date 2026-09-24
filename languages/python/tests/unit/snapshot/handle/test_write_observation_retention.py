@@ -39,15 +39,14 @@ from parallax.core.unit_work import (
     ReadOrigin,
     RetainedObservation,
     TemporalObservation,
-    TemporalStateKey,
     TransactionSettings,
     UnitOfWork,
-    VersionedStateKey,
     VersionObservation,
     WriteBatchTrigger,
     WritePlan,
     run_unit_of_work,
 )
+from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence

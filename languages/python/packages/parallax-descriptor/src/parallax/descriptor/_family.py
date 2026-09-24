@@ -12,7 +12,6 @@ from parallax.descriptor._records import (
 )
 
 __all__ = [
-    "validate_families",
     "validate_inheritance_families",
 ]
 

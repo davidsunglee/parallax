@@ -27,7 +27,6 @@ from parallax.snapshot.materialize._root import RootView
 __all__ = [
     "ClassifiedRoot",
     "ConformingRoot",
-    "RootClassification",
     "RootClassifications",
     "classify_roots",
     "hydrates",

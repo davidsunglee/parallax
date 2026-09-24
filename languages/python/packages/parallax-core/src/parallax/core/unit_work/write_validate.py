@@ -13,7 +13,7 @@ from parallax.core.metamodel import (
     VoDocumentViolation,
 )
 
-__all__ = ["WriteRejectedError"]
+__all__ = ["WriteRejectedError", "validate_write"]
 
 # The full-document mutations: every declared member must be present, except a
 # `many` Value Object occurrence, which has no absent state to require. Every

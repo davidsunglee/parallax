@@ -47,6 +47,7 @@ __all__ = [
     "ResolutionView",
     "lifecycle_state_of",
     "relationship_value_of",
+    "require_correspondence",
 ]
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Final, Self
 
-__all__ = ["ABSENT", "UNLOADED", "Absent", "NodeHandle"]
+__all__ = ["ABSENT", "UNLOADED", "NodeHandle"]
 
 
 class Absent:

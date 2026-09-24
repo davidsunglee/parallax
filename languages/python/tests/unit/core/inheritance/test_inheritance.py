@@ -19,8 +19,29 @@ from parallax.core.document_codec._authoring import (
     MAPPING_SOURCE_ACCESS,
     validate_member_authoring,
 )
+from parallax.core.inheritance._rules import (
+    CONCRETE_SUBTYPE_WITH_CHILDREN,
+    CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    CYCLE,
+    DUPLICATE_TAG_VALUE,
+    LAYOUT_NOT_ROOT_OWNED,
+    MATERIALIZATION_KEY_COLLISION,
+    MEMBER_SHADOWING,
+    MISSING_CONCRETE_SUBTYPE,
+    MISSING_ROOT,
+    MISSING_TAG_VALUE,
+    OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+    PERSISTENCE_NOT_ROOT_OWNED,
+    PRIMARY_KEY_MISSING,
+    PRIMARY_KEY_MULTIPLE,
+    TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+    TEMPORALITY_NOT_ROOT_OWNED,
+    TPCS_ABSTRACT_TABLE_FORBIDDEN,
+    TPCS_CONCRETE_TABLE_REQUIRED,
+    TPH_DESCENDANT_TABLE_FORBIDDEN,
+    TPH_ROOT_TABLE_REQUIRED,
+)
 from parallax.core.metamodel import (
-    UNRESOLVED_ENTITY_REFERENCE,
     AbstractRoot,
     AbstractSubtype,
     AttributeIdentity,
@@ -54,6 +75,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import AsOfAxisLocation as AxisLocation
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel._resolve import UNRESOLVED_ENTITY_REFERENCE
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.unit_work import KeyedWrite, WriteRejectedError
 from parallax.core.unit_work.instructions import prepare_typed_write
@@ -421,51 +443,35 @@ def test_both_write_entry_points_share_the_exact_scalar_type_contract(
 # --------------------------------------------------------------------------- #
 
 _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
-    "m-inheritance-021-rejected-cycle": inheritance.CYCLE,
-    "m-inheritance-023-rejected-concrete-without-abstract-root": (
-        inheritance.CONCRETE_WITHOUT_ABSTRACT_ROOT
-    ),
-    "m-inheritance-024-rejected-abstract-root-with-table": (
-        inheritance.TPCS_ABSTRACT_TABLE_FORBIDDEN
-    ),
-    "m-inheritance-026-rejected-tpcs-concrete-tag-value": (
-        inheritance.TAG_ON_CONCRETE_SUBTYPE_STRATEGY
-    ),
-    "m-inheritance-027-rejected-duplicate-tag-value": inheritance.DUPLICATE_TAG_VALUE,
-    "m-inheritance-028-rejected-inconsistent-hierarchy-table": (
-        inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN
-    ),
-    "m-inheritance-029-rejected-abstract-subtype-with-table": (
-        inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN
-    ),
-    "m-inheritance-031-rejected-tph-missing-tag-value": inheritance.MISSING_TAG_VALUE,
-    "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
-    "m-inheritance-121-rejected-missing-concrete-subtype": inheritance.MISSING_CONCRETE_SUBTYPE,
-    "m-inheritance-138-rejected-concrete-subtype-with-children": (
-        inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN
-    ),
+    "m-inheritance-021-rejected-cycle": CYCLE,
+    "m-inheritance-023-rejected-concrete-without-abstract-root": CONCRETE_WITHOUT_ABSTRACT_ROOT,
+    "m-inheritance-024-rejected-abstract-root-with-table": TPCS_ABSTRACT_TABLE_FORBIDDEN,
+    "m-inheritance-026-rejected-tpcs-concrete-tag-value": TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+    "m-inheritance-027-rejected-duplicate-tag-value": DUPLICATE_TAG_VALUE,
+    "m-inheritance-028-rejected-inconsistent-hierarchy-table": TPH_DESCENDANT_TABLE_FORBIDDEN,
+    "m-inheritance-029-rejected-abstract-subtype-with-table": TPH_DESCENDANT_TABLE_FORBIDDEN,
+    "m-inheritance-031-rejected-tph-missing-tag-value": MISSING_TAG_VALUE,
+    "m-inheritance-032-rejected-missing-root": MISSING_ROOT,
+    "m-inheritance-121-rejected-missing-concrete-subtype": MISSING_CONCRETE_SUBTYPE,
+    "m-inheritance-138-rejected-concrete-subtype-with-children": CONCRETE_SUBTYPE_WITH_CHILDREN,
     "m-inheritance-098-rejected-temporality-declared-on-abstract-subtype": (
-        inheritance.TEMPORALITY_NOT_ROOT_OWNED
+        TEMPORALITY_NOT_ROOT_OWNED
     ),
     "m-inheritance-099-rejected-temporality-declared-on-concrete-subtype": (
-        inheritance.TEMPORALITY_NOT_ROOT_OWNED
+        TEMPORALITY_NOT_ROOT_OWNED
     ),
-    "m-inheritance-102-rejected-optlock-declaring-descendant": (
-        inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
-    ),
-    "m-inheritance-103-rejected-optlock-second-version": (
-        inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
-    ),
+    "m-inheritance-102-rejected-optlock-declaring-descendant": OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+    "m-inheritance-103-rejected-optlock-second-version": OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
     "m-inheritance-115-rejected-attribute-relationship-materialization-key-collision": (
-        inheritance.MATERIALIZATION_KEY_COLLISION
+        MATERIALIZATION_KEY_COLLISION
     ),
     "m-inheritance-116-rejected-narrowed-view-materialization-key-collision": (
-        inheritance.MATERIALIZATION_KEY_COLLISION
+        MATERIALIZATION_KEY_COLLISION
     ),
     "m-inheritance-117-rejected-family-variant-materialization-key-collision": (
-        inheritance.MATERIALIZATION_KEY_COLLISION
+        MATERIALIZATION_KEY_COLLISION
     ),
-    "m-inheritance-122-rejected-layout-declared-on-descendant": (inheritance.LAYOUT_NOT_ROOT_OWNED),
+    "m-inheritance-122-rejected-layout-declared-on-descendant": LAYOUT_NOT_ROOT_OWNED,
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -661,8 +667,8 @@ def test_a_rootless_family_is_reported_beside_a_rooted_one() -> None:
         ]
     }
     assert sorted(issue.code for issue in _formation_error(model).issues) == [
-        inheritance.CONCRETE_WITHOUT_ABSTRACT_ROOT,
-        inheritance.MISSING_ROOT,
+        CONCRETE_WITHOUT_ABSTRACT_ROOT,
+        MISSING_ROOT,
     ]
 
 
@@ -724,7 +730,7 @@ def _concrete(
 
 def test_a_table_per_hierarchy_root_declares_the_shared_container() -> None:
     issues = _rule_issues(_hierarchy(root_container=None), _concrete(_LEAF))
-    assert [issue.code for issue in issues] == [inheritance.TPH_ROOT_TABLE_REQUIRED]
+    assert [issue.code for issue in issues] == [TPH_ROOT_TABLE_REQUIRED]
     assert issues[0].location == EntityLocation(_ROOT)
 
 
@@ -737,7 +743,7 @@ def test_a_table_per_concrete_subtype_concrete_declares_its_own_container() -> N
         ),
         _concrete(_LEAF, tag_value=None),
     )
-    assert [issue.code for issue in issues] == [inheritance.TPCS_CONCRETE_TABLE_REQUIRED]
+    assert [issue.code for issue in issues] == [TPCS_CONCRETE_TABLE_REQUIRED]
     assert issues[0].location == EntityLocation(_LEAF)
 
 
@@ -750,7 +756,7 @@ def test_a_family_of_abstract_positions_alone_owns_no_rows() -> None:
         _hierarchy(),
         Declaration(identity=_LEAF, inheritance=AbstractSubtype(ExactEntityReference(_ROOT))),
     )
-    assert [issue.code for issue in issues] == [inheritance.MISSING_CONCRETE_SUBTYPE]
+    assert [issue.code for issue in issues] == [MISSING_CONCRETE_SUBTYPE]
     assert issues[0].location == EntityLocation(_ROOT)
 
 
@@ -780,7 +786,7 @@ def test_each_family_answers_the_concrete_membership_rule_for_itself() -> None:
             inheritance=AbstractRoot(TablePerConcreteSubtype()),
         ),
     )
-    assert [issue.code for issue in issues] == [inheritance.MISSING_CONCRETE_SUBTYPE]
+    assert [issue.code for issue in issues] == [MISSING_CONCRETE_SUBTYPE]
     assert issues[0].location == EntityLocation(other_root)
 
 
@@ -806,14 +812,14 @@ def test_a_concrete_parent_relates_its_children_in_canonical_order() -> None:
         _concrete(ferry, parent=tug, tag_value="ferry"),
         _concrete(barge, parent=tug, tag_value="barge"),
     )
-    assert [issue.code for issue in issues] == [inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN]
+    assert [issue.code for issue in issues] == [CONCRETE_SUBTYPE_WITH_CHILDREN]
     assert issues[0].location == EntityLocation(tug)
     assert issues[0].related == (EntityLocation(barge), EntityLocation(ferry))
 
 
 def test_a_family_without_a_primary_key_is_unidentifiable_at_every_position() -> None:
     issues = _rule_issues(_hierarchy(root_attributes=()), _concrete(_LEAF))
-    assert [issue.code for issue in issues] == [inheritance.PRIMARY_KEY_MISSING] * 2
+    assert [issue.code for issue in issues] == [PRIMARY_KEY_MISSING] * 2
     assert [issue.location for issue in issues] == [
         EntityLocation(_LEAF),
         EntityLocation(_ROOT),
@@ -822,7 +828,7 @@ def test_a_family_without_a_primary_key_is_unidentifiable_at_every_position() ->
 
 def test_a_descendant_key_makes_its_own_chain_carry_two() -> None:
     issues = _rule_issues(_hierarchy(), _concrete(_LEAF, attributes=(key(_LEAF, "entryId"),)))
-    assert [issue.code for issue in issues] == [inheritance.PRIMARY_KEY_MULTIPLE]
+    assert [issue.code for issue in issues] == [PRIMARY_KEY_MULTIPLE]
     assert issues[0].location == EntityLocation(_LEAF)
     assert issues[0].related == (
         AttributeLocation(key(_ROOT).identity),
@@ -832,7 +838,7 @@ def test_a_descendant_key_makes_its_own_chain_carry_two() -> None:
 
 def test_a_descendant_declares_no_persistence_mode() -> None:
     issues = _rule_issues(_hierarchy(), _concrete(_LEAF, persistence=PersistenceMode.READ_ONLY))
-    assert [issue.code for issue in issues] == [inheritance.PERSISTENCE_NOT_ROOT_OWNED]
+    assert [issue.code for issue in issues] == [PERSISTENCE_NOT_ROOT_OWNED]
     assert issues[0].location == EntityLocation(_LEAF)
     assert issues[0].related == (EntityLocation(_ROOT),)
 
@@ -859,10 +865,10 @@ def test_a_descendant_may_not_redeclare_an_ancestor_member() -> None:
         _concrete(_LEAF, attributes=(attribute(_LEAF, "label", type=STRING),)),
     )
     assert [issue.code for issue in issues] == [
-        inheritance.MATERIALIZATION_KEY_COLLISION,
-        inheritance.MEMBER_SHADOWING,
+        MATERIALIZATION_KEY_COLLISION,
+        MEMBER_SHADOWING,
     ]
-    shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
+    shadowing = next(issue for issue in issues if issue.code == MEMBER_SHADOWING)
     assert shadowing.location == AttributeLocation(attribute(_LEAF, "label").identity)
     assert shadowing.related == (AttributeLocation(attribute(_ROOT, "label").identity),)
 
@@ -880,10 +886,10 @@ def test_shadowing_crosses_member_categories() -> None:
         ),
     )
     assert [issue.code for issue in issues] == [
-        inheritance.MATERIALIZATION_KEY_COLLISION,
-        inheritance.MEMBER_SHADOWING,
+        MATERIALIZATION_KEY_COLLISION,
+        MEMBER_SHADOWING,
     ]
-    shadowing = next(issue for issue in issues if issue.code == inheritance.MEMBER_SHADOWING)
+    shadowing = next(issue for issue in issues if issue.code == MEMBER_SHADOWING)
     assert shadowing.location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("label",)))
     assert shadowing.related == (AttributeLocation(attribute(_ROOT, "label").identity),)
 
@@ -900,22 +906,22 @@ def test_shadowing_names_the_nearest_ancestor_that_declares_the_member() -> None
     )
     assert [(issue.code, issue.location, issue.related) for issue in issues] == [
         (
-            inheritance.MATERIALIZATION_KEY_COLLISION,
+            MATERIALIZATION_KEY_COLLISION,
             AttributeLocation(attribute(_LEAF, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
         (
-            inheritance.MEMBER_SHADOWING,
+            MEMBER_SHADOWING,
             AttributeLocation(attribute(_LEAF, "label").identity),
             (AttributeLocation(attribute(_MID, "label").identity),),
         ),
         (
-            inheritance.MATERIALIZATION_KEY_COLLISION,
+            MATERIALIZATION_KEY_COLLISION,
             AttributeLocation(attribute(_MID, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
         (
-            inheritance.MEMBER_SHADOWING,
+            MEMBER_SHADOWING,
             AttributeLocation(attribute(_MID, "label").identity),
             (AttributeLocation(attribute(_ROOT, "label").identity),),
         ),
@@ -997,7 +1003,7 @@ def test_attribute_column_cannot_match_a_relationship_rendered_name() -> None:
         ),
         Declaration(identity=target, attributes=(key(target),)),
     )
-    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].location == RelationshipLocation(RelationshipIdentity(owner, "details"))
     assert issues[0].related == (AttributeLocation(details.identity),)
 
@@ -1014,7 +1020,7 @@ def test_attribute_column_cannot_occupy_a_narrowed_relationship_namespace() -> N
         ),
         Declaration(identity=target, attributes=(key(target),)),
     )
-    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].location == AttributeLocation(narrowed_key.identity)
     assert issues[0].related == (RelationshipLocation(RelationshipIdentity(owner, "details")),)
 
@@ -1052,7 +1058,7 @@ def test_family_variant_is_reserved_from_rendered_member_names() -> None:
         ),
         _concrete(_LEAF),
     )
-    assert [issue.code for issue in issues] == [inheritance.MATERIALIZATION_KEY_COLLISION]
+    assert [issue.code for issue in issues] == [MATERIALIZATION_KEY_COLLISION]
     assert issues[0].location == ValueObjectLocation(ValueObjectIdentity(_ROOT, ("familyVariant",)))
     assert issues[0].related == (EntityLocation(_ROOT),)
 
@@ -1063,7 +1069,7 @@ def test_a_shared_tag_value_is_reported_against_the_later_claimant() -> None:
         _concrete(_LEAF, tag_value="same"),
         _concrete(_SIBLING, tag_value="same"),
     )
-    assert [issue.code for issue in issues] == [inheritance.DUPLICATE_TAG_VALUE]
+    assert [issue.code for issue in issues] == [DUPLICATE_TAG_VALUE]
     assert issues[0].location == EntityLocation(_SIBLING)
     assert issues[0].related == (EntityLocation(_LEAF),)
 
@@ -1084,8 +1090,8 @@ def test_the_report_is_the_same_whichever_order_a_frontend_enumerates() -> None:
     reports = {tuple(_rule_issues(*permutation)) for permutation in orders}
     assert len(reports) == 1
     assert [issue.code for issue in next(iter(reports))] == [
-        inheritance.PERSISTENCE_NOT_ROOT_OWNED,
-        inheritance.PRIMARY_KEY_MULTIPLE,
-        inheritance.MATERIALIZATION_KEY_COLLISION,
-        inheritance.MEMBER_SHADOWING,
+        PERSISTENCE_NOT_ROOT_OWNED,
+        PRIMARY_KEY_MULTIPLE,
+        MATERIALIZATION_KEY_COLLISION,
+        MEMBER_SHADOWING,
     ]

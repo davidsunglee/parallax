@@ -23,7 +23,7 @@ from parallax.core.temporal_read._facet import (
     temporal_facet,
 )
 
-__all__ = ["MODEL_COMPILER", "TemporalReadModelCompiler", "compile_facet"]
+__all__ = ["MODEL_COMPILER"]
 
 
 def compile_facet(metadata: CompiledMetadata, inheritance: InheritanceFacet) -> TemporalFacet:

@@ -31,7 +31,7 @@ __all__ = [
     "InheritanceFacet",
     "InheritancePositionView",
     "inheritance_facet",
-    "is_inheritance_facet",
+    "member_selection",
     "view",
 ]
 

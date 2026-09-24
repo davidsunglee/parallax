@@ -31,7 +31,7 @@ from parallax.core.temporal_read import (
     TransactionTimeOnly,
 )
 
-__all__ = ["MODEL_COMPILER", "OptimisticLockModelCompiler", "compile_facet"]
+__all__ = ["MODEL_COMPILER"]
 
 
 def compile_facet(

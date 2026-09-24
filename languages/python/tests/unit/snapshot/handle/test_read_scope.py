@@ -49,10 +49,11 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
     installed_lifecycle,
 )
-from parallax.core.object_query import ObjectQueryError, ObjectQueryNode
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query.serde import ObjectQueryError
 from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsResult

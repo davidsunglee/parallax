@@ -37,8 +37,6 @@ import pytest
 from parallax.core.auto_retry import retriable_failure, run_with_retry
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
-    MISSING_TARGET,
-    STALE_WRITE,
     AffectedRows,
     ExactCount,
     KeyedWrite,
@@ -54,7 +52,7 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     object_key,
 )
-from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.planned import MISSING_TARGET, STALE_WRITE, PlannedWrite
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer

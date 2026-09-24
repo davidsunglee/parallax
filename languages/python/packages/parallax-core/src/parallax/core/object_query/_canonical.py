@@ -14,7 +14,7 @@ from parallax.core.object_query._nodes import (
 )
 from parallax.core.predicate import PredicateNode, SubtypeSelection, canonical_subtype_selection
 
-__all__ = ["canonical_includes", "object_query", "subtype_spelling"]
+__all__ = ["object_query", "subtype_spelling"]
 
 
 def subtype_spelling(subtype: type) -> str:

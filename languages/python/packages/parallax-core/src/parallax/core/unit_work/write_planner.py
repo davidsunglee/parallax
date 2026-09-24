@@ -51,7 +51,6 @@ from parallax.core.unit_work.write_settlement import (
 )
 
 __all__ = [
-    "ActorIdentity",
     "PlanningRequest",
     "WritePlanner",
 ]

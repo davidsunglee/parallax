@@ -5,18 +5,10 @@ from typing import Final, Literal
 from parallax.core.dialect import Dialect, PhysicalIndexName
 
 __all__ = [
-    "CATEGORIES",
-    "CONNECTION_DEAD",
-    "DEADLOCK",
-    "LOCK_WAIT_TIMEOUT",
-    "UNIQUE_VIOLATION",
     "Category",
     "DatabaseError",
     "as_category",
     "classify_error",
-    "is_retriable",
-    "is_timed_out",
-    "violates_unique_index",
 ]
 
 # The closed neutral category set. `connectionDead` is reserved: it is a member of

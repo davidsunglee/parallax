@@ -47,8 +47,8 @@ from parallax.core.entity._declaration import (
     is_declared_class,
     members_of,
     shape_of,
-    snake_to_camel,
 )
+from parallax.core.entity._expressions import snake_to_camel
 from parallax.core.metamodel import (
     NOT_PRIMARY_KEY,
     AttributeIdentity,

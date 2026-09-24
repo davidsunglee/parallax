@@ -30,8 +30,8 @@ from parallax.core.object_query._validated import (
 )
 from parallax.core.predicate import All
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._context import LoweredStatement
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records

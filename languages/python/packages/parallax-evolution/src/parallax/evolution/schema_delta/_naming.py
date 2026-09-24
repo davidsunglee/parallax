@@ -21,11 +21,9 @@ from parallax.evolution.schema_delta._values import (
 )
 
 __all__ = [
-    "NamedIndex",
     "census",
     "collision_groups",
     "physical_index_name",
-    "readable_prefix",
 ]
 
 _NAMESPACE = "pxi"

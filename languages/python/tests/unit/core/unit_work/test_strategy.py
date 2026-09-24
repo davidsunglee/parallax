@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.unit_work import CONCURRENCY_PREFERENCES, concurrency_preference
+from parallax.core.unit_work import concurrency_preference
+from parallax.core.unit_work.strategy import CONCURRENCY_PREFERENCES
 
 
 class _UnhashableName(str):

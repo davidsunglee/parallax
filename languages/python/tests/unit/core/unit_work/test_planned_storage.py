@@ -42,7 +42,6 @@ from parallax.core.unit_work import (
     AuditStrategy,
     BatchingStrategy,
     ChangedFrom,
-    ChunkedColumn,
     ChunkedColumnBuilder,
     ColumnSlice,
     ConcurrencyStrategy,
@@ -72,6 +71,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
+    ChunkedColumn,
     freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (

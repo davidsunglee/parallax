@@ -16,8 +16,6 @@ from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, 
 from parallax.core.metamodel import (
     METADATA_COMPILER,
     METAMODEL_MODULE,
-    PRIMARY_KEY_MISSING,
-    PRIMARY_KEY_MULTIPLE,
     RESOLVER_ISSUE_CODES,
     CandidateMetamodel,
     CompiledMetadata,
@@ -33,6 +31,7 @@ from parallax.core.metamodel import (
     resolve,
 )
 from parallax.core.metamodel import _resolve as resolver
+from parallax.core.metamodel._resolve import PRIMARY_KEY_MISSING, PRIMARY_KEY_MULTIPLE
 from parallax.core.model_formation import (
     FIXED_RESOLVER,
     FORMATION_COMPILER_FAILED,
@@ -49,7 +48,6 @@ from parallax.core.model_formation import (
     FORMATION_RULE_SET_RESULT_INVALID,
     METADATA_COMPILER_REQUIRED,
     REQUIRED_RULE_SET,
-    CompilerRequirement,
     FormationContractError,
     FormationManifest,
     FormationManifestEntry,
@@ -63,6 +61,7 @@ from parallax.core.model_formation import (
     form,
 )
 from parallax.core.model_formation import _runner as runner
+from parallax.core.model_formation._manifest import CompilerRequirement
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _ORDER = identity("Order")

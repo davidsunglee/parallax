@@ -37,7 +37,6 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import IncludeSegment
 
 __all__ = [
-    "DEFAULT_STRUCTURED_COLUMN",
     "MANY_TO_ONE",
     "MAX",
     "ONE_TO_MANY",
@@ -57,7 +56,6 @@ __all__ = [
     "IndexSpec",
     "InheritanceRole",
     "Int32",
-    "OrderTerm",
     "Rel",
     "RelSpec",
     "ReverseRelSpec",

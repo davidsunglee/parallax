@@ -19,6 +19,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import deep_fetch, inheritance, relationship
+from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -31,10 +32,10 @@ from parallax.core.object_query import (
     IncludeSegment,
     TemporalDimension,
     TemporalSelection,
-    canonical_includes,
     object_query,
     validate_object_query,
 )
+from parallax.core.object_query._canonical import canonical_includes
 from parallax.core.object_query._validated import ValidatedOrderTerm
 from parallax.core.predicate import (
     All,
@@ -116,9 +117,7 @@ def _back_reference_step(
     return step
 
 
-def _position(
-    plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep
-) -> deep_fetch.IncludePosition:
+def _position(plan: deep_fetch.ObjectQueryPlan, step: deep_fetch.FetchStep) -> IncludePosition:
     return plan.includes.position(step.position)
 
 
@@ -609,9 +608,7 @@ def test_include_tree_answers_are_canonical_objects_rather_than_fresh_copies() -
     elsewhere = EntityIdentity("elsewhere", "Person")
 
     assert includes.child_groups(root) is includes.position(root).children
-    assert includes.child_groups(deep_fetch.EMPTY_RENDER) is includes.child_groups(
-        deep_fetch.EMPTY_RENDER
-    )
+    assert includes.child_groups(EMPTY_RENDER) is includes.child_groups(EMPTY_RENDER)
 
     dog_positions = includes.admitted_children(owner_positions, dog)
     assert includes.admitted_children(owner_positions, dog) is dog_positions

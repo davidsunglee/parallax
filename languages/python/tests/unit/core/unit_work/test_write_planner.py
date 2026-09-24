@@ -44,9 +44,6 @@ from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
-    MISSING_TARGET,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     UNGATED,
     UNVERSIONED,
     ActorIdentity,
@@ -79,7 +76,6 @@ from parallax.core.unit_work import (
     TransactionInstant,
     VersionColumns,
     Versioned,
-    VersionedStateKey,
     VersionGate,
     VersionObservation,
     WriteAssignment,
@@ -98,7 +94,13 @@ from parallax.core.unit_work.instructions import (
     WriteInstructionError,
     prepare_typed_write,
 )
-from parallax.core.unit_work.planned import ValidatedMutationSelection
+from parallax.core.unit_work.planned import (
+    MISSING_TARGET,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    ValidatedMutationSelection,
+)
+from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner

@@ -13,9 +13,7 @@ from parallax.core.unit_work import DatabaseLoginActor, SubjectActor
 __all__ = [
     "ExecutionCapture",
     "InvalidPrincipalError",
-    "LoginExecution",
     "Principal",
-    "PrincipalExecution",
     "capture_database_login",
     "capture_principal",
     "same_execution",

@@ -31,21 +31,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping
 
 __all__ = [
-    "AUXILIARY_STATE_SLOT",
+    "ABSENT_DECLARED_VALUE",
     "COMPACT_STATE_SLOT",
-    "OPAQUE_SLOTS_ATTRIBUTE",
     "BackedModel",
     "PublicationPlan",
     "allocate",
-    "auxiliary",
     "carry_presence",
     "carry_slots_beside_state",
-    "declared",
     "declared_values",
     "install",
     "is_present",
     "is_published",
-    "iterate",
     "named_state",
     "named_state_value",
     "plan_of",

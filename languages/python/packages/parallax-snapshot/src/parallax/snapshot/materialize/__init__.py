@@ -3,15 +3,11 @@ from __future__ import annotations
 from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
-    RootClassification,
     RootClassifications,
     classify_roots,
     hydrates,
 )
-from parallax.snapshot.materialize._convert import (
-    SNAPSHOT_DECODING_FAILED,
-    SnapshotDecodingError,
-)
+from parallax.snapshot.materialize._convert import SnapshotDecodingError
 from parallax.snapshot.materialize._invalid import (
     MISSING_STORED_VALUE,
     InvalidData,
@@ -32,11 +28,7 @@ from parallax.snapshot.materialize._page import (
 from parallax.snapshot.materialize._publication import (
     require_publishable,
 )
-from parallax.snapshot.materialize._root import (
-    SNAPSHOT_PROJECTION_CONFLICT,
-    RootView,
-    SnapshotConsistencyError,
-)
+from parallax.snapshot.materialize._root import RootView, SnapshotConsistencyError
 from parallax.snapshot.materialize._wire import (
     FAMILY_VARIANT_KEY,
     WireEntity,
@@ -49,8 +41,6 @@ from parallax.snapshot.materialize._wire import (
 __all__ = [
     "FAMILY_VARIANT_KEY",
     "MISSING_STORED_VALUE",
-    "SNAPSHOT_DECODING_FAILED",
-    "SNAPSHOT_PROJECTION_CONFLICT",
     "ClassifiedRoot",
     "ConformingRoot",
     "InvalidData",
@@ -59,7 +49,6 @@ __all__ = [
     "Page",
     "PageBuilder",
     "PageRows",
-    "RootClassification",
     "RootClassifications",
     "RootView",
     "SnapshotConsistencyError",

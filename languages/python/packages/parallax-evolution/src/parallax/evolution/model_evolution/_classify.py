@@ -55,7 +55,7 @@ from parallax.evolution.model_evolution._values import (
     attribute_write_capability,
 )
 
-__all__ = ["Classification", "classify"]
+__all__ = ["classify"]
 
 _AUTHORING = CoordinationReason.AUTHORING_SURFACE_CHANGE_REQUIRED
 _MIGRATION = CoordinationReason.DATABASE_MIGRATION_REQUIRED

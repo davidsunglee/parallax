@@ -40,6 +40,13 @@ from parallax.core import (
 from parallax.core import AbstractSubtype as AbstractSubtypeRole
 from parallax.core.entity import AttributeExpr, RelationshipPath
 from parallax.core.entity._model import model_of
+from parallax.core.inheritance._rules import (
+    CONCRETE_SUBTYPE_WITH_CHILDREN,
+    OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+    PERSISTENCE_NOT_ROOT_OWNED,
+    TPCS_ABSTRACT_TABLE_FORBIDDEN,
+    TPH_DESCENDANT_TABLE_FORBIDDEN,
+)
 from parallax.core.metamodel import (
     AbstractSubtype,
     Column,
@@ -171,7 +178,7 @@ def test_a_tph_descendant_declaring_a_table_is_a_formation_issue() -> None:
 
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(TphRoot, TphLeaf)
-    assert _issue_codes(caught.value) == [inheritance.TPH_DESCENDANT_TABLE_FORBIDDEN]
+    assert _issue_codes(caught.value) == [TPH_DESCENDANT_TABLE_FORBIDDEN]
 
 
 def test_a_tpcs_root_declaring_a_table_is_a_formation_issue() -> None:
@@ -188,7 +195,7 @@ def test_a_tpcs_root_declaring_a_table_is_a_formation_issue() -> None:
 
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(TpcsRoot, TpcsLeaf)
-    assert _issue_codes(caught.value) == [inheritance.TPCS_ABSTRACT_TABLE_FORBIDDEN]
+    assert _issue_codes(caught.value) == [TPCS_ABSTRACT_TABLE_FORBIDDEN]
 
 
 def test_a_concrete_subtype_subclassed_by_another_concrete_is_a_formation_issue() -> None:
@@ -211,7 +218,7 @@ def test_a_concrete_subtype_subclassed_by_another_concrete_is_a_formation_issue(
 
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(Vessel, Tug, Barge)
-    assert _issue_codes(caught.value) == [inheritance.CONCRETE_SUBTYPE_WITH_CHILDREN]
+    assert _issue_codes(caught.value) == [CONCRETE_SUBTYPE_WITH_CHILDREN]
     (issue,) = caught.value.issues
     assert issue.location == EntityLocation(_identity("Tug"))
     assert issue.related == (EntityLocation(_identity("Barge")),)
@@ -227,7 +234,7 @@ def test_a_descendant_declaring_its_own_version_attribute_is_a_formation_issue()
 
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(OvenRoot, OvenLeaf)
-    assert _issue_codes(caught.value) == [inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED]
+    assert _issue_codes(caught.value) == [OPTIMISTIC_LOCKING_NOT_ROOT_OWNED]
 
 
 def test_a_root_declaring_the_version_attribute_is_accepted() -> None:
@@ -290,7 +297,7 @@ def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(_Ledger, _AuditLedger)
     (issue,) = caught.value.issues
-    assert issue.code == inheritance.PERSISTENCE_NOT_ROOT_OWNED
+    assert issue.code == PERSISTENCE_NOT_ROOT_OWNED
     assert issue.location == EntityLocation(_identity("AuditLedger"))
     assert issue.related == (EntityLocation(_identity("Ledger")),)
 

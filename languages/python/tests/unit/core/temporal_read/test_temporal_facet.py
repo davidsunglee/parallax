@@ -14,6 +14,7 @@ from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, 
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
 from parallax.core.inheritance import MODEL_COMPILER as INHERITANCE_COMPILER
+from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
@@ -49,8 +50,8 @@ from parallax.core.temporal_read import (
     Bitemporal,
     TemporalFacet,
     TransactionTimeOnly,
-    compile_facet,
 )
+from parallax.core.temporal_read._compile import compile_facet
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
@@ -328,14 +329,14 @@ def test_an_entity_the_inheritance_facet_does_not_cover_is_a_contract_failure() 
     metadata = fake.parity_model()
     narrower = fake.FakeMetamodel([entity for entity in metadata.entities[:1]])
     with pytest.raises(RuntimeError, match="Inheritance Facet view"):
-        compile_facet(metadata, inheritance.compile_facet(narrower))
+        compile_facet(metadata, inheritance_compile.compile_facet(narrower))
 
 
 def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     # The compiler reads the metadata protocols only, so an accepted graph the
     # descriptor path never touched compiles into the same shapes.
     metadata = fake.parity_model()
-    facet = compile_facet(metadata, inheritance.compile_facet(metadata))
+    facet = compile_facet(metadata, inheritance_compile.compile_facet(metadata))
     assert facet.shape(fake.ACCOUNT) == NON_TEMPORAL
     audit = facet.shape(fake.AUDIT)
     assert isinstance(audit, TransactionTimeOnly)

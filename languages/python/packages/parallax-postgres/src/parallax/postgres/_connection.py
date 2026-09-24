@@ -42,12 +42,7 @@ __all__ = [
     "ConnectionEstablishment",
     "IncompatibleSessionError",
     "PostgresConnection",
-    "adapt_binds",
-    "boundary_failure",
-    "fold_document_reads",
     "initialize_connection",
-    "translate_driver_error",
-    "translating_driver_errors",
 ]
 
 _REVOKED = (

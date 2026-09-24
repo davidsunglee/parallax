@@ -67,24 +67,26 @@ from parallax.core.model_formation import (
     RequiredRuleSet,
 )
 from parallax.core.relationship import (
-    CARDINALITY_JOIN_MISMATCH,
-    DEFINING_DUPLICATE,
     FACET_KEY,
     ISSUE_CODES,
-    JOIN_SOURCE_INVALID,
-    JOIN_TARGET_INVALID,
     MODEL_COMPILER,
-    ORDER_ATTRIBUTE_INVALID,
-    ORDER_ON_TO_ONE,
     RELATIONSHIP_MODULE,
-    REVERSE_CYCLE,
-    REVERSE_INCONSISTENT,
-    REVERSE_NOT_DEFINING,
     RULE_SET,
     RelationshipFacet,
     RelationshipMetadata,
     project_join_endpoints,
     view,
+)
+from parallax.core.relationship._rules import (
+    CARDINALITY_JOIN_MISMATCH,
+    DEFINING_DUPLICATE,
+    JOIN_SOURCE_INVALID,
+    JOIN_TARGET_INVALID,
+    ORDER_ATTRIBUTE_INVALID,
+    ORDER_ON_TO_ONE,
+    REVERSE_CYCLE,
+    REVERSE_INCONSISTENT,
+    REVERSE_NOT_DEFINING,
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document

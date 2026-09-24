@@ -17,7 +17,6 @@ from parallax.core.unit_work import (
 __all__ = [
     "MILESTONE_CHAIN",
     "TemporalPlanningError",
-    "TransactionTimeChaining",
 ]
 
 _INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})

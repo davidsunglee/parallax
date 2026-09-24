@@ -24,7 +24,7 @@ from parallax.core import (
     index,
     rel,
 )
-from parallax.core.entity import METAMODEL_LOOKUP_CODES
+from parallax.core.entity._errors import METAMODEL_LOOKUP_CODES
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.metamodel import EntityIdentity, UnresolvedEntityDeclaration
 

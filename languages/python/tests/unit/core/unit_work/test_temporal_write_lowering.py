@@ -43,8 +43,6 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     SUPERSEDED,
     TERMINATED,
     UNGATED,
@@ -63,7 +61,6 @@ from parallax.core.unit_work import (
     PredecessorRow,
     TemporalGate,
     TemporalObservation,
-    TemporalStateKey,
     TransactionSettings,
     UnitOfWork,
     WriteBatchTrigger,
@@ -72,7 +69,9 @@ from parallax.core.unit_work import (
     WritePlanningError,
     run_unit_of_work,
 )
+from parallax.core.unit_work.planned import OPTIMISTIC_CONFLICT, STALE_WRITE
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planner import TemporalStateKey
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     Transaction,

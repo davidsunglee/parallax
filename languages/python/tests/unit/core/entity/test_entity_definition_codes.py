@@ -12,7 +12,8 @@ from typing import cast
 
 import pytest
 
-from parallax.core.entity import ENTITY_DEFINITION_CODES, EntityDefinitionError
+from parallax.core.entity import EntityDefinitionError
+from parallax.core.entity._errors import ENTITY_DEFINITION_CODES
 from tests._support import frontend_probes, frontend_probes_stringized
 
 _SPEC_CODES = frozenset(

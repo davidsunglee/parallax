@@ -21,7 +21,6 @@ __all__ = [
     "RelationshipFacet",
     "RelationshipMetadata",
     "inverted",
-    "is_relationship_facet",
     "relationship_facet",
     "view",
 ]
