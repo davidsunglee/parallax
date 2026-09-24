@@ -39,7 +39,7 @@ from parallax.snapshot.materialize import (
     page_rows,
     root_last_uses,
 )
-from parallax.snapshot.materialize._page import exact_stored_equal, release_page_rows
+from parallax.snapshot.materialize._page import judged_state, release_page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
@@ -496,27 +496,9 @@ class Materializer:
         rows = page_rows(page)
 
         def admitted(node: int) -> tuple[EntityLayout, tuple[object, ...]] | None:
-            key = rows.keys[node]
-            logical = rows.logical_ids[node]
-            claim = rows.claims[logical]
-            singleton = rows.judged_states.singleton(logical)
-            states = (
-                () if key is None or isinstance(claim, int) else rows.judged_states.group(logical)
-            )
-            state = (
-                singleton
-                if isinstance(claim, int)
-                else next(
-                    (
-                        value
-                        for witness, value in states
-                        if exact_stored_equal(rows.witnesses[node], rows.witnesses[witness])
-                    ),
-                    None,
-                )
-            )
+            state = None if rows.keys[node] is None else judged_state(rows, node)
             # Invalid roots suppress their complete origin map before this callback.
-            if key is None or state is None or not hydrates(state.findings):  # pragma: no cover
+            if state is None or not hydrates(state.findings):  # pragma: no cover
                 return None
             return rows.layouts[node], state.member_row
 

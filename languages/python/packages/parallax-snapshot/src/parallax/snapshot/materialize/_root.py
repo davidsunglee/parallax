@@ -23,8 +23,10 @@ from parallax.snapshot.materialize._page import (
     StoredDataIssueInput,
     dedupe_issues,
     exact_stored_equal,
+    judged_state,
     layout_order_key,
     page_rows,
+    same_witness,
     stored_order_key,
 )
 from parallax.snapshot.materialize._views import RootViewLayout
@@ -447,12 +449,12 @@ class RootView:
         rows = self._rows
         if rows is None:  # pragma: no cover - construction owns a live Page
             raise ValueError("a completed Root View cannot compare another witness")
-        if len(occurrences) == 2 and _same_witness(rows, occurrences[0], occurrences[1]):
+        if len(occurrences) == 2 and same_witness(rows, occurrences[0], occurrences[1]):
             _notify(rows.observer, "witnesses_compared", 1)
             rows.decoders[occurrences[1]] = None
             return occurrences[0]
         first, *remaining = occurrences
-        if all(_same_witness(rows, first, candidate) for candidate in remaining):
+        if all(same_witness(rows, first, candidate) for candidate in remaining):
             _notify(rows.observer, "witnesses_compared", len(remaining))
             for candidate in remaining:
                 rows.decoders[candidate] = None
@@ -469,7 +471,7 @@ class RootView:
         if candidates:
             _notify(rows.observer, "witnesses_compared", len(candidates))
         for candidate in candidates:
-            if not _same_witness(rows, canonical, candidate):
+            if not same_witness(rows, canonical, candidate):
                 raise self._conflict(canonical, candidate)
         raise AssertionError(
             "canonical witness ordering retained no disagreement"
@@ -479,29 +481,21 @@ class RootView:
         rows = self._rows
         if rows is None:  # pragma: no cover - completion owns a live Page
             raise ValueError("a completed Root View cannot judge another state")
-        key = rows.keys[canonical]
-        if key is None:
+        if rows.keys[canonical] is None:
             state = self._decode(canonical)
             _release_witness(rows, canonical)
             return state
+        held = judged_state(rows, canonical)
+        if held is not None:
+            _notify(rows.observer, "states_shared")
+            return held
+        state = self._decode(canonical)
         logical = rows.logical_ids[canonical]
-        claim = rows.claims[logical]
-        if isinstance(claim, int):
-            held = rows.judged_states.singleton(logical)
-            if held is not None:
-                _notify(rows.observer, "states_shared")
-                return held
-            state = self._decode(canonical)
+        if isinstance(rows.claims[logical], int):
             rows.judged_states.set_singleton(logical, state)
             _release_witness(rows, canonical)
-            return state
-        states = rows.judged_states.group(logical)
-        for stored_projection, state in states:
-            if _same_witness(rows, canonical, stored_projection):
-                _notify(rows.observer, "states_shared")
-                return state
-        state = self._decode(canonical)
-        states.append((canonical, state))
+        else:
+            rows.judged_states.group(logical).append((canonical, state))
         return state
 
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
@@ -579,19 +573,6 @@ def _notify(observer: object | None, name: str, *args: object) -> None:
     if observer is not None:
         callback = getattr(observer, name)
         callback(*args)
-
-
-def _same_witness(rows: PageRows, left: int, right: int) -> bool:
-    left_layout = rows.layouts[left]
-    right_layout = rows.layouts[right]
-    return (
-        left_layout.concrete == right_layout.concrete
-        and left_layout.members == right_layout.members
-        and (
-            rows.witnesses[left] is rows.witnesses[right]
-            or exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
-        )
-    )
 
 
 def _release_witness(rows: PageRows, projection: int) -> None:
