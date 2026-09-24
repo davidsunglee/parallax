@@ -557,8 +557,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
 
   ```carrier-neutral-private-reaches
   parallax.core.sql_gen._compile | CompiledRead, CompiledTemplate, compile_read, compile_template | parallax.snapshot.handle._materialization
-  parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance._lanes.scenario; parallax.conformance._lanes.reads
-  parallax.core.sql_gen._compile | compile_read | parallax.conformance._lanes.snapshot
+  parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes
   parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance._lanes.scenario
   ```
 
