@@ -25,10 +25,10 @@ from typing import TYPE_CHECKING, Any, cast
 from parallax.conformance.budget import BudgetContract
 from parallax.snapshot.handle import Database
 from tests.unit import _delivery_control_support as control_support
-from tests.unit.memory_instruments import closure
+from tests.unit._gc_reachability import closure
 
 if TYPE_CHECKING:
-    from tests.unit.memory_instruments import Closure
+    from tests.unit._gc_reachability import Closure
 
 
 def _tree_after_projecting(roots: int) -> Closure:
