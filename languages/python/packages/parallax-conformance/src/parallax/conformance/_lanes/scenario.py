@@ -33,7 +33,6 @@ from parallax.conformance._mechanism.given_state import (
     seed_shadow_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
-    canonicalize_read,
     case_entity,
     case_serving_model,
     default_family_root,
@@ -41,6 +40,7 @@ from parallax.conformance._mechanism.model_facts import (
     first_declared_entity,
     load_case_metamodel,
 )
+from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
     committed,
@@ -87,7 +87,6 @@ from parallax.core.predicate import (
     CanonicalDocumentError,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
@@ -1225,70 +1224,24 @@ def _lower_predicate_write_step(
 
 
 def _compile_find(
-    step: Mapping[str, object],
-    model: AcceptedMetamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    *,
-    result_form: Literal["row", "instance"] = "instance",
-) -> CompiledRead:
-    """Compile a scenario ``find`` step through the read path with the read-lock
-    suffix — the COMPILE lane's own oracle, which reaches no database.
+    step: Mapping[str, object], context: CaseContext, dialect: Dialect
+) -> tuple[LoweredStatement, ...]:
+    """The statements a scenario ``find`` step's read issues over a database
+    holding no rows — the COMPILE lane's own oracle.
 
-    Every RUN lane instead executes the step through the public Wire read
-    (:func:`run_standalone_find`, :func:`_run_uow_group`) and reports the
-    statement production actually ran, so this function answers the compile lane
-    alone.
-
-    A scenario find is an in-transaction object find, so ``concurrency`` is the
-    scenario's RESOLVED Concurrency Preference
-    (:func:`~parallax.conformance._mechanism.case_document.concurrency` —
-    declared ``when.uow.concurrency``, else the root's
-    ``given.databaseOptions.concurrency``, else the built-in `optimistic`),
-    never absent. It
-    resolves against the step's own target Entity into the Effective
-    Concurrency Strategy that decides the ``m-sql`` shared-row-lock suffix
-    (``for share of t0``) — through
-    :func:`~parallax.snapshot.handle.entity_read_lock`, the same seam the
-    production `Transaction.find` derives every level's lock through. The
-    Locking strategy renders the suffix after every clause; the Optimistic one
-    renders none (the `m-txtime-write-008` / `m-bitemp-write-014` coalescing
-    witnesses exercise that branch).
-
-    ``result_form`` defaults to ``instance`` — an ORDINARY (managed) scenario
-    find mirrors production ``Transaction.find`` (`m-sql` *Read projection*,
-    slot 4 included); for a value-object-free entity row-form and instance-form
-    are byte-identical, so the default only matters to VO-bearing targets.
-    A materializing predicate write's OWN internal resolving read is ROW-form
-    (`m-value-object-047` pins its need-driven Document projection) but is compiled by
-    the materializing predicate-write resolve in `parallax.snapshot.handle`
-    directly, never through this function — the RUN lane reports its ACTUAL
-    executed SQL off what the transaction put on the wire
-    (:func:`_run_materializing_pair`), not a separate pure re-lowering (its
-    binds are query-result-dependent, so no pure oracle exists to compute them
-    from).
-
-    This composition — `compile_read` + `entity_read_lock`, mirroring
-    `Transaction.find`'s own derivation — is IRREDUCIBLE adapter content, not
-    a residual "mirrors production" gap to close. The case-driven engine has
-    no typed Python entity classes at all (a scenario step is a raw,
-    case-authored dict carrying a serialized Object Query), so
-    there is no `LoweredStatement` to hand a production seam — `Transaction.find`
-    itself REQUIRES one. Re-routing through a production API would mean
-    inventing a new one solely to serve this untyped input, the opposite of
-    engine-thinning; this function stays the adapter's own translation from
-    "raw case step" to compiled read, composing production's `m-sql` /
-    `m-read-lock` building blocks rather than duplicating their logic.
+    The read runs as the RUN lanes run it (:func:`run_standalone_find`,
+    :func:`_run_uow_group`): a Wire read inside ``db.transact`` with the
+    scenario's authored keywords over a root connected with its configured
+    options, so the shared-row-lock suffix is the one production resolves for
+    the step's own target Entity. A materializing predicate write's own resolving
+    read never reaches here: its case is `compileEligibility: run-only`.
     """
-    query = step_query(step, model)
-    metadata = case_entity(model, query.target.canonical)
-    entity_query = canonicalize_read(query, metadata, model)
-    return compile_read(
-        entity_query,
-        model,
+    return planned_read(
+        context.serving,
+        context.options,
         dialect,
-        result_form=result_form,
-        lock=handle.entity_read_lock(model, metadata.identity, concurrency),
+        step_query(step, context.model),
+        transaction=context.requests,
     )
 
 
@@ -1297,9 +1250,8 @@ def step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQu
 
     The query travels as authored. Root as-of injection and per-hop navigation
     canonicalization are `deep_fetch.plan`'s own first step on every production
-    read path, so applying them here would apply them twice; the compile lane's
-    :func:`_compile_find` composes them itself precisely because it reaches no
-    executor.
+    read path, the compile lane's :func:`_compile_find` included, so applying
+    them here would apply them twice.
     """
     query_doc = step.get("objectQuery")
     if query_doc is None:
@@ -1518,8 +1470,8 @@ def _lower_scenario_step(
     known.
     """
     if "write" not in step:
-        statement = _compile_find(step, context.model, dialect, context.concurrency).statement
-        return LoweredStep(f"/scenario/{index}/objectQuery", (statement,), False, False)
+        statements = _compile_find(step, context, dialect)
+        return LoweredStep(f"/scenario/{index}/objectQuery", statements, False, False)
     raw_write = step["write"]
     rollback = step.get("rollback") is True
     if is_predicate_write_step(raw_write):
@@ -2241,7 +2193,7 @@ def _run_materializing_pair(
     # (a resolving find over a DIFFERENT predicate would silently observe the
     # wrong rows). The read's own Temporal Selection is a sibling clause and the
     # write target remains the bare predicate, so the two predicates compare
-    # directly; `canonicalize_read` would additionally inject interval
+    # directly; planning the read would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
     comparable_find = _case_ingress.prepare_case_write(
         PredicateWrite(

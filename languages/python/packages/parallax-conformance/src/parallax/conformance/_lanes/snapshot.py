@@ -40,11 +40,10 @@ from parallax.conformance._mechanism.given_state import (
     seed_shadow_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
-    canonicalize_read,
     case_entity,
     case_serving_model,
-    load_case_metamodel,
 )
+from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import (
     underlying,
 )
@@ -59,7 +58,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     KeyedWrite,
@@ -175,7 +173,9 @@ def compile_scenario(
     it); `mutate` and `access` contribute no emissions and no round trips at all
     (m-snapshot-read: an in-memory-only change and a closed-world navigation,
     never SQL)."""
-    model = load_case_metamodel(case)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
+    options = case_format.database_options(case)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
     shadow = TemporalShadow()
@@ -206,13 +206,12 @@ def compile_scenario(
                         Emission(f"/scenario/{index}/write", statement) for statement in statements
                     )
                 case "find":
-                    query = step_query(step, model)
-                    metadata = case_entity(model, query.target.canonical)
-                    entity_query = canonicalize_read(query, metadata, model)
-                    statement = compile_read(
-                        entity_query, model, dialect, result_form="instance"
-                    ).statement
-                    emissions.append(Emission(f"/scenario/{index}/objectQuery", statement))
+                    emissions.extend(
+                        Emission(f"/scenario/{index}/objectQuery", statement)
+                        for statement in planned_read(
+                            serving, options, dialect, step_query(step, model)
+                        )
+                    )
     except (*READ_ERRORS, *LOWERING_ERRORS) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)

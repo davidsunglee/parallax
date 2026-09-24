@@ -17,13 +17,12 @@ from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import READ_ERRORS, Emission, EngineError
 from parallax.conformance._mechanism.given_state import apply_given_corrupt
 from parallax.conformance._mechanism.model_facts import (
-    canonicalize_read,
-    case_entity,
     case_serving_model,
     declaring_metadata,
     load_case_metamodel,
     read_scans,
 )
+from parallax.conformance._mechanism.planned_reads import planned_read
 from parallax.conformance._mechanism.transaction_control import transact, underlying
 from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
@@ -40,9 +39,8 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import Clock, Concurrency
+from parallax.core.unit_work import Clock
 from parallax.snapshot import handle
 
 __all__ = [
@@ -124,27 +122,15 @@ def _is_transactional(case: case_format.Case) -> bool:
     )
 
 
-def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
-    """The Concurrency Preference a read-shape case's read is PLANNED under —
-    the compile lane's own oracle for the shared-row-lock suffix.
+def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
+    """Compile a read case to its ordered emissions and round-trip count.
 
-    For a transactional read (:func:`_is_transactional`) it is the preference
-    the outer invocation resolves to — declared `when.uow.concurrency`, else the
-    root's `given.databaseOptions.concurrency`, else the built-in `optimistic`
-    (:func:`~parallax.conformance.case_format.effective_options`, a grading-side
-    value never handed to production). A standalone read has no participation
-    to derive a strategy from at all, so it is ``None``, whatever the root says:
-    the `m-read-lock` witnesses whose goldens carry the suffix put the read
-    inside a boundary and spell the preference that produces it, explicitly or
-    on the root, exactly as `m-case-format` requires of any case whose SQL
-    depends on the effective choice.
+    The statements are the ones production's own read issues for the case's
+    query over a database holding no rows, run exactly as :func:`run_read_case`
+    runs it: inside a transaction opened with the case's `when.uow` keywords
+    when it carries that block, so the shared-row-lock suffix is the one that
+    transaction resolves.
     """
-    if not _is_transactional(case):
-        return None
-    return case_format.effective_options(case).concurrency
-
-
-def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRead:
     if case.shape != "read":
         raise EngineError(
             f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
@@ -152,27 +138,18 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
         )
     model = load_case_metamodel(case)
     query = _read_query(case, model)
-    dialect = dialect_for(dialect_name)
     try:
-        metadata = case_entity(model, query.target.canonical)
-        form: Literal["rows", "graph"] = "graph" if _result_form(case) == "instance" else "rows"
-        entity_query = canonicalize_read(query, metadata, model, form=form)
-        return compile_read(
-            entity_query,
-            model,
-            dialect,
-            result_form=_result_form(case),
-            lock=handle.entity_read_lock(model, metadata.identity, _read_case_concurrency(case)),
+        statements = planned_read(
+            case_serving_model(case),
+            case_format.database_options(case),
+            dialect_for(dialect_name),
+            query,
+            form="graph" if _result_form(case) == "instance" else "rows",
+            transaction=case_format.transaction_keywords(case) if _is_transactional(case) else None,
         )
     except READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-
-
-def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
-    """Compile a read case to its ordered emissions and round-trip count."""
-    statement = _compile_statement(case, dialect_name).statement
-    emission = Emission("/objectQuery", statement)
-    return [emission], 1
+    return [Emission("/objectQuery", statement) for statement in statements], len(statements)
 
 
 def run_read_case(
