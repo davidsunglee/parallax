@@ -245,7 +245,6 @@
     "asc",
     "attr",
     "desc",
-    "encode_value_object",
     "index",
     "lifecycle_state_of",
     "model_of",

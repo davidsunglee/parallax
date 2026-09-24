@@ -36,18 +36,18 @@ def build_header_bearing_value_object() -> type[ValueObject]:
 
 
 def build_framework_slot_shadowing_value_object() -> type[ValueObject]:
-    """A method taking the name the framework renders a Value Object through.
+    """A method taking a name the framework reads a Value Object through.
 
-    The destructive case: every serialization of a Value Object member reaches
-    ``__parallax_document__``, so this body would have a write row and a nested
-    predicate carry the author's object in place of the canonical document.
+    The destructive case: every member a write reads off a Value Object reaches
+    ``__parallax_authoring_member__``, so this body would have a write row and an
+    assignment carry the author's answer in place of the declared values.
     """
 
     class BadBinding(ValueObject):
         label: Attr[str]
 
-        def __parallax_document__(self) -> dict[str, object]:
-            return {"shadowed": True}
+        def __parallax_authoring_member__(self, name: str, /) -> object:
+            return "shadowed"
 
     return BadBinding
 

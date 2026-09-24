@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 import enum
 import math
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self, TypeGuard, cast, overload
@@ -47,7 +46,6 @@ __all__ = [
     "BOOLEAN",
     "BYTES",
     "DATE",
-    "DOCUMENT_TYPE",
     "FLOAT32",
     "FLOAT64",
     "INFINITY",
@@ -56,7 +54,6 @@ __all__ = [
     "INT64",
     "JSON",
     "NEUTRAL_FROM_PYTHON",
-    "NEUTRAL_TYPES",
     "SQL_NULL",
     "STRING",
     "TIME",
@@ -93,7 +90,6 @@ __all__ = [
     "inert_scalar",
     "infer_neutral_type",
     "is_document_value",
-    "is_neutral_type",
     "matches_neutral_type",
     "nearest_float_at_width",
     "normalize_instant",
@@ -323,35 +319,8 @@ def detach_json_container(value: object) -> object:
     return value
 
 
-# The closed base neutral-type vocabulary (m-core). ``decimal`` is parametric —
-# a descriptor spells it ``decimal(p,s)`` — and ``is_neutral_type`` accepts that
-# spelling in addition to the bare name below.
-NEUTRAL_TYPES: Final[frozenset[str]] = frozenset(
-    {
-        "boolean",
-        "int32",
-        "int64",
-        "float32",
-        "float64",
-        "decimal",
-        "string",
-        "bytes",
-        "date",
-        "time",
-        "timestamp",
-        "uuid",
-        "json",
-    }
-)
-
-# The storage type an ``m-value-object`` composite maps to: a single structured
-# document column rather than column-flattened members (m-core, "json" type).
-DOCUMENT_TYPE: Final[str] = "json"
-
 # The canonical literal for the open upper bound in golden SQL and table state.
 INFINITY_LITERAL: Final[str] = "infinity"
-
-_DECIMAL = re.compile(r"^decimal\(\d+,\d+\)$")
 
 
 class TemporalBound(enum.Enum):
@@ -368,11 +337,6 @@ INFINITY: Final[TemporalBound] = TemporalBound.INFINITY
 class InstantError(ValueError):
     """A ``timestamp`` value violates the m-core UTC / precision rules, or names
     no instant a UTC ``datetime`` holds."""
-
-
-def is_neutral_type(name: str) -> bool:
-    """Whether ``name`` is a base neutral type or a ``decimal(p,s)`` spelling."""
-    return name in NEUTRAL_TYPES or _DECIMAL.match(name) is not None
 
 
 def inert_scalar(value: object) -> object:

@@ -406,8 +406,8 @@ def test_the_framework_name_prefix_is_reserved_from_every_declaration_kind(
     # The prefix names class markers and instance slots both kinds carry, so the
     # reservation cannot belong to one frontend: an Entity binding
     # `__parallax_lifecycle__` would shadow a materialized node's own state, and a
-    # Value Object binding `__parallax_document__` would answer every
-    # serialization of itself in place of the canonical document.
+    # Value Object binding `__parallax_authoring_member__` would answer every
+    # member a write reads off it in place of the declared value.
     assert set(_PREFIX_PROBES) == set(DeclarationKind)
     for declare in _PREFIX_PROBES[kind]:
         with pytest.raises(EntityDefinitionError) as caught:
