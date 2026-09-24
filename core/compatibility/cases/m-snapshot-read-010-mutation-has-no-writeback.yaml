@@ -1,12 +1,5 @@
 # Snapshot mutation has no write-back (m-snapshot-read): mutating a snapshot node
 # produces no DML and leaves the database unchanged.
-#
-# Step 0 materializes a snapshot of order 1 (name Ada). Step 1 mutates the node's
-# `name` in memory: a snapshot is a plain value with no unit-of-work write-back, so
-# the assignment emits NO DML (roundTrips 0). Step 2 re-reads order 1 from the
-# database and observes the ORIGINAL Ada — the mutation never persisted. The wire
-# proof is the two round trips (the mutate contributes none) plus the unchanged
-# re-read rows; harness lane.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-edit, no-writeback, mutation, scenario, slice-snapshot-1]
 shape: scenario

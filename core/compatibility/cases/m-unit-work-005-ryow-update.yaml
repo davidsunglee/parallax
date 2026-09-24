@@ -1,29 +1,5 @@
 # Read-your-own-writes for UPDATE (m-unit-work): a dependent find observes a
 # committed in-transaction UPDATE.
-#
-# m-unit-work-001 proves read-your-own-writes for INSERT; this pins the UPDATE
-# variant. account.version is an optimistic-lock column, so a keyed UPDATE requires
-# a PRIOR observation (`m-opt-lock` "Version values are framework-owned") — the unit
-# of work first OBSERVES account 1 (Ada, balance 100.00, version 1), then commits an
-# UPDATE that advances from that observation (version advances 1 -> 2 and, under
-# the default preference's Optimistic strategy, gates on the observed 1), then
-# issues a find that depends on the update — it MUST observe
-# the updated row, not the stale fixture value. All three steps share ONE `uow`
-# group (`observed-update`): the observing find, the versioned write, and the
-# dependent find run inside the SAME unit of work, which is what lets the write's
-# version bind be the observing find's OWN transaction-scoped observation
-# (`m-opt-lock` "the version the unit of work observed") rather than an oracle
-# value the compile lane could not otherwise derive — the case is therefore
-# `compileEligibility: run-only` (query-result-dependent). The scenario:
-#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
-#   step 1 write : an UPDATE of account 1 (Ada) balance 100.00 -> 175.00, advancing
-#                  the OBSERVED version 1 -> 2.
-#   step 2 find  : query account 1 — it MUST observe balance 175.00, version 2. The
-#                  group COMMITS after this, its last step.
-# Every find is a cache MISS (the write step's forced flush precedes step 2) and
-# carries no shared-row-lock suffix — the gate is the concurrency authority for a
-# versioned Entity under the default preference. roundTrips = 3 (the observing
-# find + the committed update + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

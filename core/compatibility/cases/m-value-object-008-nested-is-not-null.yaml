@@ -1,12 +1,5 @@
 # valueObject presence test: nestedIsNotNull over a shallow field (m-value-object,
 # m-predicate absence collapse), on Postgres AND MariaDB.
-#
-# nestedIsNotNull(Customer.address.city) is the complement of nestedIsNull: it
-# matches every row whose city extraction is present. Oslo (1, 2), Boston (3) and
-# Berlin (6) qualify; the not-present cities — null column (4), missing key (5) and
-# JSON `null` leaf (7) — are excluded. It normalizes to a leading `not` (mirroring
-# the scalar `isNotNull`): Postgres `not jsonb_extract_path_text(t0.address, ?) is
-# null`, MariaDB `not json_value(t0.address, ?) is null`.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read

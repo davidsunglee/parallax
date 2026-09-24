@@ -1,11 +1,5 @@
 # Expanding a value domain (m-model-evolution): unilateral, Overlap-Visible, and a
 # Behavioral Impact.
-#
-# Within one unchanged Neutral Type, expanding the admitted domain of a surviving
-# member is unilateral. It is also Overlap-Visible, which is the narrower fact:
-# while two editions run against one database, a later writer can store the NULL
-# an earlier reader cannot admit. The admissibility of the surviving path changed
-# too, so the same operation causes one `ValueAdmissibilityChanged`.
 tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

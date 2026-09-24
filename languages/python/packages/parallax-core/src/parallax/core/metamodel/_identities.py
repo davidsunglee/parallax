@@ -1,11 +1,3 @@
-"""Canonical model identities and lexical Entity references (m-metamodel).
-
-Every accepted reference and every facet key is one of these structured values
-rather than a name string. Identities are inert: they name a model position and
-say nothing about whether that position exists, which is foundational
-resolution's answer.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

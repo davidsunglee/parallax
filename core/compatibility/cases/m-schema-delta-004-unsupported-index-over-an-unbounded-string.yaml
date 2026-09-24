@@ -1,13 +1,5 @@
 # A physical operation one Dialect cannot render (m-schema-delta): the cell is the
 # refusal, and the Evolution stays unilateral.
-#
-# `Transcript.body` is an unbounded String, and an authored access path over it
-# is an ordinary Index on Postgres and no Index at all on MariaDB, whose storage
-# engine has no key length to build one from. Renderer support is a deployment
-# capability rather than a model-semantic fact, so the dialect-independent
-# Evolution is unilateral in both cells: MariaDB reports the operation it cannot
-# spell — its kind, the physical position it acts on, and the Evolution Operation
-# that asked for it — and returns no partial delta beside it.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

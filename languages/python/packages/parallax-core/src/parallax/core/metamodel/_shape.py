@@ -1,5 +1,3 @@
-"""Member-shape vocabulary derived from accepted Metadata (m-metamodel)."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence

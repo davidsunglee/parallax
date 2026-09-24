@@ -1,5 +1,3 @@
-"""Versioned envelope and provenance for quantitative Python cost reports."""
-
 from __future__ import annotations
 
 import hashlib

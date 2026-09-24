@@ -1,12 +1,5 @@
 # Moving a subtype out of its branch (m-model-evolution): coordinated for BOTH
 # reasons, on one operation.
-#
-# `Motion` leaves `Filing` for `Docket`. A narrowing through the earlier branch
-# stops resolving and the members it inherited are no longer applicable, which is
-# `AuthoringSurfaceChangeRequired`; its rows belong to a different Table, which is
-# `DatabaseMigrationRequired`. One operation requiring both appears ONCE with both
-# reasons in the fixed order. Two surviving roots change what they denote, so the
-# one operation causes two `QueryResultMembershipChanged` impacts.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

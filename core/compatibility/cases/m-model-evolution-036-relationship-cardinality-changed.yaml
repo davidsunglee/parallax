@@ -1,11 +1,5 @@
 # Relationship CARDINALITY (m-model-evolution): the boundary is the result shape,
 # not the cardinality name.
-#
-# `badge` moves between two cardinalities that both answer with one object, so
-# the authored surface survives it. `items` moves to one that answers with a
-# collection, so a previously valid navigation changes its result shape. Both
-# associations map primary key to primary key, which is what lets one pair
-# declare all four cardinalities.
 tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,13 +1,3 @@
-"""Deriving one Physical Index Name per Index definition, and detecting collisions.
-
-A name is ``pxi_<readable-prefix>_<fingerprint>``. The prefix exists to be read
-by a person looking at a catalog; the fingerprint is what makes the name unique,
-so only the prefix is ever shortened. Every input is the definition's own — the
-physical Table, the declaring Entity Identity, the authored Index name, its
-ordered components, and its uniqueness — so a definition's name does not move
-when an unrelated Index is added beside it.
-"""
-
 from __future__ import annotations
 
 import hashlib

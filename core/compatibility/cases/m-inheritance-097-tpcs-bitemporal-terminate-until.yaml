@@ -1,24 +1,5 @@
 # Table-per-concrete-subtype BITEMPORAL terminateUntil: the inactivation targets the
 # subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql).
-#
-# A terminateUntil over a bounded Valid-Time window inactivates the original on the
-# Transaction-Time dimension and chains HEAD + TAIL (no middle), so the value is absent inside the
-# window (m-bitemp-write). In a table-per-concrete-subtype family the subtype is selected by
-# WHICH table the DML targets, so terminating a LoanRate inactivates and chains in the
-# concrete `loan_rate` table: the inactivation is `update loan_rate set out_z = ? where
-# id = ? and thru_z = ? and out_z = ?`, binds [2024-02-15, 2, infinity, infinity], with NO
-# tag guard (contrast the table-per-hierarchy inactivation m-inheritance-096, whose
-# `update instrument` carries `and kind = ?`).
-#
-# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 and to the
-# table-per-hierarchy composed variant m-inheritance-096 (same window, same 3-row result),
-# differing ONLY in table/tag routing.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the Latest rectangle, amount 6.75, valid [2024-01-01, inf),
-#                           transaction [2024-01-01, inf), spread 1.25         (1 statement)
-#   step 2 terminateUntil : terminate for Valid-Time window [2024-03-01, 2024-09-01) at
-#                           txInstant 2024-02-15 — inactivate + head + tail   (3 statements)
 model: models/rate.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

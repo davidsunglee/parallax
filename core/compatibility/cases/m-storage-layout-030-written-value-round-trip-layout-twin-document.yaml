@@ -2,34 +2,6 @@
 # writes compose the same four values, and the same read publishes them back member
 # for member. Only the physical encoding differs — every member of every row rides
 # inside the shared `payload` document rather than in a Column of its own.
-#
-# Row 10 names every member, so one write covers the whole shape — the top-level
-# `one` `spec`, the nested `one` `origin` and nested `many` `stops` inside it, and
-# the top-level `many` `marks`. Rows 11 to 13 divide the three ways a write can
-# leave something not present:
-#
-#   11  `note` OMITTED         the stored occurrence carries no `note` key
-#   12  `note` EXPLICIT NULL   the stored occurrence carries `note: null`
-#   13  `spec` never named     the occurrence itself is absent
-#
-# A `many` left unset is neither of those: `stops` and `marks` store the empty
-# array, a `many` occurrence's only zero-element representation.
-#
-# The semantic distinction this pair pins down is that presence belongs to the
-# WRITTEN VALUE and not to the layout, on both sides of the round trip. The closing
-# find's `expectRows` shows the read side, and the trip is exact: an omitted leaf is
-# omitted again and an explicit null reads back as that null, so all three
-# not-present spellings survive the read as three. The two answers that are not
-# presence states of a stored member stay what they were — an absent occurrence
-# answers null, because a `one` the row never held composes nothing, and an unset
-# `many` answers `[]`, its only zero-element representation. The twin publishes
-# those same four rows. `then.tableState` shows
-# the write side under this layout: an absent occurrence is a key the shared document
-# never carries where the Columns member has a NULL Column, and an omitted leaf is a
-# key missing from `payload.spec` rather than from a `spec` Column — three spellings
-# that stay distinct in storage either way. `WriteTwinItem` declares no version and
-# no As-Of Axis, so its Effective Concurrency Strategy is Locking and the
-# participating find takes the shared row lock.
 model: models/write-transparency-layout-twin-document.yaml
 tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, insert, json, presence, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

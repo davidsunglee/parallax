@@ -1,14 +1,5 @@
 # Deep fetch, to-many: every Order with its line items eager-fetched via the
 # one-to-many `Order.items` relationship.
-#
-# Two statements, roundTrips = 2 (NOT 1 + N):
-#   level 0 (root)  : all orders
-#   level 1 (items) : order_item rows whose order_id is in the DISTINCT order ids
-#                     {1, 2, 3, 4, 5, 42}.
-# Orders with no items (3, 4, 5) still appear in the graph with an empty `items`
-# list — proving the fan-out attaches by key, not by inner join (which would drop
-# childless parents). The harness asserts the gathered parent keys equal the
-# authored level-1 binds and that statement count == roundTrips.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, to-many, relationship, slice-managed-1]
 shape: read

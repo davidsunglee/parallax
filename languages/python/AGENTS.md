@@ -1,63 +1,9 @@
-# AGENTS.md — Parallax Python target
+# Python Target Instructions
 
-Directory-specific guidance for agents working under `languages/python/`. Repo
-policy in the root `AGENTS.md` and `CLAUDE.md` still applies; this file only adds
-what is specific to the Python target and does not restate it.
-
-## Before writing runtime code
-
-Read, in order: root `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`,
-`core/spec/modules.md`, `core/spec/slices.md`,
-`core/spec/m-conformance-adapter.md`, then this target's completed spec
-`spec/python.md`, this file, and `TESTING.md`. The spec is the binding product
-definition; nothing here overrides it.
-
-## Binding constraint — no cross-implementation prior art
-
-Other Parallax language implementations — sibling `languages/*` targets, their
-justfile recipes, tests, adapters, and operational docs — are
-**non-normative and MUST NOT** be used as prior art or design input. Derive
-everything from `spec/python.md`, the core specs, `core/schemas/`, the
-compatibility corpus, and the conformance-adapter contract. Resolve gaps in
-those artifacts rather than consulting another implementation.
-
-## Before adding, moving, or changing a test
-
-Read `TESTING.md`. It is this target's authoritative testing map: which semantic
-surface directory a test belongs in, what may live at the test root, where
-cross-surface support goes, which fixture reaches a live database, and which
-command owns which selection.
-
-## Design decisions live in the spec
-
-Do not record design decisions here or in `TESTING.md`. They belong in
-`spec/python.md` and the ADRs under `docs/adr/`. Executable commands live in the
-root `justfile`, whose recipe docs and `just show-gates <recipe>` are their own
-reference; `TESTING.md` is limited to the test map.
-
-## Deferred-work ledger
-
-The deferred-work ledger at [`docs/deferred-ledger.md`](docs/deferred-ledger.md)
-binds every session: read it at session start, add an entry in the same session
-any deferral happens, and sweep it at claim closure. It carries **only open
-entries** — closing or graduating one means removing it and leaving a forwarding
-line, so the ledger stays a work list rather than an archive.
-
-Entry numbering is continuous and never reused, so a D-number identifies one
-item. The ledger's own History section names the per-ticket files holding the
-full text of entries it no longer carries.
-
-## Key commands
-
-Every Python command is a `python-*` recipe in the root `justfile`; `just --list`
-prints the catalog and `just show-gates python-check` prints what the merge gate
-owns. Three steps have no recipe of their own:
-
-- `cd languages/python && uv sync` — install the dev environment (all five
-  workspace distributions editable, plus the toolchain).
-- `cd languages/python && uv run python tools/check_dag_sync.py --write` —
-  regenerate the import-linter forbidden-edge complement after a
-  `core/spec/modules.md` change.
-- `cd languages/python && uv run pytest -m cost -n auto --store-cost-durations` —
-  refresh `tests/_support/cost_durations.json`, which balances the cost class's
-  CI shards, after that class changes shape.
+- `spec/python.md` is the binding entrypoint. Read the linked binding page and core module relevant to the change; private refactors need no binding edit unless they change an enforced source boundary.
+- Preserve the spec's source and artifact topology declarations, `tools/check_dag_sync.py`'s independent mappings, and `tools/check_scope_ownership.py`'s checks. Changes to their enforcement mechanism require explicit design review.
+- `pyproject.toml` and package metadata own Python versions, dependencies, tool settings, and quality thresholds. Do not repeat those settings in prose.
+- Before changing tests, read `TESTING.md` for placement and fixtures. Root `justfile` recipes and `just show-gates <recipe>` describe verification ownership.
+- Keep useful public contracts and critical local rationale in source. Do not require docstrings to list variants, signatures, or behavior already expressed by types, tests, or a contract owner.
+- `docs/deferred-ledger.md` tracks open unowned work. Consult relevant entries when touching their subject, record a new deferral only when no issue or task owns it, and remove resolved entries at claim closure. It is not required reading for unrelated changes.
+- ADRs record consequential Python-specific decisions and alternatives; ordinary internal refactors need no ADR. `CONTEXT.md` is a terminology index, not another binding specification.

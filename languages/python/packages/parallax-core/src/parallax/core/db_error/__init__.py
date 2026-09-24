@@ -1,30 +1,3 @@
-"""``parallax.core.db_error`` enforcement scope (m-db-error).
-
-Maps a raised database error to a neutral **category** so language-neutral code
-can react without dialect knowledge. This is the **only** place native error codes
-are interpreted — the pure dialect strategy (`m-dialect`) owns the per-dialect
-`native code -> category` table (`Dialect.classify`), and this module consumes it;
-everything above the seam reasons in categories, never in SQLSTATE.
-
-The category set is closed: :data:`CATEGORIES`. Classification is interrogated at
-**distinct call sites**, so the seam exposes it as **predicates defined as category
-membership** — not one stringly-typed method:
-
-- the transaction retry loop (`m-auto-retry`) asks :func:`is_retriable`
-  (``category == "deadlock"`` — a true deadlock **or** a serialization failure,
-  both retriable);
-- the insert path asks :func:`violates_unique_index`
-  (``category == "uniqueViolation"``);
-- the lock path (`m-read-lock`) asks :func:`is_timed_out`
-  (``category == "lockWaitTimeout"``).
-
-:class:`DatabaseError` is the Parallax error a driver exception is re-raised as at
-the `m-db-port` boundary — it carries the neutral category, the preserved native
-code (SQLSTATE), the driver message, and, for a unique violation, the Physical
-Index Name the database itself named — so no driver exception type crosses above
-the port. ``m-db-error`` depends on ``m-db-port`` and ``m-dialect`` only.
-"""
-
 from __future__ import annotations
 
 from typing import Final, Literal

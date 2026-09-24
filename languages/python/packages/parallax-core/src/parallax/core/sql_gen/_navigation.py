@@ -1,10 +1,3 @@
-"""Plan validated relationship navigation without revisiting authored semantics.
-
-Predicate validation supplies the resolved target and both exact join members. This
-module chooses inheritance branches, allocates aliases, and renders correlation from
-those retained products; it never looks up a relationship or parses a member reference.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

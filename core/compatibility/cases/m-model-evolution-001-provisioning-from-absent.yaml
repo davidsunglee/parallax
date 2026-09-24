@@ -1,23 +1,6 @@
 # Provisioning (m-model-evolution, m-schema-delta): the evolution from an ABSENT
 # earlier endpoint is one entity-level addition per target Entity, and the
 # statements that carry an empty database to it.
-#
-# `when.evolve.earlier` is `null` — the explicit fresh-provisioning sentinel,
-# never inferred from an empty accepted model or from inspecting a database.
-# Provisioning is always unilateral, and the parent addition SUPPRESSES every
-# operation for the members it contains: `Widget`'s two Attributes and its
-# authored Index are described by `EntityAdded` alone rather than by four
-# operations. It carries no Behavioral Impact and no Overlap-Visible Operation
-# either, because no earlier scope survives for one to hold on.
-#
-# `then.schema` is where that one operation becomes physical. The Table is
-# created with all of its target Columns and its derived primary key inline, and
-# the authored NON-unique Index follows as a separately named statement — the
-# form every Index takes, so a later violation names something a rollout can
-# correlate. Both dialects spell the same two statements; only the derived
-# Physical Index Name differs, because the readable prefix is truncated to each
-# dialect's own identifier limit (63 bytes for Postgres, 64 for MariaDB) while
-# the fingerprint is never touched.
 tags: [m-model-evolution, m-schema-delta, evolution, provisioning, slice-snapshot-1]
 shape: evolution
 when:

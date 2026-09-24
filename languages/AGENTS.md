@@ -1,8 +1,8 @@
 # Language Target Instructions
 
-- For language-spec work, follow the Spec-Authoring Journey in the root `IMPLEMENTING.md`. Select a canonical Conformance Slice and complete the target language spec before writing runtime code.
-- Before runtime work, confirm that the target language spec has no unresolved decisions and follow the Implementation Journey in the root `IMPLEMENTING.md`.
-- Binding inputs are the completed target spec, core module specs, schemas, compatibility corpus, and conformance-adapter contract. Reference-harness internals and sibling language implementations are non-normative and must not be inspected or used as design input.
-- Do not alter core contracts to accommodate an implementation defect. If a core contract is wrong or incomplete, update the affected spec, schema, fixtures, and cases together.
-- Implement in the legal dependency order from `core/spec/modules.md`. Use the compatibility corpus as the primary behavioral verification and `core/spec/m-conformance-adapter.md` as the only conformance surface; reserve language unit tests for internal seams, diagnostics, and failure modes.
-- Run the narrowest active Conformance Slice and capability-tag intersection, then the target's aggregate gates in the root `justfile` (`just show-gates <recipe>` prints what each owns). Report every skipped database-backed check and why it was skipped.
+- Start with the target's binding entrypoint at `spec/<language>.md`, then read only the core contracts relevant to the change. `IMPLEMENTING.md` describes adding a target and changing its claim.
+- Binding documents record language-specific public decisions, not a second account of core semantics or private implementation structure. Preserve the required source and artifact topology declarations and their independent enforcement.
+- Core specs, schemas, compatibility cases, and the conformance-adapter contract are the portable inputs. Reference-harness internals and sibling implementations are non-normative and must not be used as implementation design input.
+- Do not alter an oracle to accommodate an implementation defect. Change the affected portable contract and executable evidence together only when intended behavior changes.
+- Use compatibility cases for portable behavior and unit tests for internal seams, diagnostics, and failure modes.
+- Read the target's `TESTING.md` before changing tests. Follow root verification policy and report any database-backed checks that could not run.

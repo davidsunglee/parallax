@@ -1,29 +1,3 @@
-"""``parallax.core.metamodel`` enforcement scope (m-metamodel).
-
-The representation-independent model contract: canonical identities, lexical
-reference resolution, the closed metadata vocabularies, the formation-state
-protocol family, the shared Metamodel Issue value with its canonical ordering
-law, the fixed foundational resolver, the one Metadata Compiler that produces
-the sole accepted metadata graph, the structural conformance of a written
-document to a Value Object occurrence, and the verdict one already-resolved
-member returns on one written value. It owns no JSON/YAML spelling, no
-inherited or effective semantic view, no query or SQL behavior, and no
-lifecycle — deciding WHICH member a name resolves to stays with the scopes that
-own family-effective resolution. ``m-metamodel`` depends only on ``m-core``.
-
-Closed structured vocabularies use one of two spellings: an ``enum.Enum`` when
-no member carries a payload, and one frozen dataclass per variant behind a
-``type`` alias when any member does — with a module-level singleton for that
-union's nullary members. Lookup-bearing aggregates are ``Protocol`` types so no
-frontend has to mirror a record graph, and every lookup returns ``None`` on a
-miss rather than raising.
-
-This is a supported public import path: an application annotating what
-``models.meta(...)`` returns, or naming an Entity by structured Identity, names
-those types from here. ``parallax.core`` re-exports none of them, so there is
-exactly one spelling for each.
-"""
-
 from __future__ import annotations
 
 from parallax.core.metamodel._compile import (

@@ -1,19 +1,3 @@
-"""The managed-document operations (m-document-codec, "Operations").
-
-A managed document is one whose leaves are already the host carriers of their
-declared Neutral Types — what a caller assigns and what a read decodes — rather
-than the encoded spellings :mod:`parallax.core.document_codec._document` reads and
-writes. These operations therefore decode nothing and refuse nothing: of everything the
-shape states they read composition alone — which members are declared, and whether
-each is a leaf, a ``one``, or a ``many`` — over a document whose leaves are
-somebody else's answer, so a stored value that violates a current authoring
-constraint stays correctable.
-
-This file imports the shape algebra and nothing else of the codec, which is what
-makes "takes managed leaves, decodes nothing, never refuses" checkable rather than
-asserted.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,17 +1,3 @@
-"""The evolution lane: an `evolution`-shape case's two model endpoints
-described as the difference between them, and a unilateral description
-lowered to its Schema Delta for every Dialect the specification names.
-
-The lane touches no database, builds no Handle, and carries no dialect of its
-own: both endpoints form through the public descriptor door every corpus
-model does, describing the difference is pure, and so is lowering it, which is
-why an evolution case costs zero round trips. What comes back is the
-observation document — the evolution's corpus spelling and, for a unilateral
-description, one schema cell per catalogued Dialect, a Dialect this
-implementation ships no strategy for reported as an explicit exclusion.
-Grading it against ``then`` is the adapter's.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,16 +1,5 @@
 # Snapshot graph, DECLARED child ordering (m-snapshot-read): a materialized snapshot
 # preserves descending, multi-key, and nullable/nulls-last relationship ordering.
-#
-# The snapshot twin of the m-deep-fetch ordering shapes (no m-op-list tag), folded
-# into one graph off order 1 so all three declared-ordering dimensions ride one
-# materialization:
-#   - items            -> `id desc`               : [12, 11] (reversed vs insertion)
-#   - itemsByShipDate  -> `shipped_on asc`, NULLs last: [12 (2024-02-15), 11 (null)]
-#   - tags             -> `priority desc, label asc`: [fragile(5), gift(2), urgent(2)]
-#                         (the second key breaks the priority=2 tie)
-# The graph lists come back in each relationship's declared order; the harness
-# ordering oracle derives the expectation from the model, so a dropped/wrong ORDER BY
-# fails. 1 (root) + 3 (one per hop) = 4 round trips.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, orderBy, ordering, multi-key, nullable, relationship, graph, slice-snapshot-1]
 shape: read

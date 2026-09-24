@@ -1,14 +1,3 @@
-"""The two disjoint Model Formation failure families (m-model-formation).
-
-An invalid model and a broken implementation are different facts about
-different authors, so they never share a type.
-:class:`MetamodelValidationError` says the supplied model is invalid and carries
-every issue that makes it so; :class:`FormationContractError` says a
-contributor, profile, or manifest violated its own contract. A contract failure
-is never silently deduplicated into an issue, and neither publishes an accepted
-Metamodel, facet set, or any other formation output.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

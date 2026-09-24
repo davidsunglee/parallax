@@ -7,33 +7,6 @@
 # back-reference arm (OrderItem.order); m-snapshot-read-016 holds the to-many arm
 # across a derived copy instead, and the two together are the populated half of
 # the composition rule for both cardinalities.
-#
-# Step 0 materializes line item 11 WITH its owning order — the ordinary 1 + L deep
-# fetch over a reverse to-one, one statement per level, two round trips. Step 1
-# UPDATES that same order's `name` from `Ada` to `Rewritten` and commits it as its
-# OWN unit of work: one DML statement plus the resolving read a keyed update owes
-# an unversioned Non-Temporal target under the mandatory Locking fallback, so two
-# round trips. Step 2 accesses `order` on the view step 0 materialized and states
-# its WHOLE contents through `expectGraph` — every declared member of order 1,
-# `name` still `Ada`.
-#
-# That PRE-write name is the case's teeth and its semantic distinction. The write
-# is the composition under test, never a term in the expectation: what the access
-# states is what step 0 fetched, which is exactly what no re-read of the written
-# row can produce. An implementation that re-fetched, refreshed, or invalidated
-# the view on write answers `Rewritten` and fails; one that discarded the view
-# raises where it should answer; and `roundTrips: 0` fails anything that reaches
-# the database at all. Observing the write is what another read is for.
-#
-# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
-# accesses (m-op-list-002), but on the wire lane it is primary-key equality
-# against this step's own reused source rows; the identity proof of record — that
-# the accessed order is literally the SAME object before and after the write — is
-# the reference-identity assertion each language's API Conformance Suite runs
-# (m-api-conformance). The contents divide the same way: a wire harness assembles
-# them from the rows its own read retained, while a conforming adapter reports the
-# graph ITS implementation still holds for this step (m-conformance-adapter
-# `stepGraphs`), which is the half that can tell a surviving view from a re-read.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, to-one, update, scenario, slice-snapshot-1]
 shape: scenario

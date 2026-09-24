@@ -1,11 +1,4 @@
 # history(transaction-time): the FULL milestone set, no as-of predicate injected.
-#
-# Scoped to account id 1 with an inner `eq`, history returns BOTH milestones —
-# the superseded [2024-01-01, 2024-06-01) 100.00 row AND the current
-# [2024-06-01, infinity) 150.00 row — because the as-of axis is read as edge
-# points, not pinned to a single instant. The projection includes the interval
-# columns so the result carries the current row's open bound (`out_z = infinity`)
-# alongside a finite, superseded `out_z` — exercising the native-infinity read.
 model: models/balance.yaml
 tags: [m-temporal-read, m-object-query, m-sql, history, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,13 +1,5 @@
 # valueObject structured-column filter: nested field inequality (m-value-object valueObject,
 # m-sql), on Postgres AND MariaDB.
-#
-# nestedNotEq(Customer.address.city, 'Oslo') lowers to a negated extraction — a
-# leading `not` (the normalizer renders the negation that way, mirroring
-# `isNotNull`/`notIn`): Postgres `not jsonb_extract_path_text(t0.address, ?) = ?`,
-# MariaDB `not json_value(t0.address, ?) = ?`. Grace (Boston) and Rin (Berlin) do
-# NOT live in Oslo; the not-present cities — null column (4), missing key (5) and
-# explicit JSON `null` leaf (7) — are all excluded by the absence collapse (not
-# present is not "not Oslo"), identically on both dialects.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, slice-snapshot-1, slice-managed-1]
 shape: read

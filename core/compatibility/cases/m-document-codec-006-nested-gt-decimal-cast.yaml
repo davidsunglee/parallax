@@ -1,23 +1,6 @@
 # Portable document encoding: a `decimal(p, s)` leaf is a JSON STRING and still
 # CASTS — the one row where document form and comparison behavior part company
 # (m-document-codec, m-dialect typed cast form, m-sql), on Postgres AND MariaDB.
-#
-# The encoding is a string because no JSON number carries a declared scale, and a
-# naive round trip through a binary float silently changes a value the database would
-# have preserved. The comparison nevertheless casts, because the exact spelling's
-# integer part has no fixed width: Ada stores "10.25" and Bo stores "9.25", so as text
-# "10.25" sorts BELOW "9.25" and `> '9.50'` matches nothing at all. The cast answers
-# Ada, which is the row a numeric reading returns.
-#
-# That divergence is what this case exists for: an implementation that classified
-# `decimal` as text-compared — the reading its JSON-string document form invites —
-# would return the EMPTY set here while equality on the same leaf (case 007) kept
-# agreeing, so the defect would be silent everywhere else.
-#
-# The bind is the managed decimal in its declared type, never a JSON number: routing
-# 9.50 through a binary float would match stored values that merely round to the same
-# float. Its wire form is the exact decimal string (m-core), which is what the golden
-# carries.
 model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read

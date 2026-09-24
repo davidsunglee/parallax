@@ -1,71 +1,3 @@
-"""Immutable query and write values built from class-level member access.
-
-Class-level attribute access yields an :class:`AttributeExpr` (the SQLAlchemy
-``Mapped[T]`` pattern): the seed of a Predicate, strict-Pyright-clean
-without a plugin. Its comparison / string / membership / null operators build
-frozen ``m-predicate`` nodes wrapped in a :class:`Predicate`, which composes with
-``&`` / ``|`` / ``~`` and native parentheses into the canonical boolean tree —
-inserting a ``group`` node exactly where an ``or`` binds looser than its enclosing
-``and`` so an idiomatic predicate can never drift from canonical grouping.
-Expressions reject ``__bool__`` (catching accidental ``and`` / ``or`` / ``not``
-and chained comparisons), pointing at ``&`` / ``|`` / ``~`` and ``.between()``.
-
-Class-level relationship access yields a :class:`RelationshipPath`: the seed of
-the deep-fetch ``.include(...)`` spelling, the hop-level narrowed-view request,
-and the single-hop relationship quantifiers. :class:`ElementAttributeExpr` is the
-Value Object element-scoped carrier, always building element-relative ``nested*``
-nodes for use inside a quantifier's ``where=`` scope.
-
-Nodes here name no declaration and import no frontend: this module reaches no
-owner class, no declaration engine, no Domain Model, and no Metamodel. What a
-node does carry is what its seeding class access handed it — for an Attribute
-Expression, the member's own declared Metadata, which is exactly what an
-assignment's assignability, nullability, and declared-type rules read. Every
-rule that needs a whole model instead — an attribute reference's position, a
-narrow's effective set, an include path's legality, and a relationship hop past
-the first — is stated once at execution preflight, against the model actually
-connected.
-
-Type parameters read the same way everywhere in the frontend: ``E`` is the Entity
-a value is rooted at — its position; ``S`` a subtype of that position; ``R`` the
-related Entity a relationship hop reaches; ``T`` a declared Python value type;
-and ``V`` a Value Object class. ``E``, ``S``, and ``R`` are always Entities and
-``T`` never is, so a signature is readable without tracing where each parameter
-was solved.
-
-:class:`Predicate`, :class:`AllPredicate`, :class:`SortKey`, and
-:class:`AttributeAssignment` are contravariant in ``E``, which is the inheritance
-rule expressed as variance: an ancestor's member is addressable from a descendant
-position, a descendant's member is not addressable from an ancestor position.
-:class:`RelationshipPath` is COVARIANT in both parameters, for the opposite
-reason: its source narrows which queried objects the path starts from, so any
-descendant of the queried Entity is a legal include source, and its target is
-what the path points at, so a narrowed hop stands wherever the broad one does.
-``E`` and ``R`` appear in no field of any of these values, so each variance claim
-is stated by its own checker-only phantom rather than inferred from the runtime
-shape.
-
-Recommended style, not a rule the parameters enforce: START EVERY TERM FROM THE
-QUERIED ENTITY. Prefer ``Dog.where((Dog.name == n) & (Dog.bark_volume > v))``
-over spelling an inherited member through the class that declares it. It costs
-nothing on the wire — ``Dog.name`` and ``Animal.name`` emit the identical
-predicate, because the expression is built from the declaring class either way —
-and it leaves every composition in one position, which is trivially well-typed.
-
-What the parameters do NOT catch is recorded where it is decided rather than
-discovered. A predicate's value is a WIRE LITERAL, not a member value: the
-neutral contract spells a decimal member's comparison as the number ``600.00``,
-so a value parameter narrowed to the member's declared Python type would refuse
-the canonical spelling. ``__eq__`` / ``__ne__`` keep ``object`` for a second
-reason on top of that one: narrowing them is a Liskov violation against
-``object.__eq__``. So ``Order.total == "abc"`` is not a static rejection, and
-where the neutral contract states a literal-type rule the model-aware validator
-is what states it — the same mismatch one value-object hop deeper draws
-``nested-literal-type-mismatch``. A value-object hop past the occurrence
-(``Customer.address.city``) likewise keeps its Entity and erases its leaf type,
-so the member's existence and type are runtime questions too.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -275,7 +207,7 @@ class RelationshipRef:
 
 @dataclass(frozen=True, slots=True)
 class AttributeAssignment[E]:
-    """One typed ``_where``-verb assignment (``Attr.set(value)``, spec §5).
+    """One typed ``_where``-verb assignment (``Attr.set(value)``).
 
     The entity-scoped spelling of a predicate-write assignment, built on the same
     attribute-expression surface a predicate is built on. This scope stays free of
@@ -665,7 +597,7 @@ class AttributeExpr[E, T]:
         return SortKey(OrderKey(attr=str(self.ref), direction="desc"))
 
     def set(self, value: T) -> AttributeAssignment[E]:
-        """A set-based ``_where``-verb assignment (``Account.balance.set(0)``, spec §5).
+        """A set-based ``_where``-verb assignment (``Account.balance.set(0)``).
 
         Only a top-level scalar attribute or Value Object member is assignable: a
         Value Object always binds its whole document, so there is no sparse write
@@ -721,11 +653,11 @@ class AttributeExpr[E, T]:
         )
 
     def _reject_unassignable(self, value: object) -> None:
-        """Apply the shared assignment rule family to a rendered value (spec §5).
+        """Apply the shared assignment rule family to a rendered value.
 
         The rules are one set, stated once in
         :func:`~parallax.core.metamodel.judge_assignment` and called from every
-        surface that assigns: here, ``Entity.edit(...)`` (spec §3), and the
+        surface that assigns: here, ``Entity.edit(...)``, and the
         serialized write boundary. A primary-key, read-only, or framework-owned
         target is refused, a scalar value must match its declared neutral type,
         and a Value Object value must be a well-formed document — with ``None``
@@ -1094,36 +1026,36 @@ class RelationshipPath[E, R]:
 
     def narrow[N](self: RelationshipPath[Any, N], *subtypes: type[N]) -> RelationshipPath[E, N]:
         """A hop-level narrowed-view request (``Owner.pets.narrow(Dog)``),
-        continuable to a deeper hop. Requests the derived narrowed view
-        (spec §3), never marking the broad relationship loaded.
+         continuable to a deeper hop. Requests the derived narrowed view
+        , never marking the broad relationship loaded.
 
-        Each named class must be a subtype of what the hop points at, which is
-        the static half of ``narrow-outside-relationship-target``: a hop narrows
-        to subtypes of its own target, never to another position. That bound is
-        carried by the specialized ``self`` rather than by a type-parameter
-        bound, because a bound may not itself be generic; solving one parameter
-        from the receiver states the same rule. That the specialized ``self``
-        spells the source as ``Any`` is deliberate: naming it ``E`` there would
-        put the source in an input position and collapse it from covariant to
-        invariant, and the source's covariance is what the include-source rule is
-        stated with. Which concrete subtypes the named classes resolve to remains
-        a per-model fact, settled at preflight, and the answered path keeps the
-        hop's declared target — a hop narrow does not move where a quantifier's
-        interior predicates are measured, since a quantifier reads the hop alone.
+         Each named class must be a subtype of what the hop points at, which is
+         the static half of ``narrow-outside-relationship-target``: a hop narrows
+         to subtypes of its own target, never to another position. That bound is
+         carried by the specialized ``self`` rather than by a type-parameter
+         bound, because a bound may not itself be generic; solving one parameter
+         from the receiver states the same rule. That the specialized ``self``
+         spells the source as ``Any`` is deliberate: naming it ``E`` there would
+         put the source in an input position and collapse it from covariant to
+         invariant, and the source's covariance is what the include-source rule is
+         stated with. Which concrete subtypes the named classes resolve to remains
+         a per-model fact, settled at preflight, and the answered path keeps the
+         hop's declared target — a hop narrow does not move where a quantifier's
+         interior predicates are measured, since a quantifier reads the hop alone.
 
-        Narrowing is single-shot per segment: a segment carries one alternative
-        list, so a second narrow on the same hop could only intersect or replace
-        the first, and both silently answer something other than what either call
-        asked for. Continuing to another relationship starts a fresh segment,
-        which narrows its own target independently.
+         Narrowing is single-shot per segment: a segment carries one alternative
+         list, so a second narrow on the same hop could only intersect or replace
+         the first, and both silently answer something other than what either call
+         asked for. Continuing to another relationship starts a fresh segment,
+         which narrows its own target independently.
 
-        At least one subtype is required, like every other narrowing form. A
-        segment records "no narrow" as an empty alternative list, so accepting a
-        narrow to nothing would answer the broad path itself — the request would
-        vanish rather than be refused, and the deep fetch would mark the broad
-        relationship loaded. The sibling forms are refused at preflight
-        (``narrow-empty-effective-set``); this one has no such refusal to fall
-        back on, because it lowers to no node of its own.
+         At least one subtype is required, like every other narrowing form. A
+         segment records "no narrow" as an empty alternative list, so accepting a
+         narrow to nothing would answer the broad path itself — the request would
+         vanish rather than be refused, and the deep fetch would mark the broad
+         relationship loaded. The sibling forms are refused at preflight
+         (``narrow-empty-effective-set``); this one has no such refusal to fall
+         back on, because it lowers to no node of its own.
         """
         *head, last = self.segments
         if last.narrow_to:

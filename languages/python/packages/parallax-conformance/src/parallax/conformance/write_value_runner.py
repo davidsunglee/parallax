@@ -1,36 +1,3 @@
-"""``parallax.conformance.write_value_runner`` — the case-driven write-value runner.
-
-A keyed write action step (`m-case-format` *Keyed write action steps*) hands a
-keyed write verb a **value** whose provenance the case states, and observes which
-verbs accept it (`m-unit-work` *Write value provenance*). What such a step
-observes is a property of a live client-held value rather than of any statement,
-which is why it is `lane: api-conformance` and why the compile/run lanes classify
-it out: the engine's snapshot lane assembles neutral row-shaped nodes and drives
-the neutral buffer seam, so it holds no value to hand a verb at all. This module
-hosts the machinery ONE parametrized runner drives against EVERY reachable
-write-value case, exactly as :mod:`~parallax.conformance.boundary_runner` does
-for the loop-mechanics branches.
-
-- :func:`write_value_steps` parses a case's own steps into the verb, the stated
-  provenance, and the declared `expectError`.
-- :func:`value_of` is the ONE provenance -> value mapping every case shares. It
-  arranges a value of the stated provenance rather than being told how: the
-  spec fixes which sources a value can come from, never how an implementation
-  retains that fact.
-- :func:`grade_step` drives the REAL developer verb and compares what it raised
-  against what the step declared, in the loud-mismatch discipline the engine's
-  own `mutate` grading uses — an undeclared refusal and a declared expectation
-  the verb never raised are both failures, never silently dropped observations.
-- :func:`declared_round_trips` is the case's own round-trip oracle, which this
-  suite is the only place to grade: the compatibility harness never executes an
-  `api-conformance` case, so nothing else reads it.
-
-Every function here drives the live :class:`~parallax.snapshot.handle.Transaction`
-and the second source (:class:`~parallax.conformance.another_source.AnotherSource`)
-it is handed, and opens no connection of its own, so the same runner grades a case
-against a real database and against a fake port alike.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

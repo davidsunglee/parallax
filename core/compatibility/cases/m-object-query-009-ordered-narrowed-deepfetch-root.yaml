@@ -1,23 +1,5 @@
 # An ORDER KEY resolves at the position `narrowTo` moved the returned rows to, beside
 # Includes (m-object-query positional rule, m-inheritance, m-deep-fetch).
-#
-# The read is positioned at the abstract root `Animal` (effective concrete set
-# {Cat, Dog, WildBoar}). `narrowTo` narrows the RESULT to [Dog] and the ordering is by
-# `Dog.barkVolume` — an attribute the CONCRETE SUBTYPE declares, referenceable only
-# because the narrowing moved the position the returned rows occupy. Asked of the
-# unnarrowed root the identical key is `subtype-attribute-outside-narrow-scope`, so the
-# affirmative half of that rule is what this case pins: an implementation that asked an
-# order key of the query's own `target` rather than of the narrowed result would refuse
-# this query, yet satisfies every case whose `orderBy` carries no narrowing — and no
-# other case carries both.
-#
-# The narrowing lowers to the single-concrete tag guard `t0.kind = ?` over the shared table
-# and reduces the projection to Dog's own inherited chain, so no sibling branch column is
-# selected and the node carries no `indoor` / `tusk_length`. `desc` over the nullable key
-# renders Postgres's `nulls last` placement. `limit 1` makes the ordering observable twice
-# over: through root membership — Rex (barkVolume 7) survives, never Fido (3) — and
-# through the child level's own IN list, which gathers only Rex's owner id 10, where an
-# `asc` key would gather Bob's 11. `1 + L` = 2 statements.
 model: models/animal.yaml
 tags: [m-object-query, m-predicate, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

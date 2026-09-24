@@ -1,9 +1,6 @@
 # Minimal dependent cascade-delete witness. Broader Reladomo bulk/cascade APIs
 # remain deferred; this case pins only the observable delete ordering for an
 # owned Order aggregate.
-#
-# Fixtures are loaded first. Deleting Order 1 removes dependent statuses, then
-# dependent items, then the root order. Rows for other orders remain untouched.
 model: models/orders.yaml
 tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
 shape: writeSequence

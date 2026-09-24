@@ -1,5 +1,3 @@
-"""Declared-type normalization for compatibility-format literal carriers."""
-
 from __future__ import annotations
 
 import datetime as dt

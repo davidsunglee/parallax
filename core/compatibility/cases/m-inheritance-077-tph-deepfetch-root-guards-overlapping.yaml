@@ -1,20 +1,5 @@
 # Two OVERLAPPING path-root guards over one relationship stay two hops, and the
 # shared roots are fetched twice (m-deep-fetch, m-inheritance).
-#
-# The two guards on `Animal.owner` are canonically `to: [Cat, Dog]` and
-# `to: [Dog, WildBoar]`:
-# they share the Dog roots, yet neither contains the other, so this is the one
-# guard relation that is neither equal, nor disjoint, nor containment. Hop identity
-# keys on the resolved source set, and {Dog, WildBoar} != {Cat, Dog}, so the two
-# stay distinct — `1 + L` = 3, with the first child keyed by the Cat and Dog
-# roots' owner ids (10, 11) and the second by the Dog and WildBoar roots' (10, 11, 12).
-# Rex and Fido, whom BOTH guards admit, therefore have their owner fetched twice.
-# The semantic distinction the case pins down is that the overlap is idempotent
-# and invisible in the object graph: both hops attach to the SAME ordinary `owner`
-# view, so a doubly-admitted root carries exactly one owner and `then.graph` is
-# indistinguishable from what one broad path produces. Only `roundTrips` observes
-# the second hop, which is what leaves collapsing overlapping guards into one hop
-# over the union of their sources a later statement-count-only change.
 model: models/animal.yaml
 tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

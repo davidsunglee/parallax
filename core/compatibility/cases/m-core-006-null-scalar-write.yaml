@@ -1,12 +1,5 @@
 # Null-scalar WRITE: every nullable scalar column bound explicitly NULL round-trips
 # as null on Postgres AND MariaDB (m-core / m-dialect).
-#
-# The complement of m-core-005: insert a row that binds SQL NULL into each nullable
-# scalar column (including the less-common bytes / time / uuid types and the decimal
-# / max-length string), then read the row back and assert every column is null. This
-# proves a null neutral value binds and decodes as null across the whole type set,
-# on both dialects (a null bytes / time / uuid must not decode to a spurious empty
-# value). The INSERT DML and binds are identical on both dialects.
 model: models/writable-scalars.yaml
 tags: [m-core, m-sql, m-dialect, scalar, "null", write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

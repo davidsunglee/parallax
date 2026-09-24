@@ -15,59 +15,19 @@ conformance-adapter contract.
 
 ## Layout
 
-```text
-src/reference_harness/
-├── case.py            # the in-memory Case + Model dataclasses + loader
-├── schema_validate.py # validate descriptors / queries / cases vs JSON Schema (+ meta-schema),
-│                      #   and the case-authoring rules JSON Schema cannot express: a
-│                      #   buffered write's members, a scenario `mutate`'s assignments, a
-│                      #   settling write's named find, a step's dialect-map coverage
-├── sql_lint.py        # sqlglot-parse every golden / reference SQL string
-├── serde.py           # canonical (de)serialize for queries AND the metamodel (JSON + YAML)
-├── sql_normalize.py   # sqlglot implementation of the m-sql normalization rules
-├── sql_wrapped_union.py # the oracle for the derived table an ordered/limited union wraps as
-├── sql_canonical.py   # the sqlglot dialect map + the refusal every canonicality check raises
-├── ddl_builder.py     # descriptor -> CREATE TABLE DDL (dialect-aware via the provider)
-├── data_loader.py     # load fixture rows
-├── dep_graph_check.py # parse modules.md; assert DAG + legal direction
-├── matrix.py          # emit the compatibility-matrix report (implementations x databases)
-├── multiset.py        # order-insensitive matching under a caller's own comparison
-├── case_assertions.py # CaseFailure + the assertion vocabulary the grading seams share:
-│                      #   comparison primitives and the boundary that names a
-│                      #   Scenario position on a failure
-├── write_plan.py      # write grading: what a golden write statement must be for the
-│                      #   neutral input it renders — row classification, bind
-│                      #   correlation, close addresses, gates, and inheritance routing
-├── provisioning.py    # reset + DDL + fixtures + given.apply, at the one point every
-│                      #   lane calls them (shallow by design; see its docstring)
-├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
-│                      #   rejected, writes, conflict, concurrency, and coherence
-├── object_query_oracle/ # every accepted Object Query observation, behind two names:
-│                        #   assert_case_read, ReadExecutor — plus the Scenario row-observation
-│                        #   collaboration unit_work_scenario alone imports
-├── unit_work_scenario/  # every Unit Work Scenario, graded whole, behind one name:
-│                        #   assert_unit_work_scenario — step interpretation, ordered
-│                        #   refusal, accounting, settlement, grouping, and lifecycle
-├── gate_graph.py      # resolve the orchestrator's command graph: roles, classes, closures
-├── show_gates.py      # render the resolved command graph
-├── check_gates.py     # fail when that graph breaks core/spec/language-testing.md
-├── ci_workflow.py     # read a CI workflow as job identifiers and the commands they run
-├── runner_config.py   # read a scope's test-runner configuration through a declared profile
-├── diagnostics.py     # the shared code/message diagnostic and its failure report
-├── markdown_read.py   # read code spans and list items out of Markdown prose
-├── check_database_access.py  # live database access stays inside the designated fixture
-└── providers/
-    ├── __init__.py    # the DatabaseProvider protocol (the seam)
-    ├── mariadb.py     # Testcontainers MariaDB provider (dialect = "mariadb")
-    └── postgres.py    # Testcontainers Postgres provider (dialect = "postgres")
-tests/
-├── conftest.py            # shared fixtures; derives each item's dbfree/db scheduling class
-├── contract_tools/        # the language-contract diagnostics' own tests
-├── oracle/                # the read oracle's own tests, on a scripted read executor
-├── unit_work_scenario/    # the Scenario package's own tests, on scripted and refusing
-│                          #   providers, driven through its one export
-└── test_compatibility.py  # pytest: discover cases, run each through run_case per provider
-```
+The [source directory](src/reference_harness/) contains corpus validation,
+independent read/write oracles, and database providers. The harness interprets
+authored expectations; it is not a production query compiler.
+
+Verification graph tooling is separate: [gate_graph.py](src/reference_harness/gate_graph.py)
+resolves commands, [show_gates.py](src/reference_harness/show_gates.py) displays
+them, and [check_gates.py](src/reference_harness/check_gates.py) validates them
+against the [testing contract](../core/spec/language-testing.md).
+
+Tests for contract diagnostics live in `tests/contract_tools/`, read oracles in
+`tests/oracle/`, and scenarios in `tests/unit_work_scenario/`. The corpus runner
+is `tests/test_compatibility.py`; `tests/conftest.py` owns provider fixtures and
+derives database scheduling from fixture use.
 
 ## Running
 
@@ -79,7 +39,7 @@ uv run python -m reference_harness.sql_lint ../core/compatibility
 uv run python -m reference_harness.dep_graph_check ../core/spec/modules.md
 uv run python -m reference_harness.slice_inspect ../core/spec ../core/compatibility slice-snapshot-1
 uv run python -m reference_harness.language_spec_validate ..
-uv run python -m reference_harness.language_spec_validate ../languages/<target>/spec/implementation.md ../core/spec
+uv run python -m reference_harness.language_spec_validate ../languages/<target>/spec/<target>.md ../core/spec
 uv run ruff format --check .
 uv run ruff check .
 uv run basedpyright
@@ -92,6 +52,7 @@ uv run python -m reference_harness.check_gates ..
 ```
 
 The two `language_spec_validate` lines differ in what they select. The first
-discovers and validates every completed language spec in the repository and is
-the form the gate runs. The second takes one path and is for a spec still being
-drafted; replace `<target>` with the target it belongs to.
+discovers each target's binding entrypoint and is the form the gate runs. The
+second validates one entrypoint; supporting binding pages are not separate
+claims. The checks cover the canonical claim and required topology declarations,
+not a checklist of explanatory prose.

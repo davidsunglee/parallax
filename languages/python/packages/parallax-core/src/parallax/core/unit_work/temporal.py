@@ -1,28 +1,3 @@
-"""Applying one neutral milestone topology to one observed row (m-unit-work).
-
-A temporal strategy answers the topology of an authored mutation — which
-milestone closes, and the interval and represented state of each successor —
-without naming a single value. This module performs the other half, split into
-two steps so a caller resolving many rows from one topology (a Materialized
-Write Group) does the first step once and the second per row:
-
-- :func:`resolve_successors` resolves ``topology.successors`` as far as
-  group-wide data (the mutation's own authored Valid-Time bounds) allows,
-  fixing which Insert Origin kind and which bound expression applies to each
-  successor without touching a predecessor.
-- :func:`bind_successor` substitutes one row's own predecessor and authored
-  values into an already-resolved successor, producing its concrete row and
-  Insert Origin.
-
-Write Settlement is the sole composition of the two, for both representations:
-it resolves a mutation's successors once, into that mutation's settled facts,
-and binds each row against them afterwards — immediately for an eagerly
-settled instruction, on demand for a group's row. Keeping the two halves apart
-is what keeps every consumer of a temporal expansion — the finalized steps a
-flush executes, and the tracked current milestone a later mutation observes —
-deriving it identically.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

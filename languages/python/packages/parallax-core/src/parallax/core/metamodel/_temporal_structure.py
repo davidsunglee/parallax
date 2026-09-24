@@ -1,12 +1,3 @@
-"""The frontend-neutral temporal convention table and derived temporal structure.
-
-Both frontends reach the `m-metamodel` seam carrying the same structure, so the
-conventions that decide it live here once rather than once per frontend: the
-canonical name and physical column of each As-Of Axis endpoint, the As-Of Axes a
-Temporality Profile derives, and the unique primary-key Index every Entity that
-declares a primary key carries.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence

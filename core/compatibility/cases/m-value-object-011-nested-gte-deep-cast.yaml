@@ -1,14 +1,5 @@
 # valueObject numeric filter: nestedGte over a THREE-level path with a typed cast
 # (m-value-object, m-sql, m-dialect), on Postgres AND MariaDB.
-#
-# `geo.point.lat` is a float64 attribute three levels deep. nestedGte(
-# Customer.address.geo.point.lat, 59.9) casts and compares with `>=`: Postgres
-# `cast(jsonb_extract_path_text(t0.address, ?, ?, ?) as double precision) >= ?`
-# carries one bind per path segment ('geo','point','lat') then the value — four
-# binds; MariaDB `cast(json_value(t0.address, ?) as double) >= ?` carries a single
-# '$.geo.point.lat' path bind then the value — two binds. Ada and Linus (lat 59.9)
-# qualify at the boundary; Grace (42.3) does not; the not-present rows (4/5/6/7)
-# cast SQL NULL and are excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read

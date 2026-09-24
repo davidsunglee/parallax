@@ -1,19 +1,6 @@
 # Boundary case (m-auto-retry, m-case-format root configuration): a Database
 # Root configured with `maxRetries: 0` disables the loop for an invocation that
 # names no bound of its own — `api-conformance` lane.
-#
-# `m-auto-retry-004` disables the loop by requesting `maxRetries: 0` at the call.
-# Here the call requests nothing at all, and the same injected
-# `serialization-failure` still surfaces after the single attempt, because the
-# bound the invocation resolves to is the root's. The outer invocation reports
-# `retries: 0` although no `when.uow` named it, which is the resolution the case
-# pins: the root's record, never the built-in 10, is what an omitted bound
-# resolves to. The stream is one attempt, and the failed write finishes
-# `retryEligible: true` — the classifier's verdict under the effective policy —
-# so what stopped the loop is the bound the root supplied, not the fault's kind.
-#
-# `roundTrips: 2` is the single attempt's cost: the observing read, and the write
-# that reached the database and failed.
 model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-execution-lifecycle, m-api-conformance, transient, database-options, slice-snapshot-1]
 lane: api-conformance

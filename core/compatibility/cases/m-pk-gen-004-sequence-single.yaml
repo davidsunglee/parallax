@@ -1,9 +1,4 @@
 # PK generation `sequence` (m-pk-gen) — single insert through a simulated sequence.
-#
-# Reserve a block (batch=1 -> advance next_val by 1*1=1, base=1), insert id 1.
-# Registry badge_seq: 1 -> 2. The advanced counter + allocated id are asserted by
-# the PK-generation oracle (case_runner._assert_pk_allocation), which re-derives
-# them from the declared config; this case asserts the target table only.
 model: models/pk-sequence.yaml
 tags: [m-pk-gen, m-unit-work, sequence, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

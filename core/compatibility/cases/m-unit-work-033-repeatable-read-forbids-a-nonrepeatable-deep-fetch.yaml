@@ -3,32 +3,6 @@
 # `when.uow.isolation: repeatable-read` fans out to an included relationship twice
 # and materializes the same graph both times, across a peer transaction that
 # committed a change to the included row in between.
-#
-# Two interleaved `uow` groups over the orders model. The `reader` group
-# materializes line item 11 WITH its owning order, the `writer` group rewrites that
-# order's name and COMMITS while the reader is still open, and the reader then
-# re-issues the same deep fetch.
-#   step 0 find  : `reader` materializes item 11 and, through
-#                  `includes: OrderItem.order`, order 1 (name `Ada`) — the ordinary
-#                  1 + L deep fetch, one statement per level
-#   step 1 write : `writer` updates order 1's name to `Rewritten`. Order is an
-#                  unversioned Non-Temporal target, so its keyed update is ungated
-#                  (the mandatory Locking fallback). The group COMMITS after this,
-#                  its last step.
-#   step 2 find  : `reader` re-issues the SAME deep fetch — `expectGraph` states the
-#                  whole materialized graph, and the included order's name is still
-#                  `Ada`. This is the teeth, and it is stated on the CHILD level
-#                  deliberately: the item the root read returns was never written,
-#                  so an implementation whose view is fixed per STATEMENT rather
-#                  than per TRANSACTION still answers the root correctly and gets
-#                  only the include wrong — the include is the one level of this
-#                  graph where the level's promise is observable at all.
-#                  The group COMMITS after this, its last step.
-#   step 3 find  : UNGROUPED, after both groups resolved — order 1 reads
-#                  `Rewritten`, which is what makes step 2's answer a fixed view
-#                  rather than a write that never happened.
-# The second of three cases varying only the READ that is repeated (m-unit-work-032
-# a plain object find, m-unit-work-034 a streamed delivery). roundTrips = 6.
 model: models/orders.yaml
 tags: [m-unit-work, m-deep-fetch, isolation, repeatable-read, nonrepeatable-read, relationship, scenario, slice-managed-1]
 shape: scenario

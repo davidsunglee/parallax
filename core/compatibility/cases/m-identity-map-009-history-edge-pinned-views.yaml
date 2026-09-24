@@ -2,19 +2,6 @@
 # `history` read returns the full milestone set, and each result is a DISTINCT
 # coordinate-keyed view interned at its milestone's own EDGE pin (its from-instant,
 # the one instant guaranteed to select exactly that milestone).
-#
-# Position id 1 is a full bitemporal history of three rectangles
-# (models/position.yaml): R1 value 90 (the superseded belief, transaction
-# [2024-01-01, 2024-04-01)), R2 value 100 (the head, valid [2024-01-01,
-# 2024-06-01)), and R3 value 200 (the corrected value, valid [2024-06-01,
-# infinity)). Step 0's `history` returns all three, each row carrying its own
-# from/thru/in/out edge columns — the milestone edge pins. Steps 1 and 2 re-read
-# id 1 pinned at two of those EDGE coordinates: R1's edge (Valid Time 2024-01-01,
-# Transaction Time 2024-01-01, exercising the Transaction-Time dimension) and R3's edge (Valid Time
-# 2024-06-01, Transaction Time 2024-04-01, exercising the Valid-Time dimension). Each resolves
-# exactly its milestone (90, then 200), and the two are DISTINCT pinned views
-# (`differentObjectFrom`) — proven at the wire by the differing coordinates and
-# rows, graded as reference inequality by the API Conformance Suite.
 model: models/position.yaml
 tags: [m-identity-map, m-temporal-read, identity, as-of, bitemporal, temporal, history, scenario, slice-managed-1]
 shape: scenario

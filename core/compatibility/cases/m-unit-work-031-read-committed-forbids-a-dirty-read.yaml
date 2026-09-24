@@ -1,30 +1,6 @@
 # Read Committed forbids a dirty read (m-unit-work / m-db-port): a unit of work
 # opened at `when.uow.isolation: read-committed` never observes another unit of
 # work's uncommitted write.
-#
-# Two interleaved `uow` groups over account 2. The `writer` group observes it,
-# buffers a gated update to 999.00, and stays open; the `reader` group then finds
-# the same row and MUST observe the fixture value 250.00 at version 1 — the state
-# the database has committed, not the one the peer transaction is holding. Only
-# after that does the `writer` group's own dependent find read its own uncommitted
-# write back (read-your-own-writes, which is a property of the writing transaction
-# and not of any level) and commit; the trailing UNGROUPED find then observes
-# 999.00 at version 2.
-#   step 0 find  : `writer` observes account 2 (Linus, 250.00, version 1)
-#   step 1 write : `writer` buffers the gated update to 999.00, advancing the
-#                  observed version 1 -> 2; NOT the group's last step, so the
-#                  transaction stays open and the write stays uncommitted
-#   step 2 find  : `reader` observes account 2 — 250.00 at version 1. This is the
-#                  teeth: an implementation whose reader saw 999.00 read data no
-#                  transaction had committed, and would then have read a value
-#                  that never became durable had the writer aborted. The group
-#                  COMMITS after this, its last step.
-#   step 3 find  : `writer` observes its OWN buffered write, 999.00 at version 2.
-#                  The group COMMITS after this, its last step.
-#   step 4 find  : UNGROUPED, after both groups resolved — 999.00 at version 2.
-# The trailing find deliberately states only what both engines have committed:
-# `read-committed` permits nonrepeatable reads and phantoms, and a case must not
-# require one to occur merely because the level allows it. roundTrips = 5.
 model: models/account.yaml
 tags: [m-unit-work, isolation, read-committed, dirty-read, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

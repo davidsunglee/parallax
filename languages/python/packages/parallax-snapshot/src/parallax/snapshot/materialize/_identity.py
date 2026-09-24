@@ -1,5 +1,3 @@
-"""Identity-first claims and exact payload witnesses for Snapshot occurrences."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

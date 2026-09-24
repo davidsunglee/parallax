@@ -13,7 +13,9 @@ public classmethod constructors that class declares.
 from __future__ import annotations
 
 import json
+from importlib import import_module
 from pathlib import Path
+from typing import TypeAliasType, get_args
 
 import pytest
 from griffe import Alias, Class, GriffeLoader, Module
@@ -95,7 +97,7 @@ def test_public_api_matches_committed_snapshot() -> None:
         ),
     ],
 )
-def test_exported_closed_contributor_algebras_document_their_variants(
+def test_exported_closed_contributor_algebras_have_expected_variants(
     public_module: str,
     defining_module: str,
     name: str,
@@ -107,6 +109,6 @@ def test_exported_closed_contributor_algebras_document_their_variants(
     assert isinstance(public, Module)
     assert isinstance(defining, Module)
     assert public.exports is not None and name in {str(export) for export in public.exports}
-    docstring = defining.members[name].docstring
-    assert docstring is not None
-    assert all(variant in docstring.value for variant in variants)
+    alias = getattr(import_module(defining_module), name)
+    assert isinstance(alias, TypeAliasType)
+    assert {variant.__name__ for variant in get_args(alias.__value__)} == set(variants)

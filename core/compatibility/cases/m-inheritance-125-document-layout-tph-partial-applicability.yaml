@@ -1,10 +1,5 @@
 # A TPH document write stores only the concrete variant's applicable members and
 # derives the shared-table tag without duplicating document state in columns.
-#
-# CardPayment and CashPayment both write `detail` to the shared path, with the
-# codec spelling each value by its declared type. `authorizationCode` applies only
-# to CardPayment. The cash document omits that key entirely rather than storing
-# JSON null, while both inserts bind one complete non-null Structured Column.
 model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

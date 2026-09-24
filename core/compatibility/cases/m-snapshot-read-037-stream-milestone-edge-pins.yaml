@@ -1,29 +1,6 @@
 # Every root of a streamed milestone set stands at its OWN edge pin, and the
 # Continuation Order carries the whole edge — every declared axis start, Valid
 # Time before Transaction Time (m-snapshot-read *Streamed delivery*).
-#
-# Position 1 is one business key at THREE bitemporal rectangles (models/position.yaml):
-# the superseded belief R1 (valid [2024-01-01, infinity), transaction [2024-01-01,
-# 2024-04-01)), the rectangle-split head R2 (valid [2024-01-01, 2024-06-01),
-# transaction [2024-04-01, infinity)), and the corrected R3 (valid [2024-06-01,
-# infinity), transaction [2024-04-01, infinity)). Scanning BOTH axes returns all
-# three with no as-of predicate injected, so the key is constant across the whole
-# result and the edge is the only thing separating the roots.
-#
-# That makes this the case where the edge's own multi-term seek is exercised: R1
-# and R2 TIE on `from_z` and part on `in_z`, so page 3 seeks the deepest branch of
-# the lexicographic remainder — `pos_id = ? and from_z = ? and in_z > ?` — while
-# page 4 parts one level higher, on `from_z` alone. Ordering by the key alone
-# would deliver ONE root; ordering by the key and Transaction Time alone would tie
-# R2 with R3, which share `in_z`.
-#
-# The delivery is three pages at `batchSize: 1`, each asking for two roots and
-# delivering one until the last, which gets one back and so proves exhaustion
-# without a statement of its own. `then.graphs` states three PAIRWISE DISJOINT
-# bitemporal pins, one per
-# published root, each naming that milestone's own from-instant on both axes and
-# never the coordinates of any read — the same partition m-temporal-read-016's
-# whole-result read of this query resolves into rows.
 model: models/position.yaml
 tags: [m-snapshot-read, m-object-query, m-temporal-read, stream, streamed-delivery, temporal, history, bitemporal, both-axes, edge-pinned, graph, slice-snapshot-1]
 shape: read

@@ -1,18 +1,3 @@
-"""The built-in Model Formation composition root.
-
-The one place that names every contributor Parallax ships. It supplies the
-Formation Manifest — immutable identity, Issue Code, facet, and dependency data
-— separately from the Formation Profile that supplies the matching
-implementations, so a contributor that is imported but undeclared, or declared
-but unsupplied, fails drift checking instead of quietly changing what a model
-means. Every contributor is imported explicitly here; nothing registers itself,
-and no manifest row is derived from a contributor object.
-
-This module is a composition root, not a public surface: it is the only core
-module permitted to import contributors from several enforcement scopes at once,
-and it exposes no behavior of its own.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

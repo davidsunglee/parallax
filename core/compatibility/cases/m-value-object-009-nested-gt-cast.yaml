@@ -1,14 +1,5 @@
 # valueObject numeric filter: nestedGt with a typed cast (m-value-object, m-sql,
 # m-dialect typed cast form), on Postgres AND MariaDB.
-#
-# `geo.elevation` is a float64 attribute, so nestedGt(Customer.address.geo.elevation,
-# 8) casts the text extraction to the declared type before comparing — the
-# m-dialect typed-cast form: Postgres `cast(jsonb_extract_path_text(t0.address, ?,
-# ?) as double precision) > ?` (per-segment binds ['geo','elevation'] then the
-# value), MariaDB `cast(json_value(t0.address, ?) as double) > ?` (one
-# '$.geo.elevation' path bind then the value). Ada (10.5) and Linus (20.0) exceed
-# 8; Grace (5.0) does not, and every not-present row (4/5/6/7) casts SQL NULL and
-# is excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read

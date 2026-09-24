@@ -1,19 +1,3 @@
-"""What a buffered write intends, where it claims it, and what a second intent
-may do to it (`m-unit-work` "Observed-State Coalescing").
-
-One claim scope may back several buffered writes before a flush, and this
-module states the only question that decides whether it may: given the intent a
-buffer already holds at a scope, what does an arriving intent become? The
-answer is one closed verdict, and both consumers read it — the developer verb,
-which refuses `write-evidence-already-claimed` synchronously for the
-incompatible answers, and the Write Planner, which performs the compatible ones
-while it coalesces. Stating it once is what makes it impossible for the
-synchronous refusal to disagree with what the flush would have done.
-
-Bare (non-underscored) names here are intra-package shared infrastructure, for
-the reason :mod:`~parallax.core.unit_work.planner` states.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

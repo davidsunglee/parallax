@@ -2,15 +2,6 @@
 # (m-snapshot-read): a page asks for one root more than it may deliver, so the
 # statement that delivered the last two roots is also the one that proved no
 # third page exists.
-#
-# Orders {1, 2, 3, 42} are delivered at `batchSize: 2` with one include level
-# (`Order.items`), and 4 divides by 2 exactly. Page 1 asks for three, gets orders
-# 1, 2, and 3, delivers 1 and 2, and fetches their items — order 3 is read here
-# and fetched by the page that delivers it. Page 2 seeks past id 2, asks for
-# three, gets orders 3 and 42, and fetches items for BOTH parent ids even though
-# order 3 has none — the level runs because the page gathered keys, and order 3's
-# view is materialized empty. Two roots for a requested three proves exhaustion,
-# so nothing follows. Total 2 + 2 = 4.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read

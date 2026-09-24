@@ -1,14 +1,6 @@
 # valueObject NULL-OUT: writing a nullable valueObject absent binds SQL NULL — the
 # whole column, not a document of nulls (m-value-object write, m-sql), on Postgres
 # AND MariaDB.
-#
-# Self-contained (from an empty table): step 1 inserts a Customer with an address
-# document; step 2 nulls the nullable `address` valueObject out. The update binds
-# `null` in its layout position (`set address = ?`, binds [null, pk]), which stores
-# SQL NULL for the whole structured-document column — the same null a scalar column
-# would take. The resulting row's `address` reads back as SQL NULL (Postgres and
-# MariaDB alike), decoded to `null` and pinned by `then.tableState`; the scalar
-# `name` is untouched.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, write-sequence, update, json, "null", slice-snapshot-1, slice-managed-1]
 shape: writeSequence

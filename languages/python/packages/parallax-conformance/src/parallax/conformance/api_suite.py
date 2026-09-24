@@ -1,19 +1,3 @@
-"""``parallax.conformance.api_suite`` — API Conformance Suite machinery.
-
-The coverage-partition computation and the Usage Guide model shared by the
-``tests/api`` suite and the ``gen-usage-guide`` generator. The
-partition asserts the union of exercised and reasoned-skipped cases equals the
-active slice, with no stale case IDs and no empty skip reasons.
-
-Reasoned skips are drawn from an explicit registry
-(:data:`SKIP_REASONS`, keyed by module) rather than auto-derived from the active
-set. An active case whose module is absent from the registry is covered by
-neither exercised nor skipped, so the partition fails — forcing a human to
-classify a newly reachable capability rather than letting it inherit a generic
-reason. A registry entry that names no unexercised active case is reported as
-stale. Entries are removed as each module's idiomatic examples land.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -24,20 +8,16 @@ from typing import Final
 from parallax.conformance import (
     case_format,
     database_options_stories,
-    database_pooling_stories,
     edit_runner,
     execution_authority_stories,
     execution_lifecycle_stories,
-    model_publication_stories,
-    read_models,
     snapshot_recipes,
-    stale_web_edit,
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
-from parallax.conformance.story_models import Account, Order, OrderStatus
+from parallax.conformance.story_models import Account, OrderStatus
 
 __all__ = [
     "CASE_SKIP_REASONS",
@@ -68,39 +48,13 @@ class Example:
 
 @dataclass(frozen=True, slots=True)
 class Recipe:
-    """A specification recipe rendered in the Usage Guide.
-
-    Unlike an :class:`Example`, a recipe maps to a SPEC section rather than
-    one corpus case — its choreography (e.g. the §3 stale-web-edit two-read
-    render-then-submit round trip) is larger than any single case's goldens,
-    and force-registering it under a borrowed case id would misrepresent what
-    that case grades. It renders under its own Usage-Guide heading with a
-    spec citation plus the tests that grade it end-to-end.
-
-    ``notes`` carries prose the snippet itself cannot: a fact about the code
-    rather than a citation of where it is specified or graded. It renders as a
-    paragraph between the citation line and the snippet, and is omitted when
-    empty."""
-
     title: str
-    spec: str
-    graded_by: str
     snippet: str
-    notes: str = ""
 
 
 RECIPES: Final[list[Recipe]] = [
     Recipe(
-        title="Optional to one — the 1..1 and 0..1 declarations and the three runtime states",
-        spec=(
-            "`python.md` §2 (a to-one's multiplicity is its foreign key's nullability) "
-            "and §3 (closed-world relationships and `is_view_loaded`)"
-        ),
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: the 1..1 instance, "
-            "the 0..1 loaded null, and the unloaded arm of both, distinguished by "
-            "`is_view_loaded` and by the refusal an unloaded access raises)"
-        ),
+        title="Read optional relationships",
         snippet=(
             inspect.getsource(OrderStatus)
             + "\n\n"
@@ -108,56 +62,7 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
-        title="Family materialization — table-per-hierarchy and table-per-concrete-subtype",
-        spec=(
-            "`python.md` §2 (`AbstractRoot` / `AbstractSubtype` / `ConcreteSubtype` "
-            "declarations and the two strategies) and §4 (`type(node)` is the "
-            "polymorphic observation)"
-        ),
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: each root read "
-            "materializes one instance of each declared concrete class, carrying that "
-            "branch's own members and no sibling's). The corpus-keyed siblings "
-            "`m-inheritance-106`/`-107`/`-108`/`-109` grade the same materializer "
-            "against their own `then.graph` goldens"
-        ),
-        snippet=(
-            inspect.getsource(read_models.Payment)
-            + "\n\n"
-            + inspect.getsource(read_models.CardPayment)
-            + "\n\n"
-            + inspect.getsource(read_models.CashPayment)
-            + "\n\n"
-            + inspect.getsource(snapshot_recipes.read_a_table_per_hierarchy_family)
-            + "\n\n"
-            + inspect.getsource(read_models.Document)
-            + "\n\n"
-            + inspect.getsource(read_models.FinancialDocument)
-            + "\n\n"
-            + inspect.getsource(read_models.Invoice)
-            + "\n\n"
-            + inspect.getsource(read_models.Receipt)
-            + "\n\n"
-            + inspect.getsource(read_models.Annotation)
-            + "\n\n"
-            + inspect.getsource(read_models.Memo)
-            + "\n\n"
-            + inspect.getsource(snapshot_recipes.read_a_table_per_concrete_subtype_family)
-        ),
-    ),
-    Recipe(
-        title="Publish an eager Typed read in canonical Wire form",
-        spec="`python.md` §4 (*Typed-to-Wire projection*)",
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: an eager Typed "
-            "Account result projects to the canonical Wire mapping through the shipped "
-            "Snapshot surface)"
-        ),
-        notes=(
-            "Projection is for a boundary that needs the result already in hand: it "
-            "performs no second read. If only Wire values are needed, begin with "
-            "`db.wire.find` instead."
-        ),
+        title="Publish a Typed result as Wire data",
         snippet=(
             inspect.getsource(Account)
             + "\n\n"
@@ -165,232 +70,8 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
-        title="Publish a Typed stream root in canonical Wire form",
-        spec="`python.md` §4 (*Stream projection is page-scoped and element-only*)",
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: every Typed Order "
-            "root projects through `SnapshotStream.wire` with its requested items "
-            "through the shipped adapter)"
-        ),
-        notes=(
-            "Project while delivery is paused at the root: the method uses the current "
-            "page and never advances it or issues SQL. Consume the Wire node inside the "
-            "scope so the stream retains only its current page."
-        ),
-        snippet=(
-            inspect.getsource(Order)
-            + "\n\n"
-            + inspect.getsource(snapshot_recipes.publish_typed_stream_as_wire)
-        ),
-    ),
-    Recipe(
-        title="Streamed delivery — one root at a time, in either namespace",
-        spec=(
-            "`python.md` §4 (*Streamed results*: `db.stream` / `db.wire.stream`, the "
-            "scope-bound single-pass delivery, and `batch_size`) and "
-            "`m-snapshot-read` *Streamed delivery* (the Continuation Order, the "
-            "`1 + L` ceiling per page, and *What a delivery costs*)"
-        ),
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: the same roots, the "
-            "same order, and the same included children at three page sizes, in both "
-            "namespaces). The memory bound the surface exists for is measured "
-            "separately in `tests/unit/test_snapshot_stream_retention.py`, which the "
-            "`cost` class owns, and the page partition each delivery spells is graded "
-            "against golden SQL by the corpus's streamed cases "
-            "(`m-snapshot-read-027`, `-031` through `-037`)"
-        ),
-        notes=(
-            "The two loops below are the whole difference between a bounded read and an "
-            "unbounded one, and it is not the `with` block — it is what the body does "
-            "with each root. Summing as you go keeps the working set at one page plus "
-            "one root; appending each root to a list reproduces the whole-result "
-            "retention the stream exists to remove, and `m-snapshot-read` excludes that "
-            "case on purpose rather than preventing it. Nothing about the stream itself "
-            "changes: a caller who needs the whole result should call `db.find`, which "
-            "says so in one word."
-        ),
+        title="Stream results",
         snippet=inspect.getsource(snapshot_recipes.stream_a_result_one_root_at_a_time),
-    ),
-    Recipe(
-        title="Streamed delivery inside a transaction — the write buffer a page bounds",
-        spec=(
-            "`python.md` §4 (a participating delivery) and `m-snapshot-read` "
-            "*Stability under concurrent writing* (per-page stability, the "
-            "caller-as-writer hazard, and the primary-key escape)"
-        ),
-        graded_by=(
-            "`tests/api/test_snapshot_recipes.py` (real Postgres: every account "
-            "credited exactly once, read back from the committed rows) and "
-            "`tests/unit/test_transaction_streams.py`'s Docker-free halves (the flush "
-            "is per page, and the buffer never exceeds one page's worth of writes at "
-            "any page size)"
-        ),
-        notes=(
-            "A delivery is stable per page and no further, so a loop that is both the "
-            "reader and the writer can move its own roots across the position its next "
-            "page seeks from — seeing one twice, or never. The escape is in the query "
-            "rather than in the loop: order by nothing, and the Continuation Order is "
-            "the primary key, which no write moves. A loop that must order by a mutable "
-            "member asks the database for the isolation it needs, through "
-            "`db.transact(..., isolation=...)`."
-        ),
-        snippet=inspect.getsource(snapshot_recipes.stream_and_write_inside_one_transaction),
-    ),
-    Recipe(
-        title="Stale web edit — Transaction-Time-Only (Balance)",
-        spec="`python.md` §3 (the recipe and the edge it transports)",
-        graded_by=(
-            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and "
-            "the concurrent-supersession refusal, each under both concurrency modes) "
-            "and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves "
-            "(the observed-`in_z` gate a zero-row close raises through)"
-        ),
-        snippet=(
-            inspect.getsource(stale_web_edit.render_balance_milestone)
-            + "\n\n"
-            + inspect.getsource(stale_web_edit.submit_balance_edit)
-        ),
-    ),
-    Recipe(
-        title="Stale web edit — bitemporal (Branch, the displayed rectangle re-read)",
-        spec="`python.md` §3 (the recipe and the edge it transports)",
-        graded_by=(
-            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and "
-            "the concurrent-supersession refusal, each under both concurrency modes) "
-            "and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
-        ),
-        snippet=(
-            inspect.getsource(stale_web_edit.render_branch_milestone)
-            + "\n\n"
-            + inspect.getsource(stale_web_edit.submit_branch_edit)
-        ),
-    ),
-    Recipe(
-        title="Stale web edit — the staleness signal, and why either concurrency mode is legal",
-        spec="`python.md` §3 (the recipe) and §5 (the concurrency modes)",
-        graded_by=(
-            "`tests/api/test_stale_web_edit.py` (real Postgres: each variant's "
-            "clean submit is graded twice, once per mode, and the read-time "
-            "refusal is graded under both)"
-        ),
-        notes=(
-            "`StaleMilestoneError` is **application**-owned, defined by the recipe itself "
-            "and shown below so the snippets above name nothing undefined. It must not "
-            "borrow the framework's `OptimisticLockConflictError`: that error means an "
-            "optimistic gate matched zero rows, which is neither what happened here nor "
-            "something that can happen under `locking` at all. The submit body is legal "
-            "under **both** modes, for different reasons — `locking` takes a shared read "
-            "lock on the current row at read time, so once the edge comparison passes "
-            "nothing can supersede the row before the flush; `optimistic` takes no lock, "
-            "and the observed-`in_z` gate covers exactly the window between the read and "
-            "the flush, raising `OptimisticLockConflictError` if a writer chains a "
-            "replacement inside it."
-        ),
-        snippet=inspect.getsource(stale_web_edit.StaleMilestoneError),
-    ),
-    Recipe(
-        title="Publishing an evolved model to a running service",
-        spec=(
-            "`python.md` §2 (*Model preparation and the Serving Model*, and the "
-            "evolution constraints publication carries), §3 (a transaction adopts "
-            "per attempt) and `m-schema-delta` (the ordered, prefix-safe statements "
-            "the application applies itself)"
-        ),
-        graded_by=(
-            "`tests/api/test_model_publication_story.py` (real Postgres: the story "
-            "runs end to end, the added column is written and read back under the "
-            "later edition, an earlier-edition read is unaffected by it, and a "
-            "stale publisher is refused with `PublicationConflictError` and "
-            "rebases onto the selection it names as held) and "
-            "`tests/unit/test_model_publication_stories.py`'s Docker-free halves "
-            "(a run of this recipe whose candidate preparation fails, leaving "
-            "no statement sent and the handle it already connected still "
-            "adopting the earlier edition, a Coordinated "
-            "Evolution, a boundary that never opened, a multi-statement delta "
-            "that stopped at its second statement, a fatal trigger that stays "
-            "primary, an undo that did not complete, the index provenance an "
-            "applying host is handed back, and the snippet being the source "
-            "that ran)"
-        ),
-        notes=(
-            "The order is the whole recipe. **Prepare the candidate first**: that is "
-            "where every fallible model-only derivation runs, so a candidate that "
-            "cannot be prepared raises with the database untouched and the earlier "
-            "selection still serving — which is the guarantee that makes a live "
-            "update safe to attempt at all. **Apply the schema next**, in the "
-            "application's own transaction: Parallax applies nothing, and the "
-            "statements are prefix-safe rather than idempotent, so a run that stops "
-            "partway leaves a database the earlier edition still operates against, "
-            "and a run whose undo also failed leaves one whose contents are unknown. "
-            "**Publish last**, because publication ASSERTS the physical schema "
-            "already satisfies what it publishes. `UnpublishableUpdateError` is "
-            "**application**-owned for the same reason `StaleMilestoneError` is: "
-            "which evolutions a host will apply live, and what it makes of a "
-            "statement that did not commit, are its decisions and no framework's. "
-            "The delta's `created_indices` is the host's own rollout ledger, kept "
-            "past the update because a later uniqueness violation names the "
-            "Physical Index Name an entry carries — the correlation "
-            "`tests/provider_contract/test_provider_contract.py` grades against a "
-            "real duplicate. This evolution adds one Column and creates no Index, "
-            "so the ledger it hands back is empty; one that added an Index would "
-            "carry an entry per Index it created. "
-            "Nothing here drains, barriers, or retries a rollout: transactions "
-            "already adopted keep the edition they adopted, other processes publish "
-            "independently, and an earlier-edition read still reports rows its own "
-            "model cannot admit as invalid stored data at the result root. "
-            "`ACCOUNT_MODEL` and `NICKNAMED_ACCOUNT_MODEL` are `DomainModel(Account)` "
-            "and `DomainModel(NicknamedAccount)` over the two classes below, the "
-            "earlier and later endpoints of the one added nullable Attribute this "
-            "publishes."
-        ),
-        snippet=model_publication_stories.publication_snippet(),
-    ),
-    Recipe(
-        title="Serving a pooled database from an application, and watching its pool",
-        spec=(
-            "`python.md` §2 (*A connected handle owns its runtime*), §3 "
-            "(*Execution lifecycle observability*: `PoolMetricsObserver` and the "
-            "sample contract) and `m-db-port` (configuration, runtime and "
-            "acquisition, and what a pooling runtime publishes about itself)"
-        ),
-        graded_by=(
-            "`tests/api/test_database_pooling.py` (real Postgres: two handles over "
-            "one configuration serving independently, the pool watched from "
-            "composition through a delivery returning its page lease to the "
-            "detachment a close causes, the lifespan closing the handle it "
-            "yielded, and every event of an offloaded operation delivered on the "
-            "worker thread rather than the event loop) and "
-            "`tests/unit/test_postgresql_lifecycle_guide.py` (the deployment "
-            "guide's blocks are these functions' own source)"
-        ),
-        notes=(
-            "Three lifetimes, and the guide "
-            "`languages/python/docs/postgresql-lifecycle.md` is written out of "
-            "these functions. **Configuration** is a value: build it once, share "
-            "it, and open a runtime per `connect`. **The handle** owns the runtime "
-            "and must be closed, which is why an application composes it in a "
-            "lifespan rather than at import — a forking server would otherwise "
-            "hand one pool's sockets to every worker. **The registration** a "
-            "`observe_pool` answers with is closed when the handle closes; the "
-            "exporter behind it is the application's and outlives both. What "
-            "crosses into a worker thread is one COMPLETE operation, release "
-            "included: handing a standalone stream back would move its later page "
-            "acquisitions and reads onto the event loop. No web framework is imported "
-            "here or needed — a lifespan is an async context manager and the "
-            "offload is a worker thread, which is exactly what FastAPI's "
-            "`lifespan=` and its own endpoint threadpool are. Sampling runs no "
-            "statement and takes no connection, which is why the reading below "
-            "succeeds after one root is published, while that page's lease is back "
-            "in the one-slot runtime and before the next page asks for it."
-        ),
-        snippet=(
-            database_pooling_stories.retention_snippet()
-            + "\n\n\n"
-            + database_pooling_stories.serving_snippet()
-            + "\n\n\n"
-            + database_pooling_stories.observation_snippet()
-        ),
     ),
 ]
 
@@ -945,7 +626,7 @@ _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON: Final[str] = (
 # Multi-concrete polymorphic PROJECTING inheritance reads (an abstract-root read,
 # or a narrow resolving to 2+ concretes) — the ROW-FORM (values-lane) originals
 # (m-inheritance-003/-013/-015/-052): `db.find` is instance-form, never row-form
-# (python.md §4: the right observation is `type(node)`, not a flattened dict),
+# (the Python binding: the right observation is `type(node)`, not a flattened dict),
 # so a flat `then.rows` comparison can never be reproduced from typed instances
 # for these — a permanent, structural non-fit, not a capability gap. Each of
 # these four has an executed
@@ -1162,17 +843,11 @@ _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "conformance lanes; no idiomatic story exists — the SAME pk-generated-column "
     "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"
 )
-####################################################################################
-# Subtype-write payload-shape rejects (`validate_write` /                         #
-# / `parallax.core.inheritance.validate_subtype_write`): the rejected sweep         #
-# grades all four (m-inheritance-086..089) through the SAME shared validator        #
+
+
 # `Transaction._buffer` calls (`test_transaction_writes.py`'s per-rule unit tests exercise#
-# it directly at the neutral seam) — `m-inheritance-088` (abstract-write-target)    #
-# gets an idiomatic build/buffer-time proof below (`Payment`/`CardPayment`/         #
-# `CashPayment` already have a production-reachable mirror, `read_models.py`); the  #
-# other three payload SHAPES have no idiomatic spelling through the TYPED verb      #
-# surface, each for a DIFFERENT, empirically-verified reason.                       #
-####################################################################################
+
+
 _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "a payload combining two SIBLING branches' own columns (CardPayment's `cardNetwork` AND "
     "CashPayment's `tendered`) has no idiomatic spelling: each concrete mirror class declares "
@@ -1753,7 +1428,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
-    # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
     "m-opt-lock-007": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
@@ -1870,14 +1544,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
-    # -- m-inheritance: multi-concrete polymorphic PROJECTING reads, the       #
     # ROW-FORM originals (their instance-form siblings are executed) --------- #
     "m-inheritance-003": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-013": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-015": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     "m-inheritance-052": _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON,
     # -- m-inheritance: non-temporal write family, conformance-lane covered -- #
-    # (instance-native examples are not available)                             #
     "m-inheritance-007": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-008": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-009": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
@@ -2188,7 +1860,7 @@ def partition_report(
 
 _GUIDE_HEADER: Final[str] = (
     "<!-- GENERATED by `gen-usage-guide` from the API Conformance Suite. "
-    "Do not edit by hand; run `just python-check` / `uv run gen-usage-guide`. -->"
+    "Do not edit by hand; run `uv run gen-usage-guide`. -->"
 )
 
 
@@ -2200,20 +1872,10 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
         "",
         "# Parallax Python — Usage Guide",
         "",
-        "Idiomatic public-API usage, generated from the API Conformance Suite's",
-        "examples. Each example mirrors a compatibility-corpus case, so the guide",
-        "cannot drift from graded behavior.",
-        "",
-        "## Read Plan Cache Sizing",
-        "",
-        "`Database.connect(..., read_plan_cache_capacity=16)` uses the production",
-        "default of 16 cached Read Plans. Use `0` to disable cross-delivery reuse,",
-        "or `8` for a small service with a stable query set. Raise the capacity to",
-        "`32` or `64` only after measurements show useful plans being evicted and",
-        "the added retained memory is acceptable. Each distinct predicate-value",
-        "query, result form, concurrency mode, and continuation NULL pattern may",
-        "consume one entry; this is conservative exact-query reuse, not shape-only",
-        "reuse.",
+        "Selected examples from the executable API Conformance Suite. The suite",
+        "covers additional cases and variants; this guide focuses on common tasks.",
+        "See the [Python binding](../spec/python.md) for API contracts and the",
+        "[PostgreSQL lifecycle guide](postgresql-lifecycle.md) for application setup.",
         "",
     ]
     if not examples:
@@ -2222,10 +1884,7 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
         )
         lines.append("")
     else:
-        # Every rendered transaction example uses the final entity-instance
-        # signatures: `tx.insert(instance)`, `tx.update(edited_copy)`,
-        # `tx.delete(node)`, and `tx.find` returning `Snapshot[T]`.
-        for example in sorted(examples, key=lambda item: item.case_id):
+        for example in examples:
             lines.append(f"## {example.title}")
             lines.append("")
             lines.append(f"Corpus case: `{example.case_id}`")
@@ -2237,18 +1896,11 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
     if recipes:
         lines.append("## Recipes")
         lines.append("")
-        lines.append("Spec-level idioms whose choreography spans more than any single corpus")
-        lines.append("case: each recipe cites its normative spec section and the tests that")
-        lines.append("grade it end-to-end (never a borrowed case id).")
+        lines.append("These examples combine several operations into one application task.")
         lines.append("")
         for recipe in recipes:
             lines.append(f"### {recipe.title}")
             lines.append("")
-            lines.append(f"Spec: {recipe.spec}. Graded by {recipe.graded_by}.")
-            lines.append("")
-            if recipe.notes:
-                lines.append(recipe.notes)
-                lines.append("")
             lines.append("```python")
             lines.append(recipe.snippet.rstrip("\n"))
             lines.append("```")

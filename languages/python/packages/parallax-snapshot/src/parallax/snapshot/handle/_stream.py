@@ -1,34 +1,3 @@
-"""``parallax.snapshot.handle._stream`` — the Snapshot Stream (`m-snapshot-read`).
-
-A streamed read is the eager read surrounded rather than replaced. Above the
-executor sits a page loop that says where the delivery stands and gets back a
-page; below it sits publication, which walks the Page through one Root View per
-root at a time. :meth:`~parallax.snapshot.handle._materialization.Materializer.read_page` between
-them plans, issues its `1 + L` statements, and seals one Page exactly as an
-eager read does — so a page's query fetches are the same ``IN (gathered keys)``
-lookups, and only the root statement differs.
-
-The loop holds a position and nothing else. How large a page is, which node
-asks for it, and which coordinate the next one resumes from all belong to the
-page operation, so a page can never be read with one request and built with
-another.
-
-What that buys is the bound this surface exists for: the working set is one
-Page plus the current Root View and published object graph, and it
-does not grow with the total number of roots. Advancing releases the previous
-root; finishing a page releases the Page after its last root.
-
-Root scope is a property of a Root View rather than a mode anything is told
-about. Each Root View borrows one Page and the ordinary classification and
-materializers run over it unchanged, which is why identity is root-local here
-without a second publication path and why the same seam publishes an eager read.
-
-The delivery type guards a private paging generator rather than being one. A
-bare generator handed to a caller could not refuse a second pass — re-iterating
-one yields nothing at all — so every entry point checks the one state field
-first, in the discipline the unit of work's own scope flag already uses.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
@@ -266,7 +235,6 @@ class SnapshotStreamContinuationError(RuntimeError):
 
     @property
     def terms(self) -> tuple[AttributeIdentity, ...]:
-        """The Continuation Order the tied coordinates were measured against."""
         return self._terms
 
     @property
@@ -369,52 +337,16 @@ class _StreamWireProjection:
 
 
 class SnapshotStream[T]:
-    """``db.stream`` / ``db.wire.stream``'s result: a scope-bound, single-pass
-    delivery of roots in the Continuation Order.
+    """Scope-bound, single-pass delivery; enter before accessing any property.
 
-    Deliberately NOT a :class:`~parallax.snapshot.handle._read.Snapshot`. There
-    is no whole-result accessor, no arity accessor, and no way to re-read what
-    already went past — a caller holding one holds a position in a delivery
-    rather than a value. Everything outside the scope raises, :attr:`pin` and
-    :attr:`edition` included, so "the stream answers inside its scope" is one
-    rule rather than one rule with an exception.
+    Entry adopts the model edition. Take exactly one iterator, either the default
+    view (invalid stored data raises) or ``checked()`` (invalid roots are records).
+    Ordinary standalone delivery failures are contextualized under that edition;
+    stream-state refusals retain their own type.
 
-    Constructing a stream settles what the call named — the lowered query, the
-    interface, and the page size — and adopts nothing: the read it delivers is
-    begun at entry, which is where the selection is taken, the model-dependent
-    refusals land, and the edition every page is read under is fixed. A stream
-    nobody enters therefore holds no selection and has no edition.
-
-    Iterating is the default view and raises
-    :class:`~parallax.snapshot.materialize.InvalidDataError` at a root whose
-    stored state contradicted the model; :meth:`checked` is the same delivery
-    with that root arriving as its record instead. A view is taken once: the
-    second — of either kind — is refused rather than silently delivering
-    nothing. Every advance of a view runs under the begun read's bracket, so an
-    ordinary failure escaping a standalone delivery — a page's statement, a
-    root's publication, the default view's refusal, a tie — arrives
-    contextualized under the stream's edition, while the stream's own state
-    refusals are judged before the bracket and keep their type.
-
-    A Typed delivery also projects one supplied published Entity through
-    :meth:`wire` while iteration is paused at a delivered root. Projection uses
-    that Page's canonical IncludeTree, never advances the delivery, and retains
-    completed output only through a weak-input memo cleared at the next Page.
-    Before the first root and after the next advance begins there is no current
-    projection Page, so the method raises :class:`SnapshotStreamStateError`.
-    There is no whole-stream projection form.
-
-    ``batch_size`` counts ROOT positions and, over storage the model describes,
-    is a performance dial alone: it changes neither the order roots arrive in,
-    nor which roots arrive, nor what each carries. Invalid stored data included:
-    a delivery advances on the coordinate the database evaluated for each root,
-    which exists whatever that root's stored values turned out to be.
-
-    A continuing page over a direct leading Column keeps its planner range and,
-    where NULLs follow the coordinate, joins a disjoint NULL-tail arm under the
-    same outer order and cap. A leading term at a Document Path hoists no range,
-    so the branch tree itself admits a NULL its extraction reads. Page size is
-    therefore a performance dial even over either source of a leading NULL.
+    Typed ``wire()`` projection is available only while paused at a delivered
+    root. It uses that page's includes and does not advance the stream. Page size
+    counts root positions and does not change their order or contents.
     """
 
     __slots__ = (

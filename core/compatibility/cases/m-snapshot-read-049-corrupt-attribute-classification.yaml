@@ -3,19 +3,6 @@
 # so a `token` no canonical decoding admits and a non-nullable `clock` holding
 # JSON null are both refused before a case runs. `given.corrupt` states them as
 # storage instead.
-#
-# Both leave their root UNHYDRATABLE and neither prunes it: default eager delivery
-# withholds no classified position and reports EVERY invalid root together. The
-# result keeps three positions in `id` order, the first two carry `null`, and each
-# states the one diagnosis its own row earned. The third row is the conforming
-# control — it shares every value with the first except the corrupted one, so what
-# separates them is the corruption and nothing else.
-#
-# `clock` and `token` are document-resident here, which is what makes the states
-# storable at all: a Structured Column holds any JSON value, while the typed
-# Column a `Columns` layout would give either member could be made to hold one only
-# by first dropping the constraint that forbids it (m-case-format *Corrupting
-# stored state*).
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stored-data, corrupt, document-layout, graph, slice-snapshot-1]
 shape: read

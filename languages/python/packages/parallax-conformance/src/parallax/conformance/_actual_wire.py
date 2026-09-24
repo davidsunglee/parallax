@@ -1,12 +1,3 @@
-"""Canonical compatibility observations projected from accepted Metadata.
-
-This module is the production-side oracle for values that do not already cross
-the public Wire read boundary.  Every typed value is paired with its declared
-Neutral Type before it reaches :mod:`parallax.core.wire`; Python carrier classes
-never select a type here.  A ``json`` Attribute is one recursively normalized
-value, while a Value Object is walked by its recursively declared leaf types.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

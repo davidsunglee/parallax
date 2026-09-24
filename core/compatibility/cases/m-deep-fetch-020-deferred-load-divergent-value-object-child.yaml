@@ -1,23 +1,4 @@
 # Deferred load x DIVERGENT value object: the wrong-entity regression witness.
-#
-# m-deep-fetch-019 loads `Customer.locations`, but Location's `address` is Customer's
-# recursive composite VERBATIM, so decoding a Location row with the WRONG (root
-# Customer) descriptor is indistinguishable. This case loads `Customer.depots`: child
-# Depot declares a FLAT `{ line, postcode }` in the same `address` column
-# (models/customer.yaml), so the wrong descriptor drops `line`/`postcode` and injects
-# `street`/`city`/`geo`/`phones` — the per-step read-entity resolution is OBSERVABLE.
-#
-# The classification pinned: a relationship `action: load` step is INSTANCE-FORM
-# (m-case-format "Read result form", object lane), and its SQL-producing child read
-# projects the read entity's OWN instance-form list — scalars plus the `address`
-# Document slot's adjacent presence/value pair LAST (m-sql "Read projection") — decoded with the relationship
-# path's TERMINAL entity descriptor (Depot), never the scenario root's. The deferred
-# load emits ONE IN-keyed child statement (not one per parent) honoring
-# `orderBy: id asc`; depot 201's SQL-NULL document materializes a null address — the
-# absence collapse pinned AT DEPTH for the divergent flat composite. Golden SQL is
-# dialect-identical (presence-plus-document projections, no JSON extraction); compileEligibility is
-# run-only because the `customer_id IN (…)` binds are the distinct parent keys
-# gathered from step 0's find RESULT, exactly as m-deep-fetch-019 names.
 model: models/customer.yaml
 tags: [m-deep-fetch, m-value-object, relationship, to-many, deferred-load, materialization, json, slice-managed-1]
 shape: scenario

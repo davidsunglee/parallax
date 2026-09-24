@@ -1,14 +1,3 @@
-"""The relationship Model Formation Rule Set (m-relationship).
-
-Everything this module rejects is a statement about one association: whether its
-join reaches the Attributes it names, whether the declared cardinality is
-something the join can deliver, whether a reverse declaration names a defining
-peer that points back at it, whether one association is claimed twice, and
-whether an ordering belongs to the direction that declares it. Reference absence
-is not here — foundational resolution owns it, so a candidate's references
-already name existing positions.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

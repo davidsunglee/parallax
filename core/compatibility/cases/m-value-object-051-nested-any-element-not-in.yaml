@@ -4,22 +4,6 @@
 # m-dialect array-traversal form). Postgres golden only — a non-equality element
 # predicate is outside MariaDB's containment scope (m-dialect, "Scope of the
 # containment golden").
-#
-# nestedNotIn(Customer.address.phones.type, [work]) matches Ada (id 1) and Linus
-# (id 2). Ada is the discriminating row and the whole point of this case: her phones
-# are [{home, 555-1234}, {work, 555-9999}], so SOME element's type is not `work`
-# (element 0) while it is NOT true that NO element's type is `work` (element 1). The
-# any-element reading admits her; the no-element reading rejects her. The no-element
-# question is already spellable as nestedNotExists(phones, where: nestedIn(type,
-# [work])) — which returns everything except Ada, Linus and Nils — so overloading it
-# onto nestedNotIn would make nestedNotIn and nestedNotEq mean structurally
-# different things.
-#
-# Absence excludes rather than satisfies: Nils's only element IS `work`, so he does
-# not match, and every zero-element row is out — the empty array (3), the null column
-# (4), the missing key (5, 6), and the three non-array states (8, 9, 10). Priya (10)
-# is the trap: her non-array OBJECT `phones` carries type=home, which is not in the
-# list, so an unguarded traversal would wrongly match her.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, notIn, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

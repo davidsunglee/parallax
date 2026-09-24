@@ -1,31 +1,5 @@
 # Rollback / abort scenario (m-unit-work): a write performed inside a unit of work that
 # ABORTS is discarded — a post-abort find re-resolves and observes the ORIGINAL rows.
-#
-# m-unit-work-001 proves read-your-own-writes (a committed write is observed mid-transaction).
-# This proves the complementary ABORT contract: a write applied inside a unit of
-# work — even one force-flushed to serve a dependent read — MUST NOT survive the
-# abort. account.version is an optimistic-lock column, so the keyed UPDATE requires a
-# PRIOR observation (`m-opt-lock`); steps 0-1 share ONE `uow` group (`doomed-update`)
-# so the write's version bind is the observing find's OWN transaction-scoped
-# observation, in the SAME doomed unit of work its `rollback: true` write step
-# dooms — the case is therefore `compileEligibility: run-only`
-# (query-result-dependent). The scenario interleaves the doomed group with an
-# UNGROUPED post-abort find:
-#   step 0 find  : observe account 1 (Ada, balance 100.00, version 1), 1 round trip.
-#   step 1 write : apply `balance = 999.00` for the OBSERVED account 1, advancing the
-#                  observed version 1 -> 2 (`rollback: true` — dooms the group, which
-#                  ROLLS BACK after this, its last step).
-#   step 2 find  : the SAME find, UNGROUPED, re-resolves after the group's rollback
-#                  and MUST observe the ORIGINAL balance 100.00, never the aborted
-#                  999.00.
-# The teeth: step 2 cannot be a cache HIT — a hit would reuse step 0's rows, and
-# the aborted write must leave the row exactly as step 0 read it. Account declares
-# a version, so the default `optimistic` preference resolves it to the Optimistic
-# strategy: the golden UPDATE advances the version AND gates on the observed one
-# (`m-opt-lock` "The version column"), and neither find carries a shared-row-lock
-# suffix — step 0 inside the aborting unit of work, step 2 as the re-resolve in a
-# fresh one. roundTrips = 3 (two finds + the rolled-back write, whose DML still
-# executes).
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

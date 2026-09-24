@@ -1,20 +1,5 @@
 # valueObject to-many: two ANDed flat predicates match across DIFFERENT elements
 # (m-value-object to-many, m-predicate any-element), on Postgres AND MariaDB.
-#
-# The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
-# '555-9999'))` evaluates each flat predicate INDEPENDENTLY as any-element, so a
-# row matches when some element has type = home and some — possibly DIFFERENT —
-# element has number = 555-9999. Ada matches on different elements (home in element
-# 0, 555-9999 in element 1); Linus matches on one element that has both. This is
-# the paired contrast to m-value-object-019 (scoped, same-element), which excludes
-# Ada. It lowers to two INDEPENDENT existence checks — Postgres two `exists`
-# subqueries (aliases t1, t2), MariaDB two `json_contains` conjuncts — each
-# INDEPENDENTLY array-guarded.
-#
-# The object row (10), whose content {type:home, number:'555-9999'} satisfies BOTH
-# conjuncts, is the trap: unguarded, MariaDB `json_contains` would match it twice
-# and Postgres would ERROR; each conjunct's array-type guard collapses the non-array
-# `phones` to not-present, so 10 (and the JSON-null 8 and scalar 9) are excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,6 +1,6 @@
 # Supplemental Interface Obligations
 
-Status: provisional and non-normative. Parallax specifications remain authoritative.
+Status: historical proposal, non-normative. Parallax specifications remain authoritative.
 
 This note catalogues behaviors the compatibility corpus **structurally cannot
 state**, so that a second language implementation does not have to rediscover
@@ -19,19 +19,10 @@ obligation mechanically, by the schema below.
 
 ## What this is for
 
-[COR-103](https://linear.app/flimflam/issue/COR-103) is the consumer. It makes
-this catalogue binding: a **Supplemental Interface Obligations** registry as a
-numbered section of `core/spec/language-testing.md` — which already owns *what a
-test proves* and defines `unit/` as the Internal-behavior surface — with
-applicability reusing the language-spec template's existing
-`**(decide and record — When claimed: <module>)**` grammar, and
-`core-check-language-spec` verifying that a completed language spec answers every
-obligation whose module tag is in its claimed set. The precedent for that
-enforcement is §6's coverage-partition assertion (exercised union reasoned-skipped
-equals the active slice), extended from cases to behaviors that have no case.
-
-This note deliberately stops short of that. It changes no contract, adds no gate,
-and grades nothing. It is the inventory COR-103 turns into a rule.
+[COR-103](https://linear.app/flimflam/issue/COR-103) records the proposal to adopt
+this catalogue. Adoption requires a decision in the owning core contracts and
+executable proof; this document itself adds no contract or gate. Its suggested
+prose-completeness workflow is not a requirement of the language binding template.
 
 Obligations do **not** belong in the `m-*.md` module specs (`core/AGENTS.md`
 forbids those from naming slices or claim status, and scattering them defeats

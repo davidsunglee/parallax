@@ -1,25 +1,3 @@
-"""``parallax.snapshot.handle._planning`` — the Write Planner composition root.
-
-:func:`build_write_planner` is the one place the optional policy modules
-(``batch_write``, ``opt_lock``, ``txtime_write``, ``bitemp_write``) are wired
-into a :class:`~parallax.core.unit_work.WritePlanner` as its strategy ports —
-`parallax.snapshot.handle` is the sole module cleared to import both
-``batch_write`` and ``unit_work``. Both the developer transaction path
-(:mod:`~parallax.snapshot.handle._database`) and the conformance engine's
-compile lane call this same factory, so lane equivalence is structural rather
-than parallel wiring that could drift.
-
-:func:`plan_temporal_close` re-wires the SAME concurrency adapter into
-:func:`~parallax.core.unit_work.plan_temporal_close`, the `m-opt-lock`
-conflict-probe's standalone close settlement — preserving its existing
-signature so every caller stays unaffected.
-
-The three adapter classes translate this scope's own optional-policy calls
-into the neutral vocabulary the planner's strategy Protocols declare;
-nothing here inherits a Protocol, matching the ``Clock`` / ``DatabaseConnection``
-convention every other strategy shape in the tree follows.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

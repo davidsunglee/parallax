@@ -4,22 +4,6 @@
 # committed participating transactions are equivalent to some serial order — never
 # the mechanism either server reaches it by, which is why one choreography holds for
 # both while `then.nativeCode` differs.
-#
-# The trigger is a write skew, distinct from the lock-cycle deadlock cases
-# (m-db-error-004/005), which are ordinary row-lock contention at any level:
-#   round 0 : A reads gauge 2, B reads gauge 1
-#   round 1 : A writes gauge 1, B writes gauge 2 — each writing the row the peer
-#             read, so no serial order of the two produces this pair of outcomes
-#   round 2 : each node COMMITS its own held transaction (`kind: commit`), the
-#             latest moment a refusal can surface at — and the only one on an
-#             engine that lets both rounds above run unblocked
-#
-# Postgres reaches it optimistically: SSI takes SIREAD predicate locks, nothing
-# blocks, and the cycle is detected at commit as `40001`. MariaDB reaches it
-# pessimistically: Serializable converts both plain SELECTs to shared locking reads,
-# so round 1's crossed writes wait on each other and InnoDB victimizes one with
-# `1213`. Either way exactly one node's transaction is refused; the runner classifies
-# whichever is victimized.
 model: models/error-cases.yaml
 tags: [m-db-error, isolation, deadlock, serialization, slice-snapshot-1, slice-managed-1]
 shape: error

@@ -1,15 +1,3 @@
-"""The database facts a failed Database Call reports, and the causal attribution
-an activity failure carries.
-
-The generic projection both build on — :class:`FailureDiagnostic`, its byte
-ceilings, and the guarded extraction under it — lives in
-:mod:`parallax.core.diagnostics`, because a resource cleanup issue and a pool
-sample need exactly that projection and none of the lifecycle's own vocabulary.
-What stays here is what only a database execution can state: the neutral
-`m-db-error` category and native code copied off an already-classified error,
-and how an activity's single failure is attributed.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

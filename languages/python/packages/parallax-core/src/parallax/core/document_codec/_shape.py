@@ -1,5 +1,3 @@
-"""Document shape construction and presence (m-document-codec)."""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

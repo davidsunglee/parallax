@@ -1,17 +1,3 @@
-"""Python-annotation to Neutral Type inference (m-core).
-
-The Neutral Type vocabulary is ``m-core``-owned, so the mapping from a native
-Python scalar carrier to its structured Neutral Type belongs here rather than in
-any one frontend. The mapping is exact-type rather than subclass-based: a
-``datetime`` is a ``date`` subclass but a distinct value space.
-
-``decimal.Decimal`` is deliberately absent from the mapping. The
-:class:`~parallax.core.base.Decimal` variant is parametric with no defaults, so
-its precision and scale come from the declaration rather than from the
-annotation, and a frontend classifies the missing parameters in its own
-vocabulary.
-"""
-
 from __future__ import annotations
 
 import datetime as _dt

@@ -1,16 +1,3 @@
-"""The serialized spelling of the ``m-core`` Neutral Type algebra (m-descriptor).
-
-``m-descriptor`` alone owns how a Neutral Type is written down. A spelling is a
-single lowercase token, and ``decimal`` is the only parameterized one:
-``decimal(<precision>,<scale>)`` with both parameters required, spelled as
-unsigned canonical decimal digits, and no interior whitespace. The structured
-variant a spelling denotes never crosses the ``m-metamodel`` interface as text.
-
-Resolution is error-neutral: a spelling the algebra cannot represent resolves to
-absence so the calling seam classifies it in its own vocabulary, where an
-unrepresentable spelling is a value-phase rejection rather than a shape defect.
-"""
-
 from __future__ import annotations
 
 import re

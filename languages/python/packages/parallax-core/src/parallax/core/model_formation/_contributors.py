@@ -1,13 +1,3 @@
-"""The contributor protocols an explicit composition root supplies (m-model-formation).
-
-Each protocol is one collaboration direction and nothing else: a Rule Set emits
-issues and no facet, a compiler produces one value and no issue channel. That
-split is what keeps a semantic defect in the model distinguishable from a defect
-in the code that inspects it. Protocols are deliberately not
-``runtime_checkable`` — a contributor is matched to its manifest row by declared
-owner, never by a structural presence test.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

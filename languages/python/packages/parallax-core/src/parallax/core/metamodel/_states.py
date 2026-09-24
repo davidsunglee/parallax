@@ -1,15 +1,3 @@
-"""The formation-state and accepted-metadata protocol family (m-metamodel).
-
-Formation is the gated progression ``UnresolvedMetamodel -> CandidateMetamodel
--> Metamodel``, and each state exposes strictly more capability than the last:
-enumeration only, then canonical enumeration with total Entity lookup, then
-accepted Metadata with local member lookup and typed facets. Protocols here
-prescribe no concrete class or storage layout, so a frontend may satisfy them
-with its own read-only objects rather than mirroring a record graph. They are
-deliberately not ``runtime_checkable``: structural conformance is a static
-guarantee, and a presence check over data members would not be sound.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence

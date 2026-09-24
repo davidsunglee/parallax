@@ -1,18 +1,3 @@
-"""Reading the native pool's own bookkeeping, and stopping when the runtime does.
-
-The driver's pool keeps counters and gauges of its own and hands them out as a
-plain mapping. Everything here is about the distance between that mapping and
-the neutral :class:`~parallax.core.db_port.PoolMeasurements` an exporter
-receives: which keys are required, which are absent when they are zero, what a
-value has to be to be a measurement at all, and what happens to a reading taken
-while the runtime is closing.
-
-The source is created with the runtime and lives exactly as long as it does. It
-is the same object before and after the close, which is what lets an exporter
-hold it: what a close changes is the ANSWER — every later sample reports the
-runtime gone — rather than the identity of the thing being asked.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

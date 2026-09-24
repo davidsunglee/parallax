@@ -1,15 +1,5 @@
 # Snapshot graph, SHARED-PREFIX levels (m-snapshot-read): the canonical maximal
 # include path materializes its prefix ONCE.
-#
-# The snapshot twin of the m-deep-fetch shared-prefix shape (no m-op-list tag). The
-# include is the maximal `Order.items -> OrderItem.statuses` path; its
-# `Order.items` prefix is materialized, so the level count is 3:
-#   level 0 (root)     : all orders
-#   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
-#   level 2 (statuses) : item-level statuses keyed by the distinct item ids
-#                        {11,12,21,421,422}
-# A naive materialization would fetch `Order.items` twice; the harness asserts
-# exactly 3 statements, proving the snapshot shares the prefix.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, shared-prefix, relationship, graph, materialization, slice-snapshot-1]
 shape: read

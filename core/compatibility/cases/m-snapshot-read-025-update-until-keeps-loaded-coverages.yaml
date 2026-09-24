@@ -1,57 +1,5 @@
-# A RECTANGLE SPLIT under a loaded view leaves that view alone (m-snapshot-read
-# *Closed world*, composition): a materialized graph is a value taken at its pin,
-# so a committed `updateUntil` that inactivates the very rectangle a loaded
-# to-many view holds and chains three successors in its place neither re-pins that
-# view nor invalidates it — accessing it still issues ZERO SQL and still answers
-# the rectangle the read selected. This is the clause "a write changes nothing
-# about a graph already materialized", held on the BOUNDED BITEMPORAL arm;
-# m-snapshot-read-021 holds it for a single-axis close, and this case is the one
-# where the write rewrites the view's own coordinates rather than only its
-# contents — the read's pin still selects a row after the write, and it is a
-# DIFFERENT row.
-#
-# Step 0 materializes policy 2 as of Valid Time 2024-05-01 / Transaction Time
-# LATEST, WITH its `coverages` — the ordinary 1 + L deep fetch, one statement per
-# level, the root pin propagating per hop and per axis (m-navigate), two round
-# trips. At that pin the policy owns exactly one coverage: 20 at 300.00, valid
-# [2024-01-01, infinity) and current on Transaction Time; coverage 21 is a
-# Transaction-Time-historical row the pin correctly excludes. Step 1 issues
-# `updateUntil` over the Valid-Time window [2024-03-01, 2024-09-01) at
-# Transaction Time 2024-07-01, committed as its OWN unit of work: the signature
-# rectangle split — inactivate the observed rectangle, then chain head (the old
-# 300.00 before the window), middle (the new 999.00 inside it) and tail (the old
-# 300.00 after it) — four statements plus the resolving read the keyed write owes
-# the rectangle it addresses, so five round trips. Step 2 accesses `coverages` on
-# the view step 0 materialized and states its WHOLE contents through
-# `expectGraph`: coverage 20 at 300.00, still spanning [2024-01-01, infinity) on
-# both axes. Step 3 then re-reads the same relationship's rows FROM THE DATABASE
-# at the SAME pin.
-#
-# Steps 2 and 3 together are the case's teeth and its semantic distinction. They
-# ask the same question of the same relationship at the same pin and MUST answer
-# differently — and here the disagreement reaches the AMOUNT and not only the
-# bounds: the access answers 300.00 over [2024-01-01, infinity) x [2024-01-01,
-# infinity), the read-back answers 999.00 over [2024-03-01, 2024-09-01) x
-# [2024-07-01, infinity). What the two still share is identity alone — coverage
-# 20 of policy 2, each open on Transaction Time — so every leaf the split
-# rewrote differs, and the value is one of them. Both are correct
-# answers to different questions, which is what a bitemporal store is for: a
-# pinned graph records what was believed when it was taken, and only another read
-# reports what is believed now. An implementation that re-pinned, refreshed, or
-# invalidated the view on write answers the middle rectangle and fails; one that
-# discarded the view raises where it should answer; one whose split reached
-# nothing fails step 3; and `roundTrips: 0` fails anything that reaches the
-# database at step 2 at all.
-#
-# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
-# accesses (m-op-list-002), but on the wire lane it is primary-key equality
-# against this step's own reused source rows; the identity proof of record — that
-# the accessed coverage is literally the SAME object — is the reference-identity
-# assertion each language's API Conformance Suite runs (m-api-conformance). The
-# contents divide the same way: a wire harness assembles them from the rows its
-# own read retained, while a conforming adapter reports the graph ITS
-# implementation still holds for this step (m-conformance-adapter `stepGraphs`),
-# which is the half that can tell a surviving view from a re-read.
+# The original pin still selects a row after splitting, but a different one.
+# Re-resolving the relationship would silently substitute that successor.
 model: models/policy.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, m-bitemp-write, m-unit-work, closed-world, relationship, temporal, bitemporal, update-until, rectangle-split, scenario, slice-snapshot-1]
 shape: scenario

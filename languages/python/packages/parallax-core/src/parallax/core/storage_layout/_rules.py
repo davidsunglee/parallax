@@ -1,5 +1,3 @@
-"""Storage Layout's Candidate Metamodel physical-layout Rule Set."""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

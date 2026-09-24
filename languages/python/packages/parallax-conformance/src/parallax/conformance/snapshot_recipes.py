@@ -1,19 +1,3 @@
-"""Executable Usage-Guide recipes for the Snapshot read surface.
-
-Each function here is one executable read over the **public** developer surface
-(``parallax.snapshot.connect`` → authority selection → ``db.find``), and its own source is the
-Usage-Guide snippet (``api_suite.RECIPES``). Unlike a story
-(:mod:`parallax.conformance.graph_stories`), a recipe mirrors a SPEC section
-rather than one corpus case: what each of these shows is a **declaration**
-together with the runtime states that declaration produces, which spans more
-than any single case's goldens — registering one under a borrowed case id would
-misrepresent what that case grades.
-
-A recipe seeds nothing: its caller supplies a ``ScopedDatabase`` whose owning
-root remains open while the recipe reads, so the same body serves as both the
-rendered snippet and an executable proof.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -36,21 +20,7 @@ __all__ = [
 
 
 def read_to_one_relationship_states(db: ScopedDatabase) -> tuple[Snapshot[Any], Snapshot[Any]]:
-    """The three runtime states a to-one relationship takes, over one Entity that
-    declares both multiplicities. A to-one's multiplicity is its foreign key's
-    nullability: ``order_id`` is non-nullable, so ``order`` is 1..1 and every
-    status resolves it to an instance, while ``order_item_id`` is nullable, so
-    ``order_item`` is 0..1 and an order-level status resolves it to ``None`` — a
-    LOADED null, not an absence of knowledge. Both are spelled ``Rel[T | None]``
-    because both are REVERSE directions, where nothing in the model guarantees a
-    counterpart row; a DEFINING to-one instead spells its key's nullability in
-    the annotation itself (``Rel[Customer]`` versus ``Rel["Coupon | None"]``) and
-    a mismatch is refused at model construction.
-
-    The second read includes neither, leaving both UNLOADED: access raises
-    ``UnloadedRelationshipError`` and issues no SQL, and
-    ``is_view_loaded(node, OrderStatus.order_item)`` is what tells that state
-    apart from the loaded null (``False`` versus ``True``)."""
+    """Use is_view_loaded to distinguish an omitted relationship from a loaded null."""
     included = db.find(
         OrderStatus.where(OrderStatus.all).include(OrderStatus.order, OrderStatus.order_item)
     )
@@ -58,31 +28,19 @@ def read_to_one_relationship_states(db: ScopedDatabase) -> tuple[Snapshot[Any], 
 
 
 def read_a_table_per_hierarchy_family(db: ScopedDatabase) -> Snapshot[Any]:
-    """An abstract-root read of a table-per-hierarchy family: every row of the one
-    shared table, each materialized as the concrete class its declared tag value
-    names. ``type(node)`` is the observation (``python.md`` §4) — a ``CardPayment``
-    node carries ``card_network`` and no ``tendered`` at all, and a ``CashPayment``
-    node the reverse, never a sibling's null-padded column."""
+    """Read the abstract root and inspect each returned node's concrete Python type."""
     return db.find(Payment.where(Payment.all))
 
 
 def read_a_table_per_concrete_subtype_family(db: ScopedDatabase) -> Snapshot[Any]:
-    """The same read over a table-per-concrete-subtype family, whose concretes own
-    separate tables and no tag at all: the read unions them, and each row still
-    materializes as its own declared concrete class — including one reached
-    through an intermediate abstract subtype (``Invoice``/``Receipt`` under
-    ``FinancialDocument``) and one declared directly under the root (``Memo``)."""
+    """Read an abstract root whose concrete classes own separate tables."""
     return db.find(Document.where(Document.all))
 
 
 def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
-    """Read typed domain values, then publish that exact result in Wire form.
+    """Project an existing Typed result without another read.
 
-    ``Snapshot.wire()`` traverses the already-published eager result in memory. It
-    preserves the result envelope and canonical Wire encoding without issuing a
-    second read, acquiring a connection, or re-running query planning. Use it when
-    one caller needs domain objects and a later boundary needs their portable form;
-    start with ``db.wire.find`` when no caller needs the typed values.
+    Use db.wire.find directly when no caller needs Typed values.
     """
     typed = db.find(Account.where(Account.id == 1))
     return typed.wire()
@@ -91,42 +49,17 @@ def publish_typed_read_as_wire(db: ScopedDatabase) -> Snapshot[Any]:
 def publish_typed_stream_as_wire(
     db: ScopedDatabase, page: int, publish: Callable[[WireEntity], None]
 ) -> None:
-    """Publish each Typed delivery root in canonical Wire form as it arrives.
-
-    ``SnapshotStream.wire(value)`` projects one eligible Entity while iteration
-    is paused at a root of its current page. It uses that page's requested graph,
-    performs no read or advance of its own, and releases its working state at the
-    next page. The explicit ``publish`` boundary consumes each Wire node inside
-    the stream scope, preserving the delivery's bounded-retention shape.
-    """
+    """Consume each Wire projection while paused at its Typed root inside the scope."""
     with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
         for order in orders:
             publish(orders.wire(order))
 
 
 def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[int, list[str]]:
-    """A read delivered one root at a time instead of all at once, in both
-    namespaces over one query.
+    """Summing keeps bounded application state; collecting names retains every name.
 
-    ``db.stream`` is ``db.find``'s peer, not a different read: the same Object
-    Query, the same includes, and — over storage the model describes — the same
-    values. What differs is delivery. The
-    result is scope-bound and single-pass — it has no whole-result accessor, and
-    nothing outside the ``with`` block answers — so a loop over it holds one root
-    and the page it came from, whatever the result's size. Summing as you go, as
-    below, is the shape that stays bounded; appending each root to a list is not,
-    and is outside the guarantee on purpose.
-
-    ``batch_size`` counts ROOT positions and, over storage the model describes,
-    is a performance dial and nothing else. It changes neither which roots arrive,
-    nor the order they arrive in, nor what any of them carries; what it changes is
-    how many round trips the delivery costs and how much one page holds. Included
-    children are not counted by it: every one of a delivered root's items is
-    loaded, exactly as under ``db.find``.
-
-    Roots arrive in the Continuation Order — the query's own ``order_by`` first,
-    then the primary key — which is a total order the delivery derives, so it is
-    deterministic even for a query that declared no ordering at all.
+    Consume the stream inside its scope. Page size counts roots, not their included
+    children.
     """
     quantity = 0
     with db.stream(Order.where(Order.all).include(Order.items), batch_size=page) as orders:
@@ -141,21 +74,7 @@ def stream_a_result_one_root_at_a_time(db: ScopedDatabase, page: int) -> tuple[i
 
 
 def stream_and_write_inside_one_transaction(db: ScopedDatabase, page: int) -> list[Decimal]:
-    """A streamed delivery inside a unit of work, writing every root it hands over.
-
-    ``tx.stream`` is ``tx.find``'s peer the same way, and what participation adds
-    is a flush before every PAGE rather than one at entry: the writes the loop
-    buffered reach the database before the statement that reads the next page, so
-    read-your-own-writes holds at every page boundary and the buffer a consuming
-    loop accumulates is bounded by the page size rather than by the result.
-
-    A delivery is stable per PAGE and no further, so a loop that writes the member
-    its own query ordered by can move a root across the position the next page
-    seeks from — and see it twice, or not at all. This one orders by nothing,
-    which makes the Continuation Order the primary key alone; no write moves a
-    primary key, so the hazard cannot arise. That is the escape whenever a loop is
-    both the reader and the writer.
-    """
+    """Order by the immutable primary key so writes cannot move the next page's cursor."""
     written: list[Decimal] = []
 
     def credit(tx: Transaction) -> None:

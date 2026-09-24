@@ -1,25 +1,3 @@
-"""AWS RDS IAM database authentication as a Credential Source.
-
-An RDS IAM token is a SigV4-presigned URL bound to a hostname, a port, a
-database user, and a Region, which the server accepts in place of a password and
-which stops being accepted fifteen minutes after it was signed. Signing is
-local: what can block is botocore finding or refreshing the AWS credentials to
-sign with, which is why its client is created on first use rather than while an
-adapter is being configured.
-
-What the record bounds is the network that chain reaches over: the instance
-metadata service, an ECS task-role endpoint, and the STS and SSO clients the
-chain builds for itself. What it does not bound is a helper command a profile's
-``credential_process`` names, which botocore waits on without a timeout — that
-program is the operator's, and so is its wait.
-
-A connection the server has already accepted is never disturbed by its token
-ageing out, so this source holds no cache and runs no refresh thread: each call
-signs anew. When that happens is the port's rule, not this module's — see
-``core/spec/m-db-port.md``, "Configuration carries where, and a Credential
-Source carries how".
-"""
-
 from __future__ import annotations
 
 import threading

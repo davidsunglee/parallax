@@ -4,12 +4,6 @@
 # lock on account 2 -- and, because a shared lock is compatible with another shared
 # lock, B is ADMITTED and succeeds without blocking. Both reads observe Linus /
 # 250.00 / version 1 on their own held session.
-#
-# This is the negative control for m-read-lock-006: m-read-lock-006 alone cannot tell a SHARED lock from an
-# EXCLUSIVE one (`for update` would also block a writer and pass it). m-read-lock-007 pins the
-# lock as shared -- an adapter that emitted `for update` instead of `for share` fails
-# here, because B would then block on A and time out. No error is raised; the
-# concurrency-success shape asserts NO node blocked/raised and each read's expectRows.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect, concurrency, shared-lock-compatible, slice-snapshot-1, slice-managed-1]
 shape: concurrencySuccess

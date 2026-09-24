@@ -1,27 +1,6 @@
 # Write sequence: plain (UNBOUNDED) bitemporal insert — open a brand-new value that
 # holds from a Valid-Time instant B ONWARD, with no upper Valid-Time bound (the
 # until = infinity degenerate of insertUntil, m-bitemp-write-003).
-#
-# A plain `insert` on a bitemporal entity is a SINGLE INSERT of a fully-Latest
-# rectangle: valid [B, infinity) at transaction [txInstant, infinity), current on
-# BOTH axes (thru_z = out_z = infinity). There is NO prior row to close, so — unlike
-# the plain update / terminate splits (m-bitemp-write-006 / -007) — there is no
-# inactivation UPDATE and no optimistic gate. It is the unbounded companion of
-# insertUntil, sharing that mutation's canonical INSERT shape.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert : open the Latest rectangle, value 100, valid
-#                   [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
-#
-# Resulting state (1 row): the fully-Latest rectangle (thru_z = out_z = infinity) —
-# no inactivated original, no head/middle/tail chaining.
-#
-# Postgres-only golden by design. The MariaDB spelling of this EXACT INSERT (the
-# reserved-word `position` quoting) is already witnessed on the MariaDB run-lane by
-# the step-1 opening inserts of the dual-dialect splits m-bitemp-write-006 / -007 /
-# -008, so a standalone MariaDB witness would only duplicate them. This case's job is
-# to make plain insert a first-class MVP bitemporal behavior — the third member of the
-# plain insert / update / terminate family — on the Postgres slice.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-insert, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

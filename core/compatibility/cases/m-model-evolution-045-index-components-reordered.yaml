@@ -1,10 +1,5 @@
 # Reordering an INDEX's components (m-model-evolution): an alteration that
 # enforces the same rule.
-#
-# Component order is retained in the delta because it changes the physical access
-# path. The uniqueness rule, by contrast, is an unordered Attribute set, so the
-# reordered Index enforces exactly what it enforced before and the evolution
-# carries no Behavioral Impact.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

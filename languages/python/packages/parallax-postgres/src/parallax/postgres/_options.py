@@ -1,36 +1,3 @@
-"""The two typed retention policies a Postgres runtime is opened under.
-
-:class:`PoolOptions` keeps connections between operations; :class:`OnDemandOptions`
-keeps none. Which record is supplied selects which behavior the runtime has, so
-there is no mode flag to disagree with a setting and no combination that names
-idle inventory for a runtime that holds none.
-
-Both are frozen, slotted, keyword-only, and validated at construction, so a
-malformed configuration is refused before anything is allocated. Their field
-names follow the driver's where the meaning is the same, which makes an
-operator's existing knowledge transfer; they are still Parallax records, and the
-translation to native parameters happens where the pool is built.
-
-Most of what they carry is the same, so it is declared and validated once and
-documented here rather than twice. ``max_size`` is the ceiling on connections in
-use at once. ``acquire_timeout`` bounds ONE caller's wait for a connection,
-``startup_timeout`` bounds becoming ready before the handle is published, and
-``reconnect_timeout`` is how long the runtime's own background retrying keeps
-trying to restore capacity; they are three different controls and none of them is
-a retry budget for an operation. ``max_waiting`` caps how many callers may queue
-at once, with ``0`` meaning the queue is not counted. ``max_lifetime`` retires a
-connection by age with native jitter, so a whole generation does not expire at
-once. ``validate_on_checkout`` spends a round trip proving a connection still
-works before an operation gets it, which is what turns a connection the server
-closed while idle into a replacement rather than a failed statement.
-``num_workers`` sizes the runtime's own maintenance threads, not application
-concurrency.
-
-The defaults are a starting point chosen to be safe rather than fast, and no
-benchmark claims them optimal. Tune them from measured occupancy and queue
-latency for the deployment they run in.
-"""
-
 from __future__ import annotations
 
 import math

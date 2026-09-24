@@ -1,18 +1,3 @@
-"""The Clock Strategy — the injectable Transaction-Time source.
-
-A temporal write's **Transaction-Time instant** (its ``in_z``) is never authored on a
-write instruction: it is supplied at flush from the unit of work's configured
-clock, so no caller-facing shape can smuggle one in. The default clock reads the
-system UTC time; a :class:`FixedClock` pins a chosen instant for deterministic
-conformance runs and unit tests.
-
-The clock yields a normalized ``timestamp`` (aware UTC, microsecond) via
-:meth:`Clock.now`. :class:`TransactionInstant` is the attempt-owned lazy holder
-of that managed value, so whether the clock is read at all follows from the work
-that survives planning. :func:`instant_literal` remains the canonical Wire
-adapter for caller-facing instruction fields.
-"""
-
 from __future__ import annotations
 
 import datetime as _dt

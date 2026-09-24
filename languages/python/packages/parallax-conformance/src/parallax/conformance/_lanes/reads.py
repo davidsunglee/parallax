@@ -1,23 +1,3 @@
-"""The read lanes: a case's ``when.objectQuery`` compiled to its statement, or
-run through the production read seams and reported as the observation its
-``then`` member grades.
-
-``compile_read_case`` lowers the query purely, with no database. The five run
-entry points route it through production's own reads — the values lane for
-`then.rows`, the public Wire read for `then.graph` and `then.graphs`, and the
-Wire stream for a case declaring a `when.stream` page size — so planning,
-compilation, execution, conversion, classification, and materialization are
-production's, and what is left here is the envelope: the emissions and round
-trips read off the delivered lifecycle, the wire rendering of each published
-row or root, the root key and milestone pin a graph is reported under, and the
-stored-data records a classified root publishes in place of itself.
-
-Every run lane builds its own Handle through :func:`case_database`, applies
-the case's ``given.corrupt`` ahead of the read, and closes the Handle where
-the case that needed it ends. Grading the observation against ``then`` is the
-adapter's.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -275,13 +255,10 @@ def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping
     return row
 
 
-# --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read): the lane runs the PUBLIC Wire   #
 # read, so every level's compile, execute, convert, merge, classify, and unwind #
 # is production's and a `then.graph` observation IS a Wire result. What is left #
-# here is the envelope around it — the root key, the milestone pin, and the     #
-# stored-data records a classified root publishes in place of itself.           #
-# --------------------------------------------------------------------------- #
+
+
 def _wire_read(
     case: case_format.Case,
     query: ObjectQueryNode,

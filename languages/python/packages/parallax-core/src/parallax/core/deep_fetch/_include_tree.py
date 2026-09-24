@@ -1,10 +1,3 @@
-"""Canonical logical shape of one validated deep-fetch request.
-
-The tree owns requested positions and their resolved admission facts. Execution
-steps refer to positions by integer; publication consumes the same positions to
-select finite continuations. Nothing here retains executable query machinery.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,25 +1,3 @@
-"""Shared write-planning foundation: entity resolution and the buffer item
-shapes (m-unit-work).
-
-:class:`FamilyFacts` is the accepted model and its compiled Inheritance Facet read
-together, built once per model-scoped planner and threaded through every stage that
-needs declaring roots, family-effective primary keys, and the compiled member view.
-It holds two references and no index of its own. Raw authored input is the only
-form that names its Entity by spelling, and it resolves through the accepted
-model's own reference-position rule,
-:func:`~parallax.core.metamodel.entity_by_name`, on that branch alone. The
-buffered-write shapes those stages
-consume are :mod:`~parallax.core.unit_work.materialized`'s, which is also where
-the evidence they carry lives.
-
-Bare (non-underscored) names here are intra-package shared infrastructure —
-privacy is carried by ``__all__`` and by this being an internal engine seam
-nothing outside ``parallax.core.unit_work`` imports, not by per-name
-underscores, mirroring :mod:`parallax.snapshot.handle._family`'s own
-convention for the same reason: an underscored name imported across a sibling
-module is a Pyright strict ``reportPrivateUsage`` error.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,17 +1,3 @@
-"""Affected-row enforcement and the Write Effect Error family (m-unit-work).
-
-The unit of work owns the authoritative interpretation of every non-insert
-execution result. An executor reports the driver's affected-row count and asks
-:func:`enforce_affected_rows` what it means; SQL lowering and database adapters
-report counts and never reconstruct or reinterpret these semantics.
-
-Every error in the family carries the same semantic payload — the Entity
-Identity, the Write Target retained by reference, the expected count, and the
-actual count — and nothing else, so the diagnostic is stable across dialects and
-recognizing the canonical optimistic conflict needs no optional concurrency
-module.
-"""
-
 from __future__ import annotations
 
 from parallax.core.metamodel import EntityIdentity

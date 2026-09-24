@@ -1,13 +1,3 @@
-"""Closed metadata vocabularies and leaf metadata shapes (m-metamodel).
-
-The value layer both formation inputs and accepted Metadata share. Two
-spellings carry the closed algebras: an ``enum.Enum`` for a set whose members
-carry no payload, and one frozen dataclass per variant behind a ``type`` alias
-where any member does — with a module-level singleton for that union's nullary
-members. Invalid payloads raise at construction, so an unrepresentable model
-fact never reaches a consumer.
-"""
-
 from __future__ import annotations
 
 import enum

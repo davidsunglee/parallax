@@ -1,35 +1,6 @@
 # A streamed read advances by the Continuation Order — the authored Sort Keys in
 # the precedence the query declares, then the primary key ascending
 # (m-snapshot-read) — and its seek measures "after" in EACH term's own direction.
-#
-# The query orders by `active` descending and `qty` ascending, so the composed
-# order is three terms pointing two ways: `active desc, qty asc, id asc`. Four
-# orders share `active: true`, which is what makes the second and third terms
-# load-bearing — a seek that compared only the leading term would re-deliver or
-# skip the whole tie group at every page boundary.
-#
-# `active` is direct with a non-null carrier, so a continuing page hoists the
-# leading range `t0.active <= ?` ahead of the lexicographic remainder: the remainder
-# alone offers a planner nothing to push down, while the hoisted conjunct is the
-# ordinary AND-qual an index range is reached through, and `<=` rather than `>=`
-# because the leading term descends. Behind it sit three branches, one per tie
-# depth — the leading term strictly after its coordinate, or equal to it and the
-# second strictly after its own, or both equal and the key strictly after its own
-# — each binding the coordinates it ties with before its own.
-#
-# The two dialects spell those branches differently, and the difference is the
-# whole of where a `NULL` would fall. A branch admits its term's `NULL`s where
-# the EMITTED clause placed them after the coordinate, which for a term the model
-# declares non-nullable is the dialect's own convention: Postgres trails `NULL`s
-# on `asc`, so `qty` and `id` carry `or … is null`, while MariaDB trails them on
-# `desc`, so `active` carries it there and the other two do not. Nothing about
-# the rows changes — a `NOT NULL` column has no `NULL` to admit — and the pages
-# reached are identical, which is what makes the two spellings comparable at all.
-#
-# Pages of 2 over 6 roots, each asking for 3: {1, 2}, then {4, 42} seeking past
-# (true, 10, 2), then {3, 5} seeking past (true, 30, 42) — two roots for a
-# requested three, which proves exhaustion. Three root statements, no includes,
-# and the delivered graph is the eager read's own.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, orderBy, ordering, graph, materialization, slice-snapshot-1]
 shape: read

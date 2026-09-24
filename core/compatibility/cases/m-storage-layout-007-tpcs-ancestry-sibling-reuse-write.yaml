@@ -1,16 +1,5 @@
 # Table-per-concrete-subtype ancestry composition and legal sibling Column reuse
 # (m-storage-layout).
-#
-# Each concrete Entity of the LayoutReport family owns an independent physical
-# Table whose layout carries its complete ancestry-derived shape: the root-owned
-# `id` and `title` followed by the concrete's own member. Neither table holds a
-# discriminator, and the inherited root Attribute occupies one distinct slot per
-# Table rather than a shared one.
-#
-# LayoutAudit.auditor and LayoutSurvey.respondent are distinct contributors that
-# both map to the physical Column `detail`. Because the two mappings own
-# structurally different Tables, the reuse is accepted and each write reaches its
-# own table's slot.
 model: models/storage-layout.yaml
 tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

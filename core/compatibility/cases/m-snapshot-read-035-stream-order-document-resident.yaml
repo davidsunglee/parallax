@@ -1,54 +1,6 @@
 # A Continuation Order over DOCUMENT-RESIDENT Sort Keys seeks through the same
 # extraction seam an ordinary predicate does (m-snapshot-read x m-storage-layout x
 # m-sql x m-dialect), on Postgres AND MariaDB.
-#
-# Residence is a physical fact the Continuation Order never learns: the order is
-# still the authored Sort Keys then the primary key, and the seek is still the
-# lexicographic remainder over ordinary comparisons and null checks. What changes
-# is that a member inside a Structured Column has no Column to name, so every one
-# of its occurrences lowers to the dialect's extraction and binds a Document Path
-# ahead of its own coordinate — on its hidden capture cell, on the ordering term,
-# on each comparison, and on each null check. A continuing page here binds
-# eighteen values, eleven of them Document Paths, where the same order over
-# Columns would bind seven and no path at all.
-#
-# The two resident terms divide the extraction's two forms. `destination` is a
-# `string`, whose canonical document spelling already orders as text, so it
-# compares as the bare extraction. `nights` is an `int32`, whose document form is
-# a JSON number with no fixed integer width, so it compares under the declared
-# type's cast (m-dialect) — `"10"` sorts below `"9"` as text, which would put trip
-# 52 ahead of trip 53 inside the Bergen tie and hand page 3 a coordinate page 2
-# never delivered. `id` is the appended primary key and the one Column in the
-# order, so a single statement carries both spellings side by side.
-#
-# A NULL CHECK is spelled against the BARE extraction even where the comparison
-# beside it casts: `nights is null` is the presence question the cast does not
-# change, and both dialects answer it for a missing key and for an explicit JSON
-# null alike (m-storage-layout-021 measures that).
-#
-# Both leading terms are document-resident, so no continuing page hoists a
-# leading range: with the nulls placed after a non-null coordinate, "after" is two disjoint
-# ranges and no single comparison covers both. That is what the leading branch
-# `<destination> < ? or <destination> is null` says instead. The SECOND term's
-# own two-way branch is grouped — `(<destination> = ? and (<nights> < ? or
-# <nights> is null))` — because it ties with the term above it: ungrouped, `and`
-# would bind tighter than `or` and the branch would admit every null-`nights`
-# trip in the table regardless of destination, re-delivering roots the stream had
-# already published.
-#
-# Both terms descend, which is what keeps the two dialects' ordering tails plain:
-# MariaDB places NULLs last on `desc` natively while Postgres needs the
-# `nulls last` suffix (m-dialect *Null Placement*), so neither statement carries a
-# rank term and both resident branches are the same ordinary comparisons and null
-# checks over each dialect's own extraction. The appended `id asc` is the one term
-# they spell differently: it is non-nullable, so it takes each dialect's OWN
-# placement rather than an authored one, and only Postgres — which trails NULLs on
-# `asc` — admits them in that branch.
-#
-# Pages of 1 over 3 roots, each asking for 2: {51}, then {53} seeking past
-# (Oslo, 3, 51), then {52} seeking past (Bergen, 7, 53) — ONE root for a requested
-# two, which proves exhaustion. Three root statements, no includes, and the
-# delivered graph is the eager read's own.
 model: models/document-layout.yaml
 tags: [m-snapshot-read, m-storage-layout, m-object-query, m-sql, m-dialect, stream, streamed-delivery, orderBy, ordering, nullable, json, document-layout, cast, graph, materialization, slice-snapshot-1]
 shape: read

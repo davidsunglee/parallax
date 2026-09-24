@@ -1,18 +1,4 @@
 # Cross-process cache coherence — INSERT under full-cache re-fetch.
-#
-# m-coherence-002 proves insert visibility under the partial-cache MARK-DIRTY strategy; this
-# pins the genuinely harder combination: an insert observed under the full-cache
-# RE-FETCH strategy (m-coherence-001's strategy, but for a brand-new row). Re-fetch resolves
-# by re-querying known primary keys, which conceptually cannot DISCOVER a new PK
-# on its own — so a conforming implementation's notification must carry the new
-# key (or re-resolve the predicate) for node B to converge. The harness has no
-# cache; it asserts the OBSERVABLE outcome that any such mechanism must produce:
-# node B's predicate re-fetch returns node A's committed insert.
-#
-# Steps:
-#   0  read  on B : query owner='Trent' — empty (no such account yet).
-#   1  write on A : A commits an INSERT of account 8 (Trent, 64.00) on its connection.
-#   2  read  on B : node B re-fetches and MUST observe the newly-inserted row.
 model: models/account.yaml
 tags: [m-coherence, full-cache-refetch, insert]
 shape: coherence

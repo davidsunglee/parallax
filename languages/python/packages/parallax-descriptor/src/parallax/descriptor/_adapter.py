@@ -1,15 +1,3 @@
-"""The descriptor-backed Unresolved Metamodel adapter (m-descriptor).
-
-Parsed descriptor records are interchange carriers; this is where they become
-the representation-independent formation input Model Formation begins from. The
-adaptation is local and reference-free: every fact that needs no cross-entity
-knowledge becomes its final Metadata value here, while a relationship target, a
-reverse peer, and an inheritance parent stay Entity References for the
-foundational resolver to advance. Nothing in the produced view resolves a
-reference, pairs a relationship direction, flattens a family, or offers a
-lookup, and no descriptor record reaches a consumer through it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

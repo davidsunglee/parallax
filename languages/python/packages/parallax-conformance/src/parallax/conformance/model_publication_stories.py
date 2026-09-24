@@ -1,20 +1,3 @@
-"""``parallax.conformance.model_publication_stories`` — the executable API-suite
-story for updating a running service's model (`python.md` §2, ADR 0062).
-
-Every other artifact states one fact of publication in isolation: that a
-candidate is prepared whole, that a compare-and-replace is atomic, that an
-execution retains what it adopted. What none of them states is the ORDER a host
-must put those facts in, which is the whole of what an application owns here —
-prepare the candidate first, because that is where every fallible derivation
-runs; apply the schema next, because publication asserts the schema already
-satisfies what it publishes; publish last, because nothing may adopt an edition
-the database cannot answer for.
-
-That order is the story, and it is what
-``tests/api/test_model_publication_story.py`` executes against real Postgres, so
-the documented spelling of an update cannot drift from a working one.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -194,7 +177,7 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
 
     # An Evolution is described between two ACCEPTED models, which is what a
     # prepared selection carries its own of: `model_of` is the durable first-party
-    # seam a schema-owning host reads one through (`python.md` §2).
+    # seam a schema-owning host reads one through.
     evolution = unilateral(evolve(model_of(a.model), model_of(b.model)))
     # The statements are applied exactly as given — never reordered,
     # deduplicated, or made idempotent — because a delta states what must happen

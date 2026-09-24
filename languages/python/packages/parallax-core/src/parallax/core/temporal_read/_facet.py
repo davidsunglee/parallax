@@ -1,17 +1,3 @@
-"""The Temporal Facet and its typed retrieval (m-temporal-read).
-
-Temporality is a whole-family coordinate system its root declares, so "which
-axes apply here?" is a question no single position answers on its own. This
-module owns the answer as one immutable per-formation view, precomputed once so
-behavioral modules never resolve a family root to read an axis again.
-
-The shape algebra is closed and each variant carries exactly the axes it
-declares, which is what makes the unsupported Valid-Time-Only formation
-unrepresentable: no variant declares Valid Time without Transaction Time. Every
-axis a view returns is the declaring root's accepted value by reference, so its
-Attribute Identities still name the root.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

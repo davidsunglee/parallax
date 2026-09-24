@@ -1,14 +1,5 @@
 # A top-level Value Object is one Document-tier slot after every scalar tier
 # (m-storage-layout, m-value-object).
-#
-# LayoutProfile's layout is `id` (Identity), `label` and `note` (Domain), then
-# `contact` (Document). The document slot therefore follows every scalar tier
-# regardless of where the occurrence is declared, and the whole embedded
-# composite binds atomically into that one column rather than decomposing into
-# per-field columns.
-#
-# The second insert omits the optional `note`, so only the present cells bind and
-# the document still occupies the final position.
 model: models/storage-layout.yaml
 tags: [m-storage-layout, m-value-object, m-sql, json, document, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

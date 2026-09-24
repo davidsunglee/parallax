@@ -1,14 +1,5 @@
 # Table-per-hierarchy abstract-root read over the intermediate-abstract Animal family
 # (m-inheritance, m-sql).
-#
-# Targeting the abstract root Animal spans the whole `animal` table (Cat, Dog, and the
-# sibling WildBoar) with NO tag predicate. The projection is the full concrete
-# superset reachable from Animal in semantic tier order: identity `id`, raw
-# discriminator `kind`, then Domain slots from the root, Pet, and concrete subtypes
-# (Cat's indoor, Dog's bark_volume, WildBoar's tusk_length) in stable declaration
-# encounter order. familyVariant is materialized from the tag map (dog -> Dog, cat -> Cat,
-# boar -> WildBoar); columns not applicable to a row are null (shared table). Every
-# fixture row is returned.
 model: models/animal.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,25 +1,3 @@
-"""``parallax.evolution.model_evolution`` enforcement scope (m-model-evolution).
-
-The total, ordered description of every difference between two accepted
-Metamodels, named in the model's own terms. :func:`evolve` returns the closed
-choice of :class:`UnilateralEvolution` — the only kind a live tenant may apply
-through the schema path — or :class:`CoordinatedEvolution`, which is an equally
-complete description whose application needs authoring, data, or rollout
-coordination. Both retain their accepted endpoints, so a consumer resolves any
-identity an operation names without holding a model of its own.
-
-The description is at model altitude and is pure: it makes no provider or
-database call, prescribes no migration procedure, severity, or retry, and names
-no dialect. Physical statements are ``m-schema-delta``'s, derived from a
-Unilateral Evolution and both retained endpoints' Storage Layouts; what those two
-differ by is that module's question and not one answered here.
-
-``m-model-evolution`` depends on ``m-metamodel`` for the accepted declarations
-and identities, and on ``m-inheritance``, ``m-relationship``,
-``m-temporal-read``, and ``m-opt-lock`` for the effective facts classification
-and Behavioral Impacts compare; it re-derives none of those facets.
-"""
-
 from __future__ import annotations
 
 from typing import overload

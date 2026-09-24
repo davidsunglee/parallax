@@ -1,25 +1,3 @@
-"""``parallax.conformance._database_control`` — the harness's own scoped controls.
-
-A conformance run needs two things the shipped ``Database`` deliberately does not
-offer, and both are provisioning rather than application concerns:
-
-- a driver session the harness drives DIRECTLY — the per-case schema reset, the
-  generated DDL, fixture binds, catalog reads, a case's verbatim golden SQL, and a
-  peer holding its own transaction open across statements;
-- for the adversarial interleaved lane, a session the harness may CANCEL or
-  DESTROY to unstick a worker parked in real driver I/O.
-
-Both are stated here as protocols with no driver in them, so the engine consumes a
-declared capability instead of discovering one by duck-typing an adapter's shape.
-The native implementation is :mod:`parallax.conformance._postgres_control`, whose
-import stays deferred so naming a control costs no psycopg import.
-
-A control is SCOPED: whoever opens one closes it, on success, on failure, and on a
-refusal to start. Nothing here is a Session interface for applications — every
-value below is development-only, and modeled work still runs through the shipped
-``Database`` a control's own connection stands under.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

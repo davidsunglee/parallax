@@ -1,19 +1,4 @@
 # Write sequence: UPDATE via milestone chaining (the signature audit-only write).
-#
-# An audit-only update NEVER mutates a value in place. It (1) closes the current
-# row by setting its out_z to the transaction instant, then (2) chains a NEW
-# current row [txInstant, infinity) carrying the new value. The prior value is
-# preserved as a superseded milestone — that is the audit trail.
-#
-# The sequence (starting from an empty table, so the case is self-contained):
-#   step 1 insert : open [2024-01-01, infinity) value 100.00  (1 statement)
-#   step 2 update : close the current row (out_z = 2024-06-01) and chain a new
-#                   current row [2024-06-01, infinity) value 150.00 (2 statements)
-#
-# Resulting state: the superseded 100.00 row (out_z finite) AND the current
-# 150.00 row (out_z = infinity). This mirrors research §6's audit-only chaining
-# (close old OUT_Z=txTime; insert new head). The close UPDATE is keyed by the
-# current-row predicate (bal_id AND out_z = infinity), never a blind in-place set.
 model: models/balance.yaml
 tags: [m-txtime-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

@@ -1,17 +1,3 @@
-"""Every corpus model this package mirrors as Entity Classes, by model stem.
-
-One Domain Model per corpus model, so a story or example that names its model as
-a string reaches the classes for it without naming the module they live in. Each
-model is composed once, where its classes are declared — not because a class
-could not participate in a second Domain Model, which it may, but because one
-composition per corpus model is what makes this mapping a correspondence rather
-than a choice.
-
-The mapping is not a registry — nothing registers into it, and importing a class
-adds nothing. It is the fixed correspondence between the corpus's own model files
-and the class families this package hand-authors against them.
-"""
-
 from __future__ import annotations
 
 from types import MappingProxyType

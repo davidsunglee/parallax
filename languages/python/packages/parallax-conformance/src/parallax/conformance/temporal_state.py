@@ -1,37 +1,3 @@
-"""Case-local temporal shadow state (engine translation layer only).
-
-The conformance engine's write lanes (writeSequence / scenario / conflict) drive
-production ``db.transact`` per choreography unit. A later unit's temporal write
-needs "the observed current milestone" its
-close/chain consumes, but the framework itself never issues an implicit resolving
-read for one (`core/spec/m-txtime-write.md` / `m-bitemp-write.md`: "the engine
-supplies observed rows from case state"). This module is the engine-side tracker
-that makes that observation available WITHOUT a database round trip — fixtures (for
-a case that loads them) seed it, and each temporal write advances it from the
-successor rows the production Write Plan that write already produced carries, so
-what it holds for a milestone is what the flush wrote for that milestone rather
-than a second expansion of the same topology computed beside it.
-
-Statements this tracker never saw are the one thing it cannot account for:
-out-of-band SQL (`m-case-format` ``given.apply``) stores what no authored member
-could produce. Which milestones such statements touched is not something a naive
-``sql`` string reveals, so it narrows the doubt to the milestones they MAY have
-overtaken rather than claiming an account it no longer has
-(:meth:`TemporalShadow.accounts_for`).
-
-A materializing predicate write is the second such blind spot, and a sharper one:
-it resolves its own rows and retires and opens milestones inside production,
-whose plan never reaches this layer at all, so what this tracker holds for that
-target is not merely incomplete but no longer current
-(:meth:`TemporalShadow.note_materialized_write`).
-
-Non-normative engine-internal bookkeeping: never serialized, never a
-:class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
-production code (:mod:`parallax.snapshot.handle`) — the conformance family's own
-translation-layer state, standing in for the current milestone a real caller
-would hold on the source value an earlier find returned.
-"""
-
 from __future__ import annotations
 
 import contextlib

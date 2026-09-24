@@ -2,27 +2,6 @@
 # inside one object's own history (m-snapshot-read *Streamed delivery*): the
 # Continuation Order carries the MILESTONE EDGE after the primary key, so a page
 # continues from the milestone the previous page ended on rather than from its key.
-#
-# Invoice 100's lines are a milestone SET of three roots over two keys: line 1000
-# corrected 50.00 -> 75.00, so it stands at two Transaction-Time milestones
-# ([2024-01-01, 2024-04-01) and [2024-04-01, infinity)), and line 1001 stands at
-# one ([2024-01-01, infinity)) — models/invoice.yaml. At `batchSize: 1` EVERY page
-# boundary falls inside line 1000's own history, which is the boundary an order
-# ending in the primary key cannot cross: page 2 would seek `id > 1000` and skip
-# the 75.00 milestone entirely, delivering two roots for a three-milestone set.
-# The order here is `id asc, in_z asc`, so page 2 seeks `id >= 1000 and (id > 1000
-# or (id = 1000 and in_z > 2024-01-01))` and reaches it — the MariaDB spelling;
-# Postgres adds `or … is null` to each of those two branches, both terms being
-# non-nullable `asc` keys whose NULLs it trails natively where MariaDB leads them
-# (m-dialect). Neither column holds one, so the pages are the same.
-#
-# The delivery is three pages, each asking for two roots and delivering one until
-# the last, which gets one back and so proves exhaustion without a statement of
-# its own. `then.graphs` states the milestone set the delivery published: each
-# root stands at its OWN edge pin, so the two declared pins partition all three
-# roots — 2024-01-01 claims one milestone of each line, 2024-04-01 the corrected
-# line-1000 milestone — exactly as the whole-result read of the same query
-# (m-snapshot-read-013's shape) states them.
 model: models/invoice.yaml
 tags: [m-snapshot-read, m-object-query, m-temporal-read, stream, streamed-delivery, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read

@@ -1,12 +1,5 @@
 # valueObject numeric filter: nestedLte over a THREE-level path with a typed cast
 # (m-value-object, m-sql, m-dialect), on Postgres AND MariaDB.
-#
-# nestedLte(Customer.address.geo.point.lat, 50) casts the three-level float64
-# extraction and compares with `<=`: Postgres `cast(jsonb_extract_path_text(
-# t0.address, ?, ?, ?) as double precision) <= ?` (four binds), MariaDB
-# `cast(json_value(t0.address, ?) as double) <= ?` (two binds). Only Grace (lat
-# 42.3) is at or below 50; Ada and Linus (59.9) are above; the not-present rows
-# (4/5/6/7) cast SQL NULL and are excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,13 +1,3 @@
-"""Direct-column roles and derived Document Paths (m-storage-layout).
-
-Under Relational Document Layout, where a member lives is decided twice from two
-different inputs — by the Rule Set over the Candidate Metamodel, and by the
-compiler over accepted Metadata — so the decision itself lives here once. Both
-sides pass the same reference-free Attribute values and the same designation
-sets, which is what keeps a rejection and a placement from disagreeing about
-whether a member is document-resident.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

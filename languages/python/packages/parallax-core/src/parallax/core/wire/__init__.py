@@ -1,5 +1,3 @@
-"""Strict JSON loading and the exhaustive Neutral Wire Codec (m-wire)."""
-
 from __future__ import annotations
 
 from parallax.core.wire._codec import (

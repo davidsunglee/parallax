@@ -1,12 +1,5 @@
 # Relaxing a String maximum length (m-model-evolution): unilateral and
 # Overlap-Visible, both when the bound grows and when it disappears.
-#
-# `Digest.title` moves to a larger bound and `Digest.body` loses its bound
-# entirely; the two are one boundary, because a removed bound admits everything a
-# larger one does. Each is Overlap-Visible for the same reason nullability
-# widening is: the later edition can store a value the earlier edition cannot
-# admit. String maximum length is a field of its own, so neither operation carries
-# a `TypeChanged`.
 tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

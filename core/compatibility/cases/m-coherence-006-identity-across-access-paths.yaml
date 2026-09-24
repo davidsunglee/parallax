@@ -5,16 +5,6 @@
 # node B re-resolves via the primary key. `sameObjectAs: 0` asserts the two access
 # paths denote the SAME object: identity is keyed by the primary key regardless of
 # which predicate surfaced the row, AND it survives the cross-process write.
-#
-# `owner` resolves a single row in the fixture data (Ada/Linus/Grace are distinct),
-# exactly as scenario m-process-cache-002 relies on, though the `account_owner` index is not
-# declared unique.
-#
-# Steps:
-#   0  read  on B : seed read by owner='Linus' — B observes/interns PK 2 at 250.00.
-#   1  write on A : A commits balance = 888.00 for id 2 (a separate connection).
-#   2  read  on B : B re-fetches by PK 2; observes 888.00 at the SAME identity the
-#                   owner predicate surfaced (sameObjectAs 0).
 model: models/account.yaml
 tags: [m-coherence, identity, identity-preservation]
 shape: coherence

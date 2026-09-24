@@ -1,41 +1,3 @@
-"""Exact-model member layouts: the positional facts one Entity's rows share.
-
-A layout is the flyweight a materializing runtime reads instead of rebuilding a
-wrapper skeleton per row. Which members a resolved concrete Entity carries, in
-what order, where its category boundary falls, which positions its family's
-primary key occupies, which of its Attributes may hold the open temporal bound,
-what canonical order its relationship views take, which of its directions are
-to-many, and which spelling an inheritance participant publishes its variant
-under are all functions of the accepted Metamodel alone — so a catalog derives
-them per exact Entity, and every row, every graph, and every execution it
-serves shares what it derived rather than rebuilding one.
-
-Stated over the accepted :class:`~parallax.core.metamodel.Metamodel` rather than
-over the :class:`~parallax.core.entity.DomainModel` that carries one, because
-that is the whole of what a layout depends on: a model composing no Entity Class
-lays out its rows exactly as one composing every class does.
-
-Two things are deliberately absent. **Storage and result-key names stay out** —
-those come from a compiled read's own projection contracts, so a layout stays
-query-independent and shareable across every execution. And **row width is
-model-fixed, not query-fixed**: a member a read did not project still occupies
-its declared position, which is what keys a layout to an exact Entity rather
-than to a query shape.
-
-Two rules live here rather than at the callers that would otherwise restate
-them: :meth:`EntityLayout.key_of` owns the single-versus-composite spelling of a
-logical key, and :meth:`EntityLayout.ordered` owns the canonical view order.
-Positions stay public because the hot paths iterate members in order; it is the
-rules that are hidden, not the indexing. The canonical broad-relationship order
-is public for that reason too — a full-width relationship row is written at
-those positions, and a producer that derived them again would fix a second
-order.
-
-A model defect found while deriving a layout is a raised :class:`ValueError`,
-never a stored-data classification: a row cannot contradict a position that the
-model itself failed to fix.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -84,55 +46,13 @@ class NarrowableView(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class EntityLayout:
-    """One exact concrete Entity's positional member facts.
+    """Member rows contain ancestry-ordered Attributes, then Value Objects.
 
-    ``members`` is the family-effective member row: every applicable Attribute
-    in ancestry-then-declaration order, then every applicable top-level Value
-    Object occurrence in theirs, with ``attribute_count`` the boundary between
-    the two categories. ``attributes``, ``occurrences``, and ``value_objects``
-    are aligned to those two runs, so a caller iterating a row reads its
-    metadata by position rather than by search.
-
-    ``family`` is the identity a logical key normalizes to: the family root,
-    except under ``TablePerConcreteSubtype``, where each concrete owns an
-    independent primary-key namespace and normalizing would conflate two
-    different rows that merely share a key value.
-
-    ``primary_key`` is where that family key sits in this concrete's own row, in
-    the family's declared order. It is public because a caller spelling the key
-    some other way — by name through ``attributes``, say — would otherwise
-    restate which Attributes carry it and fix a second answer.
-
-    ``temporal_ends`` names the Attributes whose stored value may be the open
-    temporal bound. The declaring family owns its as-of axes, so which of a
-    concrete's Attributes close an interval is family-wide and fixed here rather
-    than re-resolved through the inheritance facet once per stored value.
-
-    ``relationships`` is the canonical broad-relationship row: every navigable
-    direction under the identity that declares it, in accepted declaration
-    order, ancestry first. ``relationship_index`` locates one by that whole
-    identity, so a direction this concrete does not navigate is absent from it
-    however it is spelled — including one whose local name a declared direction
-    also carries, which a name-keyed index would answer a position for. That
-    order is the one rule two callers share — the canonical view slot order
-    :meth:`ordered` sorts into, and the positions a full-width
-    broad-relationship row is written at — so both read it here rather than each
-    deriving it.
-
-    ``to_many`` names the directions whose arm admits several nodes rather than
-    one. A direction's cardinality is fixed by the declaration the ancestry
-    reaches it through, so it is settled here beside the position that direction
-    takes rather than resolved again through the relationship facet by whoever
-    writes or reads that position.
-
-    ``family_variant`` is the stable spelling an inheritance participant
-    publishes under the synthetic ``familyVariant`` key — the bare concrete
-    name, or the canonical qualified one when another concrete in the family
-    shares that local name — and ``None`` for a standalone Entity, which
-    publishes no such key. It is fixed here because the spelling is a fact of
-    the family's accepted concrete set, so every publication of this concrete
-    reads the one spelling the catalog derived rather than resolving the
-    inheritance facet again per node or memoizing its own answer per delivery.
+    ``primary_key`` indexes that row in declared key order. ``family`` is the
+    family root except for table-per-concrete-subtype, whose concrete classes
+    have independent key namespaces. Relationship positions use whole identities
+    and ancestry-first declaration order. ``family_variant`` is qualified only
+    when concrete local names collide; standalone Entities have none.
     """
 
     concrete: EntityIdentity

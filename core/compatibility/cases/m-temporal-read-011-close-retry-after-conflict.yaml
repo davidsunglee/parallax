@@ -1,21 +1,6 @@
 # Optimistic temporal close RETRY after conflict — the `attempts` 0-then-1
 # transition on the gated close (m-temporal-read + m-opt-lock retry contract, the
 # m-opt-lock-007 analogue for a temporal entity).
-#
-# m-temporal-read-010 stops at the conflict signal (a stale-in_z close affects 0
-# rows); this proves the retry closes the loop, and the `attempts` sequence makes the
-# two-step observable in one case. `given.apply` fully chains id 2 (old current row
-# closed at 2024-09-01, fresh current row value 999.00 opened at in_z 2024-09-01).
-# Attempt 0 gates on the first-read in_z (2024-02-01) and affects 0 rows — the
-# conflict; attempt 1 re-reads the fresh current in_z (2024-09-01), re-applies, and
-# affects 1 row, closing the concurrent writer's milestone at 2024-10-01. The case
-# asserts each attempt's affected count and runs no replacement INSERT, so
-# `then.tableState` is the fixtures plus the re-chain plus that retry close.
-#
-# `roundTrips: 2` is what the two authored attempts cost between them — one gated
-# close each. The first REACHED the database and closed zero rows, so it counts
-# exactly as the second does; the count spans every attempt rather than the last.
-#
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict

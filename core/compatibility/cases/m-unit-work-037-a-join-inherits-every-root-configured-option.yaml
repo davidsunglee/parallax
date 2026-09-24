@@ -2,22 +2,6 @@
 # joining call inherits, repeats, or is refused on ALL FOUR options at once, and
 # the values it is held to are the ones the outer invocation resolved from a
 # configured Database Root — `api-conformance` lane.
-#
-# The root is configured with every field away from its built-in — `maxRetries`
-# 2, `concurrency` `locking`, `retryOptimisticConflicts` true, `isolation`
-# `repeatable-read` — and the outer call requests nothing, so the outer
-# invocation reports exactly the root's record. Three joining calls then run
-# the rule over the whole record: the first names nothing and inherits, the
-# second names all four values the transaction resolved and is accepted, and
-# the third names `maxRetries: 3` and is refused before its callback runs.
-#
-# The stream tells the joins apart: under the one attempt are exactly TWO joined
-# invocations, activities 6 and 7, and a joined invocation opens only once the
-# joining call has been accepted. No third appears, because the refusal is a
-# refusal of the CALL rather than an outcome of the work; the attempt names
-# activity 7 as the scope the refusal unwound through. The buffered `update`
-# never reaches the database and `roundTrips: 1` is the observing read alone —
-# taken with the root's shared lock, since the transaction resolved `locking`.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

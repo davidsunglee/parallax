@@ -1,22 +1,6 @@
 # LOCKING-mode bitemporal inactivation of the BOUNDED current rectangle: the address is
 # rendered in full and no gate is rendered at all (m-bitemp-write + m-opt-lock,
 # ADR 0046).
-#
-# The locking sibling of m-bitemp-write-017 — the same close of R2 (value 100, valid
-# [2024-01-01, 2024-06-01)) against the same fixtures at the same instant, under
-# `locking` instead of `optimistic`. The m-read-lock shared read lock, not an
-# observation, is what makes the write correct here, so the golden emits no
-# `and in_z = ?` gate and the case authors no `observedTxStart`. Everything else is
-# byte-identical to -017's golden: `and thru_z = ? and out_z = ?` still addresses the
-# one rectangle, because address components are not gate components and which stored
-# row a close means to close never depends on the concurrency mode.
-#
-# This is the pairing the two modes could not previously express. Treating the
-# Valid-Time bound as an optimistic discriminator left a locking-mode close addressing
-# only `pos_id = ? and out_z = ?`, which R2 AND R3 both satisfy — a silent two-row
-# inactivation that would also close the untouched sibling rectangle. `then.affectedRows`
-# is 1 and `then.tableState` shows R3 still current at in_z 2024-04-01, which is exactly
-# that defect's observable.
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, conflict, locking, slice-snapshot-1, slice-managed-1]
 shape: conflict

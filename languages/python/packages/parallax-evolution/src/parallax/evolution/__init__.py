@@ -1,20 +1,3 @@
-"""Parallax model evolution and schema deltas (``parallax-evolution``).
-
-Two behavioral modules with a real seam between them.
-:mod:`parallax.evolution.model_evolution` describes any difference between two
-accepted Metamodels as a canonically ordered, classified Evolution named in the
-model's own terms, and :mod:`parallax.evolution.schema_delta` turns the
-unilateral variant into ordered dialect statements. This package re-exports both
-surfaces — :func:`evolve`, the :data:`ABSENT` provisioning sentinel, the closed
-operation, field-delta, Behavioral Impact, and coordination vocabularies the two
-results carry, and :func:`schema_delta` with the Schema Delta value and the two
-errors it raises — so an application names one import for the description it acts
-on and for the statements it applies.
-
-Parallax never applies a schema change: the application executes the statements
-and publishes the later Model Edition only after every one of them succeeds.
-"""
-
 from __future__ import annotations
 
 from parallax.evolution.model_evolution import (

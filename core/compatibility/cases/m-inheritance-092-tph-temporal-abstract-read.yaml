@@ -1,18 +1,5 @@
 # Table-per-hierarchy TEMPORAL abstract-root read: the as-of predicate composes with the
 # shared-table abstract-read lowering (m-inheritance x m-temporal-read x m-sql).
-#
-# Targeting the abstract root Instrument (bitemporal) resolves to the whole family in the
-# shared `instrument` table, so the read injects NO tag predicate — just the as-of
-# predicate. Pinning valid-time = 2024-06-01 (a past instant, so `from_z <= ? and
-# thru_z > ?`) with Transaction-Time explicitly selected as Latest (`out_z = ?`) selects each concrete's
-# Latest rectangle. The projection is the full Table Layout selection: identity `id`,
-# discriminator `kind`, Domain slots `price`, `coupon`, and `ticker`, then the four
-# Temporal interval slots. The raw tag column is where familyVariant
-# is materialized (bond -> Bond, stock -> Stock). Bitemporal composes with the abstract
-# read unchanged: only the as-of predicate is added over the tag lowering.
-#
-# Non-trivial (temporal + tag) read => referenceSql is the independent oracle (inline
-# infinity / instant literals, a different formulation returning the same rows).
 model: models/instrument.yaml
 tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

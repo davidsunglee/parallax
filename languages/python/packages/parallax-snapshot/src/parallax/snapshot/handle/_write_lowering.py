@@ -1,22 +1,3 @@
-"""``parallax.snapshot.handle._write_lowering`` — a Write Plan as its statements.
-
-:func:`stream_lowered` is the single write-lowering seam: both the developer
-transaction path (the ``FlushExecutor`` :meth:`ScopedDatabase.transact` injects) and
-the conformance engine drive THIS function, so there is exactly one place a
-Write Plan becomes DML.
-
-Every step in a :class:`~parallax.core.unit_work.WritePlan` already carries its
-target, row topology, concurrency decision, and expected effect settled — the
-Write Planner (:mod:`~parallax.snapshot.handle._planning`) decided all of that
-before this function ever runs — so lowering answers only the physical
-question :func:`~parallax.core.sql_gen._write.compile_write_step` renders:
-which Columns participate, in which order, quoted for which dialect. Nothing
-here reads an instruction, an observation, a mode, or an instant.
-
-This module composes the Snapshot executor with SQL generation's private write
-compiler; the physical lowering implementation lives entirely in ``m-sql``.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

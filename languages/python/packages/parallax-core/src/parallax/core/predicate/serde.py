@@ -1,21 +1,3 @@
-"""Predicate serde (m-predicate canonical single-key tagged encoding).
-
-``serialize`` emits the canonical single-key tagged object for each node exactly
-as ``predicate.schema.json`` fixes it (an OMITTED optional ``caseInsensitive``
-stays omitted; an explicitly authored one round-trips verbatim).
-``deserialize`` reads that form into frozen nodes and canonicalizes
-order-insensitive Subtype Selections. The pair round-trips
-every already-canonical node in the selection algebra, in both JSON and YAML (the
-format is irrelevant — the document is plain dict/list/scalar). ``deserialize``
-is structural and type-checked: it validates
-each node's closed shape, enforces every reference string against the schema
-pattern for its position (attribute / relationship / entity / nested / value-
-object / element-relative), and constrains a nested ``where`` to exactly the
-element predicates the schema admits there. Metamodel binding
-(attribute→column, nested-path and narrow resolution) is applied by ``m-sql`` at
-lowering time, which holds the metamodel.
-"""
-
 from __future__ import annotations
 
 import re
@@ -116,18 +98,6 @@ class CanonicalDocumentError(ValueError):
     """A serialized document is not a well-formed canonical node."""
 
 
-# --------------------------------------------------------------------------- #
-# Closed-shape table (derived from predicate.schema.json).                     #
-#                                                                              #
-# Each node body is a CLOSED object (`additionalProperties: false`) with a     #
-# fixed `required` set; the schema fixes both. `deserialize` validates the     #
-# body against this table BEFORE constructing a node, so an unexpected key, a  #
-# missing required key, or a mistyped field is rejected loudly rather than     #
-# silently dropped / defaulted (m-predicate: serde MUST validate and          #
-# round-trip every node unchanged). Bodies with recursive members (`operand`,  #
-# `operands`, `keys`, `paths`, `to`, `where`) get their element-level closed   #
-# checks in the helpers below.                                                 #
-# --------------------------------------------------------------------------- #
 _Shape = tuple[frozenset[str], frozenset[str]]  # (required, optional)
 
 
@@ -172,9 +142,6 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
         raise CanonicalDocumentError(f"{tag}: missing required key(s) {missing}")
 
 
-# --------------------------------------------------------------------------- #
-# Deserialize.                                                                 #
-# --------------------------------------------------------------------------- #
 def _single_key(doc: object) -> tuple[str, Mapping[str, object]]:
     if not isinstance(doc, Mapping):
         raise CanonicalDocumentError(f"predicate node must be a mapping, got {type(doc).__name__}")
@@ -410,9 +377,6 @@ def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:
     return _deserialize(body["op"], element_scope=False)
 
 
-# --------------------------------------------------------------------------- #
-# Serialize (canonical minimal single-key tagged form).                       #
-# --------------------------------------------------------------------------- #
 def _emit_where(where: PredicateNode | None) -> dict[str, object]:
     return {"where": serialize(where)} if where is not None else {}
 

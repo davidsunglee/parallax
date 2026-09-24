@@ -1,14 +1,5 @@
 # Closed-world snapshot access (m-snapshot-read): accessing a relationship the
 # snapshot did NOT include issues ZERO SQL — there is no lazy load.
-#
-# Step 0 materializes a snapshot of order 1 (a plain-value read, no includes). Step 1
-# accesses `statuses`, which the snapshot never included: a snapshot is closed-world,
-# so the relationship is found ABSENT and NO query is issued (roundTrips 0) — the
-# defining difference from a managed query-backed list (m-op-list), which would resolve a
-# deferred load here. The per-language absence representation (null / empty / a raised
-# access error) is deliberately unconstrained, so this is graded by each language's
-# API Conformance Suite (api-conformance lane); the wire assertion is only that no SQL
-# fires.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-deep-fetch, closed-world, relationship, scenario, slice-snapshot-1]
 shape: scenario

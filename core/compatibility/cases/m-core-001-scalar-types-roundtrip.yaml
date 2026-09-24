@@ -1,10 +1,5 @@
 # Scalar type round trip for the less-common m-core scalar mappings: float32,
 # float64, bytes, time, and uuid.
-#
-# This first scalar witness is Postgres-only because byte, time, and uuid driver
-# return types differ by dialect. The golden SQL renders the byte payload as hex
-# so the expected row is stable text; the Postgres provider reads time/uuid as
-# stable text for the same reason.
 model: models/scalars.yaml
 tags: [m-core, m-descriptor, m-sql, scalar, postgres, slice-snapshot-1, slice-managed-1]
 shape: read

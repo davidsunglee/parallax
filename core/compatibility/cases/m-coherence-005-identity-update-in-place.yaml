@@ -4,18 +4,6 @@
 # interned object is refreshed in place, not forked into a second object for the
 # same primary key. It is the cross-process lift of the m-process-cache identity scenario
 # (m-process-cache-002): the same-PK-=>-same-object rule, holding across a peer write.
-#
-# `sameObjectAs: 0` on the final re-fetch ties it to the seed read: both observe
-# primary key 2, so node B's cache converged on A's committed write WITHOUT
-# breaking one-object-per-PK. (The harness has no cache; it witnesses the
-# observable half — the primary-key identity is stable across the refresh — which
-# any conforming full-cache re-fetch / partial-cache mark-dirty must satisfy.)
-#
-# Steps:
-#   0  read  on B : seed read of PK 2 — B observes Linus at balance 250.00.
-#   1  write on A : A commits balance = 777.00 for id 2 (a separate connection).
-#   2  read  on B : B re-fetches PK 2; observes the new 777.00 AND the SAME object
-#                   identity as step 0 (sameObjectAs 0).
 model: models/account.yaml
 tags: [m-coherence, identity, identity-preservation]
 shape: coherence

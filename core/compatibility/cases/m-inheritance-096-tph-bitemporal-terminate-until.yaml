@@ -1,25 +1,5 @@
 # Table-per-hierarchy BITEMPORAL terminateUntil: the inactivation is tag-GUARDED
 # (m-inheritance x m-bitemp-write x m-sql).
-#
-# A terminateUntil over a BOUNDED Valid-Time window [validFrom, until) inactivates
-# the original on the Transaction-Time dimension and chains only HEAD (valid [from_z, validFrom))
-# + TAIL (valid [until, infinity)) — NO middle — so the value is absent INSIDE the
-# window while intact before and after (m-bitemp-write, the rectangle split). Under
-# table-per-hierarchy the family shares the `instrument` table, so the inactivation carries
-# the tag GUARD `and kind = ?` right after the pk and before the per-axis upper bounds:
-# `where id = ? and kind = ? and thru_z = ? and out_z = ?`, binds [2024-02-15, 2, stock,
-# infinity, infinity]; the chained head + tail set the tag from Stock's tagValue.
-#
-# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-002 (same window,
-# same 3-row result), differing ONLY in table/tag routing. The shared `instrument`
-# table physically carries BOTH subtypes' own columns, so a Stock row leaves the
-# sibling `coupon` (Bond's) null.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert         : open the Latest rectangle, price 100, valid [2024-01-01, inf),
-#                           transaction [2024-01-01, inf), kind=stock, ticker ACME   (1 statement)
-#   step 2 terminateUntil : terminate the value for Valid-Time window [2024-03-01, 2024-09-01)
-#                           at txInstant 2024-02-15 — inactivate (tag-guarded) + head + tail (3 statements)
 model: models/instrument.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-hierarchy, tag, temporal, bitemporal, write-sequence, terminate-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

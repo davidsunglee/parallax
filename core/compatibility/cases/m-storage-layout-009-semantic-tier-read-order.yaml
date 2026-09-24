@@ -1,23 +1,5 @@
 # Canonical semantic tier order decides a read's projection, not declaration
 # position or ancestry (m-storage-layout x m-sql).
-#
-# LayoutReading declares its members across tiers in an order the projection
-# deliberately does not follow: the root declares `sensor` (Domain) BEFORE its two
-# Transaction-Time bound Attributes, and the concrete subtype declares `celsius`
-# (Domain) AFTER both of them. The shared Table Layout still yields
-# `id` (Identity), `kind` (Discriminator), `sensor` then `celsius` (Domain),
-# `in_z` then `out_z` (Temporal), and `probe` (Document) — so a subtype-owned
-# domain slot precedes a root-owned temporal slot and the document slot follows
-# every scalar tier.
-#
-# The family designates no Audit Metadata, so the Audit tier is empty and
-# contributes no slot between the temporal and document slots: an absent optional
-# tier collapses rather than reserving a position.
-#
-# The abstract-root target projects the raw discriminator at its own tier position
-# and carries no tag predicate, and `familyVariant` is materialized from the tag
-# metadata rather than projected. The explicit Latest Transaction-Time pin selects
-# the open milestone alone, so the superseded 20.00 row is not observed.
 model: models/storage-layout.yaml
 tags: [m-storage-layout, m-object-query, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read

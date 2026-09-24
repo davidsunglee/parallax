@@ -1,30 +1,8 @@
-"""The spec §3 stale-web-edit recipe, both variants, against real Postgres.
+"""Read-current, compare transported edges, and submit under both concurrency modes.
 
-Every submit runs twice, once per concurrency mode: the recipe reads the
-current milestone and asserts currency by comparing edges in its own code, so
-it is legal under both. A separate closure written out by hand — never the
-recipe — replays the transported edge as a PIN instead, which is what proves
-the alternative the recipe rejects is not merely inferior but refused: a view
-pinned in the Transaction-Time past is read-only, in either mode.
-
-Neither variant maps to a single active corpus case one-to-one (every
-`m-opt-lock`/`m-bitemp-write` `conflict`-shape case that touches this same
-optimistic-gate machinery is a SYNTHETIC, single-connection injection —
-`given.apply` / `when.observedTxStart` — already graded end-to-end by the
-compile/run conformance lanes; none of them expresses the genuine two-read
-render-then-submit developer choreography this recipe is), so these stay
-standalone Docker-backed proofs (`parallax.conformance.stale_web_edit`) rather
-than case-keyed `api_suite.EXAMPLES` entries — force-registering under a
-borrowed case id would misrepresent what that case's own goldens grade. The
-Usage Guide renders both variants through the case-free `api_suite.RECIPES`
-section instead, citing spec §3 plus these tests as the grading surface — one
-source for both guide and grading.
-
-Every `Database` here connects with a :class:`~parallax.conformance.
-scripted_clock.ScriptedClock`: the system clock's microsecond resolution is not
-always distinct across two back-to-back `db.transact` calls. Two equal instants
-would collide on a temporal entity's `(pk, from_z, in_z)` uniqueness, so one
-deterministic instant per flushing transaction removes that flakiness.
+Scripted clocks give each flushing transaction a distinct instant; equal instants
+would collide on temporal keys. Replaying the transported edge as a historical
+pin is separately tested as read-only.
 """
 
 from __future__ import annotations

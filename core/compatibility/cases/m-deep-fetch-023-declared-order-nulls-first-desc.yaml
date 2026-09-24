@@ -2,19 +2,6 @@
 # NULLABLE key — the last of the four direction/placement pairs on a declared ordering,
 # proven on BOTH dialects (m-deep-fetch "Ordered to-many children" + m-dialect NULL
 # ordering).
-#
-# `Order.notesDescNullsFirst` is the row of the table where MariaDB carries the whole
-# compensation: it treats NULL as smallest, so `desc` would trail the unresolved notes,
-# and it has no NULLS FIRST syntax — the leading rank term `not t0.resolved_on is null`
-# (the m-sql normalizer's canonical spelling of `is not null`) pulls them to the front
-# instead. Postgres treats NULL as largest and already leads with it on `desc`, emitting
-# nothing. Order 1's bucket therefore starts on the unresolved note 52 and then runs
-# newest-resolved first, which is what separates it from m-deep-fetch-021 over the same
-# key and rows; order 42's bucket is fully resolved, so it is the no-NULL contrast and
-# matches -021 exactly. Both buckets reorder against insertion/id order, so a dropped or
-# mis-placed ORDER BY fails rather than passing by coincidence, and the ordering oracle
-# derives the expectation from the declared key and placement rather than from the
-# authored graph.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, m-dialect, orderBy, ordering, nulls, nullable, relationship, slice-managed-1]
 shape: read

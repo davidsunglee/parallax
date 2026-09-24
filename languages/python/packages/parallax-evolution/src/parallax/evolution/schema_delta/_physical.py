@@ -1,18 +1,3 @@
-"""The private physical-operation algebra a Unilateral Evolution lowers to.
-
-Nothing here crosses the wheel's boundary: statements leave as plain strings and
-``createdIndices`` is the sole provenance mapping out. The algebra is the closed
-choice below and carries no drop-table, drop-column, rename, primary-key
-alteration, or arbitrary-SQL arm, because no Unilateral Evolution can produce
-one.
-
-Each operation carries RESOLVED physical facts rather than Storage Layout
-objects. A ``ColumnSlot`` names its contributor, not the value domain a column
-type is spelled from, so a renderer holding one would have to resolve the
-declaration through the Metamodel anyway; resolving once in the planner is what
-keeps rendering a pure function of the operation and the Dialect.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

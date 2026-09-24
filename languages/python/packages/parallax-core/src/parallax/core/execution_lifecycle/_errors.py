@@ -1,11 +1,3 @@
-"""What a lifecycle context refuses, and what a Provider is told about.
-
-An opening failure and a re-entrant call are exceptions because no execution
-effect has begun yet, so refusing the operation is still free. A Handler failure
-is a VALUE rather than an exception because execution has already begun: it is
-reported out of band and changes nothing about the query it was observing.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

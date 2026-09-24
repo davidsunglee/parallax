@@ -1,16 +1,3 @@
-"""The Optimistic Lock Facet and its typed retrieval (m-opt-lock).
-
-A write needs one answer before it can gate or advance anything: what identifies
-the version of this row? That answer is family-level — a family is versioned
-together or not at all — and it has exactly three forms. This module owns them as
-one immutable per-formation view, precomputed once so a write path never
-rediscovers a version column.
-
-The keyed variants carry Attribute Identities rather than Attribute Metadata, so
-a consumer resolves the physical column through the Metamodel's own local lookup
-and nothing here duplicates it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

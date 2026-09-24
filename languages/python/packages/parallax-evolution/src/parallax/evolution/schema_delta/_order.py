@@ -1,18 +1,3 @@
-"""Executable statement order: one sort, because every dependency edge is local.
-
-`m-schema-delta` states the order as dependency rules plus tie-breakers. Every
-rule the current algebra can violate stays inside one Table — a Table exists
-before anything on it, a Column exists before an Index over it, and an altered
-Index's target is created before its earlier definition is dropped — so the key
-below is a linear extension of the whole dependency relation and the sort emits
-what a topological walk over the same key would.
-
-Nothing is allocated that could outlive the call: there are no nodes, no edges,
-and no in-degree table. :func:`dependency_violations` is the guard that keeps the
-shortcut honest, and the first cross-Table operation kind — a foreign key being
-the obvious one — is what would reintroduce an explicit graph.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,44 +1,6 @@
 # valueObject materialization: the whole nested composite arrives WITH the owner
 # in ONE round trip (m-value-object "Materialization and navigation contract"),
 # on Postgres AND MariaDB.
-#
-# Reading the owning Customer projects an adjacent presence discriminator and the
-# structured-document `address` column; the to-one `geo` (and its to-one `point`, three levels deep) and the
-# to-many `phones` array all decode from that ONE column — no deep-fetch statement,
-# no per-value-object fetch, one golden statement, `then.graph` fully materialized:
-# the positive proof of getter navigation to arbitrary depth with no child round
-# trip. The graph is the stored document read through the declaration: undeclared
-# keys are dropped (the `zip` inside `geo`) and every declared member is decoded by
-# its declared type. Which members the graph then carries is the read contract's
-# answer rather than this header's (m-snapshot-read "What a materialized value
-# carries"); what this case pins is that one projection of one document reads every
-# state that contract distinguishes, whole. Observably: `city`, omitted by ids 5 and
-# 8-10, is absent from the graph rather than rendered as a null the document never
-# stored, while the read predicates' own absence collapse (m-predicate Q5) still
-# answers not-present for it and changes nothing here; `geo`, which id 6 holds as a
-# scalar, appears collapsed to null because the document DID hold it; and `phones`
-# is present for each of the three stored spellings of its zero — `[]` (id 3), an
-# omitted key (ids 5/6), and a JSON null (id 8).
-#
-# A non-array `phones` (ids 9/10) is a fourth STATE and not a fourth spelling of
-# that zero: it is invalid stored data (`ManyWrongKind`), and reaching `[]` through
-# its own collapse is what a hydration rule does rather than what the stored value
-# means. That is the distinction the case pins down — hydration and classification
-# are one pass rather than a refusal. A wrong-kind occurrence collapses AND is
-# diagnosed: `then.graph` carries the collapsed value while `then.storedDataIssues`
-# carries the finding for that result position (ids 6, 9, 10), so a reader gets both
-# and never one instead of the other, while a conforming zero (ids 3, 5, 8)
-# materializes identically and carries no finding at all.
-# Per id: 3 phones stored as `[]`; 4 a SQL-NULL address column
-# (whole object null); 5 missing city + phones and a geo holding only an undeclared
-# key (so an empty geo composite); 6 a wrong-kind geo scalar; 7 explicit JSON-null
-# point leaves beside a real one-element phones array; 8 phones an explicit JSON
-# null; 9/10 phones a wrong-kind scalar / object — still []. Golden SQL is
-# dialect-identical (a presence-plus-document projection; MariaDB
-# returns the `json` column as text, Postgres the `jsonb` parsed — the same
-# composite). Element order in a to-many member is SEMANTIC (m-value-object), so
-# each `phones` array below compares POSITIONALLY — a reordered array is a
-# mismatch, and duplicate elements remain distinct.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read

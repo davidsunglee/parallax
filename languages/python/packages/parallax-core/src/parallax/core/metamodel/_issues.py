@@ -1,12 +1,3 @@
-"""The shared Metamodel Issue value and its canonical ordering law (m-metamodel).
-
-One immutable issue representation serves foundational resolution and every
-semantic Rule Set. Every issue is fatal, so there is no severity and no central
-code enum: a code is a stable kebab-case token prefixed with its owning
-module's catalog stem. Message text is explanatory and participates in neither
-equality nor ordering, so a reworded diagnostic can never reorder a report.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable

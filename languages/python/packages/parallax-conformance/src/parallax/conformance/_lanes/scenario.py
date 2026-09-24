@@ -1,36 +1,3 @@
-"""The scenario, writeSequence, and conflict lanes: a case's units of work
-compiled purely to the DML each would emit, or run through the shipped
-``db.transact`` entry point and reported as the observations its ``then``
-members grade.
-
-A write step is one unit of work. Its buffered keyed writes are planned by the
-SAME ``build_write_planner`` factory production uses (``m-unit-work``) and each
-surviving :class:`~parallax.core.unit_work.PlannedWrite` is lowered to DML by
-the shared ``snapshot.handle.stream_lowered`` seam, the deliberate ``m-sql``
-write edge the conformance family may compose. A scenario is a sequence of
-units of work: a write step commits (or, ``rollback: true``, aborts) its
-coalesced DML, a ``find`` reads committed state through the public Wire read,
-and a ``uow``-grouped span runs inside one transaction. A writeSequence lowers
-each entry independently and runs each as its own transaction. A conflict case
-is the optimistic-lock lane: every attempt takes a real source read and writes
-against the version that read observed.
-
-The compile entry points lower purely, with no database; that pure lowering is
-also what the run lanes' emissions and round-trips observations grade against,
-since both are the same deterministic computation over the same instructions,
-observations, and instant. Every run lane builds its own Handle over the
-caller's port, applies the case's ``given.apply`` ahead of the first step, and
-closes the Handle where the case that needed it ends. The observation envelope
-each returns — a :class:`~parallax.conformance._mechanism.envelope.ScenarioRun`,
-or the emissions, round trips, and table state a writeSequence or conflict
-reports — is graded against ``then`` by the adapter.
-
-The two sub-lanes that share this write core — the snapshot action-step
-scenario and the interleaved ``uow`` fork — consume the names exported here
-beyond the entry points; a scenario carrying an action step is dispatched to
-the snapshot lane by the façade before reaching this module's entry points.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -198,9 +165,6 @@ __all__ = [
 ]
 
 
-# --------------------------------------------------------------------------- #
-# Scenario / writeSequence — the unit-of-work write lanes (m-unit-work).       #
-# --------------------------------------------------------------------------- #
 # A write step is one unit of work: its buffered keyed writes are planned by
 # the SAME ``build_write_planner`` factory production uses (``m-unit-work``)
 # and each surviving :class:`~parallax.core.unit_work.PlannedWrite` is lowered
@@ -3213,17 +3177,6 @@ def read_table_state(
     return state
 
 
-# --------------------------------------------------------------------------- #
-# Conflict — the write-effect run lane (m-opt-lock / m-unit-work).             #
-# Single-attempt (`when.write`) and retry                                      #
-# (`when.attempts`) forms both drive ONE `db.transact` call per attempt.       #
-# A non-temporal attempt (a keyed UPDATE or DELETE over one row or the         #
-# multi-key array) is stated through `tx.wire.update` / `tx.wire.delete`       #
-# exactly like any other keyed write; a TEMPORAL attempt (`m-txtime-write` /   #
-# `m-bitemp-write`) composes `handle.plan_temporal_close` directly — a         #
-# conflict case tests ONLY the close, under an address and a gate the case     #
-# names EXPLICITLY rather than derives from an observation.                    #
-# --------------------------------------------------------------------------- #
 def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no

@@ -2,17 +2,6 @@
 # joining call is held to the Concurrency Preference the OUTER invocation
 # resolved, and the root's own value is a conflict where the outer call overrode
 # it — `api-conformance` lane.
-#
-# The root is configured `locking` and the outer call requests `optimistic`, so
-# the outer invocation reports `optimistic` and the observing read takes no lock.
-# The first join names nothing and inherits; the second names `optimistic` — the
-# outer value — and is accepted; the third names `locking`, the root's value, and
-# is refused before its callback runs. The root's record never enters a join
-# comparison on its own: a preference is a property of a transaction at the
-# moment it opens, and this one opened under the override.
-#
-# Two joined invocations, activities 6 and 7, and no third; the refused join
-# leaves no activity, and `roundTrips: 1` is the observing read alone.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

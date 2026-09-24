@@ -1,11 +1,6 @@
 # Deep fetch populates query-backed relationship lists, stably (m-op-list,
 # m-deep-fetch): once a deep fetch has populated a relationship list, accessing it
 # again does not re-query.
-#
-# Step 0 finds all orders. Step 1 deep-fetches (loads) `items`, populating each
-# order's line-item list in one batched child query. Step 2 accesses `items` again
-# and emits NO SQL — the list is already populated and returns the SAME objects
-# (sameObjectAs). Two round trips total.
 model: models/orders.yaml
 tags: [m-op-list, m-deep-fetch, relationship, slice-managed-1]
 shape: scenario

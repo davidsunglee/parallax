@@ -1,12 +1,5 @@
 # Making a member read-only, and making one editable (m-model-evolution): one
 # evolution, both directions of the boundary.
-#
-# `Notice.headline` becomes read-only, which invalidates a previously valid update
-# and so needs `AuthoringSurfaceChangeRequired`; `Notice.slug` becomes editable,
-# which only adds an input and is unilateral. Coordination is per operation rather
-# than per evolution: the evolution is coordinated, and the unilateral operation
-# beside it carries no requirement of its own. Both change the Attribute's
-# effective input capability, so both cause a `WriteCapabilityChanged`.
 tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
 shape: evolution
 when:

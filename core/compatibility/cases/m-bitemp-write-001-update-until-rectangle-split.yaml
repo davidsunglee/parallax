@@ -1,33 +1,6 @@
 # Write sequence: updateUntil — the BITEMPORAL RECTANGLE SPLIT (the signature
 # full-bitemporal write). A value is corrected for a BOUNDED Valid-Time window only,
 # while preserving the audit trail on the Transaction-Time dimension (research §6).
-#
-# An updateUntil over a Valid-Time window [validFrom, until) never mutates a
-# value in place. It (1) INACTIVATES the original current row by closing its
-# Transaction-Time dimension at the transaction instant (out_z = txInstant), then chains
-# THREE new rows at fresh Transaction Time [txInstant, infinity):
-#   head   : valid [from_z, validFrom)  — the OLD value before the window
-#   middle : valid [validFrom, until) — the NEW value, for the window
-#   tail   : valid [until, infinity)  — the OLD value after the window
-# so the value changes ONLY inside the window. The original survives as a row
-# closed on the Transaction-Time dimension — the bitemporal audit trail.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert      : open the Latest rectangle, value 100,
-#                        valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
-#   step 2 updateUntil : set value 200 for Valid-Time window [2024-03-01, 2024-09-01)
-#                        at txInstant 2024-02-15 — inactivate the original
-#                        (out_z = 2024-02-15) and chain head / middle / tail
-#                        at transaction [2024-02-15, infinity)                   (4 statements)
-#
-# Resulting state (4 rows): the inactivated original (out_z finite) + head (100) +
-# middle (200) + tail (100), the three new rows current on Transaction Time. The close
-# UPDATE addresses the current rectangle by pos_id plus one exclusive upper bound per
-# as-of axis (thru_z = infinity AND out_z = infinity), never a blind in-place set.
-# the inactivated original — closed on the Transaction-Time dimension (out_z finite)
-# head: old value 100 before the Valid-Time window, current on Transaction Time
-# middle: NEW value 200 for the Valid-Time window, current on Transaction Time
-# tail: old value 100 after the Valid-Time window, current on Transaction Time
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

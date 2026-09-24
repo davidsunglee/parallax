@@ -1,20 +1,3 @@
-"""Composing several Providers into the one seam ``connect`` accepts.
-
-Fan-out is a PROVIDER concern rather than a publisher one. A publisher owns one
-root's correlation and its single Handler; a fan-out answers a composite Handler
-that owns child ordering and per-child quarantine, so neither has to know about
-the other and the containment rules stay written once each.
-
-One event object reaches every child. Nothing is cloned per child, which is what
-keeps the borrowed Lowered Statement a single value and delivery work linear in
-the number of active Providers.
-
-Pool observation composes the same way and for the same reason: the optional
-interest is per Provider, so the fan-out offers the source to each child and
-holds the one registration a handle closes. What it adds there is unwinding —
-a child whose registration raises leaves no sibling registered behind it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence

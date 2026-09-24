@@ -1,25 +1,3 @@
-"""What one run did, read off the Execution Lifecycle events it delivered.
-
-The engine installs one Provider per Handle it builds, and everything the
-corpus asks about a run is answered from the stream that Provider received:
-`then.statements` is the Lowered Statement each Database Call carried, in
-delivery order — for a write lane, the plan that stream confirmed, because the
-compile lane grades the same oracle with no delivery to read; `then.roundTrips`
-is how many Database Call activities the run opened, so transaction demarcation
-counts none without the counter having to know that; and
-`then.executionLifecycle` is the stream itself, normalized.
-
-The three do not hold the same calls: a resolving read a keyed write owes is in
-the count and in the stream while no emission holds it, so a lane issuing one
-says so where it happens (:meth:`LifecycleObservation.resolving_reads`) instead
-of leaving the index space to infer it.
-
-Reading them from the delivered stream rather than from a decorator around the
-Database Port is what keeps the adapter thin over production: a statement
-arrives here in its canonical `?`-placeholder form because that is the form the
-activity borrowed, so nothing has to recover it from driver text.
-"""
-
 from __future__ import annotations
 
 import contextlib

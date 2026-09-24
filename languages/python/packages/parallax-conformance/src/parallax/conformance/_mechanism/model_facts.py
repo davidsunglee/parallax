@@ -1,20 +1,3 @@
-"""The facts a conformance lane reads off a case's MODEL: which descriptor it
-names, the accepted Metamodel and Domain Model that descriptor forms into, the
-Serving Model a Handle adopts from, and the Entity positions a case's spellings
-resolve to.
-
-One place a case's model is loaded and prepared, so every lane preparing one
-derives the same edition from the same fact about the case, and one place a
-case's authored Entity spelling is adjudicated, so a case's reference resolves
-the way every validator and lowering site resolves one. The default-target
-conventions a case naming no explicit target falls back on — the model's single
-family root, else its own first declared entity — are model facts too, and
-live here so the lanes that resolve a default share one reading. So is what a
-case's Object Query means against its model: :func:`canonicalize_read` is the
-one place a read is preflighted and planned, so every lane that compiles one
-consumes the same validated execution token production's own reads do.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path

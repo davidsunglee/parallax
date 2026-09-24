@@ -1,21 +1,6 @@
 # Batch-size invariance, arm 2 of 2 (m-snapshot-read): at `batchSize: 3` the SAME
 # Object Query is delivered over TWO root statements, and publishes the same four
 # roots in the same order as its `batch-size-twin-2` sibling.
-#
-# The pair is the corpus proof that a page size is a performance dial alone. Its
-# two members share one model, one `when.objectQuery`, and one `then.graph`, and
-# differ only in `when.stream.batchSize` and the physical observations that follow
-# from it; the static twin gate holds them equal on everything else, so a later
-# edit cannot quietly make them two unrelated cases that both pass. This arm pages
-# orders {1, 2, 3, 42} three at a time, each page asking for four: {1, 2, 3} out
-# of all four, then {42} seeking past id 3 — ONE root for a requested four, which
-# proves exhaustion. Where the two arms differ is the partition and the seek,
-# never what exhaustion costs.
-#
-# It declares NO includes, which is what makes it the witness for the compile
-# rule as well: with no deep-fetch fan-out anywhere, the only query result its
-# emissions depend on is the keyset seek itself — and the case is run-only
-# because of it.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, batch-size, graph, materialization, slice-snapshot-1]
 shape: read

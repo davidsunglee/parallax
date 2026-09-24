@@ -1,34 +1,3 @@
-"""Idiomatic Entity Classes mirroring the corpus read and inheritance families.
-
-One class family per corpus model: ``models/balance.yaml`` (a plain
-Transaction-Time-Only entity), ``models/payment.yaml`` (table-per-hierarchy),
-``models/document.yaml`` (table-per-concrete-subtype with an intermediate
-abstract subtype and a polymorphic owner), the non-owner portion of
-``models/animal.yaml`` (table-per-hierarchy), ``models/rate.yaml``
-(table-per-concrete-subtype bitemporal, the root alone selecting the
-``Bitemporal`` base because temporal shape is family-wide and root-owned), and
-``models/person.yaml`` (a one-to-one dependent relationship).
-
-Each family is composed into its own Domain Model here, named for the corpus
-model it mirrors, so the descriptor no-drift guard, the API-suite read stories,
-and the unit lane all reach one composition per corpus model. A class may
-participate in any number of Domain Models, so this is a convenience the readers
-share rather than a rule any of them could break. The animal
-family is the one exception — ``models/animal.yaml`` also declares the
-polymorphic owner ``Person``, whose canonical name collides with this module's
-own ``Person`` (``models/person.yaml``), so the owner and the family's model live
-together in :mod:`parallax.conformance.animal_owner`.
-
-Owned by ``parallax.conformance`` rather than by the test suite because
-``read_stories.py`` is a real dev-only package module whose snippets render into
-the Usage Guide via ``gen-usage-guide`` (which runs outside pytest entirely) and
-whose statements execute through the shipped ``db.find`` against real Postgres,
-so it needs classes resolvable at ordinary import time.
-
-This module deliberately avoids ``from __future__ import annotations`` so the
-engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
-"""
-
 from decimal import Decimal
 
 from parallax.core import (
@@ -83,9 +52,6 @@ __all__ = [
 ]
 
 
-# --------------------------------------------------------------------------- #
-# Balance: Transaction-Time-Only (the TxTemporal base), models/balance.yaml.   #
-# --------------------------------------------------------------------------- #
 class Balance(
     TxTemporal,
     table="balance",
@@ -100,9 +66,6 @@ class Balance(
 BALANCE_MODEL = DomainModel(Balance)
 
 
-# --------------------------------------------------------------------------- #
-# Payment: table-per-hierarchy (models/payment.yaml).                          #
-# --------------------------------------------------------------------------- #
 class Payment(
     Entity,
     table="payment",
@@ -124,9 +87,6 @@ class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value=
 PAYMENT_MODEL = DomainModel(Payment, CardPayment, CashPayment)
 
 
-# --------------------------------------------------------------------------- #
-# Document: table-per-concrete-subtype (models/document.yaml).                 #
-# --------------------------------------------------------------------------- #
 class Document(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
     id: Attr[int] = attr(primary_key=True)
     title: Attr[str] = attr(max_length=64)
@@ -168,11 +128,6 @@ class Folder(
 DOCUMENT_MODEL = DomainModel(Document, FinancialDocument, Invoice, Receipt, Memo, Folder)
 
 
-# --------------------------------------------------------------------------- #
-# Animal: table-per-hierarchy (models/animal.yaml). The family's polymorphic   #
-# owner and the model composing them both live in `animal_owner` (this         #
-# module's own docstring).                                                     #
-# --------------------------------------------------------------------------- #
 class Animal(
     Entity,
     table="animal",
@@ -210,12 +165,6 @@ class WildBoar(Animal, namespace=_NS, inheritance=ConcreteSubtype(tag_value="boa
     tusk_length: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
-# --------------------------------------------------------------------------- #
-# Rate: table-per-concrete-subtype BITEMPORAL family (models/rate.yaml). The   #
-# root ALONE selects the Bitemporal base (m-inheritance "Inherited members",   #
-# the binding root-ownership decision); DepositRate/LoanRate inherit the       #
-# family's temporal shape and declare NONE of their own.                       #
-# --------------------------------------------------------------------------- #
 class Rate(
     Bitemporal,
     namespace=_NS,
@@ -236,9 +185,6 @@ class LoanRate(Rate, table="loan_rate", namespace=_NS, inheritance=ConcreteSubty
 RATE_MODEL = DomainModel(Rate, DepositRate, LoanRate)
 
 
-# --------------------------------------------------------------------------- #
-# Person/Passport: a one-to-one dependent relationship (models/person.yaml).   #
-# --------------------------------------------------------------------------- #
 class Person(
     Entity,
     table="person",

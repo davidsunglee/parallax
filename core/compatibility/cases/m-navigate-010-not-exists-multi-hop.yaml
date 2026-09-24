@@ -1,11 +1,4 @@
 # notExists across TWO hops (m-navigate negated semi-join, multi-hop).
-#
-# m-navigate-006 is a single-hop notExists; m-navigate-008 is a multi-hop EXISTS. This pins the
-# negated multi-hop: orders that have NO item carrying any status. The inner
-# `exists(OrderItem.statuses)` is nested under a `notExists(Order.items -> ...)`,
-# so it keeps orders whose every item is status-less (or which have no items at
-# all). Order 1 (items 11/12 have statuses) and order 42 (item 421 has a status)
-# are dropped; order 2 (item 21 has none) and the item-less orders 3/4/5 survive.
 model: models/orders.yaml
 tags: [m-navigate, notExists, relationship, multi-hop, slice-snapshot-1, slice-managed-1]
 shape: read

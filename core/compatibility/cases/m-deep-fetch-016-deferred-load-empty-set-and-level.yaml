@@ -1,13 +1,6 @@
 # Deferred load with an empty source and an empty intermediate level
 # (m-deep-fetch): an empty source set emits NO SQL, and an empty intermediate key
 # set suppresses the deeper query.
-#
-# Steps 0-1: order id 999 does not exist, so the source set is empty and the `load`
-# of `items` over it issues zero SQL (roundTrips 0). Steps 2-3: order 3 has no line
-# items, so the two-hop `items.statuses` load runs the items query (which returns
-# nothing) and then SUPPRESSES the statuses query — no item keys to fetch by. The
-# whole scenario is three round trips (0 for the empty source, 1 for the empty
-# intermediate level's own query, plus the two finds).
 model: models/orders.yaml
 tags: [m-deep-fetch, relationship, deferred-load, slice-managed-1]
 shape: scenario

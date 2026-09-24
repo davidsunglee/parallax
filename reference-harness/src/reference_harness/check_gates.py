@@ -121,25 +121,7 @@ CI_WORKFLOW = Path(".github/workflows/ci.yml")
 """The workflow whose jobs must cover the required repository check graph."""
 
 OPERATIONAL_MAP = "TESTING.md"
-"""The operational map, at the repository root and in every language scope.
-
-The graph, the maps, the language specs, the agent guidance, and the CI job list
-all describe which commands gate this repository. Three pairs are compared here,
-and one is deliberately not:
-
-- graph → documents: every command a map, a language spec, or an agent-guidance
-  document cites must resolve (`doc-unknown-command`);
-- CI → maps: every job must be named by the maps answerable for it
-  (`doc-uncovered-ci-job`);
-- maps → CI: every job a map's CI table names must exist
-  (`doc-unknown-ci-job`).
-
-Documents → graph *completeness* is not compared. A map is not required to cite
-every command in its scope: `just --list` is the catalog, the contract calls
-these documents concise, and requiring completeness would turn a scope's map
-into a second listing — which §8 forbids. So an added command needs no
-documentation edit, while a renamed or removed one fails every document still
-naming it."""
+"""Navigation for testing a repository or language target; not a CI inventory."""
 
 AGENT_GUIDANCE = "AGENTS.md"
 """The agent guidance, at the repository root and in every language scope.
@@ -149,10 +131,7 @@ graph exactly as a map's or a language spec's is — and naming commands there i
 safe only while a rename fails on it. Nothing requires the document to exist:
 guidance is not a gate, so a scope without one cites nothing."""
 
-_CI_SECTION_TITLE = "Continuous integration"
-
 _RECIPE_LINE_RE = re.compile(r"^(?P<name>[A-Za-z_][A-Za-z0-9_-]*)[^:=\n]*:(?!=)", re.MULTILINE)
-_HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})[ \t]+(?P<title>.+?)[ \t]*$", re.MULTILINE)
 # A code span citing a command: the orchestrator, one recipe name, and whatever
 # arguments follow. A span holding a placeholder rather than a name — the
 # `<surface>` of a family of commands — matches nothing and cites nothing.
@@ -947,8 +926,7 @@ def _operational_maps(repository: _Repository) -> dict[str | None, Path]:
 
 
 def _language_specs(repository: _Repository) -> list[Path]:
-    """Every language spec, which names its scope's aggregate commands
-    normatively and is therefore answerable to the graph the same way a map is."""
+    """Binding pages may cite commands without duplicating the command catalog."""
     return [
         spec
         for scope in repository.language_scopes
@@ -963,35 +941,6 @@ def _agent_guidance(repository: _Repository) -> list[Path]:
         repository.language_dir(scope) / AGENT_GUIDANCE for scope in repository.language_scopes
     ]
     return [path for path in candidates if path.is_file()]
-
-
-def _section_body(text: str, title: str) -> str:
-    """The body of the section *title* opens, or empty when there is none."""
-    headings = list(_HEADING_RE.finditer(text))
-    wanted = title.casefold()
-    for index, heading in enumerate(headings):
-        if heading.group("title").strip().casefold() != wanted:
-            continue
-        level = len(heading.group("hashes"))
-        end = len(text)
-        for later in headings[index + 1 :]:
-            if len(later.group("hashes")) <= level:
-                end = later.start()
-                break
-        return text[heading.end() : end]
-    return ""
-
-
-def _named_ci_jobs(text: str) -> frozenset[str]:
-    """Every job an operational map's CI table names, read from each row's first
-    cell — the one column that identifies a lane rather than describing it."""
-    named: set[str] = set()
-    for line in _section_body(text, _CI_SECTION_TITLE).splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        named |= code_spans(stripped.strip("|").split("|")[0])
-    return frozenset(named)
 
 
 def _check_cited_commands(
@@ -1009,55 +958,22 @@ def _check_cited_commands(
 
 
 def _check_documentation(repository: _Repository) -> Iterator[Diagnostic]:
-    """§8's documentation drift, over the representations of the gates that are
-    neither the graph nor the CI workflow."""
-    cited: dict[str | None, frozenset[str]] = {}
-    maps = _operational_maps(repository)
-    job_identifiers = (
-        None if repository.jobs is None else {job.identifier for job in repository.jobs}
-    )
-    for scope, path in maps.items():
-        subject = "the repository" if scope is None else f"`{scope}`"
+    for scope, path in _operational_maps(repository).items():
         if not path.is_file():
+            subject = "the repository" if scope is None else f"`{scope}`"
             yield Diagnostic(
                 "doc-missing-operational-map",
                 f"{subject} has no {repository.relative(path)}; a scope whose commands nothing "
                 f"maps is navigable only by reading the orchestrator's own file",
             )
             continue
-        text = path.read_text(encoding="utf-8")
-        cited[scope] = code_spans(text)
-        yield from _check_cited_commands(repository, path, cited[scope])
-        if job_identifiers is None:
-            continue
-        for name in sorted(_named_ci_jobs(text)):
-            if repository.declares(name) and name not in job_identifiers:
-                yield Diagnostic(
-                    "doc-unknown-ci-job",
-                    f"{repository.relative(path)} lists `{name}` as a CI job, which "
-                    f"{CI_WORKFLOW} does not declare",
-                )
-
+        yield from _check_cited_commands(
+            repository, path, code_spans(path.read_text(encoding="utf-8"))
+        )
     for document in _language_specs(repository) + _agent_guidance(repository):
         yield from _check_cited_commands(
             repository, document, code_spans(document.read_text(encoding="utf-8"))
         )
-
-    if repository.jobs is None:
-        return
-    for job in repository.jobs:
-        if not repository.declares(job.identifier):
-            continue
-        scope = repository.graph.recipe(job.identifier).scope
-        for audience in dict.fromkeys((None, scope)):
-            spans = cited.get(audience)
-            if spans is None or job.identifier in spans:
-                continue
-            yield Diagnostic(
-                "doc-uncovered-ci-job",
-                f"{repository.relative(maps[audience])} does not name the CI job "
-                f"`{job.identifier}`; a map that omits a lane understates what gates a merge",
-            )
 
 
 _RULES = (

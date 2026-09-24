@@ -1,32 +1,3 @@
-"""Relationship view slots, fixed once per execution.
-
-One fetch plan yields one :class:`ViewSchema`, and its delivery Page and every
-projection in it read their slots off that one schema. A projection's relationship view row
-is then a fixed-width row of positions rather than a mapping: which positions it
-has is a function of the source level that produced it and the concrete Entity
-it resolved to, and nothing about the row itself.
-
-The concrete axis is degenerate everywhere but the root, and that is what makes
-the schema small. A path-root guard is the only thing that filters a level's
-parents, and a plan carries one only on root-parented levels, because a deeper
-level descends from parents an ancestor level already guarded. So every non-root
-source level has exactly one layout shared by all of its concretes, and only a
-root projection can pay a narrower row.
-
-Broad and narrowed views of one direction occupy DISTINCT slots. They can
-resolve different child sets, so they share the storage machinery and nothing
-else; splitting them stays the read-time concern it is today, where only the
-typed materializer separates them.
-
-Layouts are built on first reach of a ``(source level, concrete Entity)`` pair
-and interned by the slot tuple they admit, so concretes that no guard splits
-share one :class:`SourceViewLayout` object. Building on demand also degrades
-gracefully: a projection resolving a concrete nothing enumerated is laid out for
-rather than failed on. Every layout published is immutable, which is what lets
-the Root Views of one Page share a schema, and the memo is execution-scoped
-internal state — no query shape is retained for the lifetime of a model.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence

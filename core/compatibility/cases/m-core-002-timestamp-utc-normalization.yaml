@@ -1,9 +1,4 @@
 # Timestamp UTC preservation at the boundary (m-core timezone rule).
-#
-# m-wire requires a canonical UTC instant before this write reaches m-core. This
-# inserts that instant and asserts both dialects preserve it through timestamp
-# storage. Postgres uses timestamptz; the MariaDB seam converts to and from its
-# naive-UTC datetime(6) representation.
 model: models/event.yaml
 tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

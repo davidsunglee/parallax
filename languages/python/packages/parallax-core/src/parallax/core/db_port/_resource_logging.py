@@ -1,22 +1,3 @@
-"""The restricted last resort for a resource problem nothing else will hear about.
-
-Cleanup facts normally reach an application as data: a
-:data:`~parallax.core.db_port.CleanupResult` a caller reads, or an event a
-lifecycle Handler receives and exports on its own terms. Some do not. Startup
-unwinds before any Handler exists, and shutdown runs after the last one is gone.
-
-Those go here, and what goes out is deliberately thin: one fixed sentence per
-condition, and — where a cleanup is what failed — the cleanup phase, the cleanup
-code, and the one fixed sentence that code stands for. Never the rich diagnostic,
-never a native message or stack, never SQL, binds, credentials, a live
-traceback, structured extras, or ``exc_info``. The rich value stays available to
-whoever holds the result; this log is the floor, not a second export path, and
-it must be safe to leave on in a deployment that has redacted nothing.
-
-This does not restrict what the driver or its pool logs under their own logger
-names. Those are third-party contracts with their own disclosure policy.
-"""
-
 from __future__ import annotations
 
 import logging

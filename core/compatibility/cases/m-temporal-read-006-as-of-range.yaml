@@ -5,17 +5,6 @@
 # `in_z < to AND out_z > from`: the milestone's START is compared to the window END
 # and the milestone's END to the window START. The two binds are the window bounds
 # in [to, from] order (in_z < ?  then  out_z > ?).
-#
-# Window [2024-06-15, 2024-07-01) overlaps:
-#   id 1: 150.00 [2024-06-01, infinity)   — the CURRENT row. The superseded 100.00
-#         milestone [2024-01-01, 2024-06-01) is EXCLUDED: it closed (out_z 2024-06-01)
-#         before the window opened (2024-06-15), so the range filters it out.
-#   id 2: 200.00 [2024-02-01, infinity)   — current.
-#   id 3:  50.00 [2024-03-01, 2024-08-01) — a TERMINATED milestone that still
-#         overlaps the window; as-of-Latest would NOT return it (id 3 has no current row).
-# So the range returns a mix no single instant pin can produce: id 1's current value,
-# id 2, and id 3's closed-but-overlapping milestone — while excluding id 1's
-# superseded row (proving the overlap predicate filters, unlike `history`).
 model: models/balance.yaml
 tags: [m-temporal-read, m-object-query, m-sql, as-of-range, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read

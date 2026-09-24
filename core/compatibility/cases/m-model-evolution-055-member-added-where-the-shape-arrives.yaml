@@ -1,14 +1,5 @@
 # A required member and the shape that will carry it arriving at one position
 # together (m-model-evolution): the mirror of m-model-evolution-054.
-#
-# `Lot` is reparented onto the abstract `Holding`, which declares the required
-# `custodian` in the same edition. `Holding` denoted no stored shape in the
-# earlier edition, so `AttributeAdded` has no row there to backfill and no
-# previously valid insert naming that position to invalidate: it is unilateral.
-# The rows that will carry the member are `Lot`'s own, which stay where they are,
-# so the backfill and the reshaped insert are reported at `Lot`'s inheritance
-# alteration — a member an arriving ancestor hands a position is classified
-# exactly as one declared there would be.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,13 +1,4 @@
 # Table-per-concrete-subtype CONCRETE read with a predicate (m-inheritance, m-sql).
-#
-# Read the Receipt concrete subtype's own table for paidAmount >= 120. No union and
-# no tag are injected (the subtype is selected by its table); the user predicate is
-# the only WHERE clause. The projection carries the full inherited chain — title +
-# folder_id (from the abstract root Document) and currency (from the abstract subtype
-# FinancialDocument) — alongside the subtype's own paid_amount. `folder_id` sits where
-# the root declares it (right after title, before currency), matching the sibling
-# abstract-target superset reads (m-inheritance-050/-051). The single authored receipt
-# (paidAmount 120.00) qualifies.
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read

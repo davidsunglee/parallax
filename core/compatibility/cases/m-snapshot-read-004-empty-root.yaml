@@ -1,9 +1,4 @@
 # Snapshot graph, EMPTY root (m-snapshot-read): an empty root emits no child SQL.
-#
-# The snapshot twin of the m-deep-fetch empty-root shape (no m-op-list tag). The root
-# pins order 999, which does not exist, so the root query returns no parent keys and
-# the child levels are elided entirely: no Order.items or OrderItem.statuses SQL is
-# authored or executed. The snapshot graph is an empty root list; roundTrips is 1.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, empty-root, relationship, graph, materialization, slice-snapshot-1]
 shape: read

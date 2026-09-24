@@ -7,15 +7,6 @@
 # one and continues to the other on a seek whose branches bind the captured
 # carrier back; a page re-encoding the coordinate from a managed value would agree
 # here only by coincidence and would have nothing to encode for a corrupt one.
-#
-# This is also where the boundary of `m-sql`'s hoisted leading range is visible.
-# `day` is non-nullable, which over a direct Column would hoist `<column> >= ?`
-# for the planner, but it is document-resident: its extraction reads NULL for a
-# missing member as readily as for a stored one, and a range over an extraction
-# is no index range to trade for that. So the continuing page carries the branch
-# tree alone, and its leading branch's `or <extraction> is null` arm — keyed on
-# where the EMITTED clause put NULLs, Postgres trailing them on `asc`, never on
-# what the model declares — is what still admits such a root.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, date, document-layout, graph, slice-snapshot-1]
 shape: read

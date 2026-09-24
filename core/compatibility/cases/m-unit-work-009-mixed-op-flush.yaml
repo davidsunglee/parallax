@@ -1,39 +1,6 @@
 # Mixed-op flush ordering (m-unit-work): one unit of work buffering an INSERT, an
 # UPDATE, and a DELETE flushes them in the combined canonical order — inserts,
 # then updates, then deletes.
-#
-# m-unit-work-003 / m-unit-work-007 pin FK ordering within a single mutation kind;
-# this pins the ordering ACROSS kinds in one flush. The update and delete legs
-# target VERSIONED Account rows, so each requires a PRIOR observation
-# (`m-opt-lock`) — the unit of work first OBSERVES account 1 (the update target)
-# and account 3 (the delete target), then buffers three writes and, at the
-# boundary, flushes them grouped by kind (insert -> update -> delete) in a single
-# committed step, after which a dependent find proves the combined net state. All
-# four steps share ONE `uow` group (`mixed-flush`): both observing finds, the
-# flush, and the dependent find run inside the SAME unit of work, which is what
-# lets the update's version advance and the delete's required observation come from
-# the observing finds' OWN transaction-scoped observations (`m-opt-lock`) rather
-# than oracle values the compile lane could not otherwise derive — the case is
-# therefore `compileEligibility: run-only` (query-result-dependent). Whether either
-# write renders a GATE follows the target's Effective Concurrency Strategy alone
-# (`m-opt-lock`), and Account is versioned, so under the default `optimistic`
-# preference the UPDATE and the DELETE both gate on their observed versions:
-#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
-#   step 1 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
-#   step 2 write : three buffered writes in flush order —
-#                    (1) insert a new account 9 (Noether, 5.00),
-#                    (2) update the OBSERVED account 1's balance 100.00 -> 20.00,
-#                        advancing the observed version 1 -> 2,
-#                    (3) delete the OBSERVED account 3 (Grace, 10.00), gated on
-#                        its observed version.
-#   step 3 find  : `balance < 50` MUST observe the combined result — account 1 at
-#                  20.00 (the update landed), account 9 at 5.00 (the insert
-#                  landed), and NOT account 3, which qualified at 10.00 before the
-#                  flush but is gone (the delete landed). Account 2 (250.00) is
-#                  excluded by the predicate. The group COMMITS after this, its
-#                  last step.
-# Every find is a cache MISS and carries no shared-row-lock suffix. roundTrips = 6
-# (the two observing finds + the three flushed writes + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, m-sql, mixed-op-flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

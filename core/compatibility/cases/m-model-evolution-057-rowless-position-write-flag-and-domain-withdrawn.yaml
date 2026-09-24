@@ -1,15 +1,5 @@
 # Withdrawing a write and narrowing a domain on a position that denotes no stored
 # shape (m-model-evolution): both unilateral.
-#
-# `Provisional` is abstract and composes no concrete subtype, so it resolves to an
-# empty effective concrete set. `clerk` becoming read-only withdraws caller input
-# the same way m-model-evolution-014 does, and `memo` becoming required narrows an
-# admitted value domain the same way m-model-evolution-008 does — but both
-# boundaries are phrased over a stored value or an accepted write, and this
-# position has neither. No row holds a value against the narrowed domain, and no
-# insert names the position to lose the input. Both facts still moved, so each
-# operation causes its own Behavioral Impact: coordination is what falls silent
-# here, not behavior.
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

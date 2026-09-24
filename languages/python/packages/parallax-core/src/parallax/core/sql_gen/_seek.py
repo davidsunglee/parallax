@@ -1,24 +1,3 @@
-"""The continuation lane of m-sql: capture cells, the order clause, and the seek.
-
-One RESOLVER per read shape feeds all three, so the expression a page orders by,
-the hidden cell that captures what that expression evaluated to, and the
-comparison the next page seeks past it with cannot disagree. That is the whole
-reason this lives beside the compiler rather than in
-:mod:`parallax.core.continuation`: only the module that emitted the ordering
-clause knows where the dialect put a NULL, and only it knows what expression a
-member's placement resolved to.
-
-What is shared is the FUNCTION rather than one resolved value. A term's subject
-is resolved through a caller-supplied :data:`TermSubject` because a wrapped
-table-per-concrete-subtype union names its members by the result alias every
-branch projects them under rather than by any one branch's physical column, and
-it is called once per emitted occurrence rather than once per term: a
-document-resident member's expression carries its own path binds, binds are
-positional, and each occurrence in the emitted statement must push its own. The
-resolver answers the same expression every time, so agreement rests on the
-resolver being a function of the member alone, not on a memoized product.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence, Set

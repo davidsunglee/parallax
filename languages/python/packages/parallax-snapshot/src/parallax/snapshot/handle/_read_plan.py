@@ -1,12 +1,3 @@
-"""Read planning and its bounded cross-delivery reuse policy.
-
-The deep interface is :class:`ReadPlanner`: every read supplies the immutable
-facts that can affect planning and receives an opaque :class:`ReadPlan` whose
-behavior is sufficient to assemble a Page. The default implementation keeps a
-bounded true-LRU of exact-query plans. Capacity zero takes the same construction
-path without retaining a plan between calls.
-"""
-
 from __future__ import annotations
 
 import threading

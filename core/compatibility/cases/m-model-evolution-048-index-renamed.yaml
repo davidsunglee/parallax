@@ -1,10 +1,5 @@
 # Renaming an authored INDEX (m-model-evolution): a removal and an addition that
 # together enforce what was already enforced.
-#
-# An authored name participates in Index identity and no rename is inferred, so
-# the pair is two operations in identity order. The rule they enforce is the same
-# unordered Attribute set at both endpoints, so nothing changed behind the
-# surface either.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

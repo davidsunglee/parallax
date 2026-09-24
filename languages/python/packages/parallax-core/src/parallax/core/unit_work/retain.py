@@ -1,22 +1,3 @@
-"""Retained write evidence and the source values that own it (m-unit-work).
-
-Evidence belongs to the VALUE a read produced, not to the transaction that ran
-the read. A standalone read has no transaction to file into and still produces
-values a later optimistic write may settle against, so the observation is
-reachable from the source and the transaction keeps only a weak index of what it
-has seen plus the participation its own reads license.
-
-Two consequences fall out of the ownership rather than being maintained:
-liveness IS strong reachability — an observation stays eligible exactly while
-some source value or buffered write still reaches it — and several observed
-states of one object coexist as distinct :class:`RetainedObservation`\\ s reached
-from distinct values, so rereading a row never upgrades the evidence an older
-live value carries.
-
-Bare (non-underscored) names here are intra-package shared infrastructure, for
-the reason :mod:`~parallax.core.unit_work.planner` states.
-"""
-
 from __future__ import annotations
 
 from typing import Final, Protocol, cast

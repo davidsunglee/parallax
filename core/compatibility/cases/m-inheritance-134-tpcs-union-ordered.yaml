@@ -1,30 +1,6 @@
 # An ORDERED table-per-concrete-subtype `union all` read: the union becomes a derived
 # table and the result-shape tail applies against its alias (m-inheritance, m-sql,
 # m-object-query, m-dialect).
-#
-# A `union all` has no clause tail of its own, so an ordered abstract read wraps the
-# whole union as the derived table `u` and orders against the result aliases every
-# branch projects — the shape a table-per-hierarchy partitioned read already uses. The
-# branches themselves are byte-identical to the unordered read (m-inheritance-050):
-# same alphabetical branch order, same stable superset, same typed NULL placeholders,
-# same per-branch `familyVariant` literal. Only the tail moved outward, which is what
-# makes ordering a result-shape decision rather than a branch one, and what leaves the
-# caller's predicate lowering inside each branch where the branch's own Table Layout
-# resolves it.
-#
-# The two keys divide the `order by` term rule across the union alias. `folderId` is
-# declared nullable on the abstract root, so it lowers through the m-dialect Null
-# Placement seam: Postgres treats NULL as largest and needs the explicit `nulls last`
-# suffix on `desc`, MariaDB treats it as smallest and already trails NULLs, emitting
-# nothing. `title` is non-nullable, so both dialects render the plain term. Both keys
-# are declared on the root and are therefore applicable to every concrete in the
-# position — the positional rule (m-object-query) admits no other kind of Sort Key, so
-# an ordering key never meets a branch's own NULL placeholder.
-#
-# Row comparison is order-insensitive, so membership here is unchanged from the
-# unordered read and the golden text plus the independent oracle grade the ordering.
-# The ordered-and-capped witness whose membership does depend on the order is
-# m-inheritance-135.
 model: models/document.yaml
 tags: [m-inheritance, m-object-query, m-sql, m-dialect, table-per-concrete-subtype, union-all, root, orderBy, ordering, nulls, nullable, directive, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

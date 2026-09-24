@@ -1,17 +1,3 @@
-"""The rejected lane: a `rejected`-shape case's one input — an Object Query, an
-inline model, or a write — graded pre-SQL by the model-aware validators, and
-the rule that refused it returned.
-
-The lane touches no database and builds no Handle. An Object Query goes
-through the shared query validation every read preflight applies; an inline
-model through the descriptor frontend's family validator and then its document
-door, in that order; a write through the same case-format preparation seam
-ordinary Wire write ingress runs, after the concrete-subtype payload-shape
-rules. What comes back is the classified rule, and an input the validators
-accept is an ``EngineError`` naming the case: comparing the rule against
-``then.rejectedRule`` is the adapter's.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

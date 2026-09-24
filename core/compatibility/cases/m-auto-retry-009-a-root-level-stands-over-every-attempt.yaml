@@ -2,20 +2,6 @@
 # configuration): a Database Root's configured level is the level a retried
 # invocation reports and every one of its attempts opens at, while the invocation
 # names no level of its own — `api-conformance` lane.
-#
-# `m-auto-retry-006` requests `repeatable-read` at the call. Here the root is
-# configured with it and the call carries no `when.uow` at all; an injected
-# `deadlock` makes the first attempt's write fail retriably, the closure runs
-# twice, and the stream states ONE outer invocation carrying
-# `isolation: repeatable-read` over TWO attempts, neither restating a level. The
-# level in that event is resolved, not requested: nothing in the case asked for
-# it at the call, so its presence there is the root's record reaching the
-# invocation. That each attempt opens at it follows from the request being the
-# invocation's, and each language's suite observes the port's per-attempt
-# request beside this stream, since no lifecycle event states an attempt's level.
-#
-# `roundTrips: 4` is the retried pair's cost — each attempt's observing read plus
-# its write, the failed one included.
 model: models/account.yaml
 tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, isolation, transient, database-options, slice-snapshot-1]
 lane: api-conformance

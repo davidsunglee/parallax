@@ -1,5 +1,3 @@
-"""The exhaustive Neutral Wire Codec implementation."""
-
 from __future__ import annotations
 
 import datetime as dt

@@ -5,16 +5,6 @@
 # Temporal Selection rather than around it: the root injects the Valid-Time-past
 # predicate and collects the same as-of pins to PROPAGATE into the child level
 # whatever other clauses the query carries.
-#
-# This catches a propagation-pin collector that derives the child pin from the
-# root's ordering and cap rather than from the query's own Temporal Selection:
-# such a collector finds no pin here and the child Coverage level wrongly defaults
-# to Latest, returning coverage 10's CURRENT value 700 (C-R3) instead of the
-# Valid-Time 2024-03-01 HEAD 600 (C-R2). The propagated child suffix is the
-# ordered `[valid, valid, transaction]` binds `[B, B, infinity]`, appended after
-# the IN list. Mirrors m-navigate-013 (Valid-Time-past deep fetch) but proves
-# propagation is insensitive to the ordering and cap clauses; `limit 1` keeps only
-# Policy 1.
 model: models/policy.yaml
 tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-snapshot-1, slice-managed-1]
 shape: read

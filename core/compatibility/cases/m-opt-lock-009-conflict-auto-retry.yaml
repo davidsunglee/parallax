@@ -1,36 +1,5 @@
 # Optimistic-lock conflict AUTO-retried by the boundary (m-auto-retry/m-opt-lock bounded automatic
 # retry) — the `m-opt-lock-007` analogue with NO caller retry code.
-#
-# `m-opt-lock-007` proves a CALLER-driven retry closes the loop (the developer catches the
-# conflict and re-reads). This case proves the SAME 0-then-1 transition when the
-# unit of work opts into automatic retry (`retryOptimisticConflicts: true`): the
-# boundary re-executes the closure, which re-reads the fresh version and succeeds —
-# the developer writes no retry loop at all.
-#
-# The harness observable is identical to `m-opt-lock-007` (this is a `harness`-lane conflict
-# `attempts` case — the golden UPDATEs the retry loop issues are the same 0-then-1
-# sequence), so the m-case-format harness runs it against real Postgres exactly as it runs
-# `m-opt-lock-007`. What differs is the `uow` block: the loop is automatic, not caller-driven.
-# The API Conformance Suite additionally proves the auto-retry-via-flag path (no
-# caller catch/re-read).
-#
-# Account 2 (Linus) is read at version 1 — a REAL read whose retained observation
-# licenses the first attempt. A concurrent transaction then commits (the
-# `given.apply`: balance 999.00, version 2), BETWEEN that read and the write it
-# invalidates. Then the automatic loop:
-#   attempt 0 (stale) : UPDATE gates on the observed version (1) => 0 rows — conflict.
-#   attempt 1 (retry) : the loop re-reads the fresh version (2), re-applies => 1 row,
-#                       advancing the version to 3.
-#
-# The new balance (275.00) differs from what either read observed, so each
-# attempt's write is an effective change rather than a restoration.
-#
-# `roundTrips: 4` is what the two authored attempts cost between them — a
-# resolving read and the gated UPDATE it licenses, each. The first UPDATE REACHED
-# the database and reported zero rows, so it counts exactly as the second does;
-# the count spans every attempt rather than the last, and each attempt's read
-# counts beside its write because it too reached the database.
-#
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-snapshot-1, slice-managed-1]
 shape: conflict

@@ -1,18 +1,3 @@
-"""The standard-library logging built-in, and the only ``import logging`` here.
-
-:class:`LoggingLifecycleProvider` accepts a Logger an application already
-configured and owns nothing else — no queue, listener, sink, overflow policy,
-flush, or shutdown. Asynchronous delivery is the standard library's queue
-handlers; structlog, Loguru, and OpenTelemetry are Providers an application
-writes. That is what keeps all of them out of this package.
-
-Every field travels through ``extra=``, so the application's formatter decides
-rendering and nothing here composes a human sentence out of values a machine
-wanted. No record carries SQL or a bind at either detail — that separation is
-what lets ``safe`` be the production default rather than a reduced mode
-somebody has to remember to select.
-"""
-
 from __future__ import annotations
 
 import logging

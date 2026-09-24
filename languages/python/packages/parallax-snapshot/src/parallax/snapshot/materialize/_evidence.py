@@ -1,19 +1,3 @@
-"""The one walk that turns a rejected internal value into public evidence.
-
-Three seams judge stored data — the document codec, direct-scalar admission, and
-family-tag resolution — and each captures what it rejected in the vocabulary it
-judged in. This is where those vocabularies become the one public one and where
-the result is frozen, in a single traversal: translating and freezing apart would
-cost a second walk and leave an intermediate frozen form nobody holds.
-
-The product is ordinary immutable Python, with no frozen-dict type of its own,
-and it is the judging row's candidate rather than the copy a diagnosis is
-guaranteed to carry. Equal Payload Witnesses share one Page-owned Entity State
-and its frozen evidence; witness-distinct states remain separate even under one
-logical key. Every seam above that decision shares the retained object by
-reference rather than translating or detaching its own.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,20 +1,6 @@
 # Insert-then-update combining in one unit of work (m-unit-work + m-batch-write):
 # a buffered INSERT followed by an UPDATE of the SAME new object collapses to a
 # SINGLE INSERT carrying the FINAL values (Reladomo testInsertAndUpdateInTransaction).
-#
-# When a unit of work inserts a new object and then updates it before flushing, the
-# two buffered writes COMBINE: the update folds into the pending insert, so the
-# flush emits exactly ONE INSERT with the post-update values — never an INSERT
-# followed by an UPDATE. The scenario:
-#   step 0 write : buffer INSERT account 8 (Turing, balance 1.00), then buffer an
-#                  UPDATE of its balance to 99.00 — COMBINED into ONE INSERT that
-#                  writes the FINAL balance 99.00 (no intervening UPDATE)  (1 round trip)
-#   step 1 find  : query account 8 — it observes the combined INSERT's final state.
-# The single INSERT in step 0's golden (balance 99.00, no UPDATE statement) IS the
-# observable proof of combining; the dependent find confirms read-your-own-writes on
-# the combined row and, under the declared `locking` preference, carries the m-read-lock
-# shared-row-lock suffix (`for share of t0`). roundTrips = 2 (the one combined
-# insert + the find).
 model: models/account.yaml
 tags: [m-unit-work, m-batch-write, insert-update-combining, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

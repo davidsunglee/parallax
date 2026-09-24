@@ -1,67 +1,3 @@
-"""Executable API-suite snapshot and graph stories.
-
-Each story is ONE executable function over the **public** developer surface
-(``parallax.snapshot.connect`` → authority selection → ``db.find``), mirroring one corpus
-``m-snapshot-read`` (or a closely related ``m-navigate``/``m-value-object``/
-``m-unit-work``) case whose oracle is a materialized **graph** — a
-`then.graph`/`then.graphs`
-document or a scenario's own per-step observable. This is the read-side sibling
-of ``stories.py``'s write stories: an example whose behavior is only observable
-by executing it must run through the
-shipped surface, not merely serialize a statement — a ``graph`` grade proves the
-Wire value tree is correct, but says nothing about what only the TYPED lane has:
-the frozen entity nodes (`parallax.snapshot.handle`) ``db.find`` publishes from
-the same Page/Root View contract — identity surviving materialization, `is_view_loaded`/
-`UnloadedRelationshipError`, closed-world zero-SQL access, `pin_of`/`edge_of`
-on a materialized node. Those developer-facing guarantees are exactly what the
-API Conformance Suite exists to prove (`m-api-conformance` "Two proof paths").
-
-Each story's own source is the Usage Guide snippet (`graph_story_snippet`,
-mirroring `stories.story_snippet`) and is ALSO what
-``tests/api/test_story_run.py`` executes against real Postgres —
-one source, both consumers, so the documented spelling cannot drift from the
-executed one. Grading is bespoke per story (unlike the write stories' shared
-row/table-state comparators): a graph story returns whatever its own
-docstring-free body naturally computes — a `Snapshot[T]`, a node, or a
-`(before, after)` pair — and the test file's own per-case assertion (named
-after the story) is the oracle, chosen to mirror the mirrored case's own
-`then.graph` or scenario observable — a step's `sameObjectAs` reference identity
-included — as closely as one assertion
-can. Two lifecycle observables this module's stories witness —
-`sameObjectAs`/`differentObjectFrom` reference identity and the closed-world
-`UnloadedRelationshipError` — are the SAME per-language guarantees
-`m-api-conformance` requirement 4 names as needing to be "graded, not
-narrated" here.
-
-A function defined here but NOT listed in ``GRAPH_STORIES`` is a SUPPLEMENTAL
-proof: a public-API-only demonstration ``test_story_run.py`` still executes
-and grades directly (never through the ``GraphStory``/``Example`` machinery),
-proving a capability alongside a case's own exercised example without being
-counted toward that (or any) case's exercised status — see
-`history_of_a_concrete_temporal_node_distinguishes_milestones`. A case OUTSIDE
-the claimed active slice can only be proven this way: registering it would
-enter it as an `Example`, and the coverage partition admits an exercised id
-only from the active slice — see
-`a_finite_transaction_time_pinned_view_is_read_only`.
-
-The Customer/Location/Depot predicate reads (`m-value-object-001/002/007/
-015/016/017/019`) belong here rather than in ``read_stories.ReadStory``,
-despite being
-plain single-statement filters: each is classified ROW-FORM by the corpus
-engine (`then.rows` alone, no `then.graph`) — the values-lane original whose
-own golden SQL omits the `address` document column — but `db.find` is ALWAYS
-instance-form (python.md §4: "observable as `type(node)`"), so it necessarily
-projects `address` too, exactly the SAME structural non-fit
-`api_suite._INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON` names
-for the row-form inheritance family. Rather than leave them permanently
-unreachable the way that family's row-form originals stay, the grading rule
-here asserts the id/name SET the filter selects (the behavior genuinely under
-test) through the real, always-instance-form developer surface, never
-insisting on the inapplicable minimal row-form projection — a graph
-story's bespoke per-case assertion (unlike a `ReadStory`'s generic runner,
-which DOES require byte-exact golden SQL) is exactly the seam this needs.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -330,27 +266,6 @@ def a_rectangle_split_keeps_a_loaded_relationship_view(
 
 
 def a_finite_transaction_time_pinned_view_is_read_only(db: ScopedDatabase) -> None:
-    """SUPPLEMENTAL — not a registered ``GraphStory``, because `m-identity-map-010`
-    is not in :data:`~parallax.conformance.claim.SNAPSHOT_CLAIM`'s active slice
-    (`m-identity-map`, `slice-managed-1`): the coverage partition admits an
-    exercised id only from the active slice, so registering this would report a
-    stale exercised id rather than coverage. ``test_story_run.py`` and the
-    Docker-free graph-story driver execute and grade it directly instead, exactly
-    as they do the supplemental history proof below.
-
-    What it proves that the wire lane cannot: the mutate step's refusal graded on
-    the scenario lane is derived from the STEP's own Object Query, over frozen
-    plain values that carry no lifecycle state at all — a path that
-    never reaches ``edit``. Here the pin travels on the value, so the refusal is
-    the one an ordinary developer receives, and it is the finite-Transaction-Time
-    read-only rule holding through the real derivation. Optimistic mode matches
-    the case's own ``when.uow.concurrency`` and is the sharper half: it is the
-    mode that would otherwise leave a past-pinned keyed write to the
-    observed-``in_z`` gate, answering a temporal-correctness question with a
-    concurrency-protocol outcome, where locking mode would refuse it for an
-    unrelated reason (the observation-currency licence). The verb-time refusal
-    precedes both.
-    """
 
     def mutate_the_pinned_view(tx: Transaction) -> None:
         superseded = tx.find(
@@ -364,34 +279,14 @@ def a_finite_transaction_time_pinned_view_is_read_only(db: ScopedDatabase) -> No
 def history_of_a_concrete_temporal_node_distinguishes_milestones(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """SUPPLEMENTAL — not a registered ``GraphStory`` and not counted toward any
-    case's exercised status (`m-inheritance-100`'s own point read is exercised
-    by its `ReadStory`, `parallax.conformance.read_stories`, graded by
-    ``test_read_story_runs_through_the_shipped_surface``). Proves the separate
-    milestone-HISTORY shape: `DepositRate` declares no `as_of` of its own
-    (`Rate`, the family root, does); explicit current Valid Time composed with
-    `.history(TX_TIME)` still resolves
-    `DepositRate`'s own inherited axis, and the strengthened
-    ``fixtures/rate.yaml`` milestone history surfaces the closed historical
-    correction and the current row as two distinct, edge-pinned nodes sharing
-        one domain key.
-    """
     return db.find(DepositRate.where(DepositRate.all).history(TX_TIME).as_of(valid_time=LATEST))
 
 
 def one_to_one_peer_attaches_as_a_single_object(db: ScopedDatabase) -> Snapshot[Any]:
-    """Every ``Person`` materializes with its single ``Passport`` peer — a
-    to-one relationship attaches as ONE object, not a collection, and a
-    person with no passport (id 3) gets a null peer."""
     return db.find(Person.where(Person.all).include(Person.passport))
 
 
 def animal_owner_reaches_root_and_narrowed_subtype_view(db: ScopedDatabase) -> Snapshot[Any]:
-    """The animal family's owner exposes both a root-typed
-    ``animals`` path (reaching any concrete subtype) and a leaf-typed
-    ``pets[Dog]`` narrowed view both reach the SAME row (Alice's Rex) with
-    DIFFERENT fetched projections — the family-normalized,
-    projection-independent diamond (`m-snapshot-read-012`)."""
     return db.find(
         AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
             AnimalOwnerPerson.animals, AnimalOwnerPerson.pets.narrow(Dog)
@@ -400,18 +295,12 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: ScopedDatabase) -> S
 
 
 def narrowed_pets_view_populates_per_owner(db: ScopedDatabase) -> Snapshot[Any]:
-    """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
-    the narrowed hop populates a distinct view keyed by the derived name,
-    never marking the broad ``pets`` relationship loaded."""
     return db.find(
         AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(AnimalOwnerPerson.pets.narrow(Dog))
     )
 
 
 def equivalent_narrow_spellings_dedupe_to_one_view(db: ScopedDatabase) -> Snapshot[Any]:
-    """Two DIFFERENT authored narrowings resolving to the SAME effective
-    concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
-    ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
     return db.find(
         AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
@@ -420,12 +309,6 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: ScopedDatabase) -> Snapsh
 
 
 def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: ScopedDatabase) -> Snapshot[Any]:
-    """A broad hop and a REDUNDANT narrow over the same relationship stay TWO
-    hops (`m-inheritance-068`): ``narrow(Pet)`` resolves to the very
-    ``{Cat, Dog}`` set the broad ``pets`` hop already reaches, so both views
-    hold the same pets — under ``pets`` and ``pets[Cat,Dog]`` respectively. A
-    segment's view key follows whether a narrow was AUTHORED, never what it
-    resolves to."""
     return db.find(
         AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
@@ -434,10 +317,6 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: ScopedDatabase)
 
 
 def distinct_narrowed_views_populate_independently(db: ScopedDatabase) -> Snapshot[Any]:
-    """Two narrowings to DIFFERENT concrete sets stay two distinct views
-    (`m-inheritance-067`): ``pets[Dog]`` and ``pets[Cat]`` populate
-    independently (dedup identity is the effective concrete set, not the
-    bare relationship hop)."""
     return db.find(
         AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
@@ -446,68 +325,36 @@ def distinct_narrowed_views_populate_independently(db: ScopedDatabase) -> Snapsh
 
 
 def disjoint_root_guards_fill_one_owner_view(db: ScopedDatabase) -> Snapshot[Any]:
-    """``include(Dog.owner, Cat.owner)`` is ONE relationship guarded to disjoint
-    root objects (`m-inheritance-074`): ``owner`` is declared on ``Animal``, so
-    reaching it through a subtype keeps that identity and adds a path-ROOT guard.
-    Two hops result, and both fill the ORDINARY ``owner`` view — a root guard
-    creates no view of its own, so there is no ``owner[Dog]``, and an animal
-    neither guard admits is never attached at all."""
     return db.find(Animal.where(Animal.all).include(Dog.owner, Cat.owner))
 
 
 def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: ScopedDatabase) -> Snapshot[Any]:
-    """A guarded path subsumed by a broad one beside it still costs its own
-    statement (`m-inheritance-075`): ``Dog.owner``'s source set is a strict subset
-    of the unguarded path's, and hop identity at the root keys on the RESOLVED
-    source set, so the two stay distinct. The graph is indistinguishable from the
-    broad path's alone — only the round-trip count observes the second hop."""
     return db.find(Animal.where(Animal.all).include(Animal.owner, Dog.owner))
 
 
 def guarded_branches_keep_their_own_parents(db: ScopedDatabase) -> Snapshot[Any]:
-    """Two guarded branches over one relationship diverge at the next level
-    (`m-inheritance-078`): ``Dog.owner`` and ``WildBoar.owner`` fill the same
-    ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
-    from the DOG branch's owners alone — so Alice and Bob carry ``pets`` while
-    Carol, reached only through the WildBoar branch, does not."""
     return db.find(Animal.where(Animal.all).include(Dog.owner, WildBoar.owner, Dog.owner.pets))
 
 
 def a_guarded_root_continues_through_a_narrowed_hop(db: ScopedDatabase) -> Snapshot[Any]:
-    """The two narrow positions compose with OPPOSITE view semantics
-    (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
-    from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
-    hop's target into its own derived ``pets[Dog]`` view on those owners."""
     return db.find(Animal.where(Animal.all).include(Pet.owner.pets.narrow(Dog)))
 
 
 def transaction_time_only_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
-    """A value object rides its Transaction-Time-only owner's milestone
-    (`m-value-object-028`): an Latest read returns each supplier's CURRENT
-    address document — no value-object-specific temporal machinery."""
     return db.find(Supplier.where(Supplier.all).as_of(tx_time=LATEST))
 
 
 def transaction_time_only_vo_owner_as_of_a_past_instant(db: ScopedDatabase) -> Snapshot[Any]:
-    """The SAME owner read at a past Transaction-Time instant returns the
-    SUPERSEDED address document (`m-value-object-029`) — the document rides
-    the milestone exactly like a scalar column."""
     return db.find(
         Supplier.where(Supplier.all).as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
     )
 
 
 def bitemporal_vo_owner_as_of_latest(db: ScopedDatabase) -> Snapshot[Any]:
-    """A value object rides a FULL bitemporal owner's rectangle
-    (`m-value-object-030`): pinning both dimensions to Latest returns the
-    fully-current document."""
     return db.find(Branch.where(Branch.all).as_of(valid_time=LATEST, tx_time=LATEST))
 
 
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: ScopedDatabase) -> Snapshot[Any]:
-    """An audit read (both axes in the past, `m-value-object-031`)
-    reconstructs the ORIGINALLY-believed document, distinct from what the
-    system knows (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
         Branch.where(Branch.all).as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -519,28 +366,18 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: ScopedDatabase) -> Snapshot
 def tph_abstract_root_read_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """The object-lane sibling of the row-form abstract-root read
-    (`m-inheritance-106`, `m-inheritance-003` its values-lane witness): each
-    materialized instance is its OWN concrete class — a `CardPayment` node
-    carries no `tendered` attribute at all, a `CashPayment` node no
-    `card_network` — never a sibling's null-padded column."""
     return db.find(Payment.where(Payment.all))
 
 
 def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """The object-lane sibling of the row-form narrow-to-abstract-subtype
-    read (`m-inheritance-107`, `m-inheritance-013` its values-lane witness):
-    each `Dog`/`Cat` instance carries only its own declared members."""
     return db.find(Animal.where(Animal.narrow(Pet)))
 
 
 def tph_or_across_branches_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """The object-lane sibling of the row-form OR-across-branches read
-    (`m-inheritance-108`, `m-inheritance-015` its values-lane witness)."""
     return db.find(
         Animal.where(
             Animal.narrow(Dog, where=Dog.bark_volume > 5)
@@ -552,65 +389,38 @@ def tph_or_across_branches_materializes_typed_per_variant_instances(
 def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """The object-lane sibling of the row-form TPCS narrow-to-abstract-subtype
-    read (`m-inheritance-109`, `m-inheritance-052` its values-lane witness).
-    The narrow excludes the one concrete declaring an occurrence, so this
-    POSITION carries no `Document` slot and its union-all instance form is
-    byte-identical to the row form, with each `Invoice`/`Receipt` instance
-    carrying only its own declared members."""
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 
 
 def customer_nested_eq_city_selects_matching_owners(db: ScopedDatabase) -> Snapshot[Any]:
-    """A nested equality predicate through a value-object attribute
-    (`m-value-object-001`): the id/name SET this filter selects is the
-    behavior under test; the module docstring explains why this is a graph
-    story rather than a `ReadStory`."""
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 
 
 def customer_deep_nested_eq_country_selects_the_matching_owner(db: ScopedDatabase) -> Snapshot[Any]:
-    """A DEEP nested equality predicate, two levels into the composite
-    (`m-value-object-002`): only Grace (Boston, US) qualifies."""
     return db.find(Customer.where(Customer.address.geo.country == "US"))
 
 
 def customer_nested_is_null_collapses_every_not_present_state(db: ScopedDatabase) -> Snapshot[Any]:
-    """A nested is-null presence test (`m-value-object-007`): the null
-    column, the missing key, and the explicit JSON-null leaf all collapse to
-    the SAME not-present state."""
     return db.find(Customer.where(Customer.address.city.is_null()))
 
 
 def customer_to_many_nested_exists_is_a_nonempty_test(db: ScopedDatabase) -> Snapshot[Any]:
-    """A to-many nested existence test (`m-value-object-015`): true for a row
-    whose `phones` array has at least one element; empty and absent states are
-    excluded."""
     return db.find(Customer.where(Customer.address.phones.exists()))
 
 
 def customer_to_many_nested_not_exists_folds_every_not_present_state(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """A to-many nested absence test (`m-value-object-016`): empty and absent
-    `phones` states are indistinguishable to the algebra —
-    the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
     return db.find(Customer.where(Customer.address.phones.not_exists()))
 
 
 def customer_to_many_any_element_eq_matches_some_element(db: ScopedDatabase) -> Snapshot[Any]:
-    """A flat predicate through a `many` segment is ANY-ELEMENT
-    (`m-value-object-017`): true iff SOME `phones` element has `type` =
-    "home"."""
     return db.find(Customer.where(Customer.address.phones.type == "home"))
 
 
 def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """A scoped `where` requires ONE element to satisfy the WHOLE compound —
-    SAME-element, not the unscoped AND (`m-value-object-019`): Linus's single
-    phone carries both fields; Ada's carry them on DIFFERENT elements."""
     return db.find(
         Customer.where(
             Customer.address.phones.exists(
@@ -621,29 +431,16 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
 
 
 def customer_owner_materializes_its_whole_nested_composite(db: ScopedDatabase) -> Snapshot[Any]:
-    """The whole nested composite arrives WITH the owner in ONE round trip
-    (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
-    positive proof of the getter-navigation contract to arbitrary depth."""
     return db.find(Customer.where(Customer.all))
 
 
 def customer_owner_materializes_its_composite_under_a_filter(db: ScopedDatabase) -> Snapshot[Any]:
-    """The SAME materialization rides a FILTERED owner read too
-    (`m-value-object-024`, the SAME `nestedEq` as
-    `customer_nested_eq_city_selects_matching_owners`): materialization is
-    independent of whether the owner's own read is filtered."""
     return db.find(Customer.where(Customer.address.city == "Oslo"))
 
 
 def customer_locations_deep_fetch_materializes_the_child_document_too(
     db: ScopedDatabase,
 ) -> Snapshot[Any]:
-    """Both the root (Customer) and the child (Location) levels of a deep
-    fetch materialize their OWN value-object document (`m-deep-fetch-018`,
-    design note 14 §3): the child level projects Location's own instance-form
-    list (id, customer_id, label, address), decoded with LOCATION's
-    descriptor — never the root's — and a null child document (Location 101)
-    collapses to null exactly like a null-address Customer does at the root."""
     return db.find(Customer.where(Customer.all).include(Customer.locations))
 
 

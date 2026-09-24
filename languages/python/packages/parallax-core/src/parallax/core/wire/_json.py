@@ -1,5 +1,3 @@
-"""Strict JSON loading with value-local numeric provenance."""
-
 from __future__ import annotations
 
 import decimal

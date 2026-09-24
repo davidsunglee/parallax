@@ -1,20 +1,5 @@
 # Rollback / abort scenario for INSERT (m-unit-work): an INSERT performed inside a
 # unit of work that ABORTS is discarded — a post-abort find observes NO row.
-#
-# m-unit-work-002 witnesses the abort contract for UPDATE; this pins the INSERT
-# variant, so the rollback-discards contract is witnessed across the insert / update /
-# delete triad (the DELETE variant is m-unit-work-012). The unit of work inserts a
-# brand-new account 7, then ROLLS BACK — the insert lands inside the atomic scope the
-# abort discards, so it never becomes durable:
-#   step 0 write : apply an INSERT of a new account 7 (Newton, 5.00), then ROLL BACK
-#                  (rollback: true) — the buffered write executes and is discarded.
-#   step 1 find  : query account 7 — it MUST observe NO rows; the aborted insert
-#                  never became durable.
-# The teeth: the find is a cache MISS that re-resolves against committed data and MUST
-# see the absence of account 7. Account declares a version, so the default
-# `optimistic` preference resolves it to the Optimistic strategy and the find
-# carries no shared-row-lock suffix. roundTrips = 2 (the rolled-back insert, whose
-# DML still executes, + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, rollback, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

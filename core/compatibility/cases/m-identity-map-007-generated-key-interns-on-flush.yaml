@@ -2,17 +2,6 @@
 # key is GENERATED has no key to intern under until it is allocated, so it interns
 # at key generation / flush — after which a subsequent find returns the original
 # object.
-#
-# Badge draws its primary key from a simulated sequence (models/pk-sequence.yaml,
-# badge_seq). Step 0 constructs a new Badge and buffers it: roundTrips 0, NO DML,
-# and — because the generated key does not exist yet — it is NOT yet interned by
-# key. Step 1 flushes the unit of work: the sequence is reserved (UPDATE
-# pk_sequence, base id 1) and the Badge is inserted with the freshly generated id 1,
-# so the object interns at key generation (m-identity-map interning timing). Unlike
-# the application-assigned case (m-identity-map-006), the flush therefore emits TWO
-# statements — the key-generation UPDATE plus the insert. Step 2 finds id 1 and
-# observes the now-interned row; the object-reference identity of the created and
-# re-found instance is asserted per-language by the API Conformance Suite.
 model: models/pk-sequence.yaml
 tags: [m-identity-map, m-pk-gen, m-unit-work, identity, interning, sequence, scenario, slice-managed-1]
 shape: scenario

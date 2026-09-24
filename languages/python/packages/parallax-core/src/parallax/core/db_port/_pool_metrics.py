@@ -1,23 +1,3 @@
-"""What a runtime publishes for pool-wide observation, stated neutrally.
-
-A runtime that manages a pool keeps bookkeeping an operator wants — how much
-capacity exists, how much of it is idle, how many callers are queued — and one
-that manages no pool keeps none. :class:`PoolMetricsSource` is the handle to the
-former; ``None`` is the honest answer for the latter.
-
-The handle is named here, in the lifetime contract, rather than beside the
-observation machinery that consumes it, because it is a property of the RESOURCE:
-what may be measured is decided by what the runtime owns, and who is interested
-is decided somewhere else entirely.
-
-Sampling is a QUESTION, never a subscription. Nothing here polls, caches, or
-schedules; an exporter asks when it wants a reading and receives one of three
-answers, each a value it may keep. Two of the three carry nothing live: a
-diagnostic is the detached projection every other resource fact uses, and a
-detached source answers about itself rather than about a pool it no longer
-reaches.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,18 +1,5 @@
 # Two DISJOINT path-root guards over one relationship stay two hops filling ONE view
 # (m-deep-fetch, m-inheritance).
-#
-# This is the canonical `include(Dog.owner, Cat.owner)` shape: `owner` is declared
-# once, on the abstract root Animal, and each path guards that one relationship to a
-# different concrete source set. The guards resolve to {Cat} and {Dog}, so they are
-# TWO hops — `1 + L` = 3 statements, the first keyed by the Cat root's owner id
-# (10) and the second by the Dog roots' (10, 11) — and neither is unioned into the
-# other, which is what keeps a path's statement cost independent of its siblings.
-# The semantic distinction the case pins down is what those two hops produce: both
-# populate the SAME ordinary `owner` view, on DISJOINT root objects, because a root
-# guard guards sources rather than narrowing a target. There is no `owner[Dog]` and
-# no `owner[Cat]` key, and Alice — owner of both a Dog and a Cat — is one object
-# reached through both hops. Tusker, whom neither guard admits, carries no `owner`
-# key at all.
 model: models/animal.yaml
 tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

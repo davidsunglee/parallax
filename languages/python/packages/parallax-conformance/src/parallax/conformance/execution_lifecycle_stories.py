@@ -1,19 +1,3 @@
-"""``parallax.conformance.execution_lifecycle_stories`` — the executable
-API-suite story for observing a joined transaction (`m-execution-lifecycle`).
-
-`m-execution-lifecycle-006`'s portable oracle states the whole delivered stream,
-which is what that case grades. What no oracle can state is the SPELLING an
-application reaches it through: a Provider named at composition, one fresh
-Handler per Root Execution, and events arriving while the work runs rather than
-a record read back after it. That spelling is the story, and it is why the case
-maps to one at all rather than being colour on a case already graded.
-
-The story is the Provider, the Handler, and the call together — the snippet
-:func:`joined_lifecycle_snippet` renders is all three sources — and it is also
-what ``tests/api/test_execution_lifecycle_story.py`` executes against real
-Postgres, so the documented spelling cannot drift from the executed one.
-"""
-
 from __future__ import annotations
 
 import inspect

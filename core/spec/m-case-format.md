@@ -2637,43 +2637,11 @@ must hold it, and every ordered sequence actually ordered — and a language
 implementation grades the value itself through the conformance adapter's
 `evolution` observation.
 
-## Case-header house style
+## Case comments
 
-Every case opens with a **header comment** — the only comments a case carries.
-Comments are **header-only**: no comment sits mid-document, because the grouped
-`given` / `when` / `then` structure now shows what old comments used to narrate.
-The header follows a fixed house style:
-
-- **First line** states, in one sentence, **what the case proves** — the contract
-  or behavior, not the mechanics. (`sum + groupBy + having — the canonical
-  aggregate case (m-agg sub-area).`)
-- **A short paragraph** gives the **why / mechanism** and the key numbers a reader
-  needs to trust the assertions (the group totals, the version that goes stale, the
-  distinct parent keys a deep-fetch level gathers).
-- It uses the **new field names only** (`given.apply`, `then.affectedRows`,
-  `then.statements`) — no legacy vocabulary, no "formerly known as" prose.
-- It does **not narrate mechanics the structure now shows** — no describing
-  positional binds, key-presence shape sniffing, or field pairings that no longer
-  exist.
-- **Length follows content**: keep the header concise and focused on the
-  contract, the semantic distinction, and the information a reader needs to
-  trust the assertions. A longer header is appropriate when the YAML cannot
-  clearly express an important mapping or edge-case rationale; a header that
-  narrates several unrelated behaviors usually signals the case should be split.
-
-```yaml
-# Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
-#
-# Account id 2 (Linus) is read at version 1 — a real read, whose retained
-# observation licenses the write. Between that read and the flush, a concurrent
-# transaction commits a change to the same row, bumping its version to 2 —
-# modeled by the out-of-band `given.apply` (a naive UPDATE the harness applies
-# verbatim, simulating the other writer). Our
-# golden UPDATE gates on the version we read EARLIER (1), so its `... and version =
-# ?` predicate matches NO row: it affects ZERO rows — the `updatedRows != 1`
-# conflict signal. The harness asserts `then.affectedRows` is 0, and the resulting
-# `then.tableState` confirms our stale write never applied.
-```
+Comments are optional. Use them only for non-obvious rationale or constraints
+the case data cannot express. The case name, inputs, and assertions describe
+its scenario and expected behavior; do not repeat those in a required header.
 
 ## Case lanes
 

@@ -1,17 +1,3 @@
-"""The Entity class frontend (spec §2).
-
-An Entity Class is an implicitly frozen Pydantic model whose class statement
-carries the model's mapping facts and whose body carries its members. The
-metaclass is thin: it types the seven header keywords, rejects every other one, and
-hands the class body to the shared declaration engine.
-
-Because the engine builds the declaration payload eagerly, an Entity Class *is*
-its own ``UnresolvedEntityDeclaration``: the metaclass publishes the ten
-declaration members on the class object, so a Domain Model composes classes
-directly with
-no adapter and no mirrored record graph.
-"""
-
 from __future__ import annotations
 
 import pickle
@@ -314,7 +300,7 @@ def _change_record(value: BaseModel) -> ChangeRecord | None:
 def _edit_violations(
     entity: EntityIdentity, cls_name: str, names: WireNames, changes: Mapping[str, object]
 ) -> tuple[EditViolation, ...]:
-    """Every rule the authored ``changes`` break, one per named member (spec §3).
+    """Every rule the authored ``changes`` break, one per named member.
 
     The split is by what each half can know. Resolving a Python name to a member
     is a class-shaped question and is answered here: a relationship member, a
@@ -478,7 +464,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     def narrow[E: Entity, S: Entity](
         cls: type[E], *subtypes: type[S], where: Predicate[S] | None = None
     ) -> Predicate[E]:
-        """The scoped subtype-narrowing constructor (spec §2).
+        """The scoped subtype-narrowing constructor.
 
         ``to`` is canonicalized as one Subtype Selection, and ``where=`` grants
         attribute scope to those subtypes' declared members inside its own operand
@@ -519,7 +505,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
 
     def edit(self, **changes: object) -> Self:
-        """The one door to an Edited Copy (spec §3).
+        """The one door to an Edited Copy.
 
         The result carries a Change Record mapping each touched member to its
         earliest original across edit chains. ``changes`` is validated: every
@@ -527,7 +513,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         ``Attr.set(...)`` and the serialized write boundary apply
         (:func:`_edit_violations`), every violation is reported in one
         :class:`EditError` raised before anything is built, and the merged
-        instance then goes back through the ordinary constructor for the §2 input
+        instance then goes back through the ordinary constructor for the input
         policies — whose own ``ValidationError`` propagates unchanged, because a
         value the judgement accepted and the annotation refused is a judgement
         coverage defect rather than a developer-input refusal.
@@ -569,7 +555,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         return copied
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
-        """Refused: ``edit(**changes)`` is the object-copy verb (spec §3).
+        """Refused: ``edit(**changes)`` is the object-copy verb.
 
         Pydantic's own signature has no place to put an edit's contract —
         ``deep=True`` on a frozen value carrying a Change Record has no defined
@@ -583,15 +569,15 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     def copy(self, **kwargs: object) -> Self:
         """Refused: the deprecated Pydantic v1 shim reaches neither the
         framework's name resolution nor its judgement, so a primary key or a
-        framework-owned member could be set through it (spec §3)."""
+        framework-owned member could be set through it."""
         del kwargs
         raise _use_edit(type(self), "copy") from None
 
     def __copy__(self) -> Self:
         """Refused: a shallow copy of the instance dictionary carries the Change
-        Record living in it, so the result would claim provenance it did not earn
-        and lower to a sparse row built from originals that were never its own
-        (spec §3)."""
+         Record living in it, so the result would claim provenance it did not earn
+         and lower to a sparse row built from originals that were never its own
+        ."""
         raise _use_edit(type(self), "__copy__") from None
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
@@ -601,7 +587,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> str | tuple[Any, ...]:
         """Refused while lifecycle state is attached: a materialized node does
-        not pickle (spec §3).
+        not pickle.
 
         That state is one lifecycle's private record of a value IT materialized —
         the views it loaded, the coordinates it read at, and the private hint a
@@ -621,7 +607,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         what ``object.__reduce_ex__`` consults afterwards, so an authored one of
         those runs downstream of a guard that has already passed rather than in
         place of it, which is what the class body's matching name reservation
-        (spec §2) keeps true. That reservation judges one namespace at one moment
+        keeps true. That reservation judges one namespace at one moment
         rather than holding the attribute for the life of the class: assigning
         the name onto the class afterwards, or binding a descriptor whose
         ``__set_name__`` installs it once the body has been judged, puts another

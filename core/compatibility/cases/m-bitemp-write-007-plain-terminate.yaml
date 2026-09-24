@@ -1,25 +1,6 @@
 # Write sequence: plain (UNBOUNDED) bitemporal terminate — end a value from a
 # Valid-Time instant B ONWARD, leaving the value intact before B (rectangle split
 # with a HEAD only, no tail).
-#
-# A plain `terminate` on a bitemporal entity inactivates the original current row
-# on the Transaction-Time dimension (out_z = txInstant) and chains only ONE new row at fresh
-# Transaction Time [txInstant, infinity):
-#   head : valid [from_z, B)  — the value before the termination
-# There is NO tail and NO middle — the window [B, infinity) is left covered by no
-# Transaction-Time-current row, so the value is ABSENT (terminated) from B onward.
-# The original survives as a row closed on the Transaction-Time dimension — the audit trail.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert    : open the Latest rectangle, value 100,
-#                      valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
-#   step 2 terminate : end the value from Valid Time B = 2024-06-01 at txInstant
-#                      2024-07-01 — inactivate the original (out_z = 2024-07-01)
-#                      and chain head (old 100, [2024-01-01, 2024-06-01))                  (2 statements)
-#
-# Resulting state (2 rows): the inactivated original (out_z finite) + head (100,
-# valid [2024-01-01, 2024-06-01)), the window [2024-06-01, infinity) left
-# uncovered by any Transaction-Time-current row.
 model: models/position.yaml
 tags: [m-bitemp-write, m-sql, bitemporal, temporal, write-sequence, plain-terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

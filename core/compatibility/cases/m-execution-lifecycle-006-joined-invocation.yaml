@@ -1,43 +1,6 @@
 # Joined invocation (m-execution-lifecycle): a joined unit of work is an
 # activity of its own that runs NO attempt, and its buffered write reaches the
 # database in the OUTER attempt's pre-commit batch.
-#
-# The body reads, then opens a joined unit of work (`action: join`) and writes
-# inside it. A joined boundary shares the outer transaction rather than opening
-# a nested one (m-unit-work), and the stream says exactly that in three ways.
-#
-# It is a child of the ATTEMPT, not of the invocation: activity 6's `parent` is
-# 2, so the joined call is inside the physical attempt that was running when it
-# was made. It runs no attempt of its own: no `transactionAttemptStarted`
-# follows it, and there is exactly one in the whole root. And it carries no
-# concurrency and no retry policy — `invocation: joined` is the whole payload,
-# because both were resolved by the invocation it joined and a joined boundary
-# may not renegotiate them.
-#
-# It acquires nothing either, which is the resource half of the same sharing.
-# The one Acquisition and the one Release in this root belong to the attempt (3
-# and 9), and everything under it — the read, the joined invocation, the
-# pre-commit batch and its write — INHERITS that connection. A joined boundary
-# that took a second connection would be a second borrower of the transaction it
-# claims to share.
-#
-# `returned` is likewise narrower than `committed`. A joined invocation finishes
-# as `returned` or `raised`, which describes the nested CALLBACK only and never
-# claims the physical transaction did anything: sequence 10 says the joined body
-# came back, while the transaction it joined is still open. Commit settles the
-# attempt and has no event of its own — it happens after the pre-commit batch
-# closes at sequence 14 and before the connection goes back at 15 and 16, and
-# sequence 17 reports the outcome it already established.
-#
-# The write it buffered proves the sharing. It appears at sequence 12, after the
-# joined invocation already finished, inside the OUTER boundary's own
-# `pre-commit` batch (activity 7, `parent: 2`) — because that boundary is the
-# one that finalizes the shared buffer. A stream showing two attempts, or two
-# roots, would describe a nested transaction that never existed physically.
-#
-# `lane: api-conformance`: a joined boundary is an API arrangement with no wire
-# spelling, so no golden SQL is authored and each Database Call omits its
-# `statement` index. Satisfied by each language's API Conformance Suite.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, slice-snapshot-1, joined]
 lane: api-conformance

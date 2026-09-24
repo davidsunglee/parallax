@@ -1,5 +1,3 @@
-"""Eager compilation of canonical immutable physical Table Layouts."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

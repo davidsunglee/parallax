@@ -2,28 +2,6 @@
 # evidence, and a write settles against the generation the read it names observed
 # (m-unit-work "The ledger admits multiple observed states for one Entity and
 # primary key"; m-case-format *Settling against a grouped find*).
-#
-# The versioned Non-Temporal counterpart of m-unit-work-015, which grades the same
-# keying over a Bitemporal key's two current rectangles. Account 1 holds one ROW,
-# but this group holds one observed GENERATION of it per read: the observing find
-# sees version 1, a write advances it to version 2, and the dependent find sees
-# version 2. Each write then names the read its value came from, and its gate binds
-# THAT reading's version — an implementation filing evidence under identity alone
-# holds one slot, so the second read would erase the first and both writes would
-# gate on whichever reading ran last.
-#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
-#   step 1 write : `balance = 125.00`, naming step 0 — gated on version 1, advancing
-#                  to 2. The buffered intent is still pending when step 2 runs.
-#   step 2 find  : the dependent read force-flushes that intent and then observes
-#                  the FRESH state (125.00, version 2), 1 round trip beyond the
-#                  write's own.
-#   step 3 write : `balance = 175.00`, naming step 2 — gated on version 2, advancing
-#                  to 3. Naming step 0 here would gate on version 1, which the row no
-#                  longer stands at, and the write would affect zero rows.
-# The two writes are two intents against two different observed states, so nothing
-# coalesces: the flush emits both statements, in authored order. The case is
-# `run-only` (query-result-dependent): every version bind is the framework-owned
-# advance of a version a query returned.
 model: models/account.yaml
 tags: [m-unit-work, m-opt-lock, m-sql, observed-state, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

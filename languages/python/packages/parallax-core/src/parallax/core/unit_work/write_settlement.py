@@ -1,27 +1,3 @@
-"""Write Settlement: dependency-ordered intent as Planned Writes (m-unit-work).
-
-:class:`WriteSettlement` owns everything after the Write Planner's four
-rewriting stages. :meth:`WriteSettlement.settle` reads the complete ordered
-sequence once and answers the Write Planning Result: it decides each surviving
-write's target, topology, concurrency, and expected effects, decorates the
-eagerly settled steps with provenance, packs adjacent eager runs into one
-segment while a Materialized Write Group keeps its own compact one, and
-collects the claims those surviving writes settled against.
-
-It is model-scoped and owned by the planner prepared for one exact accepted
-Metamodel: it reads that model's family facts through the
-:class:`~parallax.core.unit_work.planner.FamilyFacts` reader the planner hands
-it, holds the concurrency, temporal, and audit strategies the composition layer
-wired, and observes publication not at all. Settlement accepts only PREPARED
-input — every write it settles carries exact target Metadata — so it owns no
-entity-spelling index; :func:`plan_temporal_close`, the `m-opt-lock` conflict
-lane's standalone probe, is the one function here reached with a spelling, and
-it resolves through the accepted model's own reference-position rule.
-
-Imports run one way, ``write_planner`` to here, so nothing settlement decides is
-reachable from a stage that runs before it.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -417,13 +393,8 @@ class WriteSettlement:
         flush_pending()
         return WritePlanningResult(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
 
-    # ----------------------------------------------------------------- #
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
-    # resolve the Transaction Instant lazily, and expand temporal          #
-    # topology in place. Stage 2 ran before settlement was reached, so a   #
-    # known no-op instruction and a no-op ROW of one are both already      #
-    # gone and neither is ever settled.                                    #
-    # ----------------------------------------------------------------- #
+
     def _settle(
         self,
         instruction: PreparedWrite,
@@ -775,10 +746,6 @@ class WriteSettlement:
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
 
-    # ----------------------------------------------------------------- #
-    # A Materialized Write Group's compact rows, settled ONCE HERE,       #
-    # never re-derived at step access.                                    #
-    # ----------------------------------------------------------------- #
     def _settle_group(
         self,
         group: MaterializedWriteGroup,

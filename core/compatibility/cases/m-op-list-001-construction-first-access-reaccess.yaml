@@ -1,12 +1,6 @@
 # Query-backed list laziness (m-op-list): constructing the list does no DB
 # work, the first access resolves it in exactly one query, and every later access
 # re-uses that resolved result with zero further SQL.
-#
-# Step 0 constructs `findMany(all Orders)` — a query-backed view, roundTrips 0,
-# no SQL. Step 1 is the first access (iterate / size / index): it resolves the list
-# once, six orders in a single query. Step 2 accesses again and emits NO SQL,
-# returning the SAME resolved objects (sameObjectAs). The whole scenario costs one
-# round trip — the single first-access resolution.
 model: models/orders.yaml
 tags: [m-op-list, lazy, slice-managed-1]
 shape: scenario

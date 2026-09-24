@@ -1,12 +1,5 @@
 # Value Object LEAF value facts (m-model-evolution): a leaf owns a Neutral Type
 # and a nullability and nothing else.
-#
-# The type change is coordinated for both reasons, exactly as it is on a scalar
-# Attribute. Nullability is directional at a leaf exactly as it is at an
-# Attribute: expanding `city`'s admitted domain carries no requirement, and
-# contracting `note`'s needs the documents already stored to carry a value they
-# do not have. Every leaf reports a `ValueAdmissibilityChanged` whose maximum
-# length is absent, because a leaf declares no String bound.
 tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,29 +1,3 @@
-"""The composition seam, the per-root publisher, and the activity scopes that
-drive it.
-
-An activity is a SCOPE. Entering it emits Started, leaving it emits Finished
-however the body leaves — including under a control-flow or fatal exception no
-call site would have handled by hand — so balance is a property of the shape
-rather than of any call site's discipline. A caller supplies only an outcome that
-carries data it alone holds, such as the rows a query call returned; the failure
-path is the scope's own business.
-
-A Snapshot Stream is the one scope whose Finished may come before its exit. A
-delivery that runs out of roots learns so inside the body, and WHEN exhaustion
-was discovered is what its case asserts, so the outcome is emitted where it is
-learned and the exit finds the activity already finished. Balance is unchanged —
-one Finished per Started, whatever ends it first.
-
-Delivery is the publisher's job rather than the activity's, so quarantine and
-last-resort reporting are written once instead of once per activity kind, and an
-activity stays small enough to be obviously correct.
-
-:data:`INERT` stands in for both the no-Provider default and a declined root, so
-no call site carries ``| None`` and none chooses between an early return and an
-inline guard. Entering and leaving it allocates nothing, which is what keeps the
-scope shape available on the default path at all.
-"""
-
 from __future__ import annotations
 
 import sys

@@ -1,12 +1,3 @@
-"""``parallax.core.predicate`` enforcement scope (m-predicate).
-
-The Predicate algebra: frozen node types for the recursive selection grammar and
-the canonical single-key tagged serde that round-trips them (the corpus's
-normative encoding). ``m-predicate`` depends only on ``m-metamodel`` and
-``m-inheritance``; the query value that carries a predicate lives above it in
-``m-object-query``, and SQL lowering above that in ``m-sql``.
-"""
-
 from __future__ import annotations
 
 from parallax.core.predicate._nodes import (

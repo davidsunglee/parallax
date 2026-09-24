@@ -1,28 +1,3 @@
-"""``parallax.snapshot.handle._adoption`` — how an execution adopts a Model
-Edition, and the failure that carries it.
-
-Every execution that owns its adoption does the same three things: takes the
-Serving Model's current selection, opens its lifecycle activity carrying that
-edition, and turns an ordinary exception escaping the whole execution into an
-:class:`ExecutionFailure` naming the edition it ran under. The first and last
-are written here once, and the opening in between belongs to the execution's
-own lifecycle seam. One :class:`AdoptedExecution` exists per root execution and
-owns "which edition is current for this execution", which is what lets a
-transaction adopt afresh for each attempt and still report the final attempt's
-edition once.
-
-The rules this module carries: a join or a participating read inherits and
-never adopts or wraps, so a failure inside one propagates internally and is
-contextualized once at the outer execution; retry classification sees the
-underlying error, because the wrap is applied after the retry loop resolves;
-a failure already contextualized passes through unchanged; and a control-flow
-or fatal exception is never contextualized at all, because it is not an
-ordinary failure of the execution.
-
-Names crossing a module boundary are spelled bare; privacy is carried by this
-MODULE's leading underscore and by the package's frozen ``__all__``.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -57,12 +32,10 @@ class ExecutionFailure(Exception):
 
     @property
     def edition(self) -> str:
-        """The Model Edition the failing execution had adopted."""
         return self._edition
 
     @property
     def cause(self) -> Exception:
-        """The exception that escaped the execution."""
         return self._cause
 
 

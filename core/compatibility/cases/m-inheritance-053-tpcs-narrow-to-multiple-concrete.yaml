@@ -1,15 +1,5 @@
 # Table-per-concrete-subtype narrow to MULTIPLE concrete subtypes across branches
 # (m-inheritance, m-object-query, m-sql).
-#
-# The queried target is the abstract root Document; `narrowTo` constrains the result
-# to the explicit concrete list [Invoice, Memo] — two concretes from DIFFERENT branches of
-# the tree (Invoice under FinancialDocument, Memo directly under Document), skipping
-# Receipt. The read `union all`s over exactly the invoice + memo tables in alphabetical
-# order (Invoice, Memo). Invoice and Memo share only the root chain (id, title,
-# folder_id), so the stable superset is id, title, folder_id, currency, amount_due,
-# body + `familyVariant`: this is the focused `NULL`-placeholder witness — Invoice
-# NULLs `body`, and Memo NULLs both `currency` (FinancialDocument's, which Memo does
-# not inherit) and `amount_due`, each with a dialect cast.
 model: models/document.yaml
 tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

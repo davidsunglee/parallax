@@ -1,18 +1,5 @@
 # Boundary case (m-auto-retry): `maxRetries: 0` DISABLES the loop — even a transient failure
 # surfaces to the caller — `api-conformance` lane.
-#
-# The retry bound is configurable (default 10); a bound of `0` disables the loop
-# entirely. This case injects a `serialization-failure` — normally auto-retried —
-# under `maxRetries: 0`, and asserts it SURFACES to the caller after the single attempt
-# rather than being retried away. This pins the lower boundary of the bound: a
-# transient is retriable by default, but a disabled loop still surfaces it.
-#
-# `roundTrips: 2` is the single attempt's cost: the observing read, and the write
-# that reached the database and failed. A failed call counts one; the disabled loop
-# means there is no second attempt to add to it.
-#
-# `lane: api-conformance`: injected transient + a loop-configuration observable;
-# suite-driven via a fault-injecting decorator around the shipped adapter.
 model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

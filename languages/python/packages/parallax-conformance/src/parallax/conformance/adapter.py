@@ -1,13 +1,3 @@
-"""``parallax.conformance.adapter`` — the in-process conformance adapter core.
-
-Plain functions returning **envelope** dicts: the JSON documents
-``m-conformance-adapter`` defines as the wire surface (validated against
-``core/schemas/conformance-adapter.schema.json``). ``describe`` reports the
-claim; ``compile_case`` / ``run_case`` classify the request against the claim's
-filters in contract order and, for a claimed case, emit an ``error`` envelope
-until the compile/run lanes come online.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

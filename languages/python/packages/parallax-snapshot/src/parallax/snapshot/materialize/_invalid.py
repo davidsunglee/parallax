@@ -1,18 +1,3 @@
-"""The in-band invalid-result surface a classified read publishes (m-snapshot-read).
-
-A result element is ``T | InvalidData[T]``: a root whose whole requested include
-tree conforms is delivered as itself, and a root some stored state contradicted
-is delivered as the record here. Classification is root-granular — an issue
-anywhere in a root's requested include tree makes that root invalid — so nothing
-below a root is ever pruned or unioned.
-
-The record carries diagnoses, positions, and the immutable evidence of what was
-rejected — never authority: no decoding cause, no mutable details, and no
-observation address. Its locators answer *which* result element is invalid, not
-what a caller may then write, and the evidence it carries is reachable only by
-explicit attribute access.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -260,10 +245,8 @@ class InvalidDataError(RuntimeError):
 
     @property
     def invalid_data(self) -> tuple[InvalidData[object], ...]:
-        """The invalid result roots this refusal reports, in result order."""
         return self._invalid_data
 
     @property
     def edition(self) -> str:
-        """The Model Edition the refused result was read under."""
         return self._edition

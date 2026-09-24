@@ -1,11 +1,5 @@
 # Adding and removing an authored secondary INDEX (m-model-evolution): both are
 # unilateral, removal included.
-#
-# An authored Index is the one model-facing declaration a query or write never
-# addresses, so removing one invalidates nothing and is the sole exception to the
-# removal rule. Adding a UNIQUE one changes what the database admits, which is
-# reported as `UniquenessEnforcementChanged` and caused by that addition alone —
-# the non-unique Index leaving enforces nothing and causes nothing.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

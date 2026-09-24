@@ -11,15 +11,16 @@ it must name its true owner so a second language target inheriting the same gap
 can find it. A neutral concern that outlives this target is promoted to a core
 specification, an issue, or a ledger of its own rather than left here.
 
-This is not a duplicate of the `languages/python/spec/python.md` §1 deferral
-list, which is canonical for deferred capabilities, and it does not restate work
-already tracked as a Linear issue.
+The canonical slice defines claimed capabilities. This ledger does not repeat
+that claim or work already tracked as an issue. Historical entries and forwarding
+notes retain their original references; current public semantics are reached
+through the [binding entrypoint](../spec/python.md).
 
 ## Protocol
 
-Read this file at session start. Add an entry in the same session any deferral
-happens — never only in a commit message, a code comment, or a task artifact.
-Sweep it at claim closure.
+Read relevant entries when working on their subject. Add an entry when a new
+deferral has no other owner; do not duplicate an issue or task record. Sweep
+the ledger at claim closure.
 
 Closing, graduating, or otherwise giving an entry a home means **removing it**
 and leaving a forwarding line below, so this file stays a work list rather than

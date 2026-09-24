@@ -2,18 +2,6 @@
 # configuration): a joining call is held to the Isolation Level the OUTER
 # invocation resolved, and the root's own level is a conflict where the outer
 # call overrode it — `api-conformance` lane.
-#
-# The root is configured `repeatable-read` and the outer call requests
-# `serializable`, so the outer invocation reports `serializable` and every
-# attempt opens at it. The first join names nothing and inherits the override;
-# the second names `serializable` and is accepted; the third names
-# `repeatable-read`, the root's level, and is refused before its callback runs.
-# `m-unit-work-035` states the same rule with no root in play; what this case
-# adds is that the root's level is no more acceptable to a join than any other
-# level the transaction did not open at.
-#
-# Two joined invocations, activities 6 and 7, and no third; the refused join
-# leaves no activity, and `roundTrips: 1` is the observing read alone.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

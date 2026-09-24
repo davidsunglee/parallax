@@ -1,5 +1,3 @@
-"""The structured Neutral Type algebra and managed value spaces (m-core)."""
-
 from __future__ import annotations
 
 import datetime as _dt

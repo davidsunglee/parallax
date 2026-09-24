@@ -1,22 +1,4 @@
 # Cross-process cache coherence — partial-cache mark-dirty.
-#
-# The complementary invalidation strategy to m-coherence-001's full-cache re-fetch. A node
-# holding a bounded, evictable cache does not re-fetch on a peer write; it EVICTS
-# / marks the affected entries dirty, and the next find misses and re-resolves.
-# The OBSERVABLE outcome is identical — a post-invalidation find on node B returns
-# node A's committed state — so the suite asserts the outcome, not the strategy.
-#
-# Here node A INSERTS a brand-new account (a row node B had never seen). Node B's
-# query for that owner first returns nothing (the row does not exist yet); after
-# node A commits the insert and node B's cache is marked dirty, the same find
-# re-resolves and observes the new row. This also proves coherence covers
-# insertions, not only updates to already-cached rows.
-#
-# Steps:
-#   0  read  on B : query owner='Mallory' — empty (no such account yet).
-#   1  write on A : A commits an INSERT of account 9 (Mallory, 42.00) on its connection.
-#   2  read  on B : the same find now observes the newly-inserted row (mark-dirty +
-#                   re-resolve), proving node B converged on A's committed insert.
 model: models/account.yaml
 tags: [m-coherence, partial-cache-mark-dirty]
 shape: coherence

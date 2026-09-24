@@ -153,7 +153,6 @@ core-check-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.object_query_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.descriptor_contract_check ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.retired_vocab_check ..
-    cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.canonical_spelling_check ../core/compatibility
 
 [metadata("runtime:fast")]
@@ -167,7 +166,7 @@ core-check-batch-size-twins:
     cd {{harness}} && uv run python -m reference_harness.batch_size_twin_check ../core/compatibility
 
 [metadata("runtime:fast")]
-[doc("Every completed language spec still fills in the canonical template.")]
+[doc("Language binding claims and required topology declarations are valid.")]
 core-check-language-spec:
     cd {{harness}} && uv run python -m reference_harness.language_spec_validate ..
 
@@ -258,7 +257,7 @@ harness-format:
 # ===========================================================================
 # Language: Python. The uv workspace lives under languages/python/packages/*;
 # these fan out into it via uv. Recipe names are pinned by
-# languages/python/spec/python.md §10.
+# languages/python/pyproject.toml and package metadata.
 # ===========================================================================
 
 [doc("Every blocking check over the Python implementation.")]

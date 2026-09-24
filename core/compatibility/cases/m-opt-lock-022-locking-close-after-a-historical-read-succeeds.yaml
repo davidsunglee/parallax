@@ -1,32 +1,6 @@
 # A locking-mode milestone close staged after an AUDIT read of the same key commits
 # UNGATED (m-opt-lock "Effective Concurrency Strategy determines the gate uniformly" + m-read-lock
 # "Automatic read-lock correctness", composed inside one `uow` group).
-#
-# One unit of work reads Balance id 1 at Latest (the current milestone, value 150),
-# then reads the SAME key at the past Transaction-Time instant 2024-04-01 — a
-# historical milestone, value 100, superseded on the Transaction-Time axis — and then
-# writes. Both finds carry the dialect's shared row lock, because the unit participates
-# in `locking` mode; the close that follows carries NO gate predicate — its address is
-# the whole `where bal_id = ? and out_z = ?` — because a gate is optimistic mode's
-# recovery and this mode holds locks instead. The close addresses the milestone still
-# open on Transaction Time, chains its successor, and commits; `then.tableState` shows
-# the superseded milestone the audit read returned untouched.
-#
-# The semantic distinction is that the gate decision and the address are properties of
-# Balance's own Effective Concurrency Strategy and of the milestone the close observes,
-# not of the transaction's
-# reading history: staging a second, historical read of the same key between the first
-# find and the write changes neither. An implementation that emitted an `and in_z = ?`
-# gate here, or that took no shared lock on either find, fails the case.
-#
-# What this case does NOT grade, so that no reader takes it for more: the milestone
-# this close addresses is resolved from the case's own current state — the one row of
-# Balance id 1 still open on Transaction Time — and NOT from either find step. A case
-# supplies the observed rows a write consumes rather than the framework issuing an
-# implicit resolving read, so neither find contributes evidence to this write and no
-# license exists for the audit read to revoke. Nothing here observes how an
-# implementation KEYS the observations its own reads record, nor whether a write
-# consults them at all.
 model: models/balance.yaml
 tags: [m-opt-lock, m-unit-work, m-txtime-write, m-read-lock, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

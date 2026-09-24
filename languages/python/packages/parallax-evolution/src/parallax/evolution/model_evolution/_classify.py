@@ -1,13 +1,3 @@
-"""Per-operation classification: why coordination is required, and whether the
-operation is Overlap-Visible.
-
-One rule function per operation kind, each a pure function of the operation and
-the two endpoints, so a rule is stated and proven where it is decided rather
-than inside a traversal. Every rule compares the EFFECTIVE facts a family fixes
-rather than the raw declarations a field delta reports, so an authored form that
-normalizes to the accepted value it already had classifies as no change at all.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

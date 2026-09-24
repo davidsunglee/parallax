@@ -1,15 +1,6 @@
-"""The host-owned model update against real Postgres (python.md §2,
-m-api-conformance).
+"""Execute host-owned schema application and model publication against Postgres.
 
-The Docker-free half runs the same story over a fake port, where a schema
-statement is a string a double accepted. What only a real database can show is
-that the three steps are one working order: the delta the generator wrote
-actually carries the schema, the edition published over it actually serves, and
-the added member is a column a later-edition write commits into and an
-earlier-edition read never selects.
-
-The publication story is the Usage Guide's own source, executed here so the
-documented spelling of an update cannot drift from a working one.
+The new edition writes the added column while earlier-edition reads omit it.
 """
 
 from __future__ import annotations

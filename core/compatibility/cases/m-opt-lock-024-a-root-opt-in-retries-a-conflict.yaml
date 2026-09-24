@@ -2,17 +2,6 @@
 # configured with `retryOptimisticConflicts: true` auto-retries an optimistic-lock
 # conflict for an invocation that names no opt-in of its own — `api-conformance`
 # lane.
-#
-# `m-opt-lock-011` opts in at the call. Here the call carries no `when.uow`, and
-# the root's record is what joins the conflict to the retriable set: the injected
-# conflict on the first attempt makes the boundary re-execute the whole closure,
-# the re-read observes the current version, the re-applied gated UPDATE succeeds,
-# and the unit of work commits with no caller retry code. Without the root's
-# opt-in the same conflict surfaces after one attempt (`m-opt-lock-010`).
-#
-# `roundTrips: 4` is what the two attempts cost between them: each observes the
-# row and issues its gated UPDATE, the first of which reached the database and
-# reported zero rows.
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, success, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

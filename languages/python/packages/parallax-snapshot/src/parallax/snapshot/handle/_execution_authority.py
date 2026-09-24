@@ -1,5 +1,3 @@
-"""Capture and compare one scoped execution authority."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

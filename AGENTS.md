@@ -15,7 +15,23 @@
 - Otherwise, document only constraints or rationale that are critical and cannot be expressed in code.
 - Keep comments and docstrings timeless and code-local. Never narrate straightforward code. Never reference planning or execution artifacts like issues, plans, or reviews.
 - Update or remove affected comments and docstrings when behavior changes; stale documentation is a defect.
-- Compatibility cases: start each case with one detailed header comment that explains the scenario, expected observable behavior, and semantic distinction it pins down. The case body must contain no comments.
+- Compatibility cases need no header commentary. Use descriptive names and executable inputs and expectations; add a short local explanation only for a distinction they cannot make clear.
+
+## Contract Ownership
+
+- Read instructions and contracts relevant to the change. Use `README.md`, `IMPLEMENTING.md`, and the language binding entrypoint as navigation; do not load every specification before an internal change.
+- Portable semantics belong to their owning `core/spec` module, serialized structure to schemas, and concrete expected observations to compatibility cases. Resolve disagreements explicitly rather than changing an oracle to match production.
+- Language bindings inherit core semantics and own additional public language decisions that signatures, types, and executable examples cannot express. Private structure belongs to code; package metadata, quality thresholds, and commands belong to executable configuration.
+- Dependency declarations are an intentional exception to single authorship: preserve the core graph, language topology declarations, and independent implementation mappings and checks. Changes to this enforcement mechanism require explicit design review.
+- Otherwise, author a fact once. Link to its owner or generate another view; do not maintain prose inventories of code, cases, or CI jobs. An internal refactor normally needs no specification edit.
+- `CONTEXT.md` files are terminology/navigation aids. ADRs record decisions and rationale at the time they were made; supersede them when a decision changes rather than keeping historical prose synchronized. Research, measurements, and task artifacts are evidence, not additional current product contracts.
+
+## Review
+
+- Judge behavior against its current contract owner and changes against these instructions. A finding must identify observable harm or a material contract violation with a credible trigger and evidence.
+- Missing repetition in a secondary document is not a defect. When duplicated prose conflicts, prefer removing the duplicate or linking to its owner; preserve any unique public contract before deleting it.
+- Generated documentation is reviewed through its authored inputs and generation checks. Tests verify exports, types, behavior, and enforced boundaries, not explanatory prose that repeats them.
+- Keep private task records out of product documentation. A bounded change needs no separate design document; a large change needs only a short execution outline unless an unresolved product decision requires design work.
 
 ## Reladomo Prior Art
 

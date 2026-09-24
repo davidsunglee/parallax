@@ -1,9 +1,5 @@
 # Negative (m-inheritance, resolved Q3/Q4): an abstract SUBTYPE declares a physical
 # table.
-#
-# `Pet` is an interior `role: abstract-subtype` but also declares `table: animal`.
-# The TPH root owns the shared table. Every descendant, abstract or concrete, must
-# omit a table mapping and inherit the root-owned container.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -1,10 +1,5 @@
 # Narrowing a String maximum length (m-model-evolution): coordinated, both when
 # the bound shrinks and when one is introduced.
-#
-# This is m-model-evolution-009 read backwards. Existing values may be longer than
-# the later model admits, so each operation needs `DatabaseMigrationRequired`;
-# introducing a bound where none existed contracts the domain exactly as
-# shrinking one does.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

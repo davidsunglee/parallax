@@ -1,35 +1,3 @@
-"""Scoped execution over one psycopg connection, and the setup every one gets.
-
-This is the `m-db-error` **port boundary** and the `m-db-port`
-normalize-at-boundary contract in one place: every psycopg exception raised by
-work the connection itself performs — a statement, or the transaction boundary's
-begin, commit, or rollback — becomes a neutral
-:class:`~parallax.core.db_error.DatabaseError` carrying the classified category,
-the preserved native SQLSTATE, the driver message, and the violated Physical
-Index Name a unique violation reports, so no driver exception type produced by
-execution ever crosses above it. An exception the caller's own ``transaction``
-body raises is not this module's work and is not translated. Category
-interpretation is delegated to the pure dialect strategy; only psycopg's
-driver-specific SQLSTATE, its message, and the structured ``diag.constraint_name``
-beside them are extracted here, and no message text is ever parsed.
-
-:class:`ConnectionEstablishment` is the other half: everything that happens once
-per PHYSICAL connection. It produces the driver keywords each one is dialed with
-— which is where the credential source is resolved — and then, as the pool's
-``configure``, runs :func:`initialize_connection` over the connection that
-resulted. Both run for every way a connection comes into existence — initial
-capacity, growth, replacement, and on-demand establishment — because a codec
-installed on some connections and not others is a decoding bug that appears
-under load and nowhere else.
-
-Execution here is SCOPED. A :class:`PostgresConnection` is created per
-acquisition and revoked when that acquisition ends: after revocation it holds no
-native connection and every verb refuses before reaching a driver. It never
-closes, returns, or replaces a connection — deciding that is cleanup's, which is
-why a boundary this module cannot bring back to a reusable state marks the
-execution SUSPECT and reports the outcome instead of disposing of anything.
-"""
-
 from __future__ import annotations
 
 import contextlib

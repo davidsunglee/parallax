@@ -1,23 +1,3 @@
-"""Compact private column storage for write planning (m-unit-work).
-
-A materializing predicate write's resolving read produces a number of rows
-that scales with the addressed data, not with anything the planner controls.
-Rather than wrapping each resolved row in an independently allocated object,
-this module gives the write path a bounded, immutable columnar backing —
-:class:`ChunkedColumn`, its :class:`ChunkedColumnBuilder`, and the windowed
-:class:`ColumnSlice` view over one sealed column — following
-:mod:`parallax.core.storage_layout._facet`'s interned-shape-plus-materialize-
-on-demand precedent. :class:`PredecessorColumns` stores complete predecessor
-state this way; :class:`~parallax.core.unit_work.observe.PredecessorRow`
-remains the logical complete-state contract, and a view over one row is built
-only when a consumer asks for it.
-
-Every value here is immutable once sealed. A :class:`ChunkedColumnBuilder`
-appends one value at a time and seals each fixed-size chunk as it fills,
-so building a column never holds one full-size list alongside the growing
-column itself, and no full-size list-to-tuple copy happens at the end.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

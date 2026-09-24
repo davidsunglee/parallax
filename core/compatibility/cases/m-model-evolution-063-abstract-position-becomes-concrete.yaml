@@ -1,18 +1,5 @@
 # An abstract position turning concrete under table-per-hierarchy
 # (m-model-evolution): unilateral, and Overlap-Visible.
-#
-# `Note` takes the concrete-subtype role and the `note` tag value. It adds a shape
-# to the family and withdraws none, so every earlier narrowing still resolves, no
-# member moves, and no row is transformed: the alteration is unilateral. It is
-# Overlap-Visible for the reason m-model-evolution-019 gives an added concrete
-# subtype — an abstract position owns no rows, so admitting it as a concrete one
-# introduces a discriminator value the shared Table did not carry, and a reader
-# still on the earlier edition cannot admit `note`. The family the value lands in
-# is the one the earlier edition already held, which is what a position keeping its
-# root distinguishes from one arriving in a family the earlier edition holds no
-# position of. Two surviving positions change what they denote, and `Note` becomes
-# a write handle: a write names a concrete subtype, so the position admitted no
-# persistence operation at all while it was abstract.
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

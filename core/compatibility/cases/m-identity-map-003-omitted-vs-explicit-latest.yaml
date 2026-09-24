@@ -1,17 +1,6 @@
 # Omitted coordinate vs explicit `latest` (m-identity-map): an OMITTED temporal
 # coordinate and an EXPLICIT `asOf(latest)` lower to the SAME coordinate, so both
 # resolve to the same managed object.
-#
-# The identity key's coordinate component is the LOWERED as-of coordinate: an
-# authored omitted Transaction Time and an explicit `asOf(..., latest)` both normalize to the infinity
-# sentinel — one canonical coordinate, not a wall-clock instant (m-identity-map).
-# Step 0 retains the OMITTED authoring form under `equivalentEncodings`; its
-# canonical `find` is explicit Latest (`out_z = ?` bind infinity -> the current 150.00). Step 1
-# finds the same primary key with an EXPLICIT `asOf(transaction-time, latest)`; it
-# lowers to the identical `out_z = ?` predicate, so it is the SAME lowered
-# coordinate and therefore the SAME managed view (`sameObjectAs`) — still costing a
-# round trip (no query-cache claim). The object-reference identity is asserted
-# per-language by the API Conformance Suite.
 model: models/balance.yaml
 tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, scenario, slice-managed-1]
 shape: scenario

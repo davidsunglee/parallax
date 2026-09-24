@@ -1,16 +1,3 @@
-"""The interleaved lane's own threading primitives: the strict step-index
-cursor two worker threads take turns through, and the bounded join that
-unsticks and joins both workers before it reports a choreography that did not
-finish.
-
-Not a lane. Nothing here reads a case, holds a port, or knows what a step
-does: a :class:`Turnstile` sequences step INDICES across two threads, and
-:func:`await_workers` joins two threads over the executions each runs on,
-escalating through each execution's own termination ladder and naming the case
-only in the error it raises. The interleaved lane
-(:mod:`~parallax.conformance._lanes.interleaved`) is the one consumer.
-"""
-
 from __future__ import annotations
 
 import threading

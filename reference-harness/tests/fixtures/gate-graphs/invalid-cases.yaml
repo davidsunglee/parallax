@@ -70,8 +70,8 @@
 
 - name: check-recipe-running-tests
   file: justfile
-  old: "    cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility"
-  new: "    cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility\n    cd {{harness}} && uv run pytest tests/contract_tools"
+  old: "    cd {{harness}} && uv run python -m reference_harness.canonical_spelling_check ../core/compatibility"
+  new: "    cd {{harness}} && uv run python -m reference_harness.canonical_spelling_check ../core/compatibility\n    cd {{harness}} && uv run pytest tests/contract_tools"
   code: inlined-operation
   message: "`core-check-contract-tools` performs `test`"
 
@@ -298,24 +298,10 @@
 
 - name: map-citing-a-command-the-graph-does-not-declare
   file: TESTING.md
-  old: "`just check-dbfree`"
-  new: "`just check-dbfre`"
+  old: "`just show-gates`"
+  new: "`just show-gate`"
   code: doc-unknown-command
-  message: "TESTING.md cites `just check-dbfre`, which the graph does not declare"
-
-- name: map-omitting-a-ci-lane
-  file: TESTING.md
-  old: "| `harness-check-db` |"
-  new: "| `harness-check-database` |"
-  code: doc-uncovered-ci-job
-  message: "TESTING.md does not name the CI job `harness-check-db`"
-
-- name: map-listing-a-lane-ci-does-not-run
-  file: TESTING.md
-  old: "| `python-check-db` | — | `just python-check-db` |"
-  new: "| `python-check` | — | `just python-check-db` |"
-  code: doc-unknown-ci-job
-  message: "TESTING.md lists `python-check` as a CI job"
+  message: "TESTING.md cites `just show-gate`, which the graph does not declare"
 
 - name: agent-guidance-citing-a-command-the-graph-does-not-declare
   file: AGENTS.md
@@ -326,8 +312,8 @@
 
 - name: language-spec-citing-a-command-the-graph-does-not-declare
   file: languages/python/spec/python.md
-  old: "- **Aggregate `dbfree` command.** `just python-check-dbfree` — one local command"
-  new: "- **Aggregate `dbfree` command.** `just python-check-dbfre` — one local command"
+  old: "```language-binding"
+  new: "Run `just python-check-dbfre`.\n\n```language-binding"
   code: doc-unknown-command
   message: "languages/python/spec/python.md cites `just python-check-dbfre`, which the graph does not declare"
 

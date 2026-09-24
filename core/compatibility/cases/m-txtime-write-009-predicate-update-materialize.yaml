@@ -1,35 +1,6 @@
 # Predicate-selected UPDATE over an audit-only (Transaction-Time-Only) entity
 # materializes per resolved row to the close-and-chain (m-txtime-write + m-opt-lock,
 # ADR 0014).
-#
-# The exact sibling of m-txtime-write-007 (predicate-terminate-materialize), swapping
-# `terminate` for an `update` with an assignment. Balance carries a SINGLE Transaction-Time
-# axis [in_z, out_z); an audit-only update never mutates a value in place — it CLOSES
-# the current row (set out_z = the Transaction-Time instant) and CHAINS a new current row
-# carrying the new value (the signature audit-only write, keyed m-txtime-write-002).
-# Because the write gates each row on its own open interval, the set predicate cannot
-# collapse to one statement: it MATERIALIZES to a close + chain per resolved row.
-#
-# The unit of work runs in LOCKING mode, so the materializing read takes `for share`
-# row locks (`for share of t0`) over the two matches (bal_id 1 and 2, both value < 250,
-# both currently open) and the closes are ungated (no observed-in_z gate — that is the
-# optimistic composition, m-txtime-write-006). The update assigns value = 175.00 to
-# every matched row (still < 250, so the verify re-read sees the two chained heads).
-# The acct_num copied into each chained head comes from the MATERIALIZED row (the
-# query-result-dependent part): A for bal_id 1, B for bal_id 2.
-#
-# Multi-row statement ordering is PER RESOLVED ROW (close then chain, one row before
-# the next): [close 1, chain 1, close 2, chain 2] — a materialization iterates the
-# resolved rows and emits each row's complete lowering (m-sql "Versioned set-based
-# updates materialize": one per-object lowering per matched row; the single-row
-# bitemporal precedents m-bitemp-write-010/-012 fix a row's own close-before-chain
-# order). The two matched keys are distinct, so no close interferes with another row's
-# chain and the resulting table state is order-independent; the per-row grouping is the
-# authored form, not a state-discriminated one.
-#
-# The trailing find re-reads the still-open set (out_z = infinity) and expects the two
-# chained heads at value 175.00. Total roundTrips 6 = materialize read (1) + two
-# closes + two chains (4) + verify read (1).
 model: models/balance.yaml
 tags: [m-txtime-write, m-opt-lock, m-sql, m-unit-work, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario

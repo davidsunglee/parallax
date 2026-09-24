@@ -1,27 +1,6 @@
 # Observed-State Coalescing (m-unit-work): two assignment-bearing writes against
 # ONE observed state and one temporal region merge into a single write, and the
 # later authored value wins a member both of them name.
-#
-# The buffer holds two keyed updates of account 1, both settling against the state
-# the group's own observing find recorded (version 1). They intend the same thing
-# over the same region, so they are one intent: the flush emits ONE gated UPDATE
-# carrying the union of their sparse assignments — `owner` from the second write,
-# which is the only one that names it, and `balance` from the second as well,
-# because a repeated member takes the LAST authored value rather than the first.
-# The version advances once, 1 -> 2, and the gate binds the ONE observed version
-# both writes settled against; two separate statements would advance it twice and
-# the second would gate on a version no read of this unit of work ever saw.
-#   step 0 find  : observe account 1 (Ada, 100.00, version 1), 1 round trip.
-#   step 1 write : buffer `balance = 125.00`, then `owner = Grace, balance = 175.00`;
-#                  the flush emits one UPDATE binding Grace / 175.00 / version 2,
-#                  gated on the observed version 1, 1 round trip.
-#   step 2 find  : the dependent find MUST observe Grace / 175.00 / version 2 — the
-#                  merged value, never the intermediate 125.00.
-# Both writes name the find they settle against with `on` (m-case-format *Settling
-# against a grouped find*), which is what makes the shared observed state explicit
-# rather than inferred from the key. The case is `run-only`
-# (query-result-dependent): the version both binds carry is the framework-owned
-# advance of a version a query returned.
 model: models/account.yaml
 tags: [m-unit-work, m-opt-lock, m-sql, coalescing, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

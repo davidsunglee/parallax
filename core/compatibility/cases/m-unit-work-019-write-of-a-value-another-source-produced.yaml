@@ -5,15 +5,6 @@
 # refusal is `write-value-foreign-lifecycle` for the `insert` family and for the
 # `update` family alike, which is what makes the three-way partition total: every
 # value a keyed verb can be handed falls under exactly one of the three answers.
-#
-# This is an api-conformance-lane case: its defining observable is a raised
-# application-lifecycle error over a VALUE a client holds, and the second managed
-# source the case requires is one no wire harness can arrange, so the harness
-# schema-validates it and each language's API Conformance Suite returns and
-# verifies the error observations. How an implementation arranges the value is its
-# own affair — one whose runtime is a single managed lifecycle supplies the second
-# source itself — but the value MUST be one a read through that second source
-# produced, which is the provenance the case states.
 model: models/account.yaml
 lane: api-conformance
 tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]

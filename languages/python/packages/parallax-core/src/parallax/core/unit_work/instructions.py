@@ -1,39 +1,3 @@
-"""The write-instruction IR (m-unit-work write-instruction vocabulary).
-
-Frozen ``slots`` dataclasses for the two canonical authored write-instruction
-shapes — the write-side analogue of the Object Query — plus the
-serde that round-trips them through ``core/schemas/write-instruction.schema.json``
-(``serialize(deserialize(x)) == x``, JSON and YAML). There are exactly two shapes:
-
-- a **keyed** instruction (:class:`KeyedWrite`) — a ``mutation`` on one ``entity``
-  carrying the flat attribute-named neutral write input (``rows``);
-- a **predicate-selected** instruction (:class:`PredicateWrite`) — a ``mutation``
-  on every row of a ``target`` (entity + a bare ``m-predicate`` predicate)
-  matching that predicate, with ``assignments`` on the update forms.
-
-The embedded predicate is a canonical ``m-predicate`` node — the sole place the
-write side reaches the algebra — deserialized through :mod:`parallax.core.predicate`
-so a malformed predicate is rejected, exactly as the schema defers predicate
-validation to ``predicate.schema.json``. Two structural rules keep the instruction
-framework-honest and are enforced here:
-
-- **The instant surface is dimension-explicit.** Valid-Time bounds are named
-  ``validFrom`` / ``until``; a bounded ``*Until`` mutation carries BOTH.
-  The **Transaction-Time instant** is NOT an instruction field — it is Clock-supplied
-  flush context, so the corpus's ``at`` authoring alias is an
-  UNEXPECTED key here and :func:`deserialize` rejects it (the caller-facing shape
-  cannot smuggle one in).
-- **The transaction observation is not an instruction field.** The reserved
-  control keys ``observedVersion`` / ``observedTxStart`` are FORBIDDEN on a durable
-  write row; the observation is attached per materialized row at flush
-  (:mod:`parallax.core.unit_work.planner`), never carried on the instruction.
-
-Construction is value-only (mirroring ``m-predicate`` nodes): structural shape is
-validated by :func:`deserialize`; member-name honesty against a metamodel is
-part of :func:`prepare_typed_write` and :func:`prepare_wire_write`, which return
-the immutable managed products buffering retains.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -370,9 +334,6 @@ _ASSIGNMENT_REF = re.compile(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Deserialize (canonical write-instruction document -> frozen instruction).    #
-# --------------------------------------------------------------------------- #
 def deserialize(doc: object) -> WriteInstruction:
     """Parse a canonical write-instruction document into a frozen instruction.
 
@@ -577,9 +538,6 @@ def _predicate(node: Mapping[str, object]) -> PredicateWrite:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Serialize (frozen instruction -> canonical minimal document).                #
-# --------------------------------------------------------------------------- #
 def serialize(instruction: WriteInstruction) -> dict[str, object]:
     """Emit the canonical minimal write-instruction document for one instruction."""
     if isinstance(instruction, KeyedWrite):
@@ -624,9 +582,6 @@ def _wire_bound(value: str | dt.datetime) -> object:
     return value
 
 
-# --------------------------------------------------------------------------- #
-# Target/mutation applicability (metamodel-aware, shared across the layers).   #
-# --------------------------------------------------------------------------- #
 _KEYED_SPELLING: Final[dict[str, str]] = {
     "insert": "insert",
     "insertUntil": "insert_until",
@@ -669,7 +624,7 @@ def temporal_delete_refusal(
     inheritance family DOES derive an As-Of Axis. ``delete`` is physical row
     removal and carries no temporal meaning at all, so a target that milestones
     its rows spells its removal ``terminate`` and rejects ``delete`` outright
-    (`python.md` §5 "Write verbs and temporal spellings"; `m-txtime-write` /
+    (the Python binding "Write verbs and temporal spellings"; `m-txtime-write` /
     `m-bitemp-write`). Settling one anyway would erase the history the target
     exists to keep, leaving no milestone recording that the value ever held.
 
@@ -770,9 +725,6 @@ def _derives_as_of_axes(model: AcceptedMetamodel, entity: EntityMetadata) -> boo
     return bool((entity if root is None else root).declared_as_of_axes)
 
 
-# --------------------------------------------------------------------------- #
-# Member-name honesty (metamodel-aware build-time validator).                  #
-# --------------------------------------------------------------------------- #
 def _preflight_write_shape(
     instruction: WriteInstruction, model: AcceptedMetamodel
 ) -> EntityMetadata:
@@ -939,7 +891,7 @@ def _prepare_managed_write(
     (``subtype-write-set-based-unsupported``, `m-inheritance` "Per-object
     writes are keyed; set-based inheritance writes are out of scope") — after
     the predicate rules, which the spec orders first, and BEFORE the
-    assignments, which `python.md` §5 requires: "every assigned attribute or
+    assignments, which the Python binding requires: "every assigned attribute or
     value-object member must be declared by the exact target entity — set-based
     writes already reject inheritance-family targets, so ancestry resolution
     never arises."
@@ -971,7 +923,7 @@ def _prepare_managed_write(
     member, `inheritance.validate_write_assignment` additionally rejects a
     primary-key or framework-owned (version) target and any scalar value that
     does not conform to its declared neutral type
-    (`python.md:667-676`/`m-case-format.md:700` -- the SAME classification a
+    (the Python binding/`m-case-format.md:700` -- the SAME classification a
     `.set(...)`-built assignment and an `Entity.edit(**changes)` entry are
     rejected with at build time (`entity._expressions.AttributeExpr.set`,
     `entity._entity.Entity.edit`); one validator, three callers, which is

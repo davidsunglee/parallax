@@ -2,17 +2,6 @@
 # view pinned at a finite Transaction-Time-axis instant raises the neutral
 # `transaction-time-pin-read-only` error and emits NO DML — the Transaction-Time past
 # records what the system knew and is never rewritten.
-#
-# This is an api-conformance-lane case: its defining observable is a raised
-# application-lifecycle error, which the single-connection wire harness cannot grade,
-# so the harness schema-validates it and each language's API Conformance Suite
-# returns and verifies the error observation. Step 0 pins Balance id 1 at the finite
-# Transaction-Time instant 2024-03-01 — the superseded milestone value 100.00, a
-# read-only Transaction-Time-past view. Step 1 attempts to mutate it (`set` value 999.00);
-# because the pin is on the finite Transaction-Time dimension, the mutation is rejected with
-# `expectError: transaction-time-pin-read-only` and buffers zero DML (roundTrips 0). The
-# error is distinct from the m-db-error database taxonomy. (Contrast a finite
-# Valid-Time-axis pin, which is writable — m-identity-map-011.)
 model: models/balance.yaml
 lane: api-conformance
 tags: [m-identity-map, m-edit, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]

@@ -1,11 +1,3 @@
-"""One physical operation to one statement, or to the Dialect's refusal.
-
-The invariant half of rendering — which Columns, which types, which key — is
-already settled by the planner; this module only quotes identifiers and asks the
-Dialect for spellings. Nothing here names a dialect or branches on one, so the
-same code renders every vendor and a synthetic Dialect drives the whole path.
-"""
-
 from __future__ import annotations
 
 from parallax.core.dialect import ColumnDdl, Dialect, IndexColumnDdl, Unsupported

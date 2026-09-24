@@ -1,25 +1,3 @@
-"""``parallax.core.inheritance`` enforcement scope (m-inheritance).
-
-The closed inheritance-tree model: exactly one abstract ``root``, interior
-``abstract-subtype`` nodes, row-owning ``concrete-subtype`` leaves, and the two
-strategies (table-per-hierarchy with a tag discriminator,
-table-per-concrete-subtype). This scope owns the family invariants a model must
-satisfy and the Inheritance Facet that answers, once per formation, every
-family-effective question — ancestry, family identity, effective
-concrete-subtype sets, member applicability, physical container and tag, and the
-root-owned Persistence Mode — so a consumer reads a precomputed family fact
-instead of recomputing it. ``m-inheritance`` depends on ``m-metamodel`` and
-``m-model-formation``.
-
-It exports :func:`project_table_groups`, the pure Candidate Metamodel projection
-the dependent Storage Layout Rule Set validates. Canonical physical column
-order, effective nullability, and physical keys belong to
-``m-storage-layout``; nothing here answers a physical table's shape.
-
-Consumers reach the facet through :func:`view`, so generic facet retrieval stays
-an internal formation seam.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -171,16 +149,6 @@ def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> st
     return concrete.canonical if matches > 1 else concrete.name
 
 
-# --------------------------------------------------------------------------- #
-# Concrete-subtype write protocol (m-inheritance "Concrete-subtype writes"):  #
-# the payload-shape rules a model-aware write                                 #
-# validator MUST enforce before the target-validity rule, pre-SQL. `entity`   #
-# is the write's resolved target (a concrete subtype for an idiomatic keyed   #
-# verb; the family root by the rejected lane's own "no explicit handle"       #
-# default, `m-predicate`'s target-resolution convention reused for writes)   #
-# -- an abstract `entity` is itself the LAST-checked defect, never short-     #
-# circuited ahead of the more specific payload-shape rules.                   #
-# --------------------------------------------------------------------------- #
 _FORBIDDEN_METADATA_KEYS: frozenset[str] = frozenset({"tag", "tagValue", "familyVariant"})
 
 
@@ -299,7 +267,7 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     shared managed-write preparation reached by both
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` and
     :func:`~parallax.core.unit_work.instructions.prepare_wire_write`. The
-    developer-facing ``_where`` verb family (`python.md` §5) and the conformance
+    developer-facing ``_where`` verb family and the conformance
     engine's predicate-write translation therefore run it before they buffer,
     so no ingress can classify an inheritance-family predicate write differently.
     Two callers stand behind it, each covering a route that call

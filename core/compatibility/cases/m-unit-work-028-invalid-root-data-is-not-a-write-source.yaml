@@ -4,11 +4,6 @@
 # is declared. The result is hydratable, but classification suppresses every Read
 # Origin in its root-local graph. Handing its Customer node to `update` therefore
 # raises `write-value-not-stored` before row derivation, buffering, or SQL.
-#
-# m-snapshot-read-050 is the shared-state sibling: one invalid and one valid root
-# reach the same page-owned child state, yet only the valid root's distinct child
-# node carries an origin. This case pins the write-visible consequence for the
-# invalid node itself.
 model: models/customer.yaml
 lane: api-conformance
 tags: [m-unit-work, m-snapshot-read, m-value-object, write-value, provenance, invalid-stored-data, scenario, slice-snapshot-1]

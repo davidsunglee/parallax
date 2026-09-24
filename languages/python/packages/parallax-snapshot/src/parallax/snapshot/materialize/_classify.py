@@ -1,29 +1,3 @@
-"""Root classification: one verdict per result root, downstream of its Root View.
-
-Detection is local and layout-neutral; attribution is not. Whether a root is
-invalid depends on the whole include tree reachable from it, which only the
-Root View knows — so classification runs here, once, after the view forms and before
-construction, and neither materializer re-judges anything it answers.
-
-The rule is root-granular by contract: an issue anywhere in a root's requested
-include tree makes that root invalid, one invalid included node repeats its
-diagnosis in every root that reaches it, and no node is pruned or given a union
-of its own. A root whose issues all left values producible still constructs — its
-collapse produced legal member values — so hydration and classification stay one
-pass rather than a construct-and-catch that would re-judge by exception.
-
-The construction scope narrows honestly with it: nodes reachable only from
-non-hydrating roots are left out, so atomic publication means *everything
-constructible publishes together* rather than everything the query matched. The
-scope is closed under reachability by construction — a root that reaches a
-non-hydrating node is itself non-hydrating — so no constructed node ever points
-at one left out.
-
-A conforming Root View pays nothing: :func:`classify_roots` answers from
-:attr:`~parallax.snapshot.materialize.RootView.has_issues` alone, walking
-nothing and wrapping nothing.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable

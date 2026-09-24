@@ -1,17 +1,5 @@
 # Two guarded branches over one relationship DIVERGE at the next level, and each
 # deeper hop descends from its own branch's parents (m-deep-fetch, m-inheritance).
-#
-# Two canonical maximal paths guard `Animal.owner` at the root: to {WildBoar},
-# and to {Dog} continuing through `Person.pets`. The Dog path materializes its
-# first hop once, so `1 + L` = 4 — the WildBoar owner (12), the Dog owners
-# (10, 11), and the pets of the DOG branch's owners alone. The semantic
-# distinction the case pins down is branch provenance: the two guarded owner hops
-# fill the same ordinary `owner` view but keep separate parent sets, so the `pets`
-# level is keyed by 10 and 11 — never by 12, the owner the WildBoar branch reached
-# just before it. Alice and Bob therefore carry `pets`, while Carol, reached only
-# through the WildBoar branch, carries none at all: the same relationship, fetched
-# for one branch and not the other, is exactly what the extra statement buys.
-# Whiskers, a Cat, is admitted by neither guard and so carries no `owner` key.
 model: models/animal.yaml
 tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

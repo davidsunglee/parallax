@@ -1,54 +1,3 @@
-"""The ONE recursive predicate owner (m-sql), over an immutable resolution scope.
-
-Every descent into an `m-predicate` predicate happens here. `_navigation` and
-`_inheritance` return immutable PLANS and never lower anything; `_compile`
-assembles statements around the fragment this module returns. So this file holds
-the package's only RECURSIVE dispatch over the Predicate union, and its only
-recursion — which is what makes "where does this node get lowered?" a question
-with one answer. (`_compile_inheritance_read` carries the package's only other
-`match`, selecting a plan type rather than a Predicate node.)
-
-**The resolution scope is the dispatch argument.** :data:`ResolutionScope` is
-either an :class:`EntityScope` (an active entity, its alias, and whether this
-statement aliases its own columns at all) or an :class:`ElementScope` (one
-unnested value-object array element: its container and the alias the unnest
-declared). One dispatcher serves both — the boolean combinators and the flat
-`nested*` family are legal in either, and everything else is entity-scope
-vocabulary that an element scope refuses. There is deliberately no second
-element dispatcher: a scoped `nestedExists` `where` builds an element scope and
-hands its own predicate back to :func:`lower_predicate`.
-
-**Both mutual-recursion cycles close here rather than through a sibling.**
-
-* A `narrow` reached mid-predicate is handled in this module: it self-recurses on
-  the branch operand and asks `_inheritance` only for the tag guard's inputs.
-* A hop is handled the same way: `_navigation` resolves the plan, this module
-  opens each branch, builds the child scope, recurses on the branch's un-lowered
-  interior, and only THEN pushes the guard's bind values (m-sql "Grouped branch
-  predicates": a user predicate binds before a framework-injected guard).
-
-**Binding is always spelled through the context.** A scope resolves and renders;
-`scope.ctx` accumulates. Every bind site in this file therefore reads
-`scope.ctx.bind(...)` / `scope.ctx.binds`, so the bind ORDER this task exists to
-protect is greppable rather than inferred. The plan-only modules below hold a
-`ColumnScope` / `PlanScope` instead, neither of which can reach a `ctx` at all.
-
-To-many value-object array traversal lives here too (m-sql "To-many — exists /
-notExists and any-element predicates"): a correlated `EXISTS` over a guarded
-`jsonb_array_elements` unnest, continuing the same alias sequence navigation
-uses. A flat predicate crossing a `many` member is **any-element** and self-
-guards independently per predicate (two ANDed flat predicates open two
-independent `EXISTS` subqueries, `m-value-object-018`); a scoped `nestedExists`
-/ `nestedNotExists` `where` is **same-element** — every element predicate lowers
-against the SAME unnested alias, element-relative (no `Class.valueObject`
-prefix). This claim is Postgres-only; MariaDB's `json_contains` / `json_length`
-containment family is documented in `m-sql` but not goldened for this target and
-is not implemented here.
-
-Named without a leading underscore because the MODULE carries the privacy, the
-package convention `_context` established: importers alias each name down.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -182,14 +131,6 @@ class MemberSubject:
     text_compared: bool = False
 
 
-# --------------------------------------------------------------------------- #
-# The resolution scopes.                                                       #
-#                                                                              #
-# Both are immutable VALUES describing "what does a leaf reference resolve      #
-# against, and how does it render". Both point at the statement's one `StatementBuilder`,    #
-# which is the mutable half — so a scope may be freely rebuilt while aliases    #
-# and binds keep advancing on the single shared accumulator.                    #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class EntityScope:
     """A predicate resolving against an ENTITY: the active target, its alias, and
@@ -457,9 +398,6 @@ _FlatNested = (
 )
 
 
-# --------------------------------------------------------------------------- #
-# The dispatcher.                                                              #
-# --------------------------------------------------------------------------- #
 def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
     """Lower one predicate node to a SQL fragment, appending binds in order.
 
@@ -672,11 +610,6 @@ def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
     assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 
-# --------------------------------------------------------------------------- #
-# Inheritance — a `narrow` reached MID-predicate (m-sql "Grouped branch         #
-# predicates"). Cycle A closes here: this self-recurses on the branch operand   #
-# and asks `_inheritance` only for the guard's inputs.                          #
-# --------------------------------------------------------------------------- #
 def _lower_branch_narrow(product: ValidatedPredicate, scope: EntityScope) -> str:
     """A `narrow` node reached MID-predicate (nested inside and/or/not/group) — a
     **grouped branch predicate** (m-sql "Grouped branch predicates"): the
@@ -711,15 +644,9 @@ def _lower_branch_narrow(product: ValidatedPredicate, scope: EntityScope) -> str
     return f"({branch_sql} and {tag_sql})"
 
 
-# --------------------------------------------------------------------------- #
-# Navigation (m-sql "Joins by navigation"). Cycle B closes here: `_navigation`  #
 # resolves the hop and hands back an immutable plan; this is its only consumer. #
-# The loop below is the whole lowering: OPEN a branch (which takes its alias    #
-# and renders its correlation and its DEFERRED tag guard), lower that branch's  #
-# own interior against a child scope, and only THEN push the guard's binds —    #
-# the m-sql "Grouped branch predicates" order, stated here rather than left to  #
-# an evaluation-order accident.                                                 #
-# --------------------------------------------------------------------------- #
+
+
 def _lower_navigation(product: ValidatedPredicate, scope: EntityScope) -> str:
     op = product.authored
     if not isinstance(op, (Navigate, Exists, NotExists)):  # pragma: no cover
@@ -784,12 +711,9 @@ def _hop_where(
     return " and ".join(terms)
 
 
-# --------------------------------------------------------------------------- #
-# Value-object nested predicates (m-value-object). Every occurrence is         #
 # self-identifying accepted Metadata with its own expected-O(1) member lookup, #
-# so a dotted path resolves through the Metamodel Interface here rather than   #
-# through m-value-object, which the DAG forbids m-sql from importing.          #
-# --------------------------------------------------------------------------- #
+
+
 def _lower_nested(product: ValidatedPredicate, scope: EntityScope) -> str:
     """Lower a flat `nested*` predicate (m-predicate "Nested value-object
     predicates"): a scalar extraction against the scope's own alias when the path
@@ -999,10 +923,6 @@ def _lower_any_element(
     )
 
 
-# --------------------------------------------------------------------------- #
-# `nestedExists` / `nestedNotExists` (m-sql "To-many — exists / notExists and  #
-# any-element predicates").                                                    #
-# --------------------------------------------------------------------------- #
 def _lower_nested_exists(product: ValidatedPredicate, scope: EntityScope) -> str:
     """A bare form is a non-empty / empty-or-absent test over the guarded
     unnest; a scoped `where` composes its element predicate on the SAME

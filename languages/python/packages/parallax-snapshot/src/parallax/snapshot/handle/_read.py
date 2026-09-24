@@ -1,79 +1,3 @@
-"""``parallax.snapshot.handle._read`` — the production find executor and the
-Snapshot result surface (m-deep-fetch / m-snapshot-read).
-
-The module DAG's snapshot-handle scope already reaches `materialize` + `m-sql`
-+ `m-db-port`, so the edges the DAG declares nowhere (`m-deep-fetch` may not
-import `m-sql`; `m-sql` may not import `m-navigate`/`m-temporal-read`) are
-composed HERE, exactly like `_write_lowering` composes
-the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
-`db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
-and build the SAME
-:class:`~parallax.snapshot.materialize.Page`, so the per-level
-loop exists exactly once on the developer-facing path.
-
-Included Page levels materialize and convert rows one at a time: a converted
-node names its correlation members, so the next level gathers keys from the
-converted parent rather than a retained row. The shared
-:class:`~parallax.snapshot.handle._materialization.Materializer` owns root
-execution, per-level fetching, and Page assembly. Flat-row, history, and predicate-write lanes
-instead stage one tuple of positional provider rows into one Page, before any
-consumer-specific derivation, so each lane classifies or refuses that one staging
-Page rather than judging rows as it walks them. The port's raw
-`list[Row]` remains one statement's own lifetime, and neither raw nor
-provider rows survive into a sealed Page, a Snapshot, or a lifecycle
-event.
-
-The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
-`m-snapshot-read`'s own carriers — the sealed Page and the private Read Origins
-a materializer needs, and nothing about the execution that produced them — so
-they are defined in
-:mod:`~parallax.snapshot._read_result` and re-exported here beside the
-executor that builds them, together with the developer-facing :class:`Snapshot`
-surface they convert into and the pin helpers that carry a query's or a
-milestone's as-of coordinates across that conversion.
-
-An object-form read also retains the write evidence its Page-owned states observed, onto the
-values it publishes: this module drives
-:mod:`parallax.snapshot.handle._retention` while each row is still live, and
-hands the resulting Read Origins to whichever materializer runs. The dependency
-goes this way and only this way — the retention module names nothing here.
-
-One executor, two materializers. The two :class:`ResultPublication` values are
-PEERS over the same
-:class:`~parallax.snapshot.materialize.RootView`: which one runs is chosen
-after execution has already finished and neither calls the other. Each publishes
-one Page at a time, so an eager find, a milestone-set find, and a
-streamed read differ in WHICH Pages they hand over rather than in how a Page
-becomes a result.
-:func:`find_rows` is the values lane's own degenerate case — the transformed row
-IS the representation, so it publishes rows directly and shares with :func:`find`
-exactly the canonicalization, compilation, and Database Call bracket that decide
-behavior.
-
-All three classify stored state that contradicts the model rather than refusing
-it: a Snapshot element is ``T | InvalidData[T]``, a row-form element is
-``Mapping | InvalidData[Mapping]``, the default accessors here refuse an invalid
-result after their own arity check, and :meth:`Snapshot.checked` reads the same
-storage in band. Milestone-set roots use the same in-band classification and
-carry no edge when their temporal start cannot decode. Predicate-write staging
-alone refuses at the shared publication gate because a write has no in-band
-channel through which to publish a verdict.
-
-What a find EXECUTES is `m-execution-lifecycle`'s vocabulary, not this module's:
-each read runs inside the activity its composition root handed down, and each
-call is bracketed into a Database Call child of it. A standalone read is handed
-the Read its own root opened; a participating read is handed the Read its
-transaction's attempt opened; an unobserved one is handed the shared inert
-activity, and the same bracket then emits nothing. Nothing is retained — a
-result carries no record of the calls that produced it — so an executor takes the
-activity it brackets against and answers the result alone. :func:`execute_read`
-is where the call bracket actually happens, and it is deliberately the package's
-ONE of them: the materializing predicate write's resolving read
-(`_predicate_writes`) is a read that reaches the database too, so it brackets
-through this same function rather than through a second copy of the timing and
-failed-call rules.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -189,12 +113,12 @@ __all__ = [
 
 
 class NoResultFound(RuntimeError):
-    """``Snapshot.result()`` matched zero roots (spec §2/§3)."""
+    """``Snapshot.result()`` matched zero roots."""
 
 
 class TooManyResultsFound(RuntimeError):
     """``Snapshot.result()`` / ``.result_or_none()`` matched more than one root
-    (spec §2/§3)."""
+    ."""
 
 
 def _sole[T](roots: tuple[T, ...], *, empty_is_absence: bool) -> T | None:
@@ -230,7 +154,7 @@ _WIRE_AT_OMITTED = object()
 
 
 class Snapshot[T]:
-    """The Python reification of a core Snapshot Graph (spec §3): ``db.find`` /
+    """The Python reification of a core Snapshot Graph: ``db.find`` /
     ``tx.find``'s result. The complete surface: :meth:`result`,
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
     :meth:`checked`, :meth:`wire`,
@@ -367,7 +291,7 @@ class Snapshot[T]:
 
     @property
     def pin(self) -> Pin:
-        """The query's OWN lowered as-of coordinates (spec §3): only
+        """The query's OWN lowered as-of coordinates: only
         genuinely pinned axes — a scanned (``history`` / ``as_of_range``) axis
         is absent, per the core rule that a scan is not a pin."""
         return self._pin
@@ -549,7 +473,7 @@ def _project_eager_values(
 
 
 class CheckedSnapshot[T]:
-    """A :class:`Snapshot`'s roots as ``T | InvalidData[T]`` (spec §4).
+    """A :class:`Snapshot`'s roots as ``T | InvalidData[T]``.
 
     The whole eager checked surface: the same three arity accessors, the same
     :attr:`pin`, the same :attr:`edition`, and nothing else. It shares the
@@ -586,12 +510,10 @@ class CheckedSnapshot[T]:
 
     @property
     def pin(self) -> Pin:
-        """The source Snapshot's own pin, forwarded unchanged."""
         return self._pin
 
     @property
     def edition(self) -> str:
-        """The source Snapshot's own edition, forwarded unchanged."""
         return self._edition
 
     def __repr__(self) -> str:
@@ -1171,7 +1093,7 @@ def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetada
 
 
 def edge_pin(edge: Edge) -> Pin:
-    """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
+    """One milestone's own edge, rendered as a :class:`Pin` (the Python binding: each
     milestone-set root is edge-pinned at its own milestone's from-instant).
 
     An axis the Entity does not declare answers absent on both sides, so the

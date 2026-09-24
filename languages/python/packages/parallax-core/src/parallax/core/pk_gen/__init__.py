@@ -1,22 +1,3 @@
-"""``parallax.core.pk_gen`` enforcement scope (m-pk-gen).
-
-The primary-key generation strategy model: application-assigned (caller-supplied),
-``max`` (``max(col) + 1`` folded into the INSERT's SQL), and ``sequence`` (a
-simulated sequence registry table hands out reserved blocks). This scope carries
-the pure strategy classification and the block-allocation arithmetic; the actual
-DML (the ``max`` INSERT's ``coalesce(max(...), ?) + ?`` fragment, the registry
-``update ... set next_val = next_val + ?``) is lowered at the write seam
-(``parallax.snapshot.handle``) from the
-neutral ``{computed: "maxPlusOne"}`` / ``{increment: n}`` DB-computed markers a
-write row carries; :func:`allocate_block` is the block arithmetic the
-``sequence`` strategy's registry choreography derives its ids from.
-``m-pk-gen`` depends on ``m-metamodel``.
-
-Generation is reachable only through an Attribute's primary-key branch, and a
-:class:`~parallax.core.metamodel.Sequence` reaches this scope with every sizing
-parameter already resolved to its semantic default, so nothing here re-fills one.
-"""
-
 from __future__ import annotations
 
 from parallax.core.metamodel import (

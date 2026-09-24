@@ -1,11 +1,3 @@
-"""The identity-paired view of two endpoints every later stage reads.
-
-Declarations are paired exactly once, by structured identity and never by
-guessing a rename, so the differ, the classifier, and the impact analyzers never
-re-pair. The value is internal to this scope and dies with the ``evolve`` call
-that built it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence

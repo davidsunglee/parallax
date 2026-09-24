@@ -1,5 +1,3 @@
-"""The error-neutral authoring verdict consumed by metamodel policy."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

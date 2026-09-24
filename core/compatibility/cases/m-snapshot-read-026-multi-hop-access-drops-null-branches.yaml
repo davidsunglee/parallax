@@ -6,34 +6,6 @@
 # only corpus case that states the FANNED-OUT MULTI-HOP form of that walk: every
 # other `expectGraph` names a single hop, where there is no intermediate branch
 # to drop and a to-many arm holds only the rows the fetch attached.
-#
-# Order 1 owns FOUR statuses and they are exactly the two kinds: 101 is
-# order-level, so its `orderItemId` is NULL and its `orderItem` view is
-# loaded-NULL, while 201, 202 and 203 are item-level and reach items 11, 11 and
-# 12. The read materializes all three levels — order, statuses, then the items
-# those statuses point at — in three round trips, the second level's IN-list
-# gathering the root key and the third's the DISTINCT non-null `orderItemId`s,
-# which is where the null branch already costs nothing. The access then walks
-# `statuses.orderItem` over that view and states `[11, 11, 12]`: item 11 TWICE,
-# because two statuses reach it and the walk answers per branch rather than per
-# distinct node, and no `null` at all, because status 101's branch reached no row.
-#
-# The semantic distinction is against both of the other shapes the rule
-# distinguishes. Against a to-one path with no fan-out: an access over
-# `OrderStatus.orderItem` from a read rooted on statuses would state one terminal
-# per root — the node, or the `null` its last hop holds — because a position that
-# never fanned out carries the "single node or null" a to-one member is defined
-# to hold. Against de-duplication: `[11, 12]` would be the DISTINCT nodes the
-# walk reached, which is a different question from what the traversal answers.
-# An implementation that emitted `null` for the order-level status, or that
-# collapsed the two branches reaching item 11 into one, fails here while every
-# single-hop case in the family still passes.
-#
-# `roundTrips: 0` on the access is the closed-world half as everywhere else: the
-# whole walk is over rows the read already fetched, so a multi-hop path costs no
-# more at access time than a single-hop one. `sameObjectAs: 0` rides along for
-# consistency with the other zero-round-trip accesses (m-op-list-002); on the
-# wire lane it is primary-key equality against this step's own reused source rows.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-case-format, m-deep-fetch, closed-world, relationship, to-many, multi-hop, scenario, slice-snapshot-1]
 shape: scenario

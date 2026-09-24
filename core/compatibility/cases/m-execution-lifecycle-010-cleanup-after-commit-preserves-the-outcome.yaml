@@ -2,40 +2,6 @@
 # have its release confirmed after a COMMITTED attempt is a fact about the resource, not an
 # outcome — the attempt still commits and so does the invocation —
 # `api-conformance` lane.
-#
-# The closure reads the versioned row and updates it, the boundary commits, and
-# the Release that follows cannot hand the connection back. `cleanup:
-# release-unconfirmed` with one `return`/`handoff-failed` issue is the honest report
-# of a resource whose fate is unknown: the handoff raised, so it is neither
-# retried nor followed by a close — a native return that failed may still have
-# given the connection to another borrower (m-db-port). The issue is required
-# there rather than optional, because something has to have gone wrong to reach
-# that disposition and stating which step is the whole value of it.
-#
-# What the case pins is the two facts standing side by side without either
-# rewriting the other. `then.outcome: committed`, the attempt finishes
-# `committed`, and the invocation finishes `committed` — the durability call
-# already succeeded, and a problem met while LETTING GO of the connection
-# afterwards cannot un-commit it. Equally, the release states what it
-# established rather than being silently reported as a clean return. A stream
-# that answered `cleanup: returned` here would claim an accounting that never
-# completed, and one that failed the attempt would claim a transaction that
-# never rolled back.
-#
-# The Release is also not a CAUSE. Nothing names activity 8 — the attempt
-# carries no failure at all, so there is nothing for a cleanup fact to be the
-# cause of, and the rule holds the other way too: a Release never becomes the
-# child another activity's failure names, however badly it went.
-#
-# `roundTrips: 2` counts the observing read and the gated update. The Release is
-# no Database Call and neither is the commit, so the connection's whole lifetime
-# — checkout, the handoff that failed, and the disposal that was not attempted
-# after it — reaches the count nowhere: resource work is housekeeping
-# (m-execution-lifecycle).
-#
-# `lane: api-conformance`: a handoff that fails is injected at the resource seam
-# and cannot be provoked by authored SQL or by a single-connection harness, so
-# no golden SQL is authored and each Database Call omits its `statement` index.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, slice-snapshot-1]
 lane: api-conformance

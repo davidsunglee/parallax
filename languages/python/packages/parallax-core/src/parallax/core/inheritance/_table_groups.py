@@ -1,11 +1,7 @@
-"""Validation-time inheritance topology and physical Table-group projection.
+"""Projection accepts an unvalidated Candidate Metamodel and emits no issues.
 
-The projection is deliberately earlier than the Inheritance Facet. It accepts
-only a Candidate Metamodel, emits no issues, and returns groups only where the
-family root, strategy, ancestry, and intended Table are unambiguous. The
-Inheritance Rule Set and dependent Storage Layout Rule Set share the same
-cycle-guarded topology walk without depending on Rule Set invocation order.
-"""
+Only unambiguous groups are returned, allowing dependent validation rules to
+share this projection without depending on rule invocation order."""
 
 from __future__ import annotations
 
@@ -163,13 +159,6 @@ type TableGroupContributor = (
     | TopLevelValueObjectTableContributor
     | TablePerHierarchyTagContributor
 )
-"""The closed identity-bearing physical-claim projection algebra.
-
-``AttributeTableContributor`` carries an accepted Attribute declaration,
-``TopLevelValueObjectTableContributor`` carries a top-level Value Object
-identity and declaration, and ``TablePerHierarchyTagContributor`` carries the
-Entity Identity and Column of a TPH root discriminator.
-"""
 
 
 @dataclass(frozen=True, slots=True)

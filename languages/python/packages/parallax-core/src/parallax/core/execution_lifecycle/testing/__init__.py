@@ -1,23 +1,3 @@
-"""``parallax.core.execution_lifecycle.testing`` enforcement scope — the complete
-recorder.
-
-TESTING ONLY. :class:`RecordingLifecycleProvider` retains every event of every
-root it accepts, so it grows ``O(events)`` by design and violates the bounded
-per-root state a production Handler owes. It is also the one Handler that
-retains the Lowered Statements a Database Call borrows. Both are deliberate: a
-suite grading a delivered event stream needs the whole stream, and a production
-observability path needs neither.
-
-It is its own ISOLATED enforcement scope precisely so that "not a production
-observability path" is a build failure rather than a sentence: a grant on the
-parent package does not carry this child, so every production scope outside that
-package has it as a forbidden target rather than merely an unstated one, and the
-one import a contract cannot reject — a module of the parent package reaching
-this child — is rejected over the files themselves by
-``tools/check_scope_ownership.py``. This package is also absent from
-:mod:`parallax.core.execution_lifecycle`'s re-exports.
-"""
-
 from __future__ import annotations
 
 import threading

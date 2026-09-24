@@ -1,22 +1,3 @@
-"""Predicate-algebra nodes (m-predicate).
-
-Frozen ``slots`` dataclasses for the recursive selection tree the query surface
-builds and the corpus serializes. Every node is immutable and shareable;
-construction is value-only (metamodel binding is validated by the serde/statement
-layers, not in ``__init__``). The union :data:`PredicateNode` is the exhaustive
-selection algebra consumed by ``m-sql`` predicate lowering, whose dispatch uses
-``match`` and ``assert_never``. Every query-wide value — the queried position,
-result narrowing, ordering, the row cap, Temporal Selection, Includes — is a
-clause of ``m-object-query`` rather than a node here; :class:`Narrow` is the
-Predicate-scoped filter, which restricts the active position while evaluating
-its own operand. Aggregation (``groupBy``) and the write side are out of scope.
-
-A node that doubles as a Python authoring surface — one a caller composes by
-method call rather than by deserializing a document — rejects an illegal
-composition through :class:`QueryDefinitionError`, which lives here beside the
-rules that raise it.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -125,7 +106,7 @@ QUERY_DEFINITION_CODES: Final[frozenset[str]] = frozenset(
         "query-not-mutation-compatible",
     }
 )
-"""The closed query-definition rejection vocabulary (Python spec §2).
+"""The closed query-definition rejection vocabulary.
 
 That section fixes which rule draws which code; an invalid expression — a Sort
 Key composition included — draws ``query-expression-invalid``. A query names no

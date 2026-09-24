@@ -1,12 +1,5 @@
 # Removing a concrete subtype (m-model-evolution): coordinated, and its Behavioral
 # Impact is retained.
-#
-# This is m-model-evolution-019 read backwards. Removing a model-facing
-# declaration needs `AuthoringSurfaceChangeRequired`, and the shared Table's rows
-# may simply be left in place. A Coordinated Evolution is a complete description
-# rather than a refusal, so it carries the same `QueryResultMembershipChanged` the
-# unilateral direction did — alongside its requirement, and with no Overlap-Visible
-# Operation.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

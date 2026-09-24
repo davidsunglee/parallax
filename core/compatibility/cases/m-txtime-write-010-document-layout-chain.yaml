@@ -1,24 +1,6 @@
 # A Transaction-Time-Only UPDATE of a document-mapped Entity closes the current
 # milestone and chains a successor carrying the WHOLE Structured Column
 # (m-txtime-write x m-storage-layout), on Postgres AND MariaDB.
-#
-# The layout changes nothing about the milestone contract: the two axis bounds are
-# designated Attributes, so `in_z` and `out_z` keep Columns of their own and the close
-# is the same `set out_z = ?` addressed on the one current row. What the layout does
-# change is where the carried state lives. Under `Columns` a chained successor binds
-# one column per domain member; here it binds ONE document, and the successor's
-# document is the closed row's own with the assignment patched into it.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert : open [2026-01-01, infinity) with the whole document   (1 statement)
-#   step 2 update : close the current row (out_z = 2026-06-01) and chain a new
-#                   current row [2026-06-01, infinity) carrying the changed
-#                   `title` beside the carried `crew` and `manifest`      (2 statements)
-#
-# `crew` and `manifest` are what make the chain observable rather than decorative:
-# neither changes, and both MUST still appear in the successor's document. An
-# implementation that patched the closed row in place would leave one milestone; one
-# that bound only the assigned member would chain a row that lost them.
 model: models/document-layout.yaml
 tags: [m-txtime-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

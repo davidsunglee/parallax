@@ -1,12 +1,5 @@
 # A Value Object occurrence arriving (m-schema-delta): one Structured Column, not
 # a Column per member.
-#
-# `Consignment.origin` is nullable, so existing rows need nothing and the
-# addition is unilateral. Physically it is one occurrence in one Column of the
-# dialect's structured-document type — `jsonb` on Postgres, `json` on MariaDB —
-# carrying both of its members, which is what distinguishes a top-level
-# occurrence from two Attributes declared beside each other. Its members are
-# suppressed operations: the occurrence's own addition describes them.
 tags: [m-model-evolution, m-schema-delta, evolution, valueObject, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,14 +1,3 @@
-"""The symmetric Relationship Facet and its typed retrieval (m-relationship).
-
-A relationship is authored once, from one side, but navigated from both. This
-module owns the resulting directional value and the immutable per-formation view
-that serves it: one value per accepted declaration, reachable by exact Identity
-in expected amortized constant time and enumerable per Entity in local
-declaration order. The facet is the only place a reverse direction's join and
-cardinality exist; accepted Entity Metadata keeps its declarations exactly as
-authored.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

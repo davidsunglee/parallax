@@ -1,12 +1,4 @@
 # Walking-skeleton case: eq on the primary key — one equality predicate, one bind.
-#
-# The literal 42 becomes a `?` placeholder whose value rides in the statement's
-# binds. Trivial single-table predicate, so `then.referenceSql` is optional; a
-# naive oracle is included anyway to exercise the triple-equivalence path.
-#
-# A plain single-table `eq` lowers to identical SQL on Postgres and MariaDB (no
-# dialect divergence), so both dialects share one `then.statements` entry and the
-# harness runs it against both — the simplest matrix row.
 model: models/orders.yaml
 tags: [m-predicate, m-conformance-adapter, eq, slice-snapshot-1, slice-managed-1]
 shape: read

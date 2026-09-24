@@ -1,24 +1,6 @@
 # Columns half of the chained-edit proof: two successive edits of ONE occurrence,
 # each replacing it whole against the state the previous one left. Its twin authors
 # the same two edits and the same two expected rows under Relational Document Layout.
-#
-# The first edit adds a stop, so it restates `title`, `note`, `origin`, and both
-# elements of `stops`; the intervening find proves that restated value is what item 2
-# now holds. The second edit names `title` and one stop and nothing else, so what it
-# destroys is what the FIRST edit stored rather than what the fixture did — `note`
-# and `origin` were rewritten a moment earlier and are gone all the same, and the
-# closing find publishes an occurrence without those keys rather than with their
-# nulls.
-#
-# The semantic distinction this pair pins down is that a chain composes over stored
-# state, one replacement per edit, with no accumulation across the chain. An
-# implementation that merged an assignment into the stored occurrence would end with
-# `note` and `origin` still standing and both stops still listed; one that settled
-# the second edit against the value the first edit was itself built from would end
-# with `Bergen` back. Each edit is its own unit of work, so each takes its own
-# resolving read — `WriteTwinItem` declares no version and no As-Of Axis, so its
-# Effective Concurrency Strategy is Locking and every read here takes the shared row
-# lock.
 model: models/write-transparency-layout-twin-columns.yaml
 tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

@@ -1,19 +1,5 @@
 # One path narrowing at BOTH positions: a root guard, then a segment narrow
 # (m-deep-fetch, m-inheritance).
-#
-# The single path is
-# `{ narrow: { to: [Pet] }, segments: [{ rel: Animal.owner },
-# { rel: Person.pets, narrow: { to: [Dog] } }] }` — guarded at the root to the pets
-# of the family, then narrowed at its second hop to the owners' Dogs. Both hops run
-# once (`1 + L` = 3): the owner level is keyed by the owner ids gathered from the
-# Cat and Dog roots alone (10, 11 — never Carol's 12, which the guard excludes), and
-# the pets level descends from those already-guarded owners, so it needs no guard of
-# its own. The semantic distinction the case pins down is that the two positions
-# compose while keeping OPPOSITE view semantics: the root guard contributes no key,
-# so Rex, Fido, and Whiskers reach their owner under the ordinary `owner` view, while
-# the segment narrow contributes the derived `pets[Dog]` key on those owners — never
-# marking the broad `pets` relationship loaded. Tusker, excluded at the root, carries
-# no `owner` key and therefore no branch of this path at all.
 model: models/animal.yaml
 tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

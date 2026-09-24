@@ -1,12 +1,6 @@
 # Deferred load flushes a pending dependent write first (m-deep-fetch,
 # m-unit-work): a buffered write that affects the relationship being loaded is
 # flushed BEFORE the relationship query runs, so the load observes it.
-#
-# Order 1 is found (step 0), then a new line item (id 13) is buffered for it and
-# flushed at step 1 — the INSERT lands. Step 2's explicit `load` of `items` runs
-# AFTER the flush, so its `order_id in (1)` query returns the two seeded items PLUS
-# the freshly flushed 13. The statement ordering (INSERT before SELECT) is the
-# observable: a load never queries a relationship over stale buffered state.
 model: models/orders.yaml
 tags: [m-deep-fetch, relationship, deferred-load, m-unit-work, slice-managed-1]
 shape: scenario

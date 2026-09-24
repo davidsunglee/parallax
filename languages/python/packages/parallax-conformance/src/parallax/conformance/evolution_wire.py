@@ -1,16 +1,3 @@
-"""The corpus spelling of an Evolution and its Schema Delta, as `then` JSON.
-
-`parallax.evolution` exports typed values and no serialization, because model
-altitude is the point — a host renders an Evolution in its own words. The JSON
-spelling belongs to `m-case-format`, and its only consumer is the conformance
-adapter, so the encoder sits here beside the case-format parser rather than in
-the wheel.
-
-Every accepted value is spelled the way the model descriptor spells it, so an
-`earlier` or `later` fact reads as the model it was authored in rather than as a
-second vocabulary a case author has to learn.
-"""
-
 from __future__ import annotations
 
 from enum import Enum
@@ -269,9 +256,6 @@ def _physical_location(location: PhysicalLocation) -> dict[str, str]:
     return spelled
 
 
-# --------------------------------------------------------------------------- #
-# Identities.                                                                  #
-# --------------------------------------------------------------------------- #
 def _entity(identity: EntityIdentity) -> str:
     return identity.canonical
 
@@ -329,9 +313,6 @@ def _scope(identity: object) -> dict[str, str]:
             raise EvolutionSpellingError(f"no scope spelling for {identity!r}")
 
 
-# --------------------------------------------------------------------------- #
-# Operations and their field deltas.                                           #
-# --------------------------------------------------------------------------- #
 def _operation(operation: EvolutionOperation) -> dict[str, Any]:
     match operation:
         case EntityAdded() | EntityRemoved() | ConcreteSubtypeAdded() | ConcreteSubtypeRemoved():
@@ -415,9 +396,6 @@ def _delta(delta: Any) -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Behavioral Impacts.                                                          #
-# --------------------------------------------------------------------------- #
 def _impact(impact: BehavioralImpact) -> dict[str, Any]:
     return {
         "kind": type(impact).__name__,
@@ -435,9 +413,6 @@ def _requirement(requirement: CoordinationRequirement) -> dict[str, Any]:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Accepted values, spelled as the model descriptor spells them.                #
-# --------------------------------------------------------------------------- #
 def _fact(value: object) -> Any:
     """One accepted endpoint value, spelled as the model descriptor spells it.
 

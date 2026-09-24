@@ -1,20 +1,6 @@
 # Deep fetch, DECLARED relationship ordering DESCENDING over a NULLABLE key with the
 # canonical Nulls Last placement, proven on BOTH dialects (m-deep-fetch "Ordered
 # to-many children" + m-dialect NULL ordering).
-#
-# `Order.notesDescNullsLast` orders notes by `resolvedOn`, a nullable date: a resolved
-# note carries one, an unresolved note does not. This is the pairing where the two
-# dialects swap which one compensates — Postgres treats NULL as largest and so needs
-# the explicit `desc nulls last` suffix, while MariaDB treats it as smallest and already
-# trails NULLs on `desc`, emitting nothing — and it is the corpus's first witness for a
-# DECLARED `desc` over a nullable key. Order 1's bucket runs newest-resolved first and
-# ends on the unresolved note 52 even though 52's id sits between the two resolved ones;
-# order 42's bucket is fully resolved, so it is the no-NULL contrast. Both buckets
-# reorder against insertion/id order, so a dropped or mis-placed ORDER BY fails rather
-# than passing by coincidence, and the ordering oracle derives the expectation from the
-# declared key and placement rather than from the authored graph. The paired contrast is
-# m-deep-fetch-023, whose `nulls: first` over the same key and rows leads with note 52
-# instead of trailing it.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, m-dialect, orderBy, ordering, nulls, nullable, relationship, slice-managed-1]
 shape: read

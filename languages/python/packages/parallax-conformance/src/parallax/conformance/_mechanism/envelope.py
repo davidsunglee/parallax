@@ -1,16 +1,3 @@
-"""The observation envelope every conformance lane reports through, and the
-errors it classifies.
-
-A lane's observation is what :mod:`parallax.conformance.adapter` grades against
-a case's ``then``: the compiled statement emissions, the scenario channels, and
-the graph roots a published result renders to. What this module owns is the
-envelope itself — the emission and scenario-run records, the engine's own
-refusal class, the read failures a lane translates into it, the reconciliation
-of a planned statement with the one the lifecycle delivered, and the rendering
-of a published root as a `then.graph` value under the key it is graded by.
-Nothing here executes; every lane hands in what it ran and what it planned.
-"""
-
 from __future__ import annotations
 
 import json

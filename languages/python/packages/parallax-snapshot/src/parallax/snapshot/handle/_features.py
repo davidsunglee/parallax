@@ -1,38 +1,3 @@
-"""``parallax.snapshot.handle._features`` — Deferred Execution Features.
-
-The inventory of Conformance-Slice read Features whose query shapes this
-Snapshot implementation is expected to execute and has not implemented yet,
-together with the recognizer deciding whether one canonical Object Query requires
-any of them. The read-preflight seam consults it after target resolution and
-query validation and before any I/O, so such a query is refused BY NAME
-rather than rejected as invalid: ``m-snapshot-read`` carries
-``snapshot-history-includes`` on its own Feature tag and forbids any case
-mandating its refusal, so the query is valid, the implementation is behind, and
-the refusal says which of the two it is.
-
-The inventory is FIXED for the installed package and describes Snapshot's own
-execution completeness — never a database provider's capability, a Dialect
-trait, an adapter or Database Port property, or anything an application,
-environment, constructor argument, or hook can add to or remove from. There is
-no capability protocol here for a provider to implement, because every Database
-in one installation defers exactly the same set. Its expected end state is
-empty, and every member is reviewable implementation debt.
-
-A member is added only atomically with the core behavior and Feature tag that
-defines it, the active Conformance Slice's explicit non-claim of that Feature,
-the Python specification's deferred list, and zero-I/O refusal coverage —
-``tests/compatibility`` proves the non-claim by walking the claimed corpus. A
-Feature the active slice DOES claim is a defect when unimplemented and can never
-be made permissible by listing it here. Removing a member is the same change in
-reverse.
-
-Every name here is spelled bare: privacy is carried by this MODULE's leading
-underscore and by the package's frozen ``__all__``, not by per-name underscores.
-The inventory itself is the exception — it keeps the leading underscore
-``spec/python.md`` names it by, and nothing imports it, which is the property the
-sentences above describe.
-"""
-
 from __future__ import annotations
 
 from typing import Final

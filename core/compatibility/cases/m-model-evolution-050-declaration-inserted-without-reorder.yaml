@@ -1,9 +1,5 @@
 # Inserting a declaration between two existing ones (m-model-evolution): an
 # addition, and no reordering.
-#
-# Reordering compares only the identities both endpoints hold, and those keep the
-# relative order they had, so the insertion is described once as the addition it
-# is rather than twice.
 tags: [m-model-evolution, m-schema-delta, evolution, declaration-order, slice-snapshot-1]
 shape: evolution
 when:

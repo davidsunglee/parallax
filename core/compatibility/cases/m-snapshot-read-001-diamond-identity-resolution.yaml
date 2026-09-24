@@ -1,17 +1,6 @@
 # Diamond identity resolution (m-snapshot-read): two include paths reach the SAME
 # rows, and the snapshot graph materializes them in 1 + L statements — one node
 # per row, referenced from both positions.
-#
-# Order 1 is fetched with the `Order.items` and `Order.itemsByShipDate` paths: two
-# relationships over the same order_id join, so both levels return the same
-# OrderItem rows {11, 12} — the diamond. One row is ONE node referenced from both
-# lists; only the list order differs (id desc vs shipped_on asc, NULLs last).
-# Both levels fetch the IDENTICAL projection, so the graph expectation never
-# depends on which path materializes a node first; the reference-equality half of
-# identity resolution is asserted per-language by the API Conformance Suite,
-# exactly like `sameObjectAs` scenarios. Round trips are 1 (root) + 1 (items) +
-# 1 (itemsByShipDate) = 3 — one statement per level, never a fourth statement
-# for the shared rows.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read

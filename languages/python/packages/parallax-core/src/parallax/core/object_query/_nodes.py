@@ -1,17 +1,3 @@
-"""Object Query values (m-object-query).
-
-The canonical query value and the clause values it carries, as frozen ``slots``
-dataclasses with no base class. An :class:`ObjectQueryNode` is FLAT: every clause
-is a sibling field, so clause authoring order carries no meaning and no clause
-can nest inside another. Recursion belongs to ``m-predicate`` alone, which this
-module carries as one field.
-
-The private deep-fetch flat-query product is the non-wire value ``m-sql`` compiles — one
-root or related-Entity query whose temporal terms are already injected into its
-predicate. It is deliberately separate from :class:`ObjectQueryNode`: a child
-fetch level derives one without ever being an authored query.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

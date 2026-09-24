@@ -1,14 +1,3 @@
-"""Machine-readable Python Snapshot delivery budget contract, and the memory
-gates the cost class blocks on.
-
-The Budget Contract prices Snapshot delivery: its ceilings are compared by the
-report and reported as advisories. The memory gates are the other half of the
-measurement contract: one blocking ceiling per byte-unit reading address of the
-structural read and write windows, derived from the retained capture they name
-as their basis by one stated rule and graded by cost-class tests. Both are loaded
-here and transcribed nowhere.
-"""
-
 from __future__ import annotations
 
 import hashlib

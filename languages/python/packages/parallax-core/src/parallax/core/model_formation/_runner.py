@@ -1,14 +1,3 @@
-"""The deterministic Model Formation runner (m-model-formation).
-
-One entry point drives the whole gated progression: drift-check the profile
-against the manifest, resolve once, validate, compile, publish. Every ordering
-decision is taken from the manifest rather than from the profile or from
-emission order, so permuting frontend input, rule emission, or profile order
-cannot change the reported issue sequence or the compiler schedule. Nothing is
-published until every step succeeds — there is no partial Metamodel and no
-partial facet set.
-"""
-
 from __future__ import annotations
 
 import re

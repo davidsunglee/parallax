@@ -1,12 +1,6 @@
 # Deferred load batches the whole source set (m-deep-fetch): an explicit `load`
 # over several already-managed objects emits ONE child statement, never one per
 # object.
-#
-# Step 0 finds orders {1, 2, 42} (one round trip). Step 1 is an explicit `load` of
-# the `items` relationship over that whole set: a single `order_id in (?, ?, ?)`
-# query keyed by the three distinct parent ids — not three per-object queries — so
-# the deferred load costs exactly one round trip and returns every line item of the
-# three orders. This is the portable, mandatory explicit-load trigger.
 model: models/orders.yaml
 tags: [m-deep-fetch, relationship, deferred-load, slice-managed-1]
 shape: scenario

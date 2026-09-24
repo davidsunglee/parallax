@@ -1,13 +1,5 @@
 # Table-per-hierarchy DELETE: a concrete-subtype delete is tag-GUARDED (m-inheritance,
 # m-sql).
-#
-# Fixtures are loaded first. Deleting CardPayment 2 removes exactly that row from the
-# shared `payment` table — keyed on the primary key `id` with the concrete-subtype tag
-# GUARD `and kind = ?` joining the identity predicates immediately AFTER the pk
-# equality (resolved Q9): `where id = ? and kind = ?`, binds `[2, card]` (the tag value
-# is framework-derived from the subtype's tagValue). The guard scopes the delete to a
-# CardPayment row: the other card row and the cash row remain, proving the delete is
-# keyed and tag-guarded, not a tag-wide sweep.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, delete, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

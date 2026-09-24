@@ -1,18 +1,3 @@
-"""The Value Object class frontend (spec §2).
-
-A Value Object Class extends :class:`ValueObject`, is inherently frozen, and uses
-the same ``Attr[T]`` / ``attr(...)`` vocabulary Entity members use. It carries no
-table, key, relationship, or identity, and it declares no class-header option at
-all — a Value Object is reached only through the occurrences that contain it.
-
-This module is a thin metaclass over the shared engine; every parsing rule,
-reserved-name check, and payload construction lives there, so no second Value
-Object parser exists. The copy verb it adds is the shared edit core with the
-Entity vocabulary removed: no relationship may be named, and no Change Record is
-stamped, because a Value Object has no identity and is never independently
-written.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -129,7 +114,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         def __hash__(self) -> int: ...
 
     def edit(self, **changes: object) -> Self:
-        """The one door to an edited Value Object (spec §3).
+        """The one door to an edited Value Object.
 
         The result is a validated copy carrying every member this value populates
         and the caller did not name, changing only what ``changes`` names — which
@@ -147,7 +132,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         :func:`~parallax.core.metamodel.judge_assignment`, every violation is
         reported in one :class:`EditError` raised before anything is built, and
         the merged value then goes back through the ordinary constructor for the
-        §2 input policies. Four of the eight edit codes are unreachable here,
+        input policies. Four of the eight edit codes are unreachable here,
         because no Value Object member carries the designations that raise them
         (:func:`_member_metadata`).
 
@@ -168,7 +153,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         return derive(self, changes, _resolution_of(type(self)))
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
-        """Refused: ``edit(**changes)`` is the object-copy verb (spec §3).
+        """Refused: ``edit(**changes)`` is the object-copy verb.
 
         ``model_copy(update=...)`` writes its values into the copy without
         validating them, so it can build a Value Object no declaration admits — a
@@ -185,14 +170,14 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
     def copy(self, **kwargs: object) -> Self:
         """Refused: the deprecated Pydantic v1 shim reaches neither this class's
         name resolution nor the shared assignment judgement, so it is the same
-        unvalidated door under an older name (spec §3)."""
+        unvalidated door under an older name."""
         del kwargs
         raise _use_edit(type(self), "copy") from None
 
     def __copy__(self) -> Self:
         """Refused: one reachable copy path is enough to reinstate the bypass, and
         a shallow copy of the instance dictionary also carries the populated set
-        that decides which members the document spells (spec §3)."""
+        that decides which members the document spells."""
         raise _use_edit(type(self), "__copy__") from None
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
@@ -242,7 +227,7 @@ def _use_edit(cls: type, door: str) -> EditError:
 def _edit_violations(
     cls: type, shape: ValueObjectShape, changes: Mapping[str, object]
 ) -> tuple[EditViolation, ...]:
-    """Every rule the authored ``changes`` break, one per named member (spec §3).
+    """Every rule the authored ``changes`` break, one per named member.
 
     The split is ``Entity.edit``'s: resolving a Python name to a member is a
     class-shaped question answered here, and everything a resolved member then

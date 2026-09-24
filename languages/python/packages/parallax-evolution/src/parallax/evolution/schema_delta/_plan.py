@@ -1,23 +1,3 @@
-"""Lowering a Unilateral Evolution to physical operations against the layouts.
-
-This is where the model becomes physical: `m-storage-layout` already composed
-every Table, its canonical Column order, each Column's effective nullability, and
-the physical primary key, so the lowering selects those facts and resolves each
-Column's value domain through the declaration its contributor names. It composes
-no key, no column order, and no nullability of its own.
-
-The lowering therefore reads the two endpoints' compiled layouts and asks what
-the later one holds that the earlier one does not, rather than re-deriving a
-physical consequence per operation kind. An Evolution Operation decides what a
-physical difference MEANS — which operations caused it, and so whether one exists
-at all — and the layouts decide what it IS.
-
-An entity-level addition brings a whole Table with it. It suppresses operations
-for the members it contains, so the members' Columns and the Entity's authored
-Indices are read off the later model here rather than arriving as operations of
-their own.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence

@@ -1,29 +1,3 @@
-"""The credential half of ``m-db-port``: how a database login proves who it is.
-
-A connection string says WHERE a database is; a **Credential Source** says HOW
-the login it names authenticates. Keeping them apart is what lets a token-based
-identity integration — AWS RDS IAM, Cloud SQL IAM, a secrets broker — be a
-provider artifact an application composes rather than a change to an adapter.
-
-Nothing here reaches a driver, a pool, or a network. An adapter is the only
-consumer: it calls :meth:`CredentialSource.resolve` where its driver establishes
-a PHYSICAL connection, and never for an acquisition that reuses a retained one.
-Established connections outlive the credential that opened them, so there is no
-refresh verb and no expiry field: a source that needs to rotate simply produces
-a different credential the next time it is asked.
-
-That timing is also what separates this seam from the other ``-Source``
-protocols in Parallax, whose verbs are I/O-free. ``resolve`` MAY block on a
-network, and it runs where nothing above it can interrupt it — on a retained
-pool's own worker threads, or on an acquiring caller's thread ahead of the
-driver's connect timeout. A source therefore BOUNDS its own I/O.
-
-Secret hygiene is stated once and belongs to both sides. :class:`Password` keeps
-its secret out of its representation, and the message of anything a source
-raises MUST NOT carry the secret: an adapter's fixed-text wrapping covers a
-careless top-level message, but it cannot scrub a chained cause.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

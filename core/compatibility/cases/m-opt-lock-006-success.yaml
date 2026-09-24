@@ -1,28 +1,4 @@
 # Optimistic-lock success (m-opt-lock): a fresh-version UPDATE affects exactly ONE row.
-#
-# The companion to the conflict case (m-opt-lock-005): with NO concurrent writer (no
-# `precondition`), Account id 2 (Linus) still carries the version we read (1), so
-# the golden UPDATE's version gate matches:
-#   update account set balance = ?, version = ? where id = ? and version = ?
-# The `... and version = ?` predicate (bind 1) matches the row, so the UPDATE
-# affects EXACTLY ONE row — success — and advances the version to 2 (every
-# successful versioned write moves the gate forward, so the next writer's check is
-# meaningful).
-#
-# The harness asserts the affected-row count is 1 and the resulting table state:
-# id 2's balance is now 500.00 and its version is 2; the other rows are untouched.
-# Together with m-opt-lock-005 this proves `updatedRows != 1` is the conflict signal — a
-# fresh version provably touches one row, a stale version provably touches zero.
-#
-# `roundTrips: 2` and the lifecycle oracle state the OTHER call this shape costs:
-# the resolving read whose retained observation licenses the write (`m-unit-work`
-# "Write Observation"). It is a Root Execution of its own because it stands outside
-# the transaction it licenses — that is what lets a concurrent writer commit
-# between the two in m-opt-lock-005 — and its Database Call names NO statement,
-# because `then.statements` authors the DML alone and a resolving read has no
-# golden to index (`m-case-format` "Resolving reads a write owes"). The gated
-# UPDATE names golden 0, so the authored order is named in full by the calls that
-# ran it, and the two calls are exactly what `roundTrips` counts.
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, success, optimistic-lock-success, slice-snapshot-1, slice-managed-1]
 shape: conflict

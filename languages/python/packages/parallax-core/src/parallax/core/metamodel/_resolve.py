@@ -1,16 +1,3 @@
-"""The fixed foundational resolver (m-metamodel).
-
-Resolution is the one gate between a frontend's Unresolved Metamodel and the
-Candidate Metamodel semantic Rule Sets validate. It aggregates every
-foundational issue — identity grammar, duplicate identities, unresolvable
-references, local member collisions, reserved temporal names, standalone
-primary keys, indices, and As-Of Axes — and either rejects with all of them or
-produces a candidate whose relationship and inheritance references are
-canonical Identities. It advances references and nothing else: it never pairs
-relationship directions, swaps joins, inverts cardinality, derives inheritance,
-or implements another module's semantic rules.
-"""
-
 from __future__ import annotations
 
 import re

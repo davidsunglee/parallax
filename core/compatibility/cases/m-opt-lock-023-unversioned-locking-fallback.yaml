@@ -1,33 +1,5 @@
 # The mandatory Locking fallback under the DEFAULT Concurrency Preference
 # (m-unit-work "Strategy selection"; m-opt-lock; m-read-lock).
-#
-# The preference a unit of work resolves is not the strategy an Entity
-# participates under: the runtime combines it with that Entity's Optimistic Lock
-# Facet. Wallet is Account minus the `version` column and carries no As-Of Axis,
-# so its family supplies NO version source and no gate can recover correctness at
-# write time. `optimistic` therefore cannot mean lock-free for it, and the
-# derivation lands on Locking — the shared read lock is the only mechanism the
-# model leaves.
-#
-# The case declares no `when.uow`, so it runs under the resolved DEFAULT
-# preference (`optimistic`), and the observation is the pair of consequences that
-# preference produces for THIS Entity:
-#   step 0 find  : the participating object find carries the m-read-lock
-#                  shared-row-lock suffix (`for share of t0`), exactly as an
-#                  explicit `locking` preference would render it — the SAME read
-#                  that renders none against the versioned Account of
-#                  m-unit-work-005.
-#   step 1 write : the keyed UPDATE of that locked row is UNGATED and advances no
-#                  version, because there is none to advance or bind. Its
-#                  correctness comes from the lock step 0 took.
-#   step 2 find  : a dependent find observes the updated row (read-your-own-writes)
-#                  and takes the same shared lock.
-# All three steps share one `uow` group, so the lock step 0 acquires is still held
-# when the write lands. The contrast case is m-unit-work-005, whose versioned
-# Account renders the opposite pair — no lock, a version gate — under the SAME
-# default preference. m-read-lock-012 completes this one: it holds step 0's
-# statement open against a concurrent writer and proves the derived lock excludes
-# it.
 model: models/wallet.yaml
 tags: [m-opt-lock, m-read-lock, m-unit-work, m-sql, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

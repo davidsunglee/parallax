@@ -1,16 +1,5 @@
 # Deep fetch, to-one: every OrderItem with its single owning Order eager-fetched
 # via the many-to-one `OrderItem.order` relationship.
-#
-# Two statements, so roundTrips = 2 (NOT one query per item):
-#   level 0 (root)  : all order items
-#   level 1 (order) : the orders whose id is in the DISTINCT order_id values of
-#                     those items — {1, 2, 42}.
-# The harness gathers the distinct parent keys from level 0, asserts they equal
-# the authored level-1 binds, executes once, and fans each order back onto its
-# items as a single `order` object (to-one).
-#
-# Non-trivial (deep fetch) ⇒ referenceSql REQUIRED: it is the naive single-
-# statement oracle for the ROOT row set (all order items).
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, to-one, relationship, slice-managed-1]
 shape: read

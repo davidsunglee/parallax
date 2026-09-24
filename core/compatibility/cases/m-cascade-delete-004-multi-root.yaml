@@ -1,15 +1,5 @@
 # Multi-root cascade delete (m-cascade-delete): one unit of work cascades two
 # independent root aggregates.
-#
-# m-cascade-delete-001 cascades a single root. This pins that TWO roots can be
-# cascaded in one sequence, each deleting its own dependents (children before its
-# root) — the per-root minimal witness applied twice, proving the ordering holds
-# independently for each aggregate rather than collapsing across roots.
-#
-# Fixtures are loaded first. Order 2 owns item 21 and status 102; order 42 owns items
-# 421/422 and statuses 142/204. Cascading order 2 then order 42 leaves order 1 (and
-# its items 11/12 and statuses 101/201/202/203) and the childless orders 3/4/5
-# untouched.
 model: models/orders.yaml
 tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
 shape: writeSequence

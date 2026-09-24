@@ -1,38 +1,3 @@
-"""``parallax.snapshot.handle._publication`` — prepared Model Selections and the
-Serving Model that publishes them.
-
-A Model Selection is the prepared execution form of one Domain Model under one
-Model Edition: every finite, fallible model-only derivation has already run, and
-the products are retained on the selection itself. It is process-local and
-carries no transaction, connection, Clock, or Execution Lifecycle Provider,
-which is what this scope's grant row states structurally: it is SEALED
-(`spec/python.md` §7) to ``parallax.core.entity`` and ``m-unit-work`` alone, so
-nothing here can name an attempt, a port, or an activity. What the row cannot
-say — that ``m-unit-work``'s ``Clock`` is not held either — is a promise the
-record types keep by having no such field.
-
-The selection is opaque from outside: ``model`` and ``edition`` are its only
-public properties, and its two projections are reached through
-:func:`read_projection` and :func:`write_projection`, defined here beside the
-class so the reach needs no private-usage suppression anywhere. A read entry
-receives the read projection and a write entry the write projection, so each
-verb holds only the capability it needs. The two projections carry the same
-edition and share the exact same :class:`~parallax.core.entity._layout.CatalogedModel`,
-by construction rather than by check.
-
-Preparation itself — :func:`~parallax.snapshot.handle._database.prepare_model`
-— lives in the composition root, because building a Write Planner reaches the
-SQL-lowering group this scope may not; this module owns :func:`select_model`,
-the one builder that root calls and the only way a selection comes into being.
-A :class:`ServingModel` then holds the current selection and replaces it by
-identity compare-and-replace under one lock, so a reader observes a complete
-selection or another complete one and never a partial state, and a stale
-publisher is refused rather than reordered.
-
-Names crossing a module boundary are spelled bare; privacy is carried by this
-MODULE's leading underscore and by the package's frozen ``__all__``.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -143,12 +108,10 @@ class ModelSelection:
 
     @property
     def model(self) -> DomainModel:
-        """The exact Domain Model this selection prepared."""
         return self._model
 
     @property
     def edition(self) -> str:
-        """The opaque Model Edition this selection was prepared under."""
         return self._edition
 
     def __repr__(self) -> str:
@@ -226,12 +189,10 @@ class PublicationConflictError(RuntimeError):
 
     @property
     def expected(self) -> ModelSelection:
-        """The selection the publisher believed was being served."""
         return self._expected
 
     @property
     def held(self) -> ModelSelection:
-        """The selection the comparison actually found held."""
         return self._held
 
 

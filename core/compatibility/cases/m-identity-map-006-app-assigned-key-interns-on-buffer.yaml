@@ -2,16 +2,6 @@
 # whose primary key is assigned by the application interns the moment its insert is
 # BUFFERED — its identity key already exists — so no key generation is needed and
 # its flush is a single plain insert.
-#
-# Step 0 constructs a new Account with an application-assigned primary key (id 4)
-# and buffers its insert: roundTrips 0, NO DML. Because the key is known, the
-# object interns in the identity map at buffer time (m-identity-map interning
-# timing). Step 1 flushes the unit of work — the buffered create lands as ONE plain
-# insert (the primary key is already assigned, so there is no sequence / key
-# generation, unlike a generated-PK object; see m-identity-map-007). Step 2 finds id
-# 4 and observes the persisted row. The object-reference identity of the buffered,
-# flushed, and re-found instance is asserted per-language by the API Conformance
-# Suite.
 model: models/account.yaml
 tags: [m-identity-map, m-unit-work, identity, interning, scenario, slice-managed-1]
 shape: scenario

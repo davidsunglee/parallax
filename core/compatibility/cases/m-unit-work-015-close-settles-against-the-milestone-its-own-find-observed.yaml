@@ -2,50 +2,6 @@
 # that follows settles against the milestone the read it names observed — not against
 # whichever read of that key ran last (m-unit-work "An observation is filed under the
 # object it observed AND the milestone it observed of that object").
-#
-# Position id 1 has TWO rectangles current on Transaction Time — R2 (value 100, valid
-# [2024-01-01, 2024-06-01)) and R3 (value 200, valid [2024-06-01, infinity)). One `uow`
-# group reads id 1 at the Valid-Time instant 2024-03-01, observing R2, then reads the
-# SAME key at 2024-09-01, observing R3, and then writes, naming step 0 with `on` as the
-# read its value came from. The close addresses R2: `thru_z` binds 2024-06-01, R2's own
-# Valid-Time end, and the split re-opens R2's window alone. `then.tableState` shows R3
-# untouched.
-#
-# This is the case that grades the KEYING of write evidence, which nothing else in the
-# corpus reaches. Everywhere else a keyed temporal write consumes a milestone resolved
-# once from case state — a writeSequence entry from what its earlier entries left
-# current, a conflict close from the edge it names — so no second read of one key ever
-# competes for the same slot. Here both reads happen, in one unit of work, and each is
-# evidence about a DIFFERENT milestone of one primary key. An implementation filing that
-# evidence under identity alone holds one slot: the second read erases the first, and
-# the write either settles against R3 — closing the wrong rectangle, splitting the wrong
-# window, and leaving R2 open — or finds nothing under the coordinate its value came from
-# and refuses a close that is fully evidenced. Both failures are visible here, and
-# neither is visible in a case whose write names its own milestone.
-#
-# The semantic distinction is that a read's evidence is about the ROW it read, not about
-# the key it read: two reads of one key that resolve to DIFFERENT milestones are two
-# pieces of evidence, and the later read takes nothing away from the earlier one. `on` is
-# what lets a case say which of them a write was handed, and an implementation that
-# ignores it — resolving the close from current state, as every other write shape must —
-# cannot answer: id 1 holds two current rectangles and no single one is "the" milestone
-# of that key.
-#
-# What this case does NOT grade, so that no reader takes it for more:
-#
-# - NOT the converse, that two coordinates resolving to the SAME milestone share one
-#   slot. Two such reads record identical evidence, so a store holding them as one entry
-#   and a store holding them as two answer every close identically, and no golden or
-#   tableState here can differ. That half of the keying rule is stated normatively in
-#   m-unit-work and has no compatibility-case witness.
-# - NOT where the gate came from. R2 and R3 are the two halves of one rectangle split,
-#   so they share the Transaction-Time start 2024-04-01 and the `and in_z = ?` gate binds
-#   2024-04-01 whichever of them a resolution picks. Telling a derived gate from a
-#   misderived one would need two current milestones of one key whose Transaction-Time
-#   starts differ, and no fixture holds such a pair; a misresolution is caught by the
-#   address alone.
-# - NOT read-lock behavior. The unit runs `optimistic`, so its finds take no shared row
-#   lock; m-opt-lock-022 is the locking-mode witness.
 model: models/position.yaml
 tags: [m-unit-work, m-bitemp-write, m-temporal-read, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

@@ -1,17 +1,3 @@
-"""The Temporal Facet's Model Compiler (m-temporal-read).
-
-Compilation runs only after every Rule Set accepted the candidate, so it decides
-no validity and emits no issue: it asks the Inheritance Facet for each Entity's
-family root and classifies that root's declared axes. This module contributes no
-Rule Set, because every axis defect is already owned elsewhere — malformed axes
-by ``m-metamodel``'s foundational rules, root ownership by ``m-inheritance``.
-
-Reaching a state those rules ruled out — including the unsupported
-Valid-Time-Only formation, which no frontend can express and no shape variant can
-hold — raises, so the formation runner reports a compiler contract failure rather
-than publishing a facet.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
