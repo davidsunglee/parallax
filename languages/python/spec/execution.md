@@ -47,8 +47,9 @@ cached, while unrelated keys can build concurrently.
 Cache identity includes the exact model edition, cataloged model and dialect,
 authored query structure and ordinary predicate values, result form, and
 concurrency preference. Exact container and scalar types remain distinct.
-Stream continuation coordinates and page limits are execution values rendered
-into a cached template, not cache identity. Plans retain immutable planning and
+The first stream page and each continuation-coordinate NULL pattern use distinct
+entries; the coordinate values and page limits are execution values rendered
+into their cached template, not cache identity. Plans retain immutable planning and
 conversion data, not runtimes, connections, rows, pages, origins, or results.
 The cache has the `Database` lifetime; closing the root does not promise to clear
 plans while the closed root is still referenced, and eviction or release makes
