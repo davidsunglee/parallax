@@ -92,6 +92,7 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
+    BufferItem,
     CardinalityCorruptionError,
     ClaimedKeyedWrite,
     Concurrency,
@@ -111,6 +112,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteEffectError,
     WriteObservation,
+    WritePlan,
     WritePlanningError,
     buffered_write,
     enforce_affected_rows,
@@ -1129,23 +1131,35 @@ def _lower_resolved(
     rows.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
-    instant = _pinned_instant(tx_instant)
+    plan, statements = _plan_and_lower(model, dialect, concurrency, tx_instant, buffer)
+    _check_statement_count_consistency(entries, len(statements))
+    shadow.track_opened(model, plan)
+    return statements
+
+
+def _plan_and_lower(
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str,
+    buffered_writes: Sequence[BufferItem],
+) -> tuple[WritePlan, tuple[LoweredStatement, ...]]:
+    """Plan one write buffer through the SAME ``build_write_planner`` factory the
+    composition layer uses and lower every surviving step PURELY, in execution
+    order, beside the plan they came from."""
     plan = (
         build_write_planner(model)
         .finalize(
             PlanningRequest(
                 actor_identity=_PLANNING_ACTOR,
-                transaction_instant=instant,
+                transaction_instant=_pinned_instant(tx_instant),
                 concurrency=concurrency,
-                buffered_writes=buffer,
+                buffered_writes=buffered_writes,
             )
         )
         .plan
     )
-    statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
-    _check_statement_count_consistency(entries, len(statements))
-    shadow.track_opened(model, plan)
-    return tuple(statements)
+    return plan, tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
 
 
 def lower_writes(
@@ -1203,20 +1217,9 @@ def _lower_predicate_write_step(
     """
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
-    instant = _pinned_instant(INERT_CLOCK_INSTANT)
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=_PLANNING_ACTOR,
-                transaction_instant=instant,
-                concurrency=concurrency,
-                buffered_writes=[prepared],
-            )
-        )
-        .plan
+    _plan, statements = _plan_and_lower(
+        model, dialect, concurrency, INERT_CLOCK_INSTANT, [prepared]
     )
-    statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
     return statements[0]
 
@@ -3318,22 +3321,14 @@ def _lower_conflict_write(
     statement its real execution emits rather than the per-row statements an
     uncollapsed plan would have rendered.
     """
-    instant = _pinned_instant(INERT_CLOCK_INSTANT)
-    plan = (
-        build_write_planner(model)
-        .finalize(
-            PlanningRequest(
-                actor_identity=_PLANNING_ACTOR,
-                transaction_instant=instant,
-                concurrency=concurrency,
-                buffered_writes=[
-                    _buffered(write.instruction, write.observation, model) for write in resolved
-                ],
-            )
-        )
-        .plan
+    _plan, statements = _plan_and_lower(
+        model,
+        dialect,
+        concurrency,
+        INERT_CLOCK_INSTANT,
+        [_buffered(write.instruction, write.observation, model) for write in resolved],
     )
-    return tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
+    return statements
 
 
 def _implied_shortfall_error(

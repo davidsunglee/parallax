@@ -34,6 +34,7 @@ from tests.unit._corpus_model_support import formed, model, target
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
+APPLIANCE = model("appliance")
 DOCUMENT = model("document")
 DOCUMENT_LAYOUT = model("document-layout")
 INSTRUMENT = model("instrument")
@@ -321,7 +322,7 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
         limit=1,
-        lock="locking",
+        preference="locking",
     )
 
     assert compiled.statement.sql.count("select ") == 5
@@ -1389,18 +1390,21 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
 # --------------------------------------------------------------------------- #
 def test_tpcs_union_refuses_only_a_genuinely_requested_read_lock() -> None:
     # `entity_read_lock` hands the read its target's Effective Concurrency
-    # Strategy verbatim, so a participating read carries `optimistic` even though
-    # no suffix is ever emitted for it. The refusal tests what the append site
-    # tests — an actual shared row lock, which PostgreSQL grants over neither a
-    # `UNION` result nor any input of one, and which cannot be silently dropped
-    # because that lock is what licenses a later ungated write.
+    # Strategy verbatim, so a participating read of a versioned family carries
+    # `optimistic` even though no suffix is ever emitted for it. The refusal tests
+    # what the append site tests — an actual shared row lock, which PostgreSQL
+    # grants over neither a `UNION` result nor any input of one, and which cannot
+    # be silently dropped because that lock is what licenses a later ungated
+    # write. An unversioned family takes that lock under either preference.
     compiled = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), lock="optimistic"
+        oa.All(), APPLIANCE, POSTGRES, target(APPLIANCE, "Appliance"), preference="optimistic"
     )
     assert " union all " in compiled.statement.sql
     assert "for share" not in compiled.statement.sql
     with pytest.raises(SqlGenError, match="read-lock suffix over a table-per-concrete-subtype"):
-        compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), lock="locking")
+        compile_read(
+            oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"), preference="locking"
+        )
 
 
 def test_tpcs_union_orders_by_the_collision_safe_result_alias() -> None:

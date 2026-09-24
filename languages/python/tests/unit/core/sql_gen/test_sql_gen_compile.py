@@ -644,7 +644,7 @@ def test_locking_object_find_matches_the_scenario_find_golden() -> None:
         ACCOUNT,
         POSTGRES,
         target(ACCOUNT, "Account"),
-        lock="locking",
+        preference="locking",
     )
     assert compiled.statement.sql == (
         "select t0.id, t0.owner, t0.balance, t0.version from account t0 "
@@ -654,8 +654,10 @@ def test_locking_object_find_matches_the_scenario_find_golden() -> None:
 
 
 def test_optimistic_and_default_reads_take_no_lock() -> None:
-    for lock in (None, "optimistic"):
-        compiled = compile_read(oa.All(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account"), lock=lock)
+    for preference in (None, "optimistic"):
+        compiled = compile_read(
+            oa.All(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account"), preference=preference
+        )
         assert "for share" not in compiled.statement.sql
 
 

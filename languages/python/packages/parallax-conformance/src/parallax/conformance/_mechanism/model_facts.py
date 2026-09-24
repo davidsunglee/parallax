@@ -24,6 +24,7 @@ __all__ = [
     "default_family_root",
     "family_declarer",
     "first_declared_entity",
+    "gate_read",
     "load_case_domain_model",
     "load_case_metamodel",
     "model_path",
@@ -209,6 +210,13 @@ def canonicalize_read(
         form == "graph",
     )
     return deep_fetch.plan(validated, model, projection=projection).root
+
+
+def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
+    """Run production's own read gate (`handle.preflight`) over ``query`` for its
+    refusal alone: it resolves the target, validates every clause from that
+    root, and classifies Deferred Execution Features."""
+    preflight(query, model=model, form="graph")
 
 
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
