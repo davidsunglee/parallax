@@ -92,7 +92,7 @@ from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.handle import Database
 from parallax.snapshot.handle._publication import read_projection
 from tests.unit import _delivery_control_support as control_support
-from tests.unit._gc_reachability import reachable_objects
+from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
@@ -107,9 +107,7 @@ from tests.unit._snapshot_materialization_support import (
 )
 from tests.unit.memory_instruments import (
     WARMUP,
-    Closure,
     Span,
-    closure,
     in_a_child_interpreter,
     serve_one_measurement,
     whole_heap_across,

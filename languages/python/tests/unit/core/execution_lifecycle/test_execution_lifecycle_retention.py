@@ -230,6 +230,7 @@ from tests._support.db_port import (
     Write,
     body_outcome,
 )
+from tests.unit._gc_reachability import Closure, closure
 from tests.unit._transact_support import (
     ACCOUNT,
     FIXED,
@@ -240,10 +241,8 @@ from tests.unit._transact_support import (
 from tests.unit.core.execution_lifecycle._lifecycle_cost_support import STATEMENT, TARGET, rows
 from tests.unit.memory_instruments import (
     REPEATS,
-    Closure,
     Seam,
     allocation,
-    closure,
     in_a_child_interpreter,
     live_graph,
     retained,

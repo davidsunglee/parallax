@@ -1,6 +1,6 @@
-"""What a run of code costs in memory, from six directions at once.
+"""What a run of code costs in memory, from five directions at once.
 
-Six instruments, because an object can appear without any byte reaching the
+Five instruments, because an object can appear without any byte reaching the
 allocator, a borrowed graph can be kept without either number moving, a container
 that existed before the window can grow inside it without becoming a survivor at
 all, a structure built and dropped between two points of a longer sequence is
@@ -55,13 +55,6 @@ holder to be caught fills on FIRST REACH and saturates — so both runs read it
 full — :func:`whole_heap_across` takes them as the two ends of one region
 entered once, over work the process has never done before.
 
-**What one object holds.** :func:`closure` grades the objects and references one
-object reaches without passing through any of a caller-named BOUNDARY. Where the
-counts above answer what a whole window kept, this answers what one participant
-in it kept, so a caller comparing one structure against the same structure
-somewhere else compares two totals rather than the difference of two sums that
-share most of their terms.
-
 **Warming: four warm themselves, one is warmed from outside, and two must not
 be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening either
 of its windows, :func:`retained` warms both its seam and its sampler inside its
@@ -76,8 +69,6 @@ reach: :func:`first_run` grades the first run a process makes, and
 would move what it grades to before the reading. The first takes no warming at
 all; the second leaves it to the caller, who pays every once-only cost by running
 the same sequence at the same size over OTHER data before opening the region.
-:func:`closure` walks an object the caller already holds and runs no seam, so
-warming does not arise for it.
 
 Outside all of them, stated rather than implied. An object born and dropped
 inside a single call that the free list also serves: no sample point holds it and
@@ -137,13 +128,11 @@ __all__ = [
     "OWN_INTERPRETER_ATTRIBUTE",
     "REPEATS",
     "WARMUP",
-    "Closure",
     "Heap",
     "LiveGraph",
     "Seam",
     "Span",
     "allocation",
-    "closure",
     "first_run",
     "high_water",
     "in_a_child_interpreter",
@@ -342,73 +331,6 @@ def survivors(seam: Seam) -> list[object]:
     return live_graph(seam).survivors
 
 
-class Closure(NamedTuple):
-    """What one object holds, and which of the boundary it holds it through."""
-
-    reached: tuple[int, ...]
-    tracked: int
-    references: int
-
-
-def closure(start: object, boundary: Sequence[object]) -> Closure:
-    """What ``start`` reaches without passing through any other member of
-    ``boundary``, and which members it reaches.
-
-    A TOTAL reading of one participant's own state, which is what a claim about
-    one structure repeated in several places needs: two sums that share most of
-    their terms cancel whatever they share when subtracted, and two closures do
-    not.
-
-    ``reached`` is the boundary members found, as their positions, so a caller
-    states which of them one member may hold rather than how many. The walk stops
-    at each of them, so a member reached through another member is not reported:
-    what comes back is the boundary this one holds DIRECTLY.
-
-    Classes end the walk. Every instance of a kind reaches its own class and
-    everything the module defining it does, which is shared structure no single
-    instance can grow; what a class itself accumulated is a reference into the
-    window's objects and is what :func:`live_graph` reads.
-
-    Objects the collector does not track are followed but not counted, for the
-    reason the survivor sample cannot count them at all: whether an equal integer
-    or an interned string is one object or two is the interpreter's business
-    rather than the measured structure's.
-
-    The reading is taken after a collection for that same reason. A tuple whose
-    contents are all untracked is itself untracked only once a collection has
-    visited it, so until then ``tracked`` counts how much allocation has happened
-    to run since the structure was built rather than anything the structure
-    holds: two identical structures reached by walks of different sizes read
-    differently, the larger walk reading LOWER because it triggered the
-    collections the smaller one did not. Collecting first puts every caller at
-    the settled state, where tracked-ness is a property of the structure.
-    """
-    gc.collect()
-    others = {id(obj): index for index, obj in enumerate(boundary) if obj is not start}
-    seen = {id(start)}
-    reached: set[int] = set()
-    tracked = 0
-    pending = gc.get_referents(start)
-    references = len(pending)
-    while pending:
-        obj = pending.pop()
-        identity = id(obj)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        if identity in others:
-            reached.add(others[identity])
-            continue
-        if isinstance(obj, type):
-            continue
-        if gc.is_tracked(obj):
-            tracked += 1
-        referents = gc.get_referents(obj)
-        references += len(referents)
-        pending.extend(referents)
-    return Closure(tuple(sorted(reached)), tracked, references)
-
-
 def retained(seam: Seam) -> int:
     """Bytes reachable at ``seam``'s innermost point that were not reachable
     before it began.
@@ -500,12 +422,12 @@ class Heap(NamedTuple):
 
     ``objects`` and ``references`` are over what the collector tracks; ``held``
     adds every untracked object those reach, priced by :func:`sys.getsizeof` once
-    per PATH the walk arrives by, for the reason :func:`closure` does not count
-    them at all — whether two equal integers are one object is the interpreter's
-    business, while how many ways the heap arrives at a value of that size is the
-    heap's own shape. Per path and not per reference: the walk carries no
-    identity set, so a value under a shared untracked subgraph is charged once
-    for every path into it however few references point at it directly.
+    per PATH the walk arrives by rather than counted as objects — whether two
+    equal integers are one object is the interpreter's business, while how many
+    ways the heap arrives at a value of that size is the heap's own shape. Per
+    path and not per reference: the walk carries no identity set, so a value
+    under a shared untracked subgraph is charged once for every path into it
+    however few references point at it directly.
 
     ``held`` is what each type reports about itself, so storage an object owns
     outside its own allocation is in none of the three numbers: a fully touched
