@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import weakref
 from decimal import Decimal
 from typing import Any, cast
 
@@ -33,7 +34,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import TX_TIME, VALID_TIME
-from parallax.core.unit_work import FixedClock, ObservedStateKey, RetainedObservation, instructions
+from parallax.core.unit_work import FixedClock, instructions
 from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, KeyedWriteValueError, Transaction
@@ -347,19 +348,16 @@ def test_releasing_every_streamed_source_makes_the_transactions_index_forget_it(
     # still reaches disappears from it with the last reference to that value.
     port = ScriptedAdapter(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
-    def fn(tx: Transaction) -> tuple[ObservedStateKey, RetainedObservation | None]:
+    def fn(tx: Transaction) -> bool:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
             roots = list(stream)
-        hint = _observation(roots[0])
-        state = cast("ObservedStateKey", hint.observation.key)
-        assert tx._uow.retained_for(state) is hint.observation  # pyright: ignore[reportPrivateUsage] - the index is first-party state
-        del roots, hint
+        evidence = weakref.ref(_observation(roots[0]).observation)
+        assert evidence() is not None
+        del roots
         gc.collect()
-        return state, tx._uow.retained_for(state)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
+        return evidence() is None
 
-    state, after_release = db_for(POLICY_MODEL, port).transact(fn)
-    assert state is not None
-    assert after_release is None
+    assert db_for(POLICY_MODEL, port).transact(fn) is True
 
 
 # --------------------------------------------------------------------------- #

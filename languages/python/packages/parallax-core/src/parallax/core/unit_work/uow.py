@@ -148,7 +148,6 @@ class UnitOfWork:
         "_claims",
         "_closed",
         "_families",
-        "_frame_depth",
         "_observations",
         "_participation",
         "_pending_inserts",
@@ -230,7 +229,6 @@ class UnitOfWork:
         # stamps on the values it produces, and what an effective-Locking write
         # tests its source against.
         self._participation = ParticipationToken()
-        self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
         # One attempt, one lazy instant: constructing it reads no clock, and
@@ -346,18 +344,6 @@ class UnitOfWork:
         self._observations[observation.key] = observation
         return observation
 
-    def retained_for(self, key: ObservedStateKey) -> RetainedObservation | None:
-        """The evidence this unit of work holds for one exact observed state, if
-        any is still reachable — the read side of :meth:`retain`.
-
-        Absence covers both a state no read of this scope observed and one whose
-        every source value and buffered write has been released: liveness is
-        strong reachability, so an index entry never outlives the evidence it
-        names.
-        """
-        self._ensure_open()
-        return self._observations.get(key)
-
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """Serve a call-time read, force-flushing pending writes first.
 
@@ -425,16 +411,6 @@ class UnitOfWork:
         if self._rollback_cause is None:
             self._rollback_cause = cause
 
-    @property
-    def is_rollback_only(self) -> bool:
-        """Whether the transaction is marked rollback-only (commit will be refused)."""
-        return self._rollback_only
-
-    @property
-    def is_joined(self) -> bool:
-        """Whether the unit of work is inside a joined (nested) frame."""
-        return self._frame_depth > 0
-
     def ensure_not_rollback_only(self) -> None:
         """Refuse new joined work when the transaction is already doomed."""
         if self._rollback_only:
@@ -488,7 +464,6 @@ class UnitOfWork:
         Driven by :func:`run_unit_of_work`; not part of the developer surface.
         """
         self.ensure_not_rollback_only()
-        self._frame_depth += 1
         try:
             # The joined body returns immediately; commit/abort/retry belong to the
             # outermost boundary. An inner failure dooms the whole txn.
@@ -496,8 +471,6 @@ class UnitOfWork:
         except BaseException as exc:
             self.mark_rollback_only(exc)
             raise
-        finally:
-            self._frame_depth -= 1
 
 
 class _ActiveState(threading.local):

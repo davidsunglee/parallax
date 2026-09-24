@@ -651,7 +651,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
     # A naive `until` (no tzinfo) must raise the SAME `ValueError` shape
-    # the shared window gate's own `instant_literal` normalization raises
+    # the shared window gate's own `normalize_instant` normalization raises
     # for a naive `valid_from` (never a bare `TypeError` leaked by
     # comparing a naive `until` against an already-aware `valid_from`
     # when comparison runs before normalization).

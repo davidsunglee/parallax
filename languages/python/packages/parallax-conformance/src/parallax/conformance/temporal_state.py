@@ -4,7 +4,7 @@ import contextlib
 import datetime as dt
 from collections.abc import Generator, Mapping, Sequence
 
-from parallax.core import inheritance, temporal_read, txtime_write
+from parallax.core import inheritance, temporal_read
 from parallax.core.base import normalize_instant
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -523,8 +523,10 @@ def _axis_start_names(model: Metamodel, entity: EntityMetadata) -> Mapping[Tempo
 def _axis_names(
     model: Metamodel, entity: EntityMetadata, dimension: TemporalDimension
 ) -> tuple[str, str]:
-    """``entity``'s family-effective Attribute names for one temporal dimension."""
-    return txtime_write.axis_attr_names(model, entity, dimension)
+    """``entity``'s family-effective Attribute names for one temporal dimension it declares."""
+    axis = temporal_read.view(model).axis(entity.identity, dimension)
+    assert axis is not None  # every caller asks for a dimension the entity declares
+    return axis.start_attribute.name, axis.end_attribute.name
 
 
 def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:

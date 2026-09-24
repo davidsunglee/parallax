@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core import temporal_read
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
+from parallax.core.metamodel import TemporalDimension
 from parallax.core.unit_work import (
     AUTHORED_STATE,
     CHANGED_STATE,
@@ -19,7 +18,6 @@ __all__ = [
     "MILESTONE_CHAIN",
     "TemporalPlanningError",
     "TransactionTimeChaining",
-    "axis_attr_names",
 ]
 
 _INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
@@ -69,23 +67,3 @@ class TransactionTimeChaining:
 
 
 MILESTONE_CHAIN: Final[TransactionTimeChaining] = TransactionTimeChaining()
-
-
-def axis_attr_names(
-    model: Metamodel, entity: EntityMetadata, dimension: TemporalDimension
-) -> tuple[str, str]:
-    """``entity``'s effective Attribute names for a temporal dimension.
-
-    A temporal entity's interval columns are ordinary declared attributes, and a
-    milestone row is Attribute-named like any other neutral write row, so this is
-    how a mutation's opened rows name the axis bounds they stamp. The axes are
-    family-wide and root-owned, so they are read through the Temporal Facet: a
-    concrete subtype answers with its family's axes without the caller resolving
-    a declaring position first.
-    """
-    axis = temporal_read.view(model).axis(entity.identity, dimension)
-    if axis is None:
-        raise TemporalPlanningError(
-            f"{entity.identity.name} declares no {dimension.name} temporal dimension"
-        )
-    return axis.start_attribute.name, axis.end_attribute.name

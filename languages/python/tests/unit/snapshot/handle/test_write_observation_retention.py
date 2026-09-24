@@ -396,8 +396,8 @@ def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
         later = second_read[0].observation
         assert earlier is not None
         assert later is not None
-        assert uow.retained_for(earlier.key) is earlier
-        assert uow.retained_for(later.key) is later
+        reread = judged_evidence(model, account, _account_columns(version=4), ledger=uow)
+        assert reread[0].observation is earlier
         return earlier.key, later.key
 
     earlier_key, later_key = _in_transaction(model, observe)

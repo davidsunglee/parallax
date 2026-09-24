@@ -16,6 +16,7 @@ import datetime as dt
 import gc
 import io
 import pickle
+import weakref
 from decimal import Decimal
 from typing import Any, ClassVar, Final, cast
 
@@ -642,19 +643,15 @@ def test_releasing_every_source_makes_the_transactions_index_forget_the_state() 
     # and no scope-bound bookkeeping.
     port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
-    def fn(tx: Transaction) -> tuple[object, object]:
+    def fn(tx: Transaction) -> bool:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        hint = cast("Any", _typed_hint(node))
-        state = hint.observation.key
-        held = tx._uow.retained_for(state)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
-        assert held is hint.observation
-        del node, hint, held
+        evidence = weakref.ref(cast("Any", _typed_hint(node)).observation)
+        assert evidence() is not None
+        del node
         gc.collect()
-        return state, tx._uow.retained_for(state)  # pyright: ignore[reportPrivateUsage] - the index is first-party state
+        return evidence() is None
 
-    state, after_release = account_db(port).transact(fn)
-    assert state is not None
-    assert after_release is None
+    assert account_db(port).transact(fn) is True
 
 
 # --------------------------------------------------------------------------- #

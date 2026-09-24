@@ -999,7 +999,6 @@ def _prepare_managed_write(
                 model,
                 mutation=instruction.mutation,
                 known_failures=transformed.failures,
-                subtype_validated=True,
             )
     managed_valid_from = bound_decoder(instruction.valid_from, "validFrom")
     managed_until = bound_decoder(instruction.until, "until")
