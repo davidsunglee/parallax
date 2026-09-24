@@ -71,6 +71,8 @@ __all__ = [
     "ValueObjectOccurrenceDeclaration",
     "ValueObjectShapeDeclaration",
     "ValueObjectShapeKey",
+    "designate_framework_owned",
+    "inheritance_parent",
 ]
 
 

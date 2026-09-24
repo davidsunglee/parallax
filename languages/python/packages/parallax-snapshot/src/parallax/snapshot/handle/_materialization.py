@@ -21,10 +21,7 @@ from parallax.core.object_query._validated import (
     ValidatedTemporalSelection,
 )
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._compile import (
-    CompiledRead,
-    compile_read,
-)
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, scans_validated_axis, validated_query_pin
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import FindResult
@@ -57,7 +54,6 @@ __all__ = [
     "Materializer",
     "RowPublication",
     "StreamPageRead",
-    "compile_read",
 ]
 
 

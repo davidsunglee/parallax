@@ -30,13 +30,7 @@ from parallax.core.base import (
     matches_neutral_type,
     retain_document_value,
 )
-from parallax.core.document_codec import (
-    EffectiveChangeSet,
-    Leaf,
-    MemberShape,
-    Occurrence,
-    classify_effective_change,
-)
+from parallax.core.document_codec import Leaf, MemberShape, Occurrence, classify_effective_change
 from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
     MAPPING_SOURCE_ACCESS,
@@ -45,6 +39,7 @@ from parallax.core.document_codec._authoring import (
     validate_authoring,
     validate_member_authoring,
 )
+from parallax.core.document_codec._managed import EffectiveChangeSet
 from parallax.core.metamodel import Multiplicity
 
 _GEO = MemberShape(members=(Leaf("lat", STRING, True),))

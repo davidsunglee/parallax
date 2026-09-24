@@ -19,14 +19,10 @@ from parallax.core.metamodel._values import (
 
 __all__ = [
     "CONVENTIONAL_TEMPORAL_NAMES",
-    "NONTEMPORAL",
-    "TEMPORALITY_PROFILES",
     "TEMPORAL_MEMBERS",
     "DerivedAxis",
-    "TemporalEndpoint",
     "derive_primary_key_index",
     "derive_temporal_structure",
-    "primary_key_index_name",
     "temporality_profile",
 ]
 

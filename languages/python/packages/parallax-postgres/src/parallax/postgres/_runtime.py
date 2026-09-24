@@ -40,7 +40,7 @@ from parallax.postgres._pool_metrics import PostgresPoolMetrics
 if TYPE_CHECKING:
     from psycopg_pool.abc import KwargsParam
 
-__all__ = ["PROBE_SQL", "PostgresRuntime", "open_runtime"]
+__all__ = ["PostgresRuntime", "open_runtime"]
 
 PROBE_SQL: Final = """SELECT
     1 AS ready,

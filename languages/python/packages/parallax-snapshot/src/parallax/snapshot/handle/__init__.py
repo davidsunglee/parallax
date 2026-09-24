@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
+from parallax.snapshot._read_result import FindResult, HistoryFindResult
 from parallax.snapshot.handle._adoption import ExecutionFailure
 from parallax.snapshot.handle._database import Database, ScopedDatabase, connect, prepare_model
 from parallax.snapshot.handle._errors import (
@@ -19,8 +20,6 @@ from parallax.snapshot.handle._publication import (
 )
 from parallax.snapshot.handle._read import (
     CheckedSnapshot,
-    FindResult,
-    HistoryFindResult,
     NoResultFound,
     PublishedRow,
     RowsResult,
@@ -43,12 +42,8 @@ from parallax.snapshot.handle._transaction_runner import (
     TransactionOwnershipError,
     TransactionRollbackError,
 )
-from parallax.snapshot.handle._wire import (
-    WireChanges,
-    WireDatabaseView,
-    WirePredicateTarget,
-    WireTransactionView,
-)
+from parallax.snapshot.handle._wire import WireDatabaseView, WireTransactionView
+from parallax.snapshot.handle._wire_writes import WireChanges, WirePredicateTarget
 from parallax.snapshot.handle._write_inputs import (
     KEYED_WRITE_VALUE_CODES,
     WRITE_EVIDENCE_CODES,

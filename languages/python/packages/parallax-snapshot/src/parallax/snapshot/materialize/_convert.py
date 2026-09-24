@@ -47,17 +47,15 @@ from parallax.snapshot.materialize._page import (
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._publication import (
-    SNAPSHOT_DECODING_FAILED,
-    SnapshotDecodingError,
-)
+from parallax.snapshot.materialize._publication import SnapshotDecodingError
 from parallax.snapshot.materialize._views import SourceLevel
 
 __all__ = [
-    "SNAPSHOT_DECODING_FAILED",
     "AttributeReadContract",
     "LevelContext",
     "SnapshotDecodingError",
+    "build_positional_many",
+    "build_positional_object",
     "convert_deferred",
 ]
 

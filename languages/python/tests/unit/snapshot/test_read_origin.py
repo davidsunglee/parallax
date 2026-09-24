@@ -40,9 +40,9 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     ReadOrigin,
     RetainedObservation,
-    VersionedStateKey,
     VersionObservation,
 )
+from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.snapshot import InvalidData, WireEntity, connect
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction, WriteEvidenceError

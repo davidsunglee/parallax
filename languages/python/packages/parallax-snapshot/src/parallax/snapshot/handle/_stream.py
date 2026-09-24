@@ -43,6 +43,7 @@ __all__ = [
     "SnapshotStream",
     "SnapshotStreamContinuationError",
     "SnapshotStreamStateError",
+    "StreamRead",
     "check_batch_size",
 ]
 

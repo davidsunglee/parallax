@@ -57,9 +57,6 @@ from parallax.core.storage_layout._rules import STORAGE_LAYOUT_MODULE
 
 __all__ = [
     "MODEL_COMPILER",
-    "StorageLayoutModelCompiler",
-    "classify_attribute_tier",
-    "compile_facet",
 ]
 
 

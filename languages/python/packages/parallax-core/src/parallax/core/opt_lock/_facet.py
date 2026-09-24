@@ -16,7 +16,6 @@ __all__ = [
     "OptimisticLockFacet",
     "TransactionTimeDerived",
     "Unversioned",
-    "is_optimistic_lock_facet",
     "optimistic_lock_facet",
     "view",
 ]

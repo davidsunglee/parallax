@@ -14,6 +14,7 @@ import pytest
 from parallax.core import inheritance, relationship, storage_layout
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import STRING
+from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
@@ -44,9 +45,11 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
-    compile_metadata,
 )
+from parallax.core.metamodel._compile import compile_metadata
 from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
+from parallax.core.relationship import _compile as relationship_compile
+from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.storage_layout._compile import (
     _interned,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
     _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
@@ -424,7 +427,7 @@ def test_empty_audit_tier_is_compiled_end_to_end_with_table_wide_tier_order() ->
 def test_internal_audit_designations_cover_all_six_tiers_without_new_declarations() -> None:
     model, root, _, _ = _tiered_tph_model()
     revised_by = AttributeIdentity(root, "revisedBy")
-    facet = storage_layout.compile_facet(
+    facet = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model),
         inheritance.view(model),
         relationship.view(model),
@@ -451,7 +454,7 @@ def test_internal_audit_designations_cover_all_six_tiers_without_new_declaration
 def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -> None:
     model, root, _, _ = _tiered_tph_model()
     tx_start = AttributeIdentity(root, "txStart")
-    facet = storage_layout.compile_facet(
+    facet = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model),
         inheritance.view(model),
         relationship.view(model),
@@ -681,10 +684,10 @@ def _document_family() -> tuple[CompiledMetadata, EntityIdentity, EntityIdentity
 
 
 def _document_facet(metadata: CompiledMetadata) -> storage_layout.StorageLayoutFacet:
-    return storage_layout.compile_facet(
+    return storage_layout_compile.compile_facet(
         metadata,
-        inheritance.compile_facet(metadata),
-        relationship.compile_facet(metadata),
+        inheritance_compile.compile_facet(metadata),
+        relationship_compile.compile_facet(metadata),
     )
 
 
@@ -724,11 +727,11 @@ def test_document_resident_members_contribute_no_slot_and_are_placed_by_path() -
 
 def test_entity_views_reference_effective_selection_in_complete_resident_order() -> None:
     metadata, _root, alpha, beta = _document_family()
-    inherited = inheritance.compile_facet(metadata)
-    facet = storage_layout.compile_facet(
+    inherited = inheritance_compile.compile_facet(metadata)
+    facet = storage_layout_compile.compile_facet(
         metadata,
         inherited,
-        relationship.compile_facet(metadata),
+        relationship_compile.compile_facet(metadata),
     )
 
     shapes: dict[EntityIdentity, tuple[str, ...]] = {}
@@ -1130,10 +1133,10 @@ def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_fa
         Declaration(identity=entity, container=Table("unviewed"), attributes=(key(entity),))
     )
     with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
             cast(inheritance.InheritanceFacet, _AbsentInheritanceFacet()),
-            relationship.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1151,10 +1154,10 @@ def test_compiling_a_twice_claimed_column_refuses_rather_than_composing_one_slot
         )
     )
     with pytest.raises(RuntimeError, match="duplicate Column or contributor"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
-            inheritance.compile_facet(metadata),
-            relationship.compile_facet(metadata),
+            inheritance_compile.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1174,10 +1177,10 @@ def test_compiling_a_tagless_shared_table_variant_refuses_rather_than_omitting_i
         ),
     )
     with pytest.raises(RuntimeError, match="no tag value"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
-            inheritance.compile_facet(metadata),
-            relationship.compile_facet(metadata),
+            inheritance_compile.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1196,10 +1199,10 @@ def test_compiling_a_tableless_shared_family_root_refuses_rather_than_inventing_
         ),
     )
     with pytest.raises(RuntimeError, match=r"TPH root .* has no Table"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
-            inheritance.compile_facet(metadata),
-            relationship.compile_facet(metadata),
+            inheritance_compile.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1215,10 +1218,10 @@ def test_compiling_a_tableless_branch_concrete_refuses_rather_than_inventing_a_t
         Declaration(identity=concrete, inheritance=ConcreteSubtype(ExactEntityReference(root))),
     )
     with pytest.raises(RuntimeError, match=r"TPCS concrete .* has no Table"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
-            inheritance.compile_facet(metadata),
-            relationship.compile_facet(metadata),
+            inheritance_compile.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1230,10 +1233,10 @@ def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings(
         Declaration(identity=second, container=Table("shared"), attributes=(key(second),)),
     )
     with pytest.raises(RuntimeError, match="has multiple mapping owners"):
-        storage_layout.compile_facet(
+        storage_layout_compile.compile_facet(
             metadata,
-            inheritance.compile_facet(metadata),
-            relationship.compile_facet(metadata),
+            inheritance_compile.compile_facet(metadata),
+            relationship_compile.compile_facet(metadata),
         )
 
 
@@ -1256,10 +1259,10 @@ def test_repeated_compilation_and_operation_scoped_positions_are_structurally_de
     None
 ):
     model, _, alpha, beta = _tiered_tph_model()
-    first = storage_layout.compile_facet(
+    first = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
     )
-    second = storage_layout.compile_facet(
+    second = storage_layout_compile.compile_facet(
         cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
     )
     assert tuple(first.tables) == tuple(second.tables)
@@ -1281,7 +1284,7 @@ def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -
     model = form_metamodel(source(*declarations))
     counted = _CountingMetadata(cast(CompiledMetadata, model))
     counted_inheritance = _CountingInheritanceFacet(inheritance.view(model))
-    storage_layout.compile_facet(
+    storage_layout_compile.compile_facet(
         counted,
         cast(inheritance.InheritanceFacet, counted_inheritance),
         relationship.view(model),

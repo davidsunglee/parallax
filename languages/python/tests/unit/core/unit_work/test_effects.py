@@ -27,10 +27,7 @@ from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,
-    MISSING_TARGET,
     NEW_LINEAGE,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     SUPERSEDED,
     UNGATED,
     UNVERSIONED,
@@ -59,10 +56,13 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
 )
 from parallax.core.unit_work.planned import (
-    PlannedWrite as PlannedStep,
+    MISSING_TARGET,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    ValidatedMutationSelection,
 )
 from parallax.core.unit_work.planned import (
-    ValidatedMutationSelection,
+    PlannedWrite as PlannedStep,
 )
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of

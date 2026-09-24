@@ -66,10 +66,7 @@ from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
-    MISSING_TARGET,
     NEW_LINEAGE,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     UNGATED,
     UNVERSIONED,
     Concurrency,
@@ -96,10 +93,13 @@ from parallax.core.unit_work import (
     WritePlanningError,
 )
 from parallax.core.unit_work.planned import (
-    PlannedWrite as PlannedStep,
+    MISSING_TARGET,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    ValidatedMutationSelection,
 )
 from parallax.core.unit_work.planned import (
-    ValidatedMutationSelection,
+    PlannedWrite as PlannedStep,
 )
 from parallax.descriptor import _records
 from parallax.snapshot.handle import build_write_planner, stream_lowered

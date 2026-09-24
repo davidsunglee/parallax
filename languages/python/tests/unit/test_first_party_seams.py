@@ -33,10 +33,9 @@ from parallax.core.unit_work import (
     ObjectKey,
     ObservedStateKey,
     RetainedObservation,
-    TemporalStateKey,
-    VersionedStateKey,
     WriteRejectedError,
 )
+from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import (
     DeferredFeatureError,
     QueryTargetError,

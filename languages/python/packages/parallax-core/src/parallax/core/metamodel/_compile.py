@@ -45,9 +45,7 @@ from parallax.core.metamodel._values import (
 
 __all__ = [
     "METADATA_COMPILER",
-    "MetamodelMetadataCompiler",
     "accept_metamodel",
-    "compile_metadata",
     "is_compiled_metadata",
     "value_object_metadata",
 ]

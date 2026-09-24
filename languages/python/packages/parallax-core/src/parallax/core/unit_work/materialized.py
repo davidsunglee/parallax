@@ -17,7 +17,6 @@ from parallax.core.unit_work.retain import RetainedObservation
 __all__ = [
     "BufferItem",
     "ClaimedKeyedWrite",
-    "GroupObservations",
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",

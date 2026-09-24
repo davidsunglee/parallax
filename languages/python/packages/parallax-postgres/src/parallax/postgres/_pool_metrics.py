@@ -12,7 +12,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.diagnostics import diagnostic_for
 
-__all__ = ["NativeStatistics", "PostgresPoolMetrics"]
+__all__ = ["PostgresPoolMetrics"]
 
 
 class NativeStatistics(Protocol):

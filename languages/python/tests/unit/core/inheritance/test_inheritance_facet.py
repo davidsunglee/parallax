@@ -19,8 +19,8 @@ from parallax.core.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
-    compile_facet,
 )
+from parallax.core.inheritance._compile import compile_facet
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,

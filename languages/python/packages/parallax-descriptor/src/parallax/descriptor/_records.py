@@ -35,6 +35,7 @@ __all__ = [
     "Temporality",
     "ValueObject",
     "ValueObjectAttribute",
+    "parent_identity",
 ]
 
 Persistence = Literal["read-write", "read-only"]

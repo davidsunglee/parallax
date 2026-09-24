@@ -31,7 +31,7 @@ from parallax.snapshot.materialize._page import (
 )
 from parallax.snapshot.materialize._views import RootViewLayout
 
-__all__ = ["SNAPSHOT_PROJECTION_CONFLICT", "RootView", "SnapshotConsistencyError"]
+__all__ = ["RootView", "SnapshotConsistencyError"]
 
 SNAPSHOT_PROJECTION_CONFLICT = "snapshot-projection-conflict"
 _UNPRIMED = object()

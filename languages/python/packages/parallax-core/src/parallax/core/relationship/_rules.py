@@ -26,18 +26,8 @@ from parallax.core.relationship._endpoints import AttributePositions, endpoint
 from parallax.core.relationship._facet import RELATIONSHIP_MODULE
 
 __all__ = [
-    "CARDINALITY_JOIN_MISMATCH",
-    "DEFINING_DUPLICATE",
     "ISSUE_CODES",
-    "JOIN_SOURCE_INVALID",
-    "JOIN_TARGET_INVALID",
-    "ORDER_ATTRIBUTE_INVALID",
-    "ORDER_ON_TO_ONE",
-    "REVERSE_CYCLE",
-    "REVERSE_INCONSISTENT",
-    "REVERSE_NOT_DEFINING",
     "RULE_SET",
-    "RelationshipRuleSet",
 ]
 
 JOIN_SOURCE_INVALID: Final[IssueCode] = "relationship-join-source-invalid"

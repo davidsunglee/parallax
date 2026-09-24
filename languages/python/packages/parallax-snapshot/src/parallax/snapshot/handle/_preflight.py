@@ -10,7 +10,7 @@ from parallax.core.predicate import ModelRejectedError
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
-__all__ = ["fetches_relationships", "preflight"]
+__all__ = ["preflight"]
 
 
 def preflight(

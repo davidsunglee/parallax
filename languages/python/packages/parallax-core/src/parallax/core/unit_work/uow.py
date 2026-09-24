@@ -26,14 +26,10 @@ from parallax.core.unit_work.write_planner import PlanningRequest, WritePlanner
 
 __all__ = [
     "Concurrency",
-    "EscapedTransactionError",
-    "FlushExecutor",
     "RollbackOnlyError",
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
-    "WriteBatchOpening",
-    "WriteBatchScope",
     "WriteBatchTrigger",
     "active_unit_of_work",
     "run_unit_of_work",

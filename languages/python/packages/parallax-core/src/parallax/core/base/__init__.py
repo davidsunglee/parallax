@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Final, Self, TypeGuard, cast, overload
 
-from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
+from parallax.core.base._inference import infer_neutral_type
 from parallax.core.base._neutral import (
     BOOLEAN,
     BYTES,
@@ -53,13 +53,11 @@ __all__ = [
     "INT32",
     "INT64",
     "JSON",
-    "NEUTRAL_FROM_PYTHON",
     "SQL_NULL",
     "STRING",
     "TIME",
     "TIMESTAMP",
     "UUID",
-    "Admission",
     "Boolean",
     "Bytes",
     "Date",
@@ -85,8 +83,10 @@ __all__ = [
     "UnknownFamilyTag",
     "Uuid",
     "admits_stored_scalar",
+    "adopt_frozen_map",
     "coerce_neutral_input",
     "detach_json_container",
+    "frozen_map_json_backing",
     "inert_scalar",
     "infer_neutral_type",
     "is_document_value",

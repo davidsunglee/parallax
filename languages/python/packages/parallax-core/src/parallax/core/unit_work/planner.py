@@ -25,12 +25,9 @@ __all__ = [
     "FamilyFacts",
     "ObjectKey",
     "ObservedStateKey",
-    "TemporalStateKey",
-    "VersionedStateKey",
     "family_facts",
     "object_key",
     "observed_state_key",
-    "primary_key_names",
     "resolve_object_key",
 ]
 

@@ -9,13 +9,7 @@ from parallax.core.metamodel import (
     Sequence,
 )
 
-__all__ = [
-    "REGISTRY_KEY_ROLE",
-    "REGISTRY_VALUE_ROLE",
-    "allocate_block",
-    "generated_key_attribute",
-    "generates",
-]
+__all__ = []
 
 # The two column roles of a simulated-sequence registry table (e.g. the corpus
 # `PkSequence` entity): the sequence-name key and the next-value counter. The

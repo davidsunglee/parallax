@@ -15,7 +15,6 @@ __all__ = [
     "ClaimVerdict",
     "SettledEvidence",
     "WriteIntent",
-    "WriteIntentKind",
     "admits",
     "claim_scope",
     "claimed_object",

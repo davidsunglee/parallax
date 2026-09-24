@@ -48,6 +48,12 @@ from parallax.core.metamodel import (
     sort_issues,
 )
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.storage_layout._rules import (
+    COLUMN_COLLISION,
+    DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+    INDEX_OVER_DOCUMENT_MEMBER,
+    TABLE_MAPPING_COLLISION,
+)
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests.unit._metamodel_support import (
@@ -173,7 +179,7 @@ def test_standalone_attribute_and_document_claims_share_one_column_registry() ->
             value_objects=(document,),
         )
     )
-    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.code == COLUMN_COLLISION
     assert issue.location == ValueObjectLocation(ValueObjectIdentity(plain, ("profileDocument",)))
     assert issue.related == (AttributeLocation(scalar.identity),)
 
@@ -230,7 +236,7 @@ def test_tph_siblings_are_contributors_within_one_mapping_owner() -> None:
             attributes=(attribute(_SIBLING, "noteLabel", type=STRING, column="label"),),
         ),
     )
-    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.code == COLUMN_COLLISION
     assert issue.location == AttributeLocation(
         attribute(_SIBLING, "noteLabel", column="label").identity
     )
@@ -245,7 +251,7 @@ def test_tph_tag_claim_precedes_remaining_attribute_claims_diagnostically() -> N
         _hierarchy(attributes=(key(_ROOT), tag_attribute)),
         _concrete(_LEAF),
     )
-    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.code == COLUMN_COLLISION
     assert issue.location == AttributeLocation(tag_attribute.identity)
     assert issue.related == (EntityLocation(_ROOT),)
 
@@ -267,7 +273,7 @@ def test_tpcs_inherited_and_local_contributors_collide_within_one_concrete_table
             inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
         ),
     )
-    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.code == COLUMN_COLLISION
     assert issue.location == ValueObjectLocation(ValueObjectIdentity(_LEAF, ("accountDocument",)))
     assert issue.related == (
         AttributeLocation(attribute(_ROOT, "accountRef", column="account_data").identity),
@@ -325,7 +331,7 @@ def test_later_independent_same_table_owners_relate_to_the_canonical_first_owner
         (EntityLocation(second), (EntityLocation(first),)),
         (EntityLocation(third), (EntityLocation(first),)),
     ]
-    assert {issue.code for issue in issues} == {storage_layout.TABLE_MAPPING_COLLISION}
+    assert {issue.code for issue in issues} == {TABLE_MAPPING_COLLISION}
 
 
 def test_multiply_owned_table_skips_secondary_column_validation() -> None:
@@ -344,7 +350,7 @@ def test_multiply_owned_table_skips_secondary_column_validation() -> None:
             attributes=(key(second, "secondId"), duplicate),
         ),
     )
-    assert [issue.code for issue in issues] == [storage_layout.TABLE_MAPPING_COLLISION]
+    assert [issue.code for issue in issues] == [TABLE_MAPPING_COLLISION]
 
 
 def test_mapping_collisions_precede_earlier_unique_table_column_collisions() -> None:
@@ -387,9 +393,9 @@ def test_mapping_collisions_precede_earlier_unique_table_column_collisions() -> 
     )
     issues = storage_layout.RULE_SET.validate(candidate)
     assert [issue.code for issue in issues] == [
-        storage_layout.TABLE_MAPPING_COLLISION,
-        storage_layout.TABLE_MAPPING_COLLISION,
-        storage_layout.COLUMN_COLLISION,
+        TABLE_MAPPING_COLLISION,
+        TABLE_MAPPING_COLLISION,
+        COLUMN_COLLISION,
     ]
     assert [(issue.location, issue.related) for issue in issues] == [
         (
@@ -477,7 +483,7 @@ def test_standalone_tph_and_tpcs_owners_compete_in_one_table_claim_stream() -> N
         (EntityLocation(tph_root), (EntityLocation(standalone),)),
         (EntityLocation(tpcs_concrete), (EntityLocation(standalone),)),
     ]
-    assert {issue.code for issue in issues} == {storage_layout.TABLE_MAPPING_COLLISION}
+    assert {issue.code for issue in issues} == {TABLE_MAPPING_COLLISION}
 
 
 def test_malformed_topology_is_omitted_without_storage_layout_guessing() -> None:
@@ -649,7 +655,7 @@ def test_a_layout_owner_with_a_column_collision_reports_the_collision_alone() ->
     # A Structured Column colliding with a direct-role Column is a physical
     # layout defect, so Storage Layout reports the collision at the later claim.
     issues = _rule_issues(_standalone_document(column="id"))
-    assert [issue.code for issue in issues] == [storage_layout.COLUMN_COLLISION]
+    assert [issue.code for issue in issues] == [COLUMN_COLLISION]
 
 
 # --------------------------------------------------------------------------- #
@@ -671,12 +677,12 @@ def test_only_direct_role_contributors_claim_a_column_under_a_document_layout() 
     )
     assert [(issue.code, issue.location, issue.related) for issue in issues] == [
         (
-            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            DOCUMENT_MEMBER_COLUMN_OVERRIDE,
             AttributeLocation(collided.identity),
             (EntityLocation(_SIBLING),),
         ),
         (
-            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            DOCUMENT_MEMBER_COLUMN_OVERRIDE,
             ValueObjectLocation(ValueObjectIdentity(_SIBLING, ("profileDocument",))),
             (EntityLocation(_SIBLING),),
         ),
@@ -688,7 +694,7 @@ def test_the_structured_column_is_the_later_claimant_against_a_direct_column() -
     # contributor rather than the other way round, and the Issue is located where
     # an author fixes it: the layout declaration naming the Column.
     (issue,) = _rule_issues(_standalone_document(column="id"))
-    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.code == COLUMN_COLLISION
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == (AttributeLocation(key(_SIBLING).identity),)
 
@@ -732,7 +738,7 @@ def test_an_index_over_a_document_resident_attribute_is_located_at_the_index() -
         indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
     )
     (issue,) = _rule_issues(owner)
-    assert issue.code == storage_layout.INDEX_OVER_DOCUMENT_MEMBER
+    assert issue.code == INDEX_OVER_DOCUMENT_MEMBER
     assert issue.location == IndexLocation(IndexIdentity(_SIBLING, "byName"))
     assert issue.related == (AttributeLocation(display_name.identity),)
 
@@ -832,8 +838,8 @@ def test_a_malformed_join_leaves_its_endpoint_document_resident_without_ordering
     # and neither waits for the other.
     declarations = _note_owning_a_holder(join_source=AttributeIdentity(_HOLDER, "id"))
     assert [issue.code for issue in _rule_issues(*declarations)] == [
-        storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
-        storage_layout.INDEX_OVER_DOCUMENT_MEMBER,
+        DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+        INDEX_OVER_DOCUMENT_MEMBER,
     ]
 
 
@@ -862,7 +868,7 @@ def test_one_ancestors_override_is_one_defect_however_many_branches_reach_it() -
     )
     assert [(issue.code, issue.location) for issue in issues] == [
         (
-            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            DOCUMENT_MEMBER_COLUMN_OVERRIDE,
             AttributeLocation(display_name.identity),
         )
     ]
@@ -872,9 +878,7 @@ def test_a_layout_owner_with_an_override_defect_reports_the_permanent_diagnostic
     owner = _standalone_document(
         attributes=(key(_SIBLING), attribute(_SIBLING, "displayName", type=STRING, column="dn"))
     )
-    assert [issue.code for issue in _rule_issues(owner)] == [
-        storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE
-    ]
+    assert [issue.code for issue in _rule_issues(owner)] == [DOCUMENT_MEMBER_COLUMN_OVERRIDE]
 
 
 def test_a_conventional_layout_reports_neither_new_code() -> None:

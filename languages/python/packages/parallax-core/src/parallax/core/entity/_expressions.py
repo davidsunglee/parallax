@@ -79,10 +79,8 @@ __all__ = [
     "RelationshipPath",
     "RelationshipRef",
     "SortKey",
-    "and_terms",
     "conjoin",
     "judged_edit_violation",
-    "member_canonical_name",
     "member_location",
     "snake_to_camel",
 ]

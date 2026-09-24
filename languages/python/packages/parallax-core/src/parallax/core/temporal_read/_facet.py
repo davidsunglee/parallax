@@ -22,7 +22,6 @@ __all__ = [
     "TemporalFacet",
     "TemporalShape",
     "TransactionTimeOnly",
-    "is_temporal_facet",
     "temporal_facet",
     "view",
 ]

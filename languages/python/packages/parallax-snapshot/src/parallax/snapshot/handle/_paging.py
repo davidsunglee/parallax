@@ -9,8 +9,6 @@ from parallax.core.object_query._validated import ContinuationCoordinate
 __all__ = [
     "At",
     "PagePlan",
-    "PageRequest",
-    "PageVerdict",
     "TieFound",
     "page_decision",
 ]

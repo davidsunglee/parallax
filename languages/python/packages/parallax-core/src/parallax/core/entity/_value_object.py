@@ -39,7 +39,7 @@ from parallax.core.metamodel import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-__all__ = ["ValueObject", "ValueObjectMeta", "shape_of"]
+__all__ = ["ValueObject"]
 
 _EDIT_RESOLUTION_SLOT: Final = "__parallax_value_object_edit_resolution__"
 

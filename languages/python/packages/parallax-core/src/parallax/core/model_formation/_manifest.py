@@ -11,7 +11,6 @@ __all__ = [
     "METADATA_COMPILER_REQUIRED",
     "MODEL_FORMATION_MODULE",
     "REQUIRED_RULE_SET",
-    "CompilerRequirement",
     "FixedResolver",
     "FormationManifest",
     "FormationManifestEntry",
@@ -19,7 +18,6 @@ __all__ = [
     "ModelCompilerRequirement",
     "ModuleIdentity",
     "RequiredRuleSet",
-    "RuleSetRequirement",
 ]
 
 type ModuleIdentity = str

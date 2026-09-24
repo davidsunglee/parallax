@@ -7,10 +7,8 @@ from parallax.core.document_codec._document import (
     DocumentFindingCode,
     DocumentPatch,
     DocumentPathSegment,
-    RawLocatedMemberInput,
     SetLeaf,
     SetValue,
-    Unavailable,
     apply_patches,
     comparison_text,
     decode_occurrence_classified,
@@ -19,10 +17,7 @@ from parallax.core.document_codec._document import (
     reduce_declared_members,
 )
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_leaf, is_text_compared
-from parallax.core.document_codec._managed import (
-    EffectiveChangeSet,
-    classify_effective_change,
-)
+from parallax.core.document_codec._managed import classify_effective_change
 from parallax.core.document_codec._occurrence import OccurrenceCarrier, encode_occurrence
 from parallax.core.document_codec._shape import (
     MISSING,
@@ -50,7 +45,6 @@ __all__ = [
     "DocumentMember",
     "DocumentPatch",
     "DocumentPathSegment",
-    "EffectiveChangeSet",
     "ExplicitNull",
     "Leaf",
     "LeafEncodingError",
@@ -60,10 +54,8 @@ __all__ = [
     "OccurrenceCarrier",
     "Presence",
     "Present",
-    "RawLocatedMemberInput",
     "SetLeaf",
     "SetValue",
-    "Unavailable",
     "apply_patches",
     "classify_effective_change",
     "comparison_text",

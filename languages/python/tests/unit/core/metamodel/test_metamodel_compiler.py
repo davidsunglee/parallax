@@ -42,8 +42,8 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
     accept_metamodel,
-    compile_metadata,
 )
+from parallax.core.metamodel._compile import compile_metadata
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,

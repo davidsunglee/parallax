@@ -8,11 +8,12 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import inheritance, opt_lock, temporal_read
+from parallax.core import opt_lock
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import INHERITANCE_MODULE
+from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     NOT_PRIMARY_KEY,
@@ -44,18 +45,18 @@ from parallax.core.model_formation import (
 from parallax.core.opt_lock import (
     FACET_KEY,
     ISSUE_CODES,
-    MULTIPLE_ATTRIBUTES,
     OPT_LOCK_MODULE,
     RULE_SET,
-    TEMPORAL_EXPLICIT_ATTRIBUTE,
     UNVERSIONED,
     ExplicitVersion,
     OptimisticLockFacet,
     TransactionTimeDerived,
-    compile_facet,
 )
+from parallax.core.opt_lock._compile import compile_facet
+from parallax.core.opt_lock._rules import MULTIPLE_ATTRIBUTES, TEMPORAL_EXPLICIT_ATTRIBUTE
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import TEMPORAL_READ_MODULE
+from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
@@ -398,7 +399,7 @@ def test_every_defect_of_one_entity_is_reported_in_canonical_order() -> None:
 
 def test_the_compiler_requires_both_facets_under_their_own_keys() -> None:
     metadata = fake.parity_model()
-    inheritance_facet = inheritance.compile_facet(metadata)
+    inheritance_facet = inheritance_compile.compile_facet(metadata)
     with pytest.raises(RuntimeError, match="Inheritance Facet"):
         opt_lock.MODEL_COMPILER.compile(metadata, {})
     with pytest.raises(RuntimeError, match="Temporal Facet"):
@@ -411,12 +412,12 @@ def test_an_entity_a_required_facet_does_not_cover_is_a_contract_failure() -> No
     # inventing a family or a shape for the Entity it cannot place.
     metadata = fake.parity_model()
     narrower = fake.FakeMetamodel([entity for entity in metadata.entities[:1]])
-    complete = inheritance.compile_facet(metadata)
-    partial = inheritance.compile_facet(narrower)
+    complete = inheritance_compile.compile_facet(metadata)
+    partial = inheritance_compile.compile_facet(narrower)
     with pytest.raises(RuntimeError, match="Inheritance Facet view"):
-        compile_facet(metadata, partial, temporal_read.compile_facet(metadata, complete))
+        compile_facet(metadata, partial, temporal_read_compile.compile_facet(metadata, complete))
     with pytest.raises(RuntimeError, match="Temporal Facet shape"):
-        compile_facet(metadata, complete, temporal_read.compile_facet(narrower, partial))
+        compile_facet(metadata, complete, temporal_read_compile.compile_facet(narrower, partial))
 
 
 def test_a_root_declaring_two_version_attributes_is_a_compiler_contract_failure() -> None:
@@ -437,8 +438,8 @@ def test_a_root_declaring_two_version_attributes_is_a_compiler_contract_failure(
             ),
         )
     )
-    inheritance_facet = inheritance.compile_facet(metadata)
-    temporal = temporal_read.compile_facet(metadata, inheritance_facet)
+    inheritance_facet = inheritance_compile.compile_facet(metadata)
+    temporal = temporal_read_compile.compile_facet(metadata, inheritance_facet)
     with pytest.raises(RuntimeError, match="version"):
         compile_facet(metadata, inheritance_facet, temporal)
 
@@ -448,9 +449,11 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     # accepted graph the descriptor path never touched compiles into the same
     # keys.
     metadata = fake.parity_model()
-    inheritance_facet = inheritance.compile_facet(metadata)
+    inheritance_facet = inheritance_compile.compile_facet(metadata)
     facet = compile_facet(
-        metadata, inheritance_facet, temporal_read.compile_facet(metadata, inheritance_facet)
+        metadata,
+        inheritance_facet,
+        temporal_read_compile.compile_facet(metadata, inheritance_facet),
     )
     assert facet.key(fake.ACCOUNT) == UNVERSIONED
     assert facet.key(fake.AUDIT) == TransactionTimeDerived(AttributeIdentity(fake.AUDIT, "txStart"))

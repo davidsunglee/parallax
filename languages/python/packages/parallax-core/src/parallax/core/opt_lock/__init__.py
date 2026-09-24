@@ -3,11 +3,7 @@ from __future__ import annotations
 from typing import Final, assert_never
 
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.opt_lock._compile import (
-    MODEL_COMPILER,
-    OptimisticLockModelCompiler,
-    compile_facet,
-)
+from parallax.core.opt_lock._compile import MODEL_COMPILER
 from parallax.core.opt_lock._facet import (
     FACET_KEY,
     OPT_LOCK_MODULE,
@@ -19,14 +15,7 @@ from parallax.core.opt_lock._facet import (
     Unversioned,
     view,
 )
-from parallax.core.opt_lock._rules import (
-    ISSUE_CODES,
-    MULTIPLE_ATTRIBUTES,
-    RULE_SET,
-    TEMPORAL_EXPLICIT_ATTRIBUTE,
-    OptimisticLockRuleSet,
-    validate_optimistic_locking,
-)
+from parallax.core.opt_lock._rules import ISSUE_CODES, RULE_SET
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     Concurrency,
@@ -43,28 +32,22 @@ __all__ = [
     "INITIAL_VERSION",
     "ISSUE_CODES",
     "MODEL_COMPILER",
-    "MULTIPLE_ATTRIBUTES",
     "OPT_LOCK_MODULE",
     "RULE_SET",
-    "TEMPORAL_EXPLICIT_ATTRIBUTE",
     "UNVERSIONED",
     "CallerAuthoredVersionError",
     "ExplicitVersion",
     "OptimisticKey",
     "OptimisticLockFacet",
-    "OptimisticLockModelCompiler",
-    "OptimisticLockRuleSet",
     "TransactionTimeDerived",
     "UnobservedVersionError",
     "Unversioned",
     "advance",
-    "compile_facet",
     "effective_strategy",
     "optimistic_key",
     "reject_caller_authored_version",
     "require_observed",
     "settled_evidence",
-    "validate_optimistic_locking",
     "view",
 ]
 

@@ -22,7 +22,7 @@ from parallax.core.unit_work import (
     ValidTimeWindow,
 )
 
-__all__ = ["RECTANGLE_SPLIT", "RectangleSplit"]
+__all__ = ["RECTANGLE_SPLIT"]
 
 # The inactivation gates on the observed Transaction-Time start exactly as a
 # single-axis close does: the Valid-Time end addresses the rectangle, and the

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from parallax.core.entity._construction_input import UNLOADED, NodeHandle
-from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
+from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
     EDIT_CODES,
@@ -29,6 +29,7 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
     SortKey,
+    snake_to_camel,
 )
 from parallax.core.entity._graph_construction import (
     EntityGraphConstruction,
@@ -55,7 +56,6 @@ from parallax.core.entity._members import (
     Float32,
     IndexSpec,
     Int32,
-    OrderTerm,
     Rel,
     ReverseRelSpec,
     Sequence,
@@ -103,7 +103,6 @@ __all__ = [
     "EditViolation",
     "ElementAttributeExpr",
     "Entity",
-    "EntityDeclaration",
     "EntityDefinitionError",
     "EntityGraphConstruction",
     "EntityGraphWriter",
@@ -117,7 +116,6 @@ __all__ = [
     "MetamodelLookupError",
     "NodeHandle",
     "ObjectQuery",
-    "OrderTerm",
     "Predicate",
     "Rel",
     "RelationshipPath",

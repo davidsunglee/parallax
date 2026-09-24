@@ -22,7 +22,7 @@ from parallax.core.relationship._facet import (
     relationship_facet,
 )
 
-__all__ = ["MODEL_COMPILER", "RelationshipModelCompiler", "compile_facet"]
+__all__ = ["MODEL_COMPILER"]
 
 
 def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:

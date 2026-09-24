@@ -50,15 +50,11 @@ from parallax.snapshot.handle._write_inputs import (
 )
 
 __all__ = [
-    "KeyedInsertSource",
     "KeyedWriteContext",
-    "KeyedWriteSource",
-    "OpenedKeyedWrite",
     "PreparedSourceWrite",
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
-    "WriteRepresentation",
     "keyed_insert",
     "keyed_write",
     "retained",

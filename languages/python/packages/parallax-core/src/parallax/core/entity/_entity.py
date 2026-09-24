@@ -71,8 +71,8 @@ __all__ = [
     "Bitemporal",
     "ChangeRecord",
     "Entity",
-    "EntityMeta",
     "TxTemporal",
+    "attach_lifecycle_state",
 ]
 
 

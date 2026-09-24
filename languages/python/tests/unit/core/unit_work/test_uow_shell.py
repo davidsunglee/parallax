@@ -23,9 +23,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
     Clock,
-    EscapedTransactionError,
     FixedClock,
-    FlushExecutor,
     KeyedWrite,
     ObservedKeyedWrite,
     PlannedInsert,
@@ -39,9 +37,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     TransactionSettings,
     UnitOfWork,
-    VersionedStateKey,
     VersionObservation,
-    WriteBatchOpening,
     WriteBatchTrigger,
     WritePlan,
     active_unit_of_work,
@@ -53,6 +49,8 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY

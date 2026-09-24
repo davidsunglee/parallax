@@ -18,7 +18,6 @@ from parallax.core.sql_gen._predicate import MemberSubject
 
 __all__ = [
     "LoweredTerm",
-    "NullPattern",
     "TermSubject",
     "capture_cells",
     "coordinate_reads",

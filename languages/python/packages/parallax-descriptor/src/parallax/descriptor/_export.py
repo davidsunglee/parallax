@@ -37,7 +37,7 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor._type_spelling import format_type_spelling
 
-__all__ = ["DESCRIPTOR_EXPORT_FAILED", "DescriptorExportError", "export_document"]
+__all__ = ["DescriptorExportError", "ExportTarget", "export_document"]
 
 DESCRIPTOR_EXPORT_FAILED: Final[str] = "descriptor-export-failed"
 """The sole code every :class:`DescriptorExportError` carries."""

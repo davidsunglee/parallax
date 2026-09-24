@@ -30,7 +30,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.model_formation import ModuleIdentity
 
-__all__ = ["MODEL_COMPILER", "InheritanceModelCompiler", "compile_facet", "root_metadata"]
+__all__ = ["MODEL_COMPILER", "root_metadata"]
 
 
 def root_metadata(

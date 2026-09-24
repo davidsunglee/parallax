@@ -28,7 +28,14 @@ from parallax.snapshot.materialize import PageBuilder
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ViewSchema
 
-__all__ = ["ReadPlan", "ReadPlanner"]
+__all__ = [
+    "DEFAULT_READ_PLAN_CACHE_CAPACITY",
+    "UNCACHED_READ_PLANNER",
+    "ReadPlan",
+    "ReadPlanCache",
+    "ReadPlanner",
+    "check_read_plan_cache_capacity",
+]
 
 type ResultForm = Literal["row", "instance"]
 type _ReadPlanKey = tuple[

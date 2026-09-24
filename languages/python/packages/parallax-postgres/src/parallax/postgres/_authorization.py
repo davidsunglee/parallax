@@ -7,7 +7,7 @@ from psycopg.sql import SQL, Identifier
 
 from parallax.core.db_port import InvalidAuthorizationError
 
-__all__ = ["PostgresRole"]
+__all__ = ["PostgresRole", "install_role", "restore_role"]
 
 
 @dataclass(frozen=True, slots=True)

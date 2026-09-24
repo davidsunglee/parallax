@@ -20,11 +20,7 @@ from parallax.core.opt_lock._facet import OPT_LOCK_MODULE
 
 __all__ = [
     "ISSUE_CODES",
-    "MULTIPLE_ATTRIBUTES",
     "RULE_SET",
-    "TEMPORAL_EXPLICIT_ATTRIBUTE",
-    "OptimisticLockRuleSet",
-    "validate_optimistic_locking",
 ]
 
 MULTIPLE_ATTRIBUTES: Final[IssueCode] = "opt-lock-multiple-attributes"

@@ -48,8 +48,6 @@ from parallax.snapshot.materialize._wire_memo import IndexMemo, WireMemo
 __all__ = [
     "FAMILY_VARIANT_KEY",
     "EntityReader",
-    "NodeReader",
-    "RootViewReader",
     "WireEntity",
     "WireValue",
     "WireWalk",

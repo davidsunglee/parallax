@@ -26,7 +26,7 @@ from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import Metamodel
 from parallax.descriptor._type_spelling import parse_type_spelling
 
-__all__ = ["SCHEMA_RESOURCE", "ingest_document", "parse_json", "parse_yaml", "schema_text"]
+__all__ = ["ingest_document", "parse_json", "parse_yaml"]
 
 SCHEMA_RESOURCE: str = "_schemas/metamodel.schema.json"
 """This distribution's packaged copy of the canonical metamodel schema.

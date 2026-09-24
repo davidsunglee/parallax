@@ -40,11 +40,8 @@ from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,
     MAX_PLUS_ONE,
-    MISSING_TARGET,
     NEW_LINEAGE,
     NO_AUDIT,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
     SUPERSEDED,
     UNGATED,
     UNVERSIONED,
@@ -75,7 +72,12 @@ from parallax.core.unit_work import (
     eager_segment,
     shortfall_for,
 )
-from parallax.core.unit_work.planned import ValidatedMutationSelection
+from parallax.core.unit_work.planned import (
+    MISSING_TARGET,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
+    ValidatedMutationSelection,
+)
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model

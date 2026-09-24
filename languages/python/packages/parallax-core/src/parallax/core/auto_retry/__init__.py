@@ -10,7 +10,7 @@ from collections.abc import Callable
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyError
 
-__all__ = ["check_retry_bound", "retriable_failure", "run_with_retry"]
+__all__ = ["retriable_failure", "run_with_retry"]
 
 
 def check_retry_bound(retries: int, /) -> None:

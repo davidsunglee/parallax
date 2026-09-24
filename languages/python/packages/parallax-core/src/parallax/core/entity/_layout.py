@@ -25,8 +25,6 @@ from parallax.core.relationship import view as relationship_view
 __all__ = [
     "CatalogedModel",
     "EntityLayout",
-    "LayoutCatalog",
-    "NarrowableView",
 ]
 
 

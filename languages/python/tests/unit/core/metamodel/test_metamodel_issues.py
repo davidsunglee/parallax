@@ -22,10 +22,10 @@ from parallax.core.metamodel import (
     ValueObjectAttributeLocation,
     ValueObjectIdentity,
     ValueObjectLocation,
-    canonical_issue_key,
     canonical_location_key,
     sort_issues,
 )
+from parallax.core.metamodel._issues import canonical_issue_key
 
 _ALPHA = EntityIdentity("app", "Alpha")
 _BETA = EntityIdentity("app", "Beta")

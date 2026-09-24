@@ -5,12 +5,8 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 __all__ = [
-    "DESCRIPTOR_INVALID_SYNTAX",
-    "DESCRIPTOR_SCHEMA_INVALID",
-    "DESCRIPTOR_VALUE_INVALID",
     "DescriptorError",
     "DescriptorFormat",
-    "DescriptorPath",
     "DescriptorSchemaError",
     "DescriptorSchemaViolation",
     "DescriptorSyntaxError",

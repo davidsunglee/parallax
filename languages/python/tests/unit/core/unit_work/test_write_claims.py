@@ -29,7 +29,6 @@ from parallax.core.unit_work import (
     ObjectClaimedWrite,
     ObjectKey,
     RetainedObservation,
-    VersionedStateKey,
     VersionObservation,
     WriteIntent,
     admits,
@@ -37,6 +36,7 @@ from parallax.core.unit_work import (
     keyed_intent,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized

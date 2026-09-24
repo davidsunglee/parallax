@@ -26,7 +26,7 @@ from parallax.postgres._authorization import PostgresRole, install_role
 from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import ConnectionEstablishment, PostgresConnection
 
-__all__ = ["Admit", "NativePool", "PostgresConnectionContext", "checkout", "release"]
+__all__ = ["NativePool", "PostgresConnectionContext"]
 
 type NativePool = psycopg_pool.ConnectionPool[psycopg.Connection[TupleRow]]
 """Either native pool this adapter builds; the null pool is a subclass of it."""
