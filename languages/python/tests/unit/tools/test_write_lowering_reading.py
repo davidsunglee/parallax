@@ -52,8 +52,6 @@ def test_the_observed_functions_are_the_managed_encoders_lowering_calls() -> Non
         is lowering["encode_managed_many"]
     )
     assert not {"encodeDocument", "encodeMany"} & set(OBSERVED_FUNCTIONS)
-    assert document_codec.encode_document not in OBSERVED_FUNCTIONS.values()
-    assert document_codec.encode_many not in OBSERVED_FUNCTIONS.values()
     assert "encode_managed_document" not in document_codec.__all__
     assert "encode_managed_many" not in document_codec.__all__
     assert not hasattr(document_codec, "encode_managed_document")

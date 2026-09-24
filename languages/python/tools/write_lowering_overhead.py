@@ -73,10 +73,10 @@ LEGACY_CALL_NAMES: Final = (
     "detachJsonContainer",
 )
 """The vocabulary the retained captures were taken under. ``encodeDocument`` and
-``encodeMany`` counted the source codec's ``encode_document`` and
-``encode_many``, which the unified write path no longer reaches; the current
-names count the managed encoders it does. A historical envelope verifies
-against this vocabulary whole, and a child answering it is refused."""
+``encodeMany`` counted a second, presence-driven document encoder the unified
+write path does not run; the current names count the managed encoders it does.
+A historical envelope verifies against this vocabulary whole, and a child
+answering it is refused."""
 CALL_VOCABULARIES: Final[Mapping[str, tuple[str, ...]]] = {
     "current": CALL_NAMES,
     "legacy": LEGACY_CALL_NAMES,

@@ -1,12 +1,11 @@
-"""The managed-document canonicalization and the one effective-change rule.
+"""Managed-document authoring and the one effective-change rule.
 
 The opt-lock witnesses hold the outcomes a database can observe — `m-opt-lock-001`
 that an empty effective change set emits no statement, `-014` that per-row
 elimination is scalar equality, `-020` that an undeclared key inside a stored
 occurrence takes no part. What stays here is what no case can reach: the rule
 stated at the operation's own interface, over operands no write path has to
-produce, and the copy-on-write identity a caller depends on for memory without
-ever seeing it.
+produce.
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from parallax.core.document_codec import (
     Leaf,
     MemberShape,
     Occurrence,
-    canonical_managed_document,
     classify_effective_change,
 )
 from parallax.core.document_codec._authoring import (
@@ -47,7 +45,6 @@ from parallax.core.document_codec._authoring import (
     validate_authoring,
     validate_member_authoring,
 )
-from parallax.core.document_codec._managed import canonical_named_members
 from parallax.core.metamodel import Multiplicity
 
 _GEO = MemberShape(members=(Leaf("lat", STRING, True),))
@@ -386,6 +383,9 @@ def test_a_value_contradicting_its_declared_shape_is_effective_rather_than_refus
         frozenset({"entries"})
     )
     assert _classify({"origin": "Oslo"}, {"origin": "Oslo"}).restored == frozenset({"origin"})
+    # An empty sequence is no document either, so it is not read as one carrying
+    # every `many`'s zero.
+    assert _classify({"origin": {}}, {"origin": []}).effective == frozenset({"origin"})
 
 
 def test_a_bytes_leaf_is_one_value_rather_than_the_array_of_its_byte_values() -> None:
@@ -405,75 +405,11 @@ def test_a_bytes_leaf_is_one_value_rather_than_the_array_of_its_byte_values() ->
     )
 
 
-def test_a_root_that_is_no_document_passes_through_canonicalization_as_itself() -> None:
-    # Totality reaches the root and not only the positions inside it. Reading a
-    # non-document against the shape would invent one: an empty sequence would
-    # answer a mapping carrying every `many`'s zero, and a value that is not even
-    # iterable would refuse — the two failures a total operation may not have.
-    empty: object = []
-    assert canonical_managed_document(_SHAPE, cast("Mapping[str, object]", empty)) is empty
-    scalar: object = 7
-    assert canonical_managed_document(_SHAPE, cast("Mapping[str, object]", scalar)) is scalar
-
-
-def test_canonicalization_keeps_declared_members_and_fills_every_many_zero() -> None:
-    assert canonical_managed_document(
-        _SHAPE, {"flag": True, "future": 7, "origin": {"city": "Oslo", "extra": 1}}
-    ) == {
-        "flag": True,
-        "origin": {"city": "Oslo", "zones": []},
-        "entries": [],
-    }
-    assert canonical_managed_document(_SHAPE, {"entries": None}) == {"entries": []}
-    assert canonical_managed_document(_SHAPE, None) is None
-
-
-def test_named_member_canonicalization_drops_unknowns_without_filling_unnamed_many() -> None:
-    document: dict[str, object] = {
-        "flag": True,
-        "origin": {"city": "Oslo", "extra": 1},
-        "future": 7,
-    }
-    assert canonical_named_members(_SHAPE, document) == {
-        "flag": True,
-        "origin": {"city": "Oslo", "zones": []},
-    }
-    empty: dict[str, object] = {}
-    assert canonical_named_members(_SHAPE, empty) is empty
-    assert canonical_named_members(_SHAPE, None) is None
-    scalar: object = 7
-    assert canonical_named_members(_SHAPE, cast("Mapping[str, object]", scalar)) is scalar
-
-
-def test_named_member_canonicalization_rebuilds_canonical_shape_order() -> None:
-    document: dict[str, object] = {"origin": None, "flag": True}
-    canonical = canonical_named_members(_SHAPE, document)
-    assert canonical is not None
-    assert tuple(canonical) == ("flag", "origin")
-
-
-def test_an_already_canonical_document_is_answered_as_itself() -> None:
-    # Every producer feeding the comparison already emits canonical documents, so
-    # the common path must allocate nothing: the answer is the input object, and a
-    # rebuild shares every nested container it did not have to change.
-    origin: dict[str, object] = {"city": "Oslo", "geo": None, "zones": []}
-    document: dict[str, object] = {"flag": True, "origin": origin, "entries": []}
-    assert canonical_managed_document(_SHAPE, document) is document
-
-    filled = canonical_managed_document(_SHAPE, {"origin": origin})
-    assert filled == {"origin": origin, "entries": []}
-    assert filled is not None
-    assert filled["origin"] is origin
-
-
-def test_a_tuple_and_a_list_are_both_canonical_carriers_of_one_value() -> None:
-    # Container type is not a canonicality criterion, so a frozen prepared carrier
-    # is answered as itself; and because the two sides may therefore arrive in
-    # different containers, the comparison ends in a structural equality rather
-    # than in the containers' own.
+def test_a_tuple_and_a_list_are_both_carriers_of_one_value() -> None:
+    # A frozen prepared carrier and a decoded one may arrive on the two sides, so
+    # the comparison ends in a structural equality rather than in the containers'
+    # own.
     elements = ({"kind": "home", "price": None},)
-    document: dict[str, object] = {"entries": elements}
-    assert canonical_managed_document(_SHAPE, document) is document
     assert _classify({"entries": elements}, {"entries": list(elements)}).restored == frozenset(
         {"entries"}
     )
