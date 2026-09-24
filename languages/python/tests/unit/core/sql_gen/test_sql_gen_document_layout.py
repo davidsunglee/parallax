@@ -30,7 +30,7 @@ from parallax.core.document_codec import MemberShape
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
-from tests._support.sql import compile_read, compile_write_predicate
+from tests._support.sql import compile_projected_read, compile_read, compile_write_predicate
 from tests.unit._document_layout_support import columns_model, document_model, entity
 
 DOCUMENT = document_model()
@@ -94,7 +94,7 @@ def _instance_form(target: EntityMetadata) -> CompiledRead:
 
 
 def _widened_resolve(target: EntityMetadata) -> CompiledRead:
-    return compile_read(oa.All(), DOCUMENT, POSTGRES, target, include_value_objects=True)
+    return compile_projected_read(oa.All(), DOCUMENT, POSTGRES, target, include_value_objects=True)
 
 
 @pytest.mark.parametrize("lane", [_instance_form, _widened_resolve], ids=["instance", "resolve"])
@@ -122,7 +122,7 @@ def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs
     # A `frozenset` widening is the versioned target's comparison-only need rather
     # than an observation, so it leaves the rule where it was: no member the read
     # asked for is document-resident, so no Structured Column is projected.
-    compiled = compile_read(
+    compiled = compile_projected_read(
         oa.All(),
         DOCUMENT,
         POSTGRES,

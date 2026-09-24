@@ -1,9 +1,8 @@
 """One Relational Document Layout model, and its member-for-member `Columns` twin.
 
-Both are compiled from Declarations and accepted directly, which is the idiom every
-sql_gen and lowering unit suite uses: it installs exactly the facets the lane under
-test reads and nothing else, so a failure names the seam rather than whole-model
-formation. The corpus carries the end-to-end proof (`models/document-layout.yaml`).
+Both are formed from Declarations through the one formation entry point every
+frontend reaches. The corpus carries the end-to-end proof
+(`models/document-layout.yaml`).
 
 The two models declare the SAME members with the same names, types, and columns
 and differ only in the root's `layout`, which is what lets a suite assert the one
@@ -16,7 +15,7 @@ carried by this MODULE's underscore. Never imported by production code.
 
 from __future__ import annotations
 
-from parallax.core import inheritance, opt_lock, relationship, storage_layout, temporal_read
+from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import DATE, INT64, STRING, NeutralType
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -34,10 +33,8 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
-    accept_metamodel,
-    compile_metadata,
 )
-from tests.unit._metamodel_support import Declaration, accepted, identity, key, source
+from tests.unit._metamodel_support import Declaration, identity, key, source
 
 PERSON: EntityIdentity = identity("Person")
 MARKER: EntityIdentity = identity("Marker")
@@ -109,22 +106,7 @@ def _declarations(layout: StorageLayout | None) -> tuple[Declaration, ...]:
 
 
 def _accept(layout: StorageLayout | None) -> Metamodel:
-    metadata = compile_metadata(accepted(source(*_declarations(layout))))
-    inheritance_facet = inheritance.compile_facet(metadata)
-    relationship_facet = relationship.compile_facet(metadata)
-    temporal_facet = temporal_read.compile_facet(metadata, inheritance_facet)
-    return accept_metamodel(
-        metadata,
-        {
-            inheritance.FACET_KEY: inheritance_facet,
-            relationship.FACET_KEY: relationship_facet,
-            temporal_read.FACET_KEY: temporal_facet,
-            opt_lock.FACET_KEY: opt_lock.compile_facet(metadata, inheritance_facet, temporal_facet),
-            storage_layout.FACET_KEY: storage_layout.compile_facet(
-                metadata, inheritance_facet, relationship_facet
-            ),
-        },
-    )
+    return form_metamodel(source(*_declarations(layout)))
 
 
 def document_model() -> Metamodel:

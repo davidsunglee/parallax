@@ -10,14 +10,13 @@ from parallax.conformance._mechanism.model_facts import (
     case_entity,
     default_family_root,
     first_declared_entity,
+    gate_read,
     load_case_metamodel,
 )
 from parallax.core import inheritance
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.metamodel import entity_by_name
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.object_query import validate_object_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import (
     KeyedWrite,
@@ -91,9 +90,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     :func:`_rejected_when_kind` before dispatch, since the schema `oneOf` cannot
     protect a caller that reaches this engine without schema validation. An
     `objectQuery` input is deserialized through the same `m-object-query` serde
-    every read uses, then checked by the shared query validation
-    (`m-predicate` / `m-navigate` / `m-value-object`) — the same rules the read
-    preflight seam applies, so the two paths cannot drift. A `model` input first
+    every read uses, then checked by production's own read gate
+    (`handle.preflight`), which owns target resolution, so the two paths cannot
+    drift. A `model` input first
     passes the descriptor frontend's own pre-formation family validator
     (:func:`~parallax.descriptor.validate_inheritance_families`) for descriptor
     spellings the accepted algebra cannot represent, then goes through the same
@@ -140,9 +139,8 @@ def run_rejected_case(case: case_format.Case) -> str:
         except CanonicalDocumentError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         query = _case_ingress.normalize_case_query(query, model)
-        root = case_entity(model, query.target.canonical)
         try:
-            validate_object_query(root, query, model)
+            gate_read(query, model)
         except ModelRejectedError as exc:
             return exc.rule
         raise EngineError(
@@ -209,10 +207,6 @@ def run_rejected_case(case: case_format.Case) -> str:
         return _rejected_keyed_write(case, row, model)
     target = case_entity(model, _rejected_target(case, model))
     try:
-        inheritance.validate_subtype_write(model, target, row)
-    except inheritance.InheritanceError as exc:
-        return exc.rule
-    try:
         durable_row = {name: value for name, value in row.items() if name != "observedVersion"}
         instruction = KeyedWrite("insert", target.identity.canonical, (durable_row,))
         _case_ingress.prepare_case_write(instruction, model)
@@ -241,15 +235,14 @@ def _rejected_keyed_write(
     The refusal is the shared build-time
     case-format preparation seam's strict Wire producer — the
     Wire producer parallel to the typed producer every keyed developer verb runs
-    before it buffers anything — and it
-    runs in the same PLACE, after the concrete-subtype payload-shape rules
-    (`m-inheritance` "Concrete-subtype writes"). Those rules classify a
+    before it buffers anything. It asks the concrete-subtype payload-shape rules
+    (`m-inheritance` "Concrete-subtype writes") first, and they classify a
     framework-owned metadata key and a sibling-branch member more specifically
     than the generic member-name-honesty gate ever could, so a keyed update of
     `CardPayment` carrying `CashPayment`'s own attribute is
     `subtype-write-sibling-attribute` rather than an undeclared-member authoring
-    failure. Asking them here and in that order is what makes the keyed rejected
-    lane, the bare-row lane, and the developer transaction one classification.
+    failure. The keyed rejected lane, the bare-row lane, and the developer
+    transaction reach that one classification through the same preparation.
     """
     doc: dict[str, object] = {
         key: authored[key]
@@ -262,15 +255,6 @@ def _rejected_keyed_write(
         instructions.WriteInstructionError
     ) as exc:  # pragma: no cover - schema validation owns malformed writes
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    keyed_target = (
-        entity_by_name(model, instruction.entity) if isinstance(instruction, KeyedWrite) else None
-    )
-    if isinstance(instruction, KeyedWrite) and keyed_target is not None:
-        for keyed_row in instruction.rows:
-            try:
-                inheritance.validate_subtype_write(model, keyed_target, keyed_row)
-            except inheritance.InheritanceError as exc:
-                return exc.rule
     try:
         _case_ingress.prepare_case_write(instruction, model)
     except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
