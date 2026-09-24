@@ -316,15 +316,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
         {"authored_number"}
     ),
-    ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._compile"): frozenset(
-        {"CompiledRead", "compile_read"}
-    ),
-    ("parallax.conformance._lanes.reads", "parallax.core.sql_gen._compile"): frozenset(
-        {"CompiledRead", "compile_read"}
-    ),
-    ("parallax.conformance._lanes.snapshot", "parallax.core.sql_gen._compile"): frozenset(
-        {"compile_read"}
-    ),
     ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._write"): frozenset(
         {"compile_write_step"}
     ),
