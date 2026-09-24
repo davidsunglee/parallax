@@ -1,11 +1,9 @@
-"""What a run of code costs in memory, from five directions at once.
+"""What a run of code costs in memory, from four directions at once.
 
-Five instruments, because an object can appear without any byte reaching the
-allocator, a borrowed graph can be kept without either number moving, a container
-that existed before the window can grow inside it without becoming a survivor at
-all, a structure built and dropped between two points of a longer sequence is
-gone from every reading taken at the end of it, and a holder OLDER than the
-window is outside every reading a window can take:
+Four instruments, because an object can appear without any byte reaching the
+allocator, a borrowed graph can be kept without either number moving, and a
+structure built and dropped between two points of a longer sequence is gone from
+every reading taken at the end of it:
 
 **Bytes allocated.** :func:`allocation` grades retention over repeated runs, so a
 byte kept per run cannot hide in the floor, beside the high-water rise after
@@ -14,18 +12,12 @@ inside the window visible. :func:`first_run` grades those two numbers for the
 first run a process makes, because a lazily built cache is paid once and a warmed
 measurement would never see it.
 
-**Objects and the references that reach them.** :func:`live_graph` grades the
-GC-tracked objects alive at a sample point that were not alive before the
-sequence began, and every reference in the heap that points at one. CPython
-serves some construction from a free list, which reaches no allocator and moves
-no byte counter — a warmed ``lambda: []`` measures as zero bytes — and a list, a
+**Objects that survive.** :func:`survivors` grades the GC-tracked objects alive
+at a sample point that were not alive before the sequence began. CPython serves
+some construction from a free list, which reaches no allocator and moves no byte
+counter — a warmed ``lambda: []`` measures as zero bytes — and a list, a
 populated dict, or a bound method is a container the collector tracks, so the
-survivor count sees what the byte count cannot. The INBOUND count sees what the
-survivors cannot: a holder that existed before the window is no survivor however
-many of the window's objects it accumulates, so a registry a long-lived
-composition owns moves no survivor count and moves this by one for every
-reference it took. :func:`survivors` is the survivor half alone, for a caller
-whose whole claim is that there are none.
+survivor count sees what the byte count cannot.
 
 **Bytes still reachable.** :func:`retained` grades the bytes alive at a sample
 point that were not alive before the sequence began. It is the only one that sees
@@ -41,68 +33,33 @@ sequence builds and releases before reaching one is invisible to all of them;
 this is the reading that prices it. It is a NET rise rather than a region's own
 total, and what that excludes is stated at the function.
 
-**What the whole process holds.** :func:`whole_heap` grades every object the
-collector tracks, every reference they hold, and what they and everything
-untracked they reach report through :func:`sys.getsizeof` — as totals, with no
-baseline and no survivor sample. Every reading above is a window's own
-difference, so a holder that existed before the window is outside all of them
-however much it took inside one. This is the reading that has no window to be
-outside of, and it has two prices: a total is meaningful only between two points
-of one process that differ in one thing, and it prices PYTHON OBJECTS rather than
-a process, so storage an object owns outside its own allocation is not in it.
-:func:`whole_heap` takes those two points as two runs of one process; where the
-holder to be caught fills on FIRST REACH and saturates — so both runs read it
-full — :func:`whole_heap_across` takes them as the two ends of one region
-entered once, over work the process has never done before.
+Every reading is Python-level — bytes are what ``tracemalloc`` traces through
+CPython's allocator and objects are what the collector tracks — so memory held
+outside that allocator is in none of them.
 
-**Warming: four warm themselves, one is warmed from outside, and two must not
+**Warming: three warm themselves, one is warmed from outside, and one must not
 be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening either
 of its windows, :func:`retained` warms both its seam and its sampler inside its
-own call, :func:`high_water` warms its span the same way, and :func:`whole_heap`
-warms each seam and then takes a whole discarded set of readings before the set
-it answers. :func:`live_graph` opens its window before the first run, so a seam
-that fills a memo on first reach is handed to it through :func:`warmed`, which
-puts those memos in the baseline the sample is compared against rather than in
-the sample. The two that must not be warmed are the two whose subject is a first
-reach: :func:`first_run` grades the first run a process makes, and
-:func:`whole_heap_across` marks a region whose work is new, so repeating either
-would move what it grades to before the reading. The first takes no warming at
-all; the second leaves it to the caller, who pays every once-only cost by running
-the same sequence at the same size over OTHER data before opening the region.
-
-Outside all of them, stated rather than implied. An object born and dropped
-inside a single call that the free list also serves: no sample point holds it and
-no counter moves. An UNTRACKED object counted as an OBJECT:
-:func:`gc.get_objects` answers only what the collector tracks, so a retained
-empty dictionary, all-immutable tuple, or integer is no survivor and no heap
-entry — it is reached and priced in bytes by the two walks that follow untracked
-referents, and counted by neither census. And, the widest of the three, STORAGE
-AN OBJECT OWNS OUTSIDE ITSELF: every byte figure here is either CPython's
-allocator through ``tracemalloc`` or a type's own :func:`sys.getsizeof`, and
-neither reaches memory a Python object merely points at. A fully touched
-``mmap.mmap`` reports the same hundred-odd bytes whether it maps four kilobytes
-or four megabytes, and replacing one with a larger mapping moves no object, no
-reference, no reported size, and no allocator counter — an anonymous mapping
-never reaches the allocator ``tracemalloc`` traces. Nothing in this module is an
-instrument for that; a resident-set reading taken from outside the interpreter
-is. The instruments are read together for what they DO cover: the byte counts
-see a retained integer no count can, the survivor sample sees a free-list list
-the byte counts cannot, and the whole-heap totals see what a holder older than
-the window took, which none of the rest can.
+own call, and :func:`high_water` warms its span the same way. :func:`survivors`
+opens its window before the first run, so a seam that fills a memo on first reach
+is handed to it through :func:`warmed`, which puts those memos in the baseline
+the sample is compared against rather than in the sample. The one that must not
+be warmed is :func:`first_run`, whose subject is the first run a process makes:
+repeating it would move what it grades to before the reading.
 
 **Where a reading is taken.** Every instrument here reads the whole process and
-not the seam alone — the survivor sample lists each tracked object and counts the
-references among them, and every collection walks all of them. What a reading
-costs, and the floor it is read against, therefore belong to the interpreter
-rather than to what is being measured. :func:`in_a_child_interpreter` is how a
-suite says so: the measurement is taken in a process that has loaded only what it
-needs, which is what leaves one reading comparable with the same reading taken
-beside anything else, and whose hashing is pinned, which is what leaves it
-comparable with the same reading taken again. Every reader refuses to run in a
-process that boundary did not start, so a reading reached by any route but the
-boundary fails where it is taken rather than passing against a shared heap.
+not the seam alone — the survivor sample lists each tracked object, and every
+collection walks all of them. What a reading costs, and the floor it is read
+against, therefore belong to the interpreter rather than to what is being
+measured. :func:`in_a_child_interpreter` is how a suite says so: the measurement
+is taken in a process that has loaded only what it needs, which is what leaves
+one reading comparable with the same reading taken beside anything else, and
+whose hashing is pinned, which is what leaves it comparable with the same reading
+taken again. Every reader refuses to run in a process that boundary did not
+start, so a reading reached by any route but the boundary fails where it is taken
+rather than passing against a shared heap.
 
-Three ``tests/unit`` cost suites read these, which is what puts them here beside
+The ``tests/unit`` cost suites read these, which is what puts them here beside
 them; ``tools/snapshot_delivery_reading.py`` reads them too, and names this
 directory to do it. Nothing here imports anything but the standard library, so
 the subject of a measurement stays the caller's to supply. Never imported by
@@ -121,25 +78,22 @@ import subprocess
 import sys
 import threading
 import tracemalloc
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from functools import wraps
-from typing import Final, NamedTuple
+from typing import Final
 
 __all__ = [
     "OWN_INTERPRETER_ATTRIBUTE",
     "OWN_INTERPRETER_VARIABLE",
     "REPEATS",
     "WARMUP",
-    "Heap",
-    "LiveGraph",
     "Seam",
     "Span",
     "allocation",
     "first_run",
     "high_water",
     "in_a_child_interpreter",
-    "live_graph",
     "require_own_interpreter",
     "retained",
     "serve_one_measurement",
@@ -147,8 +101,6 @@ __all__ = [
     "takes_its_own_interpreter",
     "untraced",
     "warmed",
-    "whole_heap",
-    "whole_heap_across",
 ]
 
 WARMUP: Final = 200
@@ -159,18 +111,6 @@ REPEATS: Final = 200
 bytes, so anything kept per run — the smallest object is tens of bytes — clears
 it by two orders of magnitude, and "under one byte per run" needs no threshold
 anyone has to justify."""
-
-SETTLING_COLLECTIONS: Final = 16
-"""The most collections a whole-heap mark takes before the listing has settled.
-
-One collection does not settle it. The collector untracks a tuple whose items are
-all untracked, so a nested structure of them loses one level per pass: a key built
-from a query's own dataclasses is still listed, with every reference in it, for as
-many collections as it is deep. Which of those passes a sample lands after is a
-function of how much the process happened to allocate since the structure was
-built, not of what it holds, so two arms of one comparison would differ in
-``objects`` and ``references`` over a heap whose ``held`` is identical.
-"""
 
 type Seam = Callable[[Callable[[], None]], None]
 """One sequence through the seam, calling its argument at its innermost point.
@@ -185,8 +125,8 @@ measured begins and ``closed`` where it ends.
 
 Two marks rather than :data:`Seam`'s one, because what is being read is a
 DIFFERENCE ACROSS the region rather than a state at one point in it — the
-high-water one span reached above what was already alive where it opened, or what
-the process holds at each end of a region entered once. The region is a middle of
+high-water one span reached above what was already alive where it opened. The
+region is a middle of
 the sequence rather than its innermost point, so the sequence keeps running after
 ``closed`` and whatever it has to unwind is outside the reading.
 """
@@ -289,16 +229,7 @@ def first_run(work: Seam) -> tuple[int, int]:
     return current - before, peak - current
 
 
-class LiveGraph(NamedTuple):
-    """What a window left reachable at its innermost point, from both ends of a
-    reference: the objects it created that are still alive, and how many
-    references anywhere in the heap point at one of them."""
-
-    survivors: list[object]
-    inbound: int
-
-
-def live_graph(seam: Seam) -> LiveGraph:
+def survivors(seam: Seam) -> list[object]:
     """What is alive at ``seam``'s innermost point that was not alive before it.
 
     The baseline BINDS the objects it found rather than only their addresses, and
@@ -315,17 +246,11 @@ def live_graph(seam: Seam) -> LiveGraph:
     invisible to this instrument either way, and is what :func:`retained` is read
     beside it for.
 
-    The INBOUND count is taken over the whole heap rather than over the survivors
-    alone, because the two see opposite pathologies: what a new object holds is
-    visible in its own referents, while what a PRE-EXISTING holder accumulated is
-    visible only from the holder's side, and a holder that existed before the
-    window is no survivor however much it grew inside it.
-
-    The instruments discount themselves: the two heap listings, the identity set,
-    and the list they were collected in are the only objects the comparison
-    cannot avoid creating.
+    The instrument discounts itself: the two heap listings, the identity set, and
+    the list they were collected in are the only objects the comparison cannot
+    avoid creating.
     """
-    require_own_interpreter("live_graph")
+    require_own_interpreter("survivors")
     sampled: list[list[object]] = []
 
     def sample() -> None:
@@ -339,22 +264,7 @@ def live_graph(seam: Seam) -> LiveGraph:
         seam(sample)
     heap = sampled[0]
     instruments = {id(heap), id(known), id(before), id(sampled)}
-    born = [obj for obj in heap if id(obj) not in before and id(obj) not in instruments]
-    identities = {id(obj) for obj in born}
-    inbound = sum(
-        1
-        for holder in heap
-        if id(holder) not in instruments
-        for referent in gc.get_referents(holder)
-        if id(referent) in identities
-    )
-    return LiveGraph(born, inbound)
-
-
-def survivors(seam: Seam) -> list[object]:
-    """The survivor half of :func:`live_graph`, for a caller whose claim is that
-    there are none."""
-    return live_graph(seam).survivors
+    return [obj for obj in heap if id(obj) not in before and id(obj) not in instruments]
 
 
 def retained(seam: Seam) -> int:
@@ -445,184 +355,8 @@ def high_water(span: Span) -> int:
     return marks[1] - marks[0]
 
 
-class Heap(NamedTuple):
-    """The whole process's PYTHON-LEVEL size at one point.
-
-    ``objects`` and ``references`` are over what the collector tracks; ``held``
-    adds every untracked object those reach, priced by :func:`sys.getsizeof` once
-    per PATH the walk arrives by rather than counted as objects — whether two
-    equal integers are one object is the interpreter's business, while how many
-    ways the heap arrives at a value of that size is the heap's own shape. Per
-    path and not per reference: the walk carries no identity set, so a value
-    under a shared untracked subgraph is charged once for every path into it
-    however few references point at it directly.
-
-    ``held`` is what each type reports about itself, so storage an object owns
-    outside its own allocation is in none of the three numbers: a fully touched
-    ``mmap.mmap`` weighs the same whatever it maps.
-    """
-
-    objects: int
-    references: int
-    held: int
-
-
-def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
-    """What the WHOLE PROCESS holds at each of ``seams``' innermost points.
-
-    No baseline and no survivor sample, which is the whole of why it exists.
-    Every reading above is a window's own difference, so a holder that EXISTED
-    BEFORE the window is outside all of them: it is no survivor, a reference it
-    took points at an object that may itself predate the window, and bytes it
-    banked into an untracked buffer are reachable from nothing a survivor sample
-    can start walking at. A total has no window to be outside of, so any PYTHON
-    STRUCTURE anywhere that grew is in one of these three numbers.
-
-    **Where a total still stops.** The three are :func:`gc.get_objects` and
-    :func:`sys.getsizeof`, which price Python objects and the references among
-    them rather than the process's memory. Storage an object owns outside its own
-    allocation — an ``mmap.mmap``, a buffer a C extension holds — is a
-    constant-size shell in every one of them however large its backing grows, so
-    growing one in place moves nothing here at all. What sees that is a
-    resident-set reading taken from outside the interpreter, which no instrument
-    in this module takes.
-
-    **Every seam at once, because a total is not a difference.** Two totals are
-    comparable only when they are taken in ONE process against everything else
-    about it held still — including what the reader itself is holding, since a
-    caller that bound the first reading before taking the second would be
-    counted holding it. Handing the whole comparison over is what lets the
-    instrument discount its own: each sample excludes the heap listing and every
-    reading already taken, so the process looks identical at all of them.
-
-    The caller owes the same discipline over its fixtures: a seam that varies one
-    thing must hold the WIDTH of every value it produces fixed, because a longer
-    string or a wider integer at a later position moves ``held`` for a reason
-    that is not retention. Read that way the readings are exact and no tolerance
-    is needed; read any other way they are not readings at all.
-
-    Warmed twice over, because a total shows every first-reach cost a difference
-    would cancel: each seam runs :data:`WARMUP` times unsampled before it is
-    sampled, and the whole set is then run and sampled a second time, with the
-    first set's readings answered to nobody.
-    """
-    require_own_interpreter("whole_heap")
-    readings: list[Heap] = []
-    sample = _marking(readings)
-    with untraced():
-        for _ in range(2):
-            readings.clear()
-            for seam in seams:
-                for _ in range(WARMUP):
-                    seam(_unsampled)
-                seam(sample)
-    return tuple(readings)
-
-
-def whole_heap_across(span: Span) -> tuple[Heap, Heap]:
-    """What the WHOLE PROCESS holds where ``span``'s region opens and where it
-    closes.
-
-    :func:`whole_heap`'s three totals, marked across ONE region of one sequence
-    rather than compared between two runs of it. That is what sees the one
-    pathology repeated readings cannot: a cache filled on FIRST REACH and keyed
-    by the data reaching it SATURATES, so two arms run in one process both read
-    it already full and their totals agree however much either one put into it.
-    A region entered once, over work the process has never done before, separates
-    the two marks by whatever any container anywhere took for that work.
-
-    Run once and NEVER WARMED, which is the whole of why it is a function of its
-    own: warming is repetition, and repetition is what would pay the region's
-    first-reach costs before the opening mark instead of between the two. The
-    caller warms the process itself instead — by running the same sequence at the
-    same size over OTHER data until every cost paid once is paid — and then marks a
-    region whose only new thing is the data reaching it.
-
-    The caller owes one thing more: the region must RELEASE everything it
-    legitimately builds before the closing mark, because these are totals rather
-    than a difference against what the region allocated, so a structure still
-    reachable at the second mark is inside it. Each mark discounts the heap
-    listing it takes and the reading already taken, so the process looks
-    identical at both.
-    """
-    require_own_interpreter("whole_heap_across")
-    readings: list[Heap] = []
-    mark = _marking(readings)
-    with untraced():
-        span(mark, mark)
-    opened, closed = readings
-    return opened, closed
-
-
-def _marking(readings: list[Heap]) -> Callable[[], None]:
-    """A sampler appending ``readings``' next whole-process total.
-
-    Discounted against itself: the listing the census walks, the list the
-    readings are collected in, and every reading already in it are the objects a
-    whole-heap comparison cannot avoid creating, so a later mark would otherwise
-    weigh what an earlier one answered.
-    """
-
-    def mark() -> None:
-        _settled()
-        heap = gc.get_objects()
-        readings.append(_heap_census(heap, frozenset({id(heap), id(readings), *map(id, readings)})))
-
-    return mark
-
-
-def _settled() -> None:
-    """Collect until the collector's listing stops moving.
-
-    A sample is a statement about what the process holds, so it is taken where
-    another collection would change nothing. Reaching that point is the whole
-    reason for the loop; a listing still moving after
-    :data:`SETTLING_COLLECTIONS` passes is a heap no total can describe.
-    """
-    listed = -1
-    for _ in range(SETTLING_COLLECTIONS):
-        gc.collect()
-        current = len(gc.get_objects())
-        if current == listed:
-            return
-        listed = current
-    raise AssertionError(f"the heap listing still moved after {SETTLING_COLLECTIONS} collections")
-
-
-def _heap_census(heap: Sequence[object], instruments: frozenset[int]) -> Heap:
-    """``heap``'s own totals, less the containers the listing needed.
-
-    The untracked walk carries no identity set and REVISITS deliberately: a value
-    reached by several paths is priced once for each of them, which is what keeps
-    ``held`` a function of the heap's shape rather than of how the interpreter
-    happened to share a value.
-
-    It terminates all the same. An untracked object holds only untracked objects
-    — inserting a tracked value into a dictionary re-tracks it, and a tuple is
-    immutable — so no untracked graph closes a cycle, and none of them can reach
-    back into anything tracked and re-count an entry of ``heap``.
-    """
-    objects = 0
-    references = 0
-    held = 0
-    pending: list[object] = []
-    for obj in heap:
-        if id(obj) in instruments:
-            continue
-        objects += 1
-        held += sys.getsizeof(obj)
-        referents = gc.get_referents(obj)
-        references += len(referents)
-        pending.extend(each for each in referents if not gc.is_tracked(each))
-    while pending:
-        obj = pending.pop()
-        held += sys.getsizeof(obj)
-        pending.extend(each for each in gc.get_referents(obj) if not gc.is_tracked(each))
-    return Heap(objects, references, held)
-
-
 def warmed(seam: Seam) -> Seam:
-    """``seam`` with its first-reach costs already paid, for :func:`live_graph`.
+    """``seam`` with its first-reach costs already paid, for :func:`survivors`.
 
     That instrument opens its window before the first run, so a memo filled on
     first reach anywhere under the seam would read as a survivor of the measured

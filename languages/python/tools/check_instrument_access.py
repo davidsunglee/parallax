@@ -48,20 +48,16 @@ BOUNDARY = "in_a_child_interpreter"
 ATTRIBUTE_CONSTANT = "OWN_INTERPRETER_ATTRIBUTE"
 CLASSIFIER_CONSTANT = "_OWN_INTERPRETER_ATTRIBUTE"
 
-# The instruments whose reading is taken over the whole process: the two survivor
-# samples and the two whole-heap censuses list every tracked object, and the four
-# byte readings each collect the whole heap and read a tracer the whole process
-# shares.
+# The instruments whose reading is taken over the whole process: the survivor
+# sample lists every tracked object, and the four byte readings each collect the
+# whole heap and read a tracer the whole process shares.
 WHOLE_INTERPRETER_READERS: frozenset[str] = frozenset(
     {
         "allocation",
         "first_run",
         "high_water",
-        "live_graph",
         "retained",
         "survivors",
-        "whole_heap",
-        "whole_heap_across",
     }
 )
 

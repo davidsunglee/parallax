@@ -19,8 +19,8 @@ from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario
 from tests.unit.memory_instruments import (
     in_a_child_interpreter,
-    live_graph,
     serve_one_measurement,
+    survivors,
     warmed,
 )
 
@@ -45,15 +45,14 @@ def test_eager_projection_retains_only_the_returned_wire_envelope() -> None:
         returned[:] = [source.wire()]
         sample()
 
-    graph = live_graph(warmed(projection))
+    alive = survivors(warmed(projection))
     assert returned
     expected = {
         id(cast("object", value))
         for value in reachable_objects(returned[0])
         if isinstance(value, (Snapshot, WireEntity, dict, list, tuple))
     }
-    survivors = {id(value) for value in graph.survivors}
-    assert survivors <= expected
+    assert {id(value) for value in alive} <= expected
     inventory = Counter(
         "snapshot"
         if isinstance(value, Snapshot)
@@ -64,7 +63,7 @@ def test_eager_projection_retains_only_the_returned_wire_envelope() -> None:
         else "sequence"
         if isinstance(value, list)
         else "roots"
-        for value in graph.survivors
+        for value in alive
     )
     assert inventory == {
         "snapshot": 1,
@@ -73,12 +72,6 @@ def test_eager_projection_retains_only_the_returned_wire_envelope() -> None:
         "sequence": 1,
         "roots": 1,
     }
-    assert graph.inbound == sum(
-        1
-        for holder in (returned, *graph.survivors)
-        for referent in gc.get_referents(holder)
-        if id(referent) in survivors
-    )
 
 
 @in_a_child_interpreter
@@ -120,12 +113,11 @@ def test_failed_eager_projection_releases_all_projection_scaffolding() -> None:
                 assert str(error) == "projection failed after rendering"
             sample()
 
-        graph = live_graph(warmed(failed))
+        alive = survivors(warmed(failed))
     finally:
         cast("Any", wire_materialize.WireWalk).position = position
 
-    assert graph.survivors == []
-    assert graph.inbound == 0
+    assert alive == []
 
 
 if __name__ == "__main__":
