@@ -21,21 +21,21 @@ from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.unit_work import (
     SELECTION_INTENT,
-    ClaimTable,
     FixedClock,
     KeyedWrite,
-    ObjectClaimedWrite,
     ObjectKey,
     RetainedObservation,
     VersionObservation,
     WriteIntent,
-    admits,
     instructions,
     keyed_intent,
 )
+from parallax.core.unit_work.claims import ClaimTable, admits
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.unit_work.materialized import ObjectClaimedWrite
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from tests._support import mirrored_models as mm
@@ -435,14 +435,14 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
 @pytest.mark.parametrize(
     ("key", "mutation", "expected"),
     [
-        (opt_lock.UNVERSIONED, "insert", None),
+        (UNVERSIONED, "insert", None),
         (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "insert", None),
         (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "insertUntil", None),
         (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "update", _RETAINED),
         (opt_lock.ExplicitVersion(_VERSION_ATTRIBUTE), "delete", _RETAINED),
         (opt_lock.TransactionTimeDerived(_START_ATTRIBUTE), "terminate", _RETAINED),
-        (opt_lock.UNVERSIONED, "update", _OBJECT),
-        (opt_lock.UNVERSIONED, "delete", _OBJECT),
+        (UNVERSIONED, "update", _OBJECT),
+        (UNVERSIONED, "delete", _OBJECT),
     ],
 )
 def test_the_claim_scope_derivation_is_total_over_the_write_kind(

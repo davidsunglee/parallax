@@ -28,14 +28,13 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import (
     AsOf,
-    IncludePath,
     IncludeSegment,
-    TemporalDimension,
     TemporalSelection,
     object_query,
     validate_object_query,
 )
 from parallax.core.object_query._canonical import canonical_includes
+from parallax.core.object_query._nodes import IncludePath, TemporalDimension
 from parallax.core.object_query._validated import ValidatedOrderTerm
 from parallax.core.predicate import (
     All,

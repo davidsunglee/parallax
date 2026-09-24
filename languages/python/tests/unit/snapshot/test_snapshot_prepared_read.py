@@ -67,15 +67,9 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize import (
-    PageBuilder,
-    RootView,
-    StoredDataIssueInput,
-    _convert,
-    _identity,
-)
+from parallax.snapshot.materialize import PageBuilder, RootView, _convert, _identity
 from parallax.snapshot.materialize._identity import claim_identity
-from parallax.snapshot.materialize._page import ABSENT, page_rows
+from parallax.snapshot.materialize._page import ABSENT, StoredDataIssueInput, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read

@@ -24,12 +24,8 @@ import pytest
 from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import (
-    PlanningRequest,
-    WritePlan,
-    WritePlanner,
-    WritePlanningResult,
-)
+from parallax.core.unit_work import PlanningRequest, WritePlan, WritePlanner
+from parallax.core.unit_work.write_settlement import WritePlanningResult
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction
 from tests._support.db_port import (

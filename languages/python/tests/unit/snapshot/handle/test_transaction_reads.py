@@ -36,9 +36,9 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
+from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle import (
     Database,
-    FindResult,
     KeyedWriteValueError,
     Transaction,
     TransactionTimePinReadOnlyError,

@@ -40,19 +40,19 @@ from parallax.core.model_formation import (
     MODEL_FORMATION_MODULE,
     MetamodelValidationError,
     ModelCompilerRequirement,
-    RequiredRuleSet,
 )
+from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.core.opt_lock import (
     FACET_KEY,
     ISSUE_CODES,
     OPT_LOCK_MODULE,
     RULE_SET,
-    UNVERSIONED,
     ExplicitVersion,
     OptimisticLockFacet,
     TransactionTimeDerived,
 )
 from parallax.core.opt_lock._compile import compile_facet
+from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.opt_lock._rules import MULTIPLE_ATTRIBUTES, TEMPORAL_EXPLICIT_ATTRIBUTE
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import TEMPORAL_READ_MODULE

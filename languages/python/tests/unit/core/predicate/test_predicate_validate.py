@@ -26,16 +26,15 @@ from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.object_query import (
     AsOf,
     History,
-    IncludePath,
     IncludeSegment,
     OrderKey,
-    TemporalDimension,
     TemporalSelection,
     object_query,
     validate_object_query,
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query import validate as query_validation
+from parallax.core.object_query._nodes import IncludePath, TemporalDimension
 from parallax.core.predicate import (
     All,
     And,

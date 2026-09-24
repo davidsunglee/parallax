@@ -46,11 +46,8 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.model_formation import (
-    MODEL_FORMATION_MODULE,
-    ModelCompilerRequirement,
-    RequiredRuleSet,
-)
+from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerRequirement
+from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake

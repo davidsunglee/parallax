@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from parallax.core.object_query import ObjectQueryNode, serialize
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query.serde import serialize
 from parallax.core.predicate import serialize as serialize_predicate
 
 __all__ = ["canonical_document", "canonical_query", "predicate_document"]

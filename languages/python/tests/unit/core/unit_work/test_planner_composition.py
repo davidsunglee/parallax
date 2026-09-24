@@ -62,18 +62,15 @@ from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import (
-    NO_AUDIT,
+from parallax.core.unit_work import NO_AUDIT, PlanningRequest, WritePlan, WritePlanner
+from parallax.core.unit_work.planned import PlannedWrite
+from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
-    PlannedWrite,
-    PlanningRequest,
     TemporalStrategy,
-    WritePlan,
-    WritePlanner,
-    WritePlanningResult,
 )
+from parallax.core.unit_work.write_settlement import WritePlanningResult
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction, _planning
 from parallax.snapshot.handle._publication import write_projection

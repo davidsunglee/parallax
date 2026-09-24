@@ -32,7 +32,6 @@ from parallax.core import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
-    EDIT_CODES,
     UNLOADED,
     EditError,
     EditViolation,
@@ -53,6 +52,7 @@ from parallax.core.entity._declaration import (
     wire_names_of,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, lifecycle_state
+from parallax.core.entity._errors import EDIT_CODES
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     CARRIED_LAYOUT_ATTRIBUTE,

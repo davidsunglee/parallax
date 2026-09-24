@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-from parallax.snapshot.materialize._classify import (
-    ClassifiedRoot,
-    ConformingRoot,
-    RootClassifications,
-    classify_roots,
-    hydrates,
-)
+from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots, hydrates
 from parallax.snapshot.materialize._convert import SnapshotDecodingError
 from parallax.snapshot.materialize._invalid import (
     MISSING_STORED_VALUE,
@@ -15,12 +9,8 @@ from parallax.snapshot.materialize._invalid import (
     StoredDataIssue,
 )
 from parallax.snapshot.materialize._page import (
-    InvalidRootInput,
     Page,
     PageBuilder,
-    PageRows,
-    StoredDataIssueCode,
-    StoredDataIssueInput,
     page_edges,
     page_rows,
     root_last_uses,
@@ -42,20 +32,14 @@ __all__ = [
     "FAMILY_VARIANT_KEY",
     "MISSING_STORED_VALUE",
     "ClassifiedRoot",
-    "ConformingRoot",
     "InvalidData",
     "InvalidDataError",
-    "InvalidRootInput",
     "Page",
     "PageBuilder",
-    "PageRows",
-    "RootClassifications",
     "RootView",
     "SnapshotConsistencyError",
     "SnapshotDecodingError",
     "StoredDataIssue",
-    "StoredDataIssueCode",
-    "StoredDataIssueInput",
     "WireEntity",
     "WireValue",
     "classify_roots",

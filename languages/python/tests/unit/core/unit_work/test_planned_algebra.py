@@ -37,16 +37,25 @@ import pytest
 from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
 from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
+    NO_AUDIT,
+    SUPERSEDED,
+    PlannedClose,
+    PlannedInsert,
+    PredecessorRow,
+    WritePlan,
+)
+from parallax.core.unit_work.plan import PlannedSteps, eager_segment
+from parallax.core.unit_work.planned import (
     ANY_COUNT,
     INFINITY,
     MAX_PLUS_ONE,
+    MISSING_TARGET,
     NEW_LINEAGE,
-    NO_AUDIT,
-    SUPERSEDED,
+    OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
     UNGATED,
     UNVERSIONED,
     AffectedRows,
-    AuditStrategy,
     ExactCount,
     Finite,
     InsertEntry,
@@ -54,30 +63,20 @@ from parallax.core.unit_work import (
     MilestoneTarget,
     NonTemporalConcurrency,
     PlannedAssignments,
-    PlannedClose,
     PlannedDelete,
-    PlannedInsert,
     PlannedRow,
-    PlannedSteps,
     PlannedUpdate,
-    PredecessorRow,
     SelfIncrement,
     Shortfall,
     TemporalConcurrency,
     TemporalGate,
+    ValidatedMutationSelection,
     Versioned,
     VersionGate,
-    WritePlan,
     WriteTarget,
-    eager_segment,
     shortfall_for,
 )
-from parallax.core.unit_work.planned import (
-    MISSING_TARGET,
-    OPTIMISTIC_CONFLICT,
-    STALE_WRITE,
-    ValidatedMutationSelection,
-)
+from parallax.core.unit_work.strategy import AuditStrategy
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model

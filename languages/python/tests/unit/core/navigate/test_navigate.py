@@ -22,7 +22,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.navigate import canonicalize_validated
 from parallax.core.object_query import AsOf, TemporalSelection
-from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
+from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target

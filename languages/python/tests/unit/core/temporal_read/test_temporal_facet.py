@@ -29,29 +29,31 @@ from parallax.core.metamodel import (
     TemporalDimension,
 )
 from parallax.core.model_formation import (
-    FORMATION_COMPILER_FAILED,
-    FORMATION_FACET_DUPLICATE,
-    FORMATION_FACET_MISSING,
     MODEL_FORMATION_MODULE,
-    FormationContractError,
     MetadataCompiler,
     ModelCompiler,
     ModelCompilerRequirement,
     ModelRuleSet,
     form,
 )
+from parallax.core.model_formation._errors import (
+    FORMATION_COMPILER_FAILED,
+    FORMATION_FACET_DUPLICATE,
+    FORMATION_FACET_MISSING,
+    FormationContractError,
+)
 from parallax.core.opt_lock import MODEL_COMPILER as OPT_LOCK_COMPILER
 from parallax.core.relationship import MODEL_COMPILER as RELATIONSHIP_COMPILER
 from parallax.core.storage_layout import MODEL_COMPILER as STORAGE_LAYOUT_COMPILER
 from parallax.core.temporal_read import (
     FACET_KEY,
-    NON_TEMPORAL,
     TEMPORAL_READ_MODULE,
     Bitemporal,
     TemporalFacet,
     TransactionTimeOnly,
 )
 from parallax.core.temporal_read._compile import compile_facet
+from parallax.core.temporal_read._facet import NON_TEMPORAL
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake

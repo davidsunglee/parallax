@@ -25,9 +25,7 @@ from parallax.core.unit_work import (
     Clock,
     FixedClock,
     KeyedWrite,
-    ObservedKeyedWrite,
     PlannedInsert,
-    PlannedUpdate,
     PlanningRequest,
     PredicateSelection,
     PredicateWrite,
@@ -49,6 +47,8 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.materialized import ObservedKeyedWrite
+from parallax.core.unit_work.planned import PlannedUpdate
 from parallax.core.unit_work.planner import VersionedStateKey
 from parallax.core.unit_work.uow import EscapedTransactionError, FlushExecutor, WriteBatchOpening
 from parallax.snapshot.handle import build_write_planner

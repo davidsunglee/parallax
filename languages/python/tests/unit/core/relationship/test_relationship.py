@@ -64,8 +64,8 @@ from parallax.core.model_formation import (
     MODEL_FORMATION_MODULE,
     MetamodelValidationError,
     ModelCompilerRequirement,
-    RequiredRuleSet,
 )
+from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.core.relationship import (
     FACET_KEY,
     ISSUE_CODES,

@@ -39,19 +39,13 @@ from parallax.core.metamodel import FacetKey
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
-    AuditStrategy,
-    BatchingStrategy,
-    ChangedFrom,
     ChunkedColumnBuilder,
-    ColumnSlice,
-    ConcurrencyStrategy,
     EntityStateRow,
     FixedClock,
     MaterializedWriteGroup,
     MilestoneTopology,
     PlannedClose,
     PlannedInsert,
-    PlannedUpdate,
     PlanningRequest,
     PredecessorColumns,
     PredecessorShape,
@@ -60,7 +54,6 @@ from parallax.core.unit_work import (
     PredicateWrite,
     SystemClock,
     TemporalColumns,
-    TemporalStrategy,
     TransactionInstant,
     VersionArithmetic,
     VersionColumns,
@@ -72,6 +65,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
     ChunkedColumn,
+    ColumnSlice,
     freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
@@ -79,9 +73,15 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core.unit_work.observe import adopt_predecessor_row
-from parallax.core.unit_work.planned import adopt_planned_row
+from parallax.core.unit_work.planned import ChangedFrom, PlannedUpdate, adopt_planned_row
 from parallax.core.unit_work.planner import (
     FamilyFacts,  # producer-reach regression only
+)
+from parallax.core.unit_work.strategy import (
+    AuditStrategy,
+    BatchingStrategy,
+    ConcurrencyStrategy,
+    TemporalStrategy,
 )
 from parallax.core.unit_work.write_settlement import (
     WriteSettlement,  # producer-reach regression only

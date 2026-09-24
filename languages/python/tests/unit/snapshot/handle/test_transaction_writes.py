@@ -30,11 +30,8 @@ from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import (
-    EntityGraphWriter,
-    EntityRowError,
-    NodeHandle,
-)
+from parallax.core.entity import EntityGraphWriter, NodeHandle
+from parallax.core.entity._errors import EntityRowError
 from parallax.core.unit_work import (
     FixedClock,
     ObjectKey,

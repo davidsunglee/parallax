@@ -46,14 +46,12 @@ from parallax.snapshot import (
     StoredDataIssue,
     connect,
 )
-from parallax.snapshot.materialize import (
-    ClassifiedRoot,
+from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
+from parallax.snapshot.materialize._classify import (
     ConformingRoot,
+    RootClassification,
     RootClassifications,
-    RootView,
-    classify_roots,
 )
-from parallax.snapshot.materialize._classify import RootClassification
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,

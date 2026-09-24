@@ -18,11 +18,10 @@ from parallax.core.unit_work import (
     Concurrency,
     PlanningRequest,
     TransactionInstant,
-    WriteInstruction,
     WriteObservation,
     buffered_write,
 )
-from parallax.core.unit_work.instructions import prepare_typed_write
+from parallax.core.unit_work.instructions import WriteInstruction, prepare_typed_write
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant
