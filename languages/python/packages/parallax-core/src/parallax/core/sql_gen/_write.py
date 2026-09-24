@@ -72,7 +72,7 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.wire import WireValue
 
-__all__: list[str] = []
+__all__ = ["compile_write_step"]
 
 
 @dataclass(frozen=True, slots=True)
