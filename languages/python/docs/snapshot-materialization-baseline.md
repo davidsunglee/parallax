@@ -22,20 +22,13 @@ Nothing here gates. This is dated evidence for the Snapshot member of `just
 python-report-cost`; current authority and every active ceiling live only in
 `spec/budget-contract.yaml`. The report displays outcomes but never turns an
 outside-budget observation into its exit status. The *shape* of the claim is gated
-instead, in `tests/unit/test_snapshot_materialization_scaling.py`, which the
-`cost` class owns and CI runs on every change: it asserts that what preparation
-holds is fixed by the model's exact Entity layouts and by the compiled reads,
-across eight rows against sixty-four through one prepared read and one execution
-against sixty-four against one prepared selection. Two readings carry that. One is
-an exact equality over what each prepared structure reaches — every object it
-reaches without crossing into another, and every reference between them. The other
-is what every Python object in the process weighs at each end of a marked region
-handed rows this process has never decoded, which must not rise; that is where a
-container no prepared structure reaches at all shows up. A region rather than a
-second arm because a cache keyed by what a row holds stops growing once the same
-rows come back, so two arms compared in one process would both read it already
-full. Neither reading is a `tracemalloc` figure, which is what leaves both of them
-exact where a total in bytes allocated would need a tolerance.
+instead, in `tests/unit/snapshot/test_snapshot_materialization_scaling.py`, which
+the `cost` class owns and CI runs on every change: it asserts that what
+preparation holds is fixed by the model's exact Entity layouts and by the compiled
+reads, across eight rows against sixty-four through one prepared read and one
+execution against sixty-four against one prepared selection, and that converting
+rows this process has never decoded, or executing over them, leaves no byte
+reachable once the Page is gone. That suite states how each reading is taken.
 
 ## What the reading does not prove
 
@@ -65,26 +58,26 @@ type and no more: `Boolean`, `Int32`, `Int64`, `Float32`, `Float64`, `String`,
 `Decimal`, `Bytes`, `Date`, `Time`, `Timestamp`, `Uuid`.
 
 **A holder whose entry count is fixed by the model.** Both gated readings are
-sizes: an equality between two arms, and a refusal to rise across one region. Both
-therefore see growth along rows, graphs, and executions — which is the whole of
-what COR-137 asks — and neither separates a holder that grows along none of them
-from state the model legitimately owns. One query shape banked once and shared by
-every execution after it leaves both execution arms holding one. A decode memo
-bounded by a value domain fills during warming only where warming covered that
-domain: `Boolean` has two values and both are decoded before any reading, while
-the wider modular domains are sampled rather than exhausted, so a memo over one
-of those would take entries inside the region and fail that reading. That such
-holders do not exist is a structural property of the code that would own them,
-asserted where that code is, and outside what a measurement of size can say.
+sizes: an equality between two arms, and an equality between one more conversion
+and a control that converts nothing. Both therefore see growth along rows, graphs,
+and executions — which is the whole of what COR-137 asks — and neither separates a
+holder that grows along none of them from state the model legitimately owns. One
+query shape banked once and shared by every execution after it leaves both
+execution arms holding one. A decode memo bounded by a value domain fills during
+warming only where warming covered that domain: `Boolean` has two values and both
+are decoded before any reading, while the wider modular domains are sampled rather
+than exhausted, so a memo over one of those would take entries inside a measured
+conversion and fail that reading. That such holders do not exist is a structural
+property of the code that would own them, asserted where that code is, and outside
+what a measurement of size can say.
 
 **A byte equality over a window that runs the codec.** Two runs of one identical
 seam read about four hundred bytes apart on a forty-kilobyte window, in either
 direction, after eight hundred warm-up batches: the interpreter's own `datetime`
 formatting leaves a slowly saturating residue behind the `Timestamp` leg of the
-canonical Wire codec. That is why the byte totals below are reported and the gated
-regression asserts structure instead. The neighbouring 64-graph cost item still
-asserts bytes because its workload declares four Neutral Types and reaches none of
-that leg.
+canonical Wire codec. That is why the byte totals below are reported rather than
+gated. The neighbouring 64-graph cost item still asserts bytes because its
+workload declares four Neutral Types and reaches none of that leg.
 
 **A profiled share as a share of real time.** `cProfile` charges its own per-call
 bookkeeping to every call, so a leg reached tens of times per row reads larger

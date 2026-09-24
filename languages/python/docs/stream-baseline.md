@@ -14,7 +14,7 @@ outside-budget observation into its exit status.
 The *shape* of the bound is gated instead, in
 `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost` class owns and CI
 runs on every change through `just python-check-cost`. That suite states the bound
-as eight separate readings. Pages do not accumulate: what a delivery retains
+as seven separate readings. Pages do not accumulate: what a delivery retains
 at ten times the roots, at a later position of the same delivery, and once
 drained, differs from the baseline by less than one retained root costs. One
 Page, its `PageRows`, one transient `RootView`, and one published root are alive
@@ -29,24 +29,11 @@ published root below it, while the width itself costs the plan once and the
 delivery retains three fixed coordinates whatever the page size or the width.
 **There is no term in the total result size and no term in how far the delivery
 has got**,
-and both absences are read directly as well as by omission — over every survivor
-whatever defined its type, over the references those survivors hold, and in bytes
-over the survivors and everything untracked they hold — so a delivery banking one
-thing per PAGE off something it published fails them whether what grows is
-objects, references, or the bytes inside a container that gains neither.
-
-Every one of those walks outwards from the delivery's own survivors, so the two
-absences are then read once more over the WHOLE PROCESS: every tracked object in
-it, every reference they hold, and what they and everything untracked they reach
-report through `sys.getsizeof`, as three totals with no baseline, equal to the
-byte at ten times the roots and at a later position of the same delivery. A total
-needs no survivor to start at, which is the only way a holder created BEFORE the
-measurement — banking one already-existing value per page, and so growing by
-neither an object nor a byte of its own — comes inside the claim. The price of a
-total is that it prices everything it reaches: the two arms may differ in nothing
-but the one dial, down to the width of every value the fixture produces. What it
-reaches is Python-level structure, and the last heading below says what that
-leaves out.
+and both absences are read directly as well as by omission — exactly, over
+every Parallax-owned survivor, over every survivor whatever defined its type, and
+over the references those survivors hold — so a delivery banking one thing per
+PAGE fails them whether what grows is objects or references, however small each
+one is against the price of a retained root.
 
 Publishing one root peaks at that root's own reachable node closure: the high-water of the region
 between two roots is exactly the same at ten times the result, at a later
@@ -69,6 +56,9 @@ driver hold — has no executable witness in that suite, for the same reason it 
 none here and under the same heading below.
 
 ## The reading
+
+The `survivors` and `inbound` columns are this capture's survivor sample and the
+references the heap held into it; the current report takes neither.
 
 ```text
   Python    CPython 3.14.7
@@ -155,14 +145,3 @@ delivery may hold and how many of it may be alive.
 `O(P_B + G_max)` rather than `O(B)` — one root with a hundred thousand line items
 dominates both terms — and no reading here varies `G_max` far enough to show that
 domination.
-
-**Anything held outside a Python object.** Every figure in this report and every
-count in the gated suite comes from `tracemalloc`, `gc.get_objects`, or
-`sys.getsizeof`, so all three price Python objects and the references among them.
-A memory mapping (`mmap`), or a buffer a C extension owns, is a constant-size
-shell at every one of them however large its backing grows, and an anonymous
-mapping never reaches the allocator `tracemalloc` traces. Observing that needs a resident-set reading
-taken from outside the interpreter, and nothing in this repository takes one. The
-graded claim is therefore about the delivery's Python-level working set — which
-is what all of Parallax's own storage is — rather than about the process's
-memory.
