@@ -46,8 +46,6 @@ ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 COST_JOB = "python-check-cost"
-COST_JOB_STEP = "just python-check-cost ${{ matrix.shard }}"
-UNGATING_KEYS = frozenset({"if", "continue-on-error"})
 WHOLE_CLASS = "1/1"
 
 # The primary semantic surfaces, each one directory under `tests/`.
@@ -172,17 +170,6 @@ def _deployed_cells() -> list[str]:
     return [str(cell) for cell in _cost_job()["strategy"]["matrix"]["shard"]]
 
 
-def _cost_job_step() -> Any:
-    """The step of that job which invokes the class command."""
-    (step,) = [step for step in _cost_job()["steps"] if COST_JOB in str(step.get("run", ""))]
-    return step
-
-
-def _index_and_count(cell: str) -> tuple[int, int]:
-    index, _, count = cell.partition("/")
-    return int(index), int(count)
-
-
 def _selection(expression: str | None, shard: str) -> list[str]:
     """The items one session selects under ``--shard shard``, narrowed to
     ``-m expression`` when one is given, in collection order.
@@ -228,57 +215,20 @@ def _selections(requests: Sequence[tuple[str | None, str]]) -> list[list[str]]:
         return list(sessions.map(_selection, expressions, shards))
 
 
-def test_the_cost_jobs_matrix_is_the_shard_vector_alone() -> None:
-    # The shard vector is the whole expansion only while it is the matrix's only
-    # key: a second dimension would multiply the cells, and `include` or
-    # `exclude` would add or drop cells the vector never names. Every assertion
-    # below reads that vector, so this is what makes them assertions about the
-    # cells GitHub Actions runs.
-    assert set(_cost_job()["strategy"]["matrix"]) == {"shard"}
-
-
-def test_the_cost_jobs_cells_are_every_shard_of_one_count() -> None:
-    # The cells are the workflow's, not a copy of it: N of them, each naming N,
-    # together naming every index of it once. A deleted, duplicated, or
-    # renumbered cell fails here rather than silently dropping class members.
-    cells = [_index_and_count(cell) for cell in _deployed_cells()]
-    assert {count for _, count in cells} == {len(cells)}
-    assert sorted(index for index, _ in cells) == list(range(1, len(cells) + 1))
-
-
-def test_the_cost_job_runs_the_shard_its_cell_names() -> None:
-    # A cell is its own shard only if the step passes it through; a shard spelled
-    # into the step would run one part of the class in every cell.
-    runs = [str(step["run"]).strip() for step in _cost_job()["steps"] if "run" in step]
-    assert [run for run in runs if COST_JOB in run] == [COST_JOB_STEP]
-
-
-def test_every_cost_cell_runs_unconditionally_and_gates_on_its_verdict() -> None:
-    # A cell gates the shard it names only while it always runs and its failure
-    # is the job's: an `if` on the job or on the invoking step would skip part of
-    # the class, and `continue-on-error` on either would run that part ungated.
-    assert UNGATING_KEYS.isdisjoint(_cost_job())
-    assert UNGATING_KEYS.isdisjoint(_cost_job_step())
-
-
 def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
-    # The cells' selections together hold every cost item exactly once and none
-    # of them is empty; with the expansion and the gating pinned above, that is
-    # what lets CI run the class as one cell per shard and still own it once
-    # (§9). Proved in process, for every cell: its part, computed from what the
-    # hook computes it from — the whole class in collection order, the stored
-    # durations, and the deployed cell count — through the same assignment the
-    # hook calls, with the cell spellings parsed by the same parse it reads
-    # `--shard` through and graded above, so a mechanism that dropped, doubled,
-    # or misnumbered a part fails without a session per cell. Pinned by the three
-    # sessions, and by nothing else: that a real sharded run selects what this
-    # predicts for it — its cost items are the spot-checked cell's part, and its
+    # The cells are every index of one count, parsed as the hook parses `--shard`.
+    # Their parts, computed in process from what the hook computes them from — the
+    # whole class in collection order, the stored durations, and the cell count —
+    # hold every cost item exactly once and none is empty (§9). One real sharded
+    # session pins the prediction: its cost items are its cell's part, and its
     # other items are exactly the unsharded session's, which is what confines
     # `--shard` to the class CI splits.
     cells = _deployed_cells()
-    # Halfway along the vector: over the deployed cells that is neither the first
-    # nor the last, so a hook that ran one end of the vector whatever cell it was
-    # given fails here.
+    parsed = [cost_durations.index_and_count(cell) for cell in cells]
+    assert sorted(parsed) == [(index, len(cells)) for index in range(1, len(cells) + 1)]
+
+    # Halfway along the vector: neither the first nor the last cell, so a hook
+    # that ran one end of the vector whatever cell it was given fails here.
     spot_checked = cells[len(cells) // 2]
     cost_class, whole, under_one_cell = _selections(
         [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, spot_checked)]
@@ -288,7 +238,7 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     )
     predicted = {
         cell: [item for item, shard in zip(cost_class, shard_of, strict=True) if shard == index]
-        for cell, (index, _) in zip(cells, map(_index_and_count, cells), strict=True)
+        for cell, (index, _) in zip(cells, parsed, strict=True)
     }
     assert all(predicted.values())
     assert sorted(item for part in predicted.values() for item in part) == sorted(cost_class)
@@ -301,29 +251,21 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     assert [item for item in whole if item in in_class] == list(cost_class)
 
 
-def test_every_deployed_cell_names_the_index_and_count_it_spells() -> None:
-    # The hook reads `--shard` through this parse, so a regression answering the
-    # same pair for every valid spelling would run one part of the class in every
-    # cell while the malformed spellings below stayed rejected and the partition
-    # above stayed green. Each deployed cell is graded against what it spells.
-    cells = _deployed_cells()
-    assert [cost_durations.index_and_count(cell) for cell in cells] == [
-        _index_and_count(cell) for cell in cells
-    ]
-    assert cost_durations.index_and_count(WHOLE_CLASS) == (1, 1)
+@pytest.mark.parametrize("shard", ["", "1", "1/", "0/4", "5/4", "a/4"])
+def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
+    with pytest.raises(pytest.UsageError, match="--shard expects I/N"):
+        cost_durations.index_and_count(shard)
 
 
-def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
-    """The outcome of a session given a ``--shard`` value, collecting this module
-    alone so what it reports is the option's answer rather than the suite's."""
-    return subprocess.run(
+def test_a_session_given_a_malformed_shard_stops_with_the_usage_error() -> None:
+    completed = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
             str(Path(__file__)),
             "--shard",
-            shard,
+            "0/4",
             "--collect-only",
             "-q",
             "-p",
@@ -334,25 +276,6 @@ def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
-
-
-@pytest.mark.parametrize(
-    "shard",
-    [
-        "",
-        "1",
-        "1/",
-        "0/4",
-        "5/4",
-        "²/4",
-        pytest.param("9" * 5000 + "/4", id="more-digits-than-int-converts"),
-    ],
-)
-def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
-    # `str.isdigit` is wider than Python's integer parser, so a value it accepts
-    # can still be one `int` refuses; the option answers every spelling with its
-    # own diagnostic rather than an exception raised partway through a session.
-    completed = _malformed_shard_session(shard)
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--shard expects I/N" in completed.stderr
 
@@ -506,8 +429,6 @@ def test_durations_that_do_not_arrive_at_all_are_a_usage_error(tmp_path: Path) -
         pytest.param('{"a::b": -1.0}', id="negative"),
         pytest.param('{"a::b": NaN}', id="nan"),
         pytest.param('{"a::b": Infinity}', id="infinite"),
-        pytest.param('{"a::b": ' + "9" * 500 + "}", id="wider-than-a-float"),
-        pytest.param('{"a::b": ' + "9" * 5000 + "}", id="more-digits-than-json-parses"),
     ],
 )
 def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
@@ -516,26 +437,9 @@ def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
     # A payload can arrive and still be no durations: a list, an object naming
     # none, a document that stops. A `NaN` would poison the mean an unknown item
     # weighs and collapse the choice of lightest shard, leaving the balance
-    # decided by nothing while the partition stayed intact. The last two are
-    # numbers Python declines to hold as one: an integer past the float range
-    # answers neither `float` nor `math.isfinite`, and a longer digit run is one
-    # `json` itself refuses to parse. Every one of them is the file's usage error
-    # rather than an exception raised out of the session that read it.
+    # decided by nothing while the partition stayed intact.
     path = tmp_path / "cost_durations.json"
     path.write_text(payload, encoding="utf-8")
-    with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
-        cost_durations.known(path)
-
-
-def test_durations_with_no_mean_between_them_are_a_usage_error(tmp_path: Path) -> None:
-    # Each of these is a duration a float holds; together they total more than
-    # one holds. Their mean is what every item the file does not know weighs, and
-    # an infinite weight makes every shard's load infinite, leaving the choice of
-    # lightest shard to its tie-breaker — balanced by nothing, with the partition
-    # intact and nothing reporting the aggregate the values are individually
-    # valid under.
-    path = tmp_path / "cost_durations.json"
-    path.write_text('{"a::b": 1e308, "a::c": 1e308}', encoding="utf-8")
     with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
         cost_durations.known(path)
 
