@@ -10,6 +10,7 @@ rejections a Value Object body owns.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -38,7 +39,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.predicate import QueryDefinitionError, serialize
 from tests._support import value_object_models as vm
-from tests.unit.core.entity._value_object_document_support import stored_document
+from tests.unit.core.entity._value_object_document_support import inserted_document
 from tests.unit.core.entity.value_object_bad_models import (
     build_copy_verb_value_object,
     build_entity_only_option_value_object,
@@ -296,17 +297,22 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
     }
 
 
+def _stored_document(address: vm.Address) -> Mapping[str, object]:
+    return inserted_document(vm.CUSTOMER_MODEL, vm.Customer(id=1, name="Ada", address=address))
+
+
 def test_the_document_omits_a_member_the_caller_never_set() -> None:
-    assert stored_document(vm.Geo(country="DE")) == {"country": "DE"}
+    address = vm.Address(street="a", city="b", geo=vm.Geo(country="DE"))
+    assert _stored_document(address)["geo"] == {"country": "DE"}
 
 
 def test_a_many_occurrence_always_renders_even_when_empty() -> None:
-    document = stored_document(vm.Address(street="a", city="b"))
+    document = _stored_document(vm.Address(street="a", city="b"))
     assert document == {"street": "a", "city": "b", "phones": []}
 
     absent_many = vm.Address.model_construct(street="a", city="b")
     absent_many.__pydantic_fields_set__.discard("phones")
-    assert stored_document(absent_many) == {"street": "a", "city": "b", "phones": []}
+    assert _stored_document(absent_many) == {"street": "a", "city": "b", "phones": []}
 
 
 def test_the_document_renders_nested_occurrences_recursively() -> None:
@@ -316,7 +322,7 @@ def test_the_document_renders_nested_occurrences_recursively() -> None:
         geo=vm.Geo(country="DE", point=vm.Point(lat=1.0, lon=2.0)),
         phones=(vm.Phone(type="home", number="1"),),
     )
-    assert stored_document(address) == {
+    assert _stored_document(address) == {
         "street": "a",
         "city": "b",
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},

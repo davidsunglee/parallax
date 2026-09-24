@@ -1,30 +1,35 @@
-"""A live Value Object's document, composed the way a write stores it.
+"""The Value Object document a typed insert binds.
 
-A write prepares an occurrence from its live carrier through the borrowed
-authoring door, then encodes the prepared value through the codec, so a test
-grading the stored document reaches both steps rather than a serializer of its
-own.
+A test grading a stored document reads the statement ``tx.insert`` hands the
+port, so what it grades is the write path's own output rather than a
+composition of that path's steps.
 """
 
 from __future__ import annotations
 
-from parallax.core.base import FrozenMap
-from parallax.core.document_codec._authoring import BORROWED_SOURCE_ACCESS, prepare_authoring
-from parallax.core.document_codec._document import encode_managed_document
-from parallax.core.entity import ValueObject, shape_of
-from parallax.core.unit_work.instructions import (
-    _coerce_typed_leaf,  # pyright: ignore[reportPrivateUsage] - the typed write's own leaf coercion, so the document is the one a write stores
-)
+from collections.abc import Mapping
+from typing import cast
+
+from parallax.core import DomainModel, Entity
+from parallax.core.db_port import JsonDocument
+from parallax.snapshot.handle import Transaction
+from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
+from tests.unit._transact_support import db_for
 
 
-def stored_document(value: ValueObject) -> FrozenMap[str, object]:
-    """``value``'s document as a typed write stores it."""
-    shape = shape_of(type(value)).document_shape
-    prepared = prepare_authoring(
-        shape,
-        value,
-        source_access=BORROWED_SOURCE_ACCESS,
-        normalize_leaf=_coerce_typed_leaf,
+def inserted_document(model: DomainModel, entity: Entity) -> Mapping[str, object]:
+    """The one Value Object document inserting ``entity`` binds."""
+    port = ScriptedAdapter(Transact(Write()))
+
+    def insert(tx: Transaction) -> None:
+        tx.insert(entity)
+
+    db_for(model, port).transact(insert)
+    (document,) = (
+        bind.value
+        for call in port.calls
+        if isinstance(call, WriteCall)
+        for bind in call.binds
+        if isinstance(bind, JsonDocument)
     )
-    assert not prepared.failures, prepared.failures
-    return encode_managed_document(shape, prepared.value)
+    return cast("Mapping[str, object]", document)

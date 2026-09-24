@@ -64,7 +64,7 @@ from parallax.core.metamodel import (
 )
 from tests._support.model_capabilities import graph_construction_for, row_codec_for
 from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
-from tests.unit.core.entity._value_object_document_support import stored_document
+from tests.unit.core.entity._value_object_document_support import inserted_document
 
 _NS = "publication"
 
@@ -314,7 +314,7 @@ def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
     codec = row_codec_for(PARCELS)
 
     assert codec.full_row(root)
-    assert stored_document(root.tag)
+    assert inserted_document(PARCELS, Parcel(id=2, label="south", tag=root.tag))
     assert root.model_dump() == {
         "id": 1,
         "label": "north",

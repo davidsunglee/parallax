@@ -23,6 +23,7 @@ database then holds, runs against real Postgres in
 from __future__ import annotations
 
 import copy as copy_module
+from collections.abc import Mapping
 from functools import cached_property
 from typing import Any, cast
 
@@ -40,7 +41,7 @@ from parallax.core.entity._instance_state import (
 from parallax.core.metamodel import MODEL_ROOT
 from tests._support import value_object_models as vm
 from tests.unit.core.entity._compact_support import layout_slots
-from tests.unit.core.entity._value_object_document_support import stored_document
+from tests.unit.core.entity._value_object_document_support import inserted_document
 
 _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
     {
@@ -54,6 +55,10 @@ _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
 the implementation so narrowing one of them fails this suite instead of agreeing
 with itself. Each reports something ``m-value-object`` does not have: a
 relationship to refuse, or one of the three assignment designations."""
+
+
+def _stored_document(address: vm.Address) -> Mapping[str, object]:
+    return inserted_document(vm.CUSTOMER_MODEL, vm.Customer(id=1, name="Ada", address=address))
 
 
 def _address(city: str = "Oslo") -> vm.Address:
@@ -71,7 +76,7 @@ def test_an_unset_optional_member_stays_absent_from_the_document() -> None:
     # published stores what was read.
     edited = _address().edit(city="Bergen")
     assert "geo" not in edited.model_fields_set
-    assert stored_document(edited) == {
+    assert _stored_document(edited) == {
         "street": "Storgata 1",
         "city": "Bergen",
         "phones": [{"type": "home", "number": "1"}],
@@ -83,14 +88,14 @@ def test_naming_a_nullable_member_none_stores_an_explicit_null() -> None:
     # and a null is what a caller authored.
     edited = _address().edit(geo=None)
     assert "geo" in edited.model_fields_set
-    assert stored_document(edited)["geo"] is None
+    assert _stored_document(edited)["geo"] is None
 
 
 def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
     geo = vm.Geo(country="NO", point=vm.Point(lat=59.9, lon=10.7))
     edited = _address().edit(geo=geo)
     assert edited.geo == geo
-    assert stored_document(edited)["geo"] == {
+    assert _stored_document(edited)["geo"] == {
         "country": "NO",
         "point": {"lat": 59.9, "lon": 10.7},
     }
@@ -98,7 +103,7 @@ def test_an_edit_replaces_a_nested_occurrence_whole() -> None:
 
 def test_an_edit_replaces_a_many_occurrence_whole() -> None:
     edited = _address().edit(phones=(vm.Phone(type="work", number="2"),))
-    assert stored_document(edited)["phones"] == ({"type": "work", "number": "2"},)
+    assert _stored_document(edited)["phones"] == ({"type": "work", "number": "2"},)
 
 
 def test_an_edit_with_no_changes_is_legal_and_carries_the_same_state() -> None:
