@@ -7,7 +7,7 @@ from typing import Protocol
 
 from parallax.core.unit_work.planned import PlannedWrite
 
-__all__ = ["PlannedSteps", "StepSegment", "WritePlan", "eager_segment", "planned_steps"]
+__all__ = ["PlannedSteps", "StepSegment", "WritePlan", "eager_segment"]
 
 
 class StepSegment(Protocol):
@@ -92,13 +92,6 @@ class PlannedSteps:
     # reason no meaningful `__hash__` exists (Planned Steps is a value never
     # used as a mapping/set key).
     __hash__ = None  # pyright: ignore[reportAssignmentType] - deliberately unhashable
-
-
-def planned_steps(steps: Sequence[PlannedWrite]) -> PlannedSteps:
-    """The canonical Planned Steps over one already-ordered, already-settled run."""
-    if not steps:
-        return PlannedSteps()
-    return PlannedSteps(segments=(eager_segment(steps),))
 
 
 @dataclass(frozen=True, slots=True)

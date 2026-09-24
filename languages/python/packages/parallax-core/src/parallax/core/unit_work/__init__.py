@@ -18,7 +18,6 @@ from parallax.core.unit_work.clock import (
     FixedClock,
     SystemClock,
     TransactionInstant,
-    instant_literal,
 )
 from parallax.core.unit_work.columns import (
     ChunkedColumn,
@@ -78,7 +77,6 @@ from parallax.core.unit_work.plan import (
     StepSegment,
     WritePlan,
     eager_segment,
-    planned_steps,
 )
 from parallax.core.unit_work.planned import (
     ANY_COUNT,
@@ -94,7 +92,6 @@ from parallax.core.unit_work.planned import (
     UNVERSIONED,
     AffectedRows,
     AnyCount,
-    AssignmentShape,
     CarriedFrom,
     ChangedFrom,
     CloseCause,
@@ -208,7 +205,7 @@ from parallax.core.unit_work.write_settlement import (
     WritePlanningResult,
     plan_temporal_close,
 )
-from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
+from parallax.core.unit_work.write_validate import WriteRejectedError
 
 __all__ = [
     "ANY_COUNT",
@@ -242,7 +239,6 @@ __all__ = [
     "AddressedTarget",
     "AffectedRows",
     "AnyCount",
-    "AssignmentShape",
     "AuditStrategy",
     "AuthoredFrom",
     "AuthoredState",
@@ -380,15 +376,12 @@ __all__ = [
     "deserialize",
     "eager_segment",
     "enforce_affected_rows",
-    "instant_literal",
     "keyed_intent",
     "object_key",
     "observed_state_key",
     "plan_temporal_close",
-    "planned_steps",
     "run_unit_of_work",
     "serialize",
     "shortfall_for",
-    "validate_write",
     "whole",
 ]

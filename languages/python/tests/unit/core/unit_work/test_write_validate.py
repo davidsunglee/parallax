@@ -1,5 +1,5 @@
-"""``validate_write`` unit tests (m-value-object write validation), over a
-hand-built multi-type synthetic model — the SAME
+"""Keyed write-row validation (m-value-object write validation), graded through
+``prepare_typed_write`` over a hand-built multi-type synthetic model — the SAME
 "synthetic Widget model" convention `test_predicate_validate.py` uses for
 `_literal_matches_type`'s full neutral-type sweep, applied here to the write
 side's own value conformance. The 10 in-slice `when.write` rejected corpus
@@ -16,15 +16,16 @@ input-policy boundary (`declarations.md` "Python scalar carriers") — a native
 carrier, plus the narrow adjacent forms the input policy itself widens (an
 `int` for a `decimal` / `float`, a canonical UUID string), conform; a
 wire-only spelling (a float for a `decimal`, an ISO date/time/timestamp
-string, a hex `bytes` string) does not, since `validate_write` only ever sees
-an already-native write input on this path (the case-format ingestion seam
-decodes a wire spelling before it ever reaches here).
+string, a hex `bytes` string) does not, since the typed preparation only ever
+sees an already-native write input (the case-format ingestion seam decodes a
+wire spelling before it ever reaches here).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
 
@@ -52,7 +53,6 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     ConcreteSubtype,
-    EntityMetadata,
     ExactEntityReference,
     Metamodel,
     Multiplicity,
@@ -65,7 +65,8 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.unit_work import WriteRejectedError, validate_write
+from parallax.core.unit_work import KeyedMutation, KeyedWrite, WriteRejectedError
+from parallax.core.unit_work.instructions import prepare_typed_write
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 # A synthetic multi-type entity: every scalar neutral type as a NULLABLE
@@ -168,13 +169,27 @@ _WIDGET_MODEL = form_metamodel(
 )
 
 
-def _entity(model: Metamodel, name: str) -> EntityMetadata:
-    metadata = model.entity(identity(name))
-    assert metadata is not None
-    return metadata
+def _prepare(
+    model: Metamodel,
+    entity: str,
+    row: Mapping[str, object],
+    *,
+    mutation: KeyedMutation = "insert",
+) -> None:
+    prepare_typed_write(KeyedWrite(mutation, entity, (row,)), model)
 
 
-_WIDGET_METADATA = _entity(_WIDGET_MODEL, "Widget")
+def _refused(
+    model: Metamodel,
+    entity: str,
+    row: Mapping[str, object],
+    *,
+    mutation: KeyedMutation = "insert",
+) -> WriteRejectedError:
+    with pytest.raises(WriteRejectedError) as exc_info:
+        _prepare(model, entity, row, mutation=mutation)
+    return exc_info.value
+
 
 # `tags` is a to-many occurrence, so it may not also be nullable (only a to-one
 # may). The baseline carries it explicitly so the tests below vary one member at a
@@ -188,14 +203,12 @@ def _row(**overrides: object) -> dict[str, object]:
     return row
 
 
-def _accept(row: dict[str, object], *, mutation: str = "insert") -> None:
-    validate_write(_WIDGET_METADATA, row, _WIDGET_MODEL, mutation=mutation)
+def _accept(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> None:
+    _prepare(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 
-def _rejects(row: dict[str, object], *, mutation: str = "insert") -> WriteRejectedError:
-    with pytest.raises(WriteRejectedError) as exc_info:
-        _accept(row, mutation=mutation)
-    return exc_info.value
+def _rejects(row: dict[str, object], *, mutation: KeyedMutation = "insert") -> WriteRejectedError:
+    return _refused(_WIDGET_MODEL, "Widget", row, mutation=mutation)
 
 
 # --------------------------------------------------------------------------- #
@@ -346,14 +359,14 @@ def test_a_nested_many_element_violation_keeps_its_index_on_the_nested_member() 
 
 # --------------------------------------------------------------------------- #
 # Value conformance: the full m-core neutral-type vocabulary, exercised       #
-# through `validate_write` over each depth-0 attribute against the DEVELOPER  #
-# input policy (`declarations.md` "Python scalar carriers") — a native carrier #
-# and the input policy's own narrow adjacent forms (an `int` for a `decimal`  #
-# or `float`, a canonical UUID string) conform; a WIRE-only spelling (a       #
-# `float` for a `decimal`, an ISO date/time/timestamp string, a hex `bytes`   #
-# string) does not, since this validator only ever sees an already-native     #
-# write input — decoding a wire spelling is the case-format ingestion seam's  #
-# own job, upstream of this boundary.                                        #
+# through the typed preparation over each depth-0 attribute against the       #
+# DEVELOPER input policy (`declarations.md` "Python scalar carriers") — a     #
+# native carrier and the input policy's own narrow adjacent forms (an `int`   #
+# for a `decimal` or `float`, a canonical UUID string) conform; a WIRE-only   #
+# spelling (a `float` for a `decimal`, an ISO date/time/timestamp string, a   #
+# hex `bytes` string) does not, since the typed preparation only ever sees an #
+# already-native write input — decoding a wire spelling is the case-format    #
+# ingestion seam's own job, upstream of this boundary.                        #
 # --------------------------------------------------------------------------- #
 _TYPE_CASES: list[tuple[str, object, bool]] = [
     ("flag", True, True),
@@ -438,24 +451,20 @@ _GAUGE_MODEL = form_metamodel(
         )
     )
 )
-_GAUGE_METADATA = _entity(_GAUGE_MODEL, "Gauge")
 
 
 def test_temporal_axis_attributes_are_never_required_on_a_full_document_insert() -> None:
     # A full-document (insert) row omitting `txStart` / `txEnd`
     # entirely is still valid: the milestone bounds are Clock-supplied /
     # instruction-level, never authored on the neutral write row.
-    validate_write(
-        _GAUGE_METADATA, {"id": 1, "reading": Decimal("20.00")}, _GAUGE_MODEL, mutation="insert"
-    )
+    _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00")})
 
 
 def test_temporal_axis_attributes_are_never_type_checked_even_when_present() -> None:
     # A stray, wrongly-typed axis value is silently ignored (excluded before the
     # type walk ever sees it) — the lowering seam is what would reject an
     # actually-authored one, not this pre-SQL structural validator.
-    row = {"id": 1, "reading": Decimal("20.00"), "txStart": 12345}
-    validate_write(_GAUGE_METADATA, row, _GAUGE_MODEL, mutation="insert")
+    _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00"), "txStart": 12345})
 
 
 # --------------------------------------------------------------------------- #
@@ -494,7 +503,6 @@ _FAMILY_MODEL = form_metamodel(
         ),
     )
 )
-_TRUCK_METADATA = _entity(_FAMILY_MODEL, "Truck")
 
 
 def _valid_truck_row() -> dict[str, object]:
@@ -504,36 +512,27 @@ def _valid_truck_row() -> dict[str, object]:
 def test_a_subtype_insert_requires_an_inherited_required_attribute() -> None:
     row = _valid_truck_row()
     del row["name"]
-    with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(_TRUCK_METADATA, row, _FAMILY_MODEL, mutation="insert")
-    assert exc_info.value.rule == "write-required-attribute-missing"
+    assert _refused(_FAMILY_MODEL, "Truck", row).rule == "write-required-attribute-missing"
 
 
 def test_a_subtype_insert_requires_an_inherited_required_value_object() -> None:
     row = _valid_truck_row()
     del row["plate"]
-    with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(_TRUCK_METADATA, row, _FAMILY_MODEL, mutation="insert")
-    assert exc_info.value.rule == "write-required-value-object-missing"
+    assert _refused(_FAMILY_MODEL, "Truck", row).rule == "write-required-value-object-missing"
 
 
 def test_a_subtype_update_type_checks_an_inherited_attribute() -> None:
-    with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(_TRUCK_METADATA, {"id": 1, "name": 123}, _FAMILY_MODEL, mutation="update")
-    assert exc_info.value.rule == "write-value-type-mismatch"
+    refused = _refused(_FAMILY_MODEL, "Truck", {"id": 1, "name": 123}, mutation="update")
+    assert refused.rule == "write-value-type-mismatch"
 
 
 def test_a_complete_subtype_insert_over_inherited_members_is_accepted() -> None:
-    validate_write(_TRUCK_METADATA, _valid_truck_row(), _FAMILY_MODEL, mutation="insert")
+    _prepare(_FAMILY_MODEL, "Truck", _valid_truck_row())
 
 
 def test_write_validation_translates_an_inheritance_target_refusal() -> None:
-    root = _entity(_FAMILY_MODEL, "Vehicle")
-
-    with pytest.raises(WriteRejectedError) as caught:
-        validate_write(root, {"id": 1, "name": "n", "plate": {"serial": "s"}}, _FAMILY_MODEL)
-
-    assert caught.value.rule == "abstract-write-target"
+    row = {"id": 1, "name": "n", "plate": {"serial": "s"}}
+    assert _refused(_FAMILY_MODEL, "Vehicle", row).rule == "abstract-write-target"
 
 
 _LEDGER = identity("Ledger")
@@ -565,7 +564,6 @@ _LEDGER_MODEL = form_metamodel(
         ),
     )
 )
-_CASH_METADATA = _entity(_LEDGER_MODEL, "CashLedger")
 
 
 def test_a_subtype_insert_excludes_inherited_root_owned_axis_bounds() -> None:
@@ -573,5 +571,4 @@ def test_a_subtype_insert_excludes_inherited_root_owned_axis_bounds() -> None:
     # member set, yet a full-document insert that omits them is still valid: an
     # inherited axis bound is no more authored on a neutral write row than a
     # standalone entity's own axis bound is.
-    row = {"id": 1, "amount": Decimal("1.00"), "note": "n"}
-    validate_write(_CASH_METADATA, row, _LEDGER_MODEL, mutation="insert")
+    _prepare(_LEDGER_MODEL, "CashLedger", {"id": 1, "amount": Decimal("1.00"), "note": "n"})

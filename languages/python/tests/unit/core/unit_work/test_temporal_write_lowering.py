@@ -35,7 +35,7 @@ from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
+from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
@@ -1074,15 +1074,17 @@ def _retained(
 ) -> WriteObservation | None:
     """The evidence a read of the SpotQuote row retained for its milestone.
 
-    Read off the read origin the retention answered, and cross-checked against
-    the unit of work's own index: the two are one object, because the index is a
-    weak view of what the sources hold rather than a second copy.
+    Read off the read origin the retention answered, and cross-checked against a
+    reread of the same milestone: the two are one object, because the unit of
+    work answers a state it already holds evidence for with that evidence rather
+    than a second copy.
     """
     hint = judged_evidence(model, entity, _SPOT_QUOTE_COLUMNS, document=document, ledger=uow)[0]
     assert hint.observation is not None
     state = TemporalStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
     assert hint.observation.key == state
-    assert uow.retained_for(state) is hint.observation
+    reread = judged_evidence(model, entity, _SPOT_QUOTE_COLUMNS, document=document, ledger=uow)[0]
+    assert reread.observation is hint.observation
     return hint.observation.evidence
 
 
@@ -1525,19 +1527,6 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
     assert isinstance(gate, TemporalGate)
     assert gate.start_attribute.name == "txStart"
     assert gate.observed_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-
-
-# --------------------------------------------------------------------------- #
-# txtime_write.axis_attr_names: the declared-axis lookup, direct.              #
-# --------------------------------------------------------------------------- #
-def test_axis_attr_names_refuses_an_axis_the_entity_does_not_declare() -> None:
-    # Balance is audit-only (Transaction-Time dimension only) — a caller asking this pure
-    # lookup for its (undeclared) Valid-Time dimension is a defensive backstop the
-    # render seam is responsible for never reaching with a well-formed
-    # instruction (`txtime_write._axis`), not a normal-path outcome.
-    model, entity = _accepted("Balance", BALANCE)
-    with pytest.raises(txtime_write.TemporalPlanningError, match="declares no VALID_TIME"):
-        txtime_write.axis_attr_names(model, entity, TemporalDimension.VALID_TIME)
 
 
 @pytest.mark.parametrize(

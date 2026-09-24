@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from parallax.core.base import TIMESTAMP, normalize_instant
-from parallax.core.wire import encode_wire
+from parallax.core.base import normalize_instant
 
-__all__ = ["Clock", "FixedClock", "SystemClock", "TransactionInstant", "instant_literal"]
+__all__ = ["Clock", "FixedClock", "SystemClock", "TransactionInstant"]
 
 
 @runtime_checkable
@@ -43,11 +42,6 @@ class FixedClock:
 
     def now(self) -> _dt.datetime:
         return self._instant
-
-
-def instant_literal(value: _dt.datetime) -> str:
-    """Render a Transaction-Time instant as a canonical Wire timestamp."""
-    return cast("str", encode_wire(TIMESTAMP, normalize_instant(value)))
 
 
 @dataclass(slots=True)

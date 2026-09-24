@@ -4,8 +4,6 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.core import inheritance
-from parallax.core.base import NeutralType, coerce_neutral_input, matches_neutral_type
-from parallax.core.document_codec._authoring import MAPPING_SOURCE_ACCESS, validate_authoring
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -15,7 +13,7 @@ from parallax.core.metamodel import (
     VoDocumentViolation,
 )
 
-__all__ = ["WriteRejectedError", "validate_write"]
+__all__ = ["WriteRejectedError"]
 
 # The full-document mutations: every declared member must be present, except a
 # `many` Value Object occurrence, which has no absent state to require. Every
@@ -43,15 +41,15 @@ def validate_write(
     row: Mapping[str, object],
     model: Metamodel,
     *,
-    mutation: str = "insert",
-    known_failures: Mapping[int, VoDocumentViolation] | None = None,
-    subtype_validated: bool = False,
+    mutation: str,
+    known_failures: Mapping[int, VoDocumentViolation],
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
 
-    Raises :class:`WriteRejectedError` naming the violated rule. Inheritance
-    payload shape and target validity are checked before family-effective member
-    validation. Inserts require a full document; other mutations admit sparse
+    Raises :class:`WriteRejectedError` naming the violated rule. The caller has
+    already applied the Inheritance payload-shape and target rules, and
+    ``known_failures`` is the authoring walk's evidence for ``row``, keyed by
+    member position. Inserts require a full document; other mutations admit sparse
     top-level rows, while every present Value Object remains a whole document.
 
     The required-attribute / required-value-object / value-type walk runs over
@@ -71,26 +69,9 @@ def validate_write(
     inherited bound because the applicable-member set carries the root's own
     Attributes, and root-owned axis metadata is exactly what designated them.
     """
-    if not subtype_validated:
-        try:
-            inheritance.validate_subtype_write(model, entity, row)
-        except inheritance.InheritanceError as exc:
-            raise WriteRejectedError(exc.rule, str(exc)) from exc
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    failures = (
-        validate_authoring(
-            view.member_selection.shape,
-            row,
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize_leaf,
-            path=entity.identity.canonical,
-            allow_root_markers=True,
-        )
-        if known_failures is None
-        else known_failures
-    )
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
     owner = entity.identity.name
     for attribute in view.applicable_attributes:
@@ -101,7 +82,7 @@ def validate_write(
             attribute,
             required=full_document,
             owner=owner,
-            known_failure=failures.get(view.member_selection.position(attribute.identity)),
+            known_failure=known_failures.get(view.member_selection.position(attribute.identity)),
         )
     for value_object in view.applicable_value_objects:
         _check_value_object_member(
@@ -109,7 +90,9 @@ def validate_write(
             value_object,
             required=full_document,
             owner=owner,
-            known_violation=failures.get(view.member_selection.position(value_object.identity)),
+            known_violation=known_failures.get(
+                view.member_selection.position(value_object.identity)
+            ),
         )
 
 
@@ -173,11 +156,6 @@ def _check_value_object_member(
         return
     if known_violation is not None:
         raise _rejected_error(known_violation, base=f"{owner}.{name}")
-
-
-def _normalize_leaf(neutral_type: NeutralType, value: object, _path: str) -> tuple[object, bool]:
-    managed = coerce_neutral_input(value, neutral_type)
-    return managed, matches_neutral_type(managed, neutral_type)
 
 
 # error-neutral document-codec finding, which owns no policy text of its own. #

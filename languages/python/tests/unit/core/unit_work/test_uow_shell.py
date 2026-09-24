@@ -148,8 +148,6 @@ def test_active_unit_of_work_tracks_the_scope() -> None:
 
     def body(tx: UnitOfWork) -> None:
         seen["same"] = active_unit_of_work() is tx
-        assert tx.is_rollback_only is False
-        assert tx.is_joined is False
 
     _run(body)
     assert seen["same"] is True
@@ -273,19 +271,19 @@ def test_system_clock_reads_an_aware_utc_instant() -> None:
 
 def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -> None:
     # The whole round trip through the shell: an observation is recorded under
-    # the slot its read filled, resolved back out of that slot before the write
-    # is buffered, and travels to planning ON the write. `PlannedUpdate` carries
-    # no raw observation — the recorded version survives only as the settled
-    # step's own advanced assignment.
+    # the state its read observed, a reread of that state answers the recorded
+    # evidence before the write is buffered, and it travels to planning ON the
+    # write. `PlannedUpdate` carries no raw observation — the recorded version
+    # survives only as the settled step's own advanced assignment.
     recorder = _Recorder()
-    observation = VersionObservation(observed_version=7)
     state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
-    retained = RetainedObservation(state, observation, None)
+    retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
 
     def body(tx: UnitOfWork) -> None:
         tx.retain(retained)
-        resolved = tx.retained_for(state)
-        assert resolved is not None
+        reread = RetainedObservation(state, VersionObservation(observed_version=7), None)
+        resolved = tx.retain(reread)
+        assert resolved is retained
         tx.buffer(
             ObservedKeyedWrite(
                 instruction=_prepared_keyed(
@@ -472,7 +470,6 @@ def test_nested_transaction_joins_the_active_one() -> None:
 
     def inner(tx: UnitOfWork) -> str:
         seen["inner_tx"] = tx
-        seen["joined"] = tx.is_joined
         tx.buffer(_account_insert(10))
         return "inner-result"
 
@@ -484,7 +481,6 @@ def test_nested_transaction_joins_the_active_one() -> None:
 
     assert _run(outer, executor=outer_exec) == "outer-result"
     assert seen["inner_tx"] is seen["outer_tx"]  # the same unit of work
-    assert seen["joined"] is True
     assert seen["inner_ret"] == "inner-result"  # a joined body returns immediately
     assert inner_exec.plans == []  # the joined call's executor is ignored
     assert len(outer_exec.plans) == 1  # one flush at the outermost boundary

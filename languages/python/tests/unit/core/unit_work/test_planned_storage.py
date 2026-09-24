@@ -68,7 +68,6 @@ from parallax.core.unit_work import (
     WriteAssignment,
     WritePlan,
     WritePlanner,
-    instant_literal,
     whole,
 )
 from parallax.core.unit_work.columns import (
@@ -120,12 +119,6 @@ def test_retained_tuple_freezes_nested_mutable_values_without_copying_immutable_
 
     assert frozen == (immutable, (1, FrozenMap({"nested": (2,)})))
     assert cast("tuple[object, ...]", frozen)[0] is immutable
-
-
-def test_transaction_instant_literal_uses_canonical_utc_wire_spelling() -> None:
-    assert instant_literal(
-        dt.datetime(2024, 1, 1, 1, tzinfo=dt.timezone(dt.timedelta(hours=1)))
-    ) == ("2024-01-01T00:00:00.000000Z")
 
 
 def test_a_chunked_column_seals_bounded_chunks_as_it_builds() -> None:
