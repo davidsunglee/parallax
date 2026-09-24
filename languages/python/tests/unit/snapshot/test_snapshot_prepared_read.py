@@ -25,7 +25,7 @@ are the two here that patch a name inside the seam and count what it reaches,
 rather than grading what the seam published.
 
 Conversion itself is graded in `test_snapshot_conversion.py`, which drives
-``convert_row`` directly: the positional layout, the absent/null/empty
+``convert_deferred`` directly: the positional layout, the absent/null/empty
 vocabulary, every leaf type, and the issue each codec finding publishes are
 properties of that seam and are stated there.
 """
@@ -51,7 +51,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import MISSING, UNAVAILABLE
+from parallax.core.document_codec import MISSING
 from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen._compile import CompiledRead
@@ -526,27 +526,10 @@ def test_encoded_identity_is_decoded_before_logical_key_formation(
     layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
     contracts = compiled.attribute_reads(identity)
     level = _convert.LevelContext(layout, attribute_reads=contracts)
-    claim = claim_identity({contracts[0].result_key: raw}, level)
+    claim = claim_identity((raw, *(ABSENT,) * (len(layout.members) - 1)), level)
 
     assert (None if claim.key is None else claim.key.primary_key) == key
     assert [finding.code for finding in claim.findings] == ([] if issue is None else [issue])
-
-
-def test_a_classified_unavailable_identity_never_forms_a_logical_key() -> None:
-    compiled = _compiled(ENCODED_IDENTITY, "EncodedIdentity")
-    identity = target(ENCODED_IDENTITY, "EncodedIdentity").identity
-    layout = LayoutCatalog(ENCODED_IDENTITY).entity(identity)
-    contracts = compiled.attribute_reads(identity)
-    key = contracts[0].result_key
-
-    claim = claim_identity(
-        {key: UNAVAILABLE},
-        _convert.LevelContext(layout, attribute_reads=contracts),
-        classified_members=frozenset({key}),
-    )
-
-    assert claim.key is None
-    assert [finding.code for finding in claim.findings] == ["stored-data-primary-key-undecodable"]
 
 
 def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
@@ -555,12 +538,7 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
     contracts = _compiled(ENCODED_IDENTITY, "EncodedIdentity").attribute_reads(identity)
     level = _convert.LevelContext(layout, attribute_reads=contracts)
     raw = ("0a1b", ABSENT)
-    claim = claim_identity(
-        {},
-        level,
-        raw_member_values=raw,
-        correlation_members=(level.layout.attributes[1].identity,),
-    )
+    claim = claim_identity(raw, level, correlation_members=(level.layout.attributes[1].identity,))
 
     assert claim.key is not None
     assert claim.routing_values == (b"\x0a\x1b", ABSENT)
@@ -573,10 +551,10 @@ def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
     level = _convert.LevelContext(layout, attribute_reads=contracts)
     attributes = {attribute.identity.name: attribute for attribute in layout.attributes}
     raw_by_name: Mapping[str, object] = {"id": 1, "payload": "0a1b", "f32": 1.5}
-    values = {
-        contract.result_key: raw_by_name.get(contract.attribute.identity.name)
-        for contract in contracts
-    }
+    values = (
+        *(raw_by_name.get(contract.attribute.identity.name) for contract in contracts),
+        *(ABSENT,) * len(layout.occurrences),
+    )
 
     claim = claim_identity(
         values,

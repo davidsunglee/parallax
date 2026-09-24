@@ -13,7 +13,6 @@ from parallax.core.base import (
     UnknownFamilyTag,
     admits_stored_scalar,
 )
-from parallax.core.db_port import MappingRow
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DocumentFinding,
@@ -60,7 +59,6 @@ __all__ = [
     "LevelContext",
     "SnapshotDecodingError",
     "convert_deferred",
-    "convert_row",
 ]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
@@ -253,26 +251,6 @@ class LevelContext:
 
 
 @dataclass(frozen=True, slots=True)
-class _RowDecoder:
-    raw_values: tuple[object, ...]
-    level: LevelContext
-    identity_values: tuple[object, ...]
-    findings: tuple[DocumentFinding, ...]
-    unknown_family_tag: UnknownFamilyTag | None
-    classified_members: frozenset[str]
-
-    def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        return _decode_row(
-            self.raw_values,
-            self.level,
-            self.identity_values,
-            self.findings,
-            self.unknown_family_tag,
-            self.classified_members,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class _DeferredRowDecoder:
     witness: tuple[object, ...]
     level: LevelContext
@@ -304,7 +282,16 @@ def convert_deferred(
     unknown_family_tag: UnknownFamilyTag | None = None,
     correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> int:
-    """Register identity and an exact witness while deferring payload stages."""
+    """Register one row's identity and exact witness in ``builder``, deferring
+    payload judgment, and answer the projection index the builder assigned.
+
+    ``witness`` is positional, laid out by ``level.layout``: every applicable
+    Attribute, then every applicable top-level Value Object occurrence, with
+    ``ABSENT`` wherever the read carried no value. ``source`` is the plan level
+    the row was read at, a fact about where the projection lands rather than how
+    the row decodes, so it travels beside ``level``. ``classifiable`` marks, one
+    bit per position, the document members payload judgment classifies.
+    """
     if not level.requires_state_reduction and unknown_family_tag is None:
         layout = level.layout
         primary_key = witness[layout.primary_key[0]]
@@ -327,11 +314,9 @@ def convert_deferred(
             witness,
         )
     claim = claim_identity(
-        {},
+        witness,
         level,
         unknown_family_tag=unknown_family_tag,
-        witness_values=witness,
-        raw_member_values=witness,
         correlation_members=correlation_members,
     )
     decoder = _DeferredRowDecoder(
@@ -387,79 +372,6 @@ def _classify_payload(
         tuple(values),
         tuple(findings),
         level.classified_members if classified is None else frozenset(classified),
-    )
-
-
-def convert_row(
-    row: MappingRow,
-    level: LevelContext,
-    builder: PageBuilder,
-    *,
-    source: SourceLevel,
-    findings: tuple[DocumentFinding, ...] = (),
-    unknown_family_tag: UnknownFamilyTag | None = None,
-    classified_members: frozenset[str] = frozenset(),
-    witness_values: tuple[object, ...] | None = None,
-    correlation_members: tuple[AttributeIdentity, ...] = (),
-) -> int:
-    """Convert one SQL-materialized row into ``builder``'s next projection.
-
-    Answers the projection index the builder assigned rather than the row
-    itself: the builder retains the row, and a caller that held its own copy
-    would be the second place a projection lives.
-
-    ``source`` is the plan level this row was read at, and is a fact about where
-    the projection lands rather than about how the row decodes — which is why it
-    travels beside the builder rather than inside ``level``, whose own identity
-    distinguishes what a row converts under and nothing else.
-
-    The row is POSITIONAL, laid out by ``level.layout``: every applicable
-    Attribute occupies its declared position and every applicable top-level
-    Value Object occurrence occupies its own after them, whether or not this
-    read projected it. A position the read did not carry, and one whose stored
-    value no conforming member could hold, both read ``ABSENT`` — beside the
-    issue the latter records — which is what keeps a member the read omitted
-    distinguishable from one stored null.
-
-    ``findings``, ``unknown_family_tag``, and ``classified_members`` are the
-    compiled row transform's provenance.
-    Conversion translates those findings and judges no member the transform
-    already classified: such a member is admitted by the classification that
-    produced it, so its value stands as the transform left it, a position the
-    transform could make no value available at reads ``ABSENT``, and a stored
-    null reads by the Attribute's own nullability — the three states a
-    classified member arrives in, kept apart without a second admission. Each
-    Payload judgment is deferred until a Root View reaches the logical node and
-    proves every occurrence carried an equal witness. That one decode freezes the
-    rejected values into the Page-owned Entity State shared by all Root Views.
-
-    Scalars are keyed by the compiled projection contract. A disjoint sibling's
-    null-padded result — and the synthetic family tag — therefore contributes
-    nothing rather than landing on a member that never declared it.
-    """
-    claim = claim_identity(
-        row,
-        level,
-        unknown_family_tag=unknown_family_tag,
-        classified_members=classified_members,
-        witness_values=witness_values,
-        correlation_members=correlation_members,
-    )
-    return builder.add_claim(
-        source,
-        level.layout,
-        claim.key,
-        claim.witness,
-        claim.routing_values,
-        claim.findings,
-        _RowDecoder(
-            claim.payload_values,
-            level,
-            claim.identity_values,
-            findings,
-            unknown_family_tag,
-            classified_members,
-        ),
     )
 
 

@@ -22,7 +22,7 @@ import pytest
 
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.object_query import (
     AsOf,
     History,
@@ -32,7 +32,6 @@ from parallax.core.object_query import (
     TemporalDimension,
     TemporalSelection,
     object_query,
-    query_entities,
     validate_object_query,
 )
 from parallax.core.object_query import deserialize as deserialize_query
@@ -82,75 +81,6 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from tests.unit._corpus_model_support import formed, records
-
-
-def test_query_entities_collects_every_class_the_query_names() -> None:
-    # The reachable-closure seed the Entity frontend forms its early-validation
-    # model from: the queried target, the `Class` prefix of every attribute /
-    # nested-path / relationship reference, plus every Subtype Selection
-    # alternative and every Sort Key, over every clause and combinator.
-    query = object_query(
-        EntityIdentity(None, "Root"),
-        And(
-            operands=(
-                Not(
-                    operand=Group(
-                        operand=Or(
-                            operands=(
-                                Comparison(op="eq", attr="Animal.name", value="x"),
-                                Between(attr="Dog.barkVolume", lower=1, upper=3),
-                                NullCheck(op="isNull", attr="Cat.whisker"),
-                                StringMatch(op="like", attr="Pet.tag", value="p"),
-                                Membership(op="in", attr="WildBoar.id", values=(1,)),
-                            )
-                        )
-                    )
-                ),
-                Narrow(to=("Dog", "Cat"), operand=All()),
-                Navigate(
-                    rel="Person.pets",
-                    op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
-                ),
-                Exists(rel="Owner.kennels", op=None),
-                NotExists(rel="Kennel.owners", op=None),
-                NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
-                NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
-                NestedExists(path="Status.tags", where=None),
-                NestedNotExists(path="Status.notes", where=None),
-                NoneOp(),
-            )
-        ),
-        narrow_to=("Narrowed",),
-        temporal={"valid-time": AsOf("latest")},
-        order_by=(OrderKey(attr="Sorted.rank"),),
-        includes=(
-            IncludePath(
-                segments=(IncludeSegment(rel="Root.leaves", narrow_to=("Leaf",)),),
-                applies_to=("Branch",),
-            ),
-        ),
-    )
-    assert query_entities(query) == frozenset(
-        {
-            "Animal",
-            "Dog",
-            "Cat",
-            "Pet",
-            "WildBoar",
-            "Person",
-            "Owner",
-            "Kennel",
-            "Order",
-            "Item",
-            "Status",
-            "Root",
-            "Leaf",
-            "Branch",
-            "Sorted",
-            "Narrowed",
-        }
-    )
-
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = records("animal")

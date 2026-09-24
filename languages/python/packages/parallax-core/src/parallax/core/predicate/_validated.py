@@ -20,8 +20,6 @@ from parallax.core.predicate._nodes import (
     ComparisonOp,
     Group,
     Membership,
-    NullCheck,
-    NullOp,
     Or,
     PredicateNode,
     Scalar,
@@ -81,13 +79,6 @@ def derive_predicate(
 ) -> ValidatedPredicate:
     """Rewrite structure while retaining every resolved fact on the occurrence."""
     return replace(source, authored=authored, children=children)
-
-
-def empty_predicate() -> ValidatedPredicate:
-    """Produce the generated predicate that admits no rows."""
-    from parallax.core.predicate._nodes import NoneOp
-
-    return ValidatedPredicate(NoneOp())
 
 
 def framework_operands(*values: object) -> ValidatedOperands:
@@ -150,16 +141,6 @@ def deferred_membership(*, attr: str, member: AttributeMetadata) -> ValidatedPre
         operands=ValidatedOperands((marker,), member.type, "framework"),
         member=member,
     )
-
-
-def null_check(*, op: NullOp, attr: str, member: AttributeMetadata) -> ValidatedPredicate:
-    """Build a generated null test over an already-resolved member."""
-    return ValidatedPredicate(NullCheck(op=op, attr=attr), member=member)
-
-
-def compose(authored: PredicateNode, *children: ValidatedPredicate) -> ValidatedPredicate:
-    """Retain generated boolean structure around occurrence-local products."""
-    return ValidatedPredicate(authored, children=children)
 
 
 def conjunction(*terms: ValidatedPredicate) -> ValidatedPredicate:

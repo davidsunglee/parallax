@@ -74,7 +74,7 @@ from parallax.snapshot.materialize import (
     RootView,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_deferred, convert_row
+from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, page_rows
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -82,6 +82,7 @@ from tests._support.model_capabilities import graph_construction_for
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.snapshot._snapshot_page_support import (
+    convert_mapping,
     documents_of,
     identity_of,
     layout_of,
@@ -179,7 +180,7 @@ def _converted(
     model: Metamodel, entity: str, row: dict[str, object], **provenance: Any
 ) -> _Projection:
     builder = PageBuilder(ViewSchema.of())
-    index = convert_row(row, _context(model, entity), builder, source=ROOT_LEVEL, **provenance)
+    index = convert_mapping(row, _context(model, entity), builder, **provenance)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
@@ -194,11 +195,36 @@ def _converted(
 def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
     """One row converted under a caller-built level context."""
     builder = PageBuilder(ViewSchema.of())
-    index = convert_row(row, context, builder, source=ROOT_LEVEL)
+    index = convert_mapping(row, context, builder)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
     return _Projection(rows.layouts[index], root.member_values(0), root.issues(0), rows.keys[index])
+
+
+def _with_finding(
+    model: Metamodel, entity: str, row: dict[str, object], finding: DocumentFinding
+) -> _Projection:
+    """``row`` converted under a level whose document codec classified the
+    Attribute ``finding`` locates and reported ``finding`` for it."""
+    identity = identity_of(model, entity)
+    layout = layout_of(model, identity)
+    located = finding.path[0]
+
+    def classify(raw: object) -> tuple[object, tuple[DocumentFinding, ...]]:
+        return raw, (finding,)
+
+    context = LevelContext(
+        layout,
+        documents_of(model, identity),
+        classified_members=frozenset({str(located)}),
+        classifiers=tuple(
+            classify if attribute.storage.name == located else None
+            for attribute in layout.attributes
+        )
+        + (None,) * len(layout.occurrences),
+    )
+    return _projection(context, row)
 
 
 def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> EntityStateRow:
@@ -738,8 +764,8 @@ def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
     # A single-column key resolves by its raw scalar, the spelling the layout's own rule gives it.
     builder = PageBuilder(ViewSchema.of())
     context = _context(ORDERS, "Order")
-    first = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
-    second = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
+    first = convert_mapping({"id": 1, "name": "Ada"}, context, builder)
+    second = convert_mapping({"id": 1, "name": "Ada"}, context, builder)
     assert first != second
     assert builder.resolve(EntityIdentity(_NAMESPACE, "Order"), 1) == first
 
@@ -845,9 +871,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     # constraint have admitted it. The provider-normalized value is therefore an
     # identity claim, not fresh input to the host's scalar codec.
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_row(
-        {"id": key, "name": "Ada"}, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL
-    )
+    ref = convert_mapping({"id": key, "name": "Ada"}, _context(CUSTOMER, "Customer"), builder)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
     view = RootView(page, 0)
@@ -873,7 +897,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
 def test_entity_document_findings_use_attribute_specific_issue_codes(
     finding: DocumentFinding, code: str
 ) -> None:
-    node = _converted(CUSTOMER, "Customer", {"id": 1, "name": "Ada"}, findings=(finding,))
+    node = _with_finding(CUSTOMER, "Customer", {"id": 1, "name": "Ada"}, finding)
     assert node.issues[0].code == code
 
 
@@ -1049,11 +1073,11 @@ def test_document_codec_findings_do_not_imply_native_column_reclassification() -
     # retains its diagnosis. A native Column is instead trusted after database
     # enforcement and provider normalization, so the host does not recreate the
     # same finding from its raw value.
-    document = _converted(
+    document = _with_finding(
         CUSTOMER,
         "Customer",
         {"id": 1, "name": "Ada"},
-        findings=(DocumentFinding("required-member-null", ("name",), None),),
+        DocumentFinding("required-member-null", ("name",), None),
     )
     columns = _converted(CUSTOMER, "Customer", {"id": 1, "name": None})
     assert _diagnoses(document) == [

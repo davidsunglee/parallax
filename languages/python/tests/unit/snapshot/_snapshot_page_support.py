@@ -3,12 +3,12 @@
 A read driver composes a Page by converting rows into a Page builder and
 writing each level's views as that level lands. These suites need the same
 composition without a database, so this builds one the same way — through
-``convert_row`` and ``PageBuilder`` — rather than hand-assembling rows that no
-driver would produce.
+``convert_deferred`` and ``PageBuilder`` — rather than hand-assembling rows that
+no driver would produce.
 
-``materialize`` then runs the production materializer over it, which is what makes
-these suites cover the real seam: Root View, allocate, populate, and per-node state
-factory, with no stand-in anywhere.
+``materialize`` then publishes it through the typed read's own publication, which
+is what makes these suites cover the real seam: Root View, allocate, populate, and
+per-node state factory, with no stand-in anywhere.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -21,8 +21,10 @@ from collections.abc import Mapping
 from typing import cast
 
 from parallax.core import DomainModel
+from parallax.core.base import UnknownFamilyTag
 from parallax.core.deep_fetch import RelationshipViewKey
-from parallax.core.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.deep_fetch._include_tree import build_include_tree
+from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -36,20 +38,20 @@ from parallax.core.metamodel import (
 )
 from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
+from parallax.snapshot.handle._read import typed_publication
 from parallax.snapshot.materialize import (
     InvalidData,
     Page,
     PageBuilder,
-    RootView,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._typed import typed_root
-from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from parallax.snapshot.materialize._views import ROOT_LEVEL, SourceLevel, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
     "PageFixture",
+    "convert_mapping",
     "documents_of",
     "identity_of",
     "invalid_record",
@@ -93,6 +95,47 @@ def layout_of(model: Metamodel, identity: EntityIdentity) -> EntityLayout:
     """``identity``'s member layout under ``model``, for a suite converting rows
     without a connection to reach that model's own catalog through."""
     return LayoutCatalog(model).entity(identity)
+
+
+def convert_mapping(
+    row: Mapping[str, object],
+    level: LevelContext,
+    builder: PageBuilder,
+    *,
+    source: SourceLevel = ROOT_LEVEL,
+    unknown_family_tag: UnknownFamilyTag | None = None,
+) -> int:
+    """Convert one row spelled by result key, laid out as a driver row's witness is.
+
+    An Attribute the row does not name reads ``ABSENT``; a projected Value Object
+    occurrence it does not name reads a stored null, as a projected document
+    Column the driver returned no value for does.
+    """
+    layout = level.layout
+    witness: list[object] = []
+    classifiable = 0
+    for position, attribute in enumerate(layout.attributes):
+        key = (
+            level.attribute_reads[position].result_key
+            if level.attribute_reads
+            else attribute.storage.name
+        )
+        witness.append(row.get(key, ABSENT))
+        classifiable |= (key in row) << position
+    for position, (occurrence, projected) in enumerate(
+        zip(layout.occurrences, level.projected_by_position, strict=True),
+        start=layout.attribute_count,
+    ):
+        witness.append(row.get(occurrence.storage.name) if projected else ABSENT)
+        classifiable |= (projected and occurrence.storage.name in row) << position
+    return convert_deferred(
+        tuple(witness),
+        level,
+        builder,
+        source=source,
+        classifiable=classifiable,
+        unknown_family_tag=unknown_family_tag,
+    )
 
 
 def rendered_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[str, object]:
@@ -166,7 +209,7 @@ class PageFixture:
     holds both reads which one it is talking to.
     """
 
-    __slots__ = ("_builder", "_domain", "_layouts", "_model", "_sealed")
+    __slots__ = ("_builder", "_cataloged", "_domain", "_model", "_sealed")
 
     def __init__(
         self,
@@ -177,7 +220,7 @@ class PageFixture:
         assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
-        self._layouts = LayoutCatalog(self._model)
+        self._cataloged = CatalogedModel(self._model)
         self._builder = PageBuilder(ViewSchema.of(*map(self._declared, views)))
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
@@ -202,7 +245,7 @@ class PageFixture:
         provider-normalized Column trust is covered at the prepared-read boundary.
         """
         identity = identity_of(self._model, entity)
-        layout = self._layouts.entity(identity)
+        layout = self._cataloged.layouts.entity(identity)
         context = LevelContext(
             layout,
             documents_of(self._model, identity),
@@ -216,11 +259,11 @@ class PageFixture:
                 for attribute in layout.attributes
             ),
         )
-        return convert_row(dict(columns), context, self._builder, source=ROOT_LEVEL)
+        return convert_mapping(columns, context, self._builder)
 
     def layout_for(self, entity: str) -> EntityLayout:
         """``entity``'s member layout under this fixture's own accepted model."""
-        return self._layouts.entity(identity_of(self._model, entity))
+        return self._cataloged.layouts.entity(identity_of(self._model, entity))
 
     def view_key(self, relationship: str, *, narrowed: str | None = None) -> RelationshipViewKey:
         """One view key, spelled ``Owner.name`` at its declaring position, with
@@ -257,18 +300,16 @@ class PageFixture:
     def materialize(
         self, *roots: int, pin: Pin = _NO_PIN
     ) -> tuple[object | InvalidData[object], ...]:
-        """Judge, classify, and publish the Page roots.
+        """Judge, classify, and publish the Page roots through the typed read's
+        publication.
 
         A conforming root is its frozen Entity instance; one some stored state
         contradicted is its :class:`InvalidData` record instead.
         """
         page = self.page(*roots, pin=pin)
-        construction = graph_construction_for(self._domain)
-        return tuple(
-            typed_root(
-                RootView(page, position),
-                self._model,
-                construction,
-            )[0]
-            for position in range(page.root_count)
+        publication = typed_publication(
+            self._cataloged, graph_construction_for(self._domain), "fixture"
         )
+        queried = self._model.entities[0].identity
+        includes = build_include_tree(queried=queried, root=(queried,), positions=())
+        return tuple(publication.roots_of(page, includes))

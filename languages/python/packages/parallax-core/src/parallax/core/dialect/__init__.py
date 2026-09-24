@@ -25,13 +25,11 @@ from parallax.core.base import (
     Time,
     Timestamp,
     Uuid,
-    detach_json_container,
     is_document_value,
 )
 
 __all__ = [
     "DIALECT_CATALOG",
-    "INFINITY",
     "POSTGRES",
     "ColumnDdl",
     "Dialect",
@@ -115,34 +113,6 @@ def _translate_placeholders(sql: str, quote_char: str, source: str, target: str)
         run if index % 2 else run.replace(source, target)
         for index, run in enumerate(_split_quoted_runs(sql, quote_char))
     )
-
-
-_DRIVER_ESCAPE_OR_PLACEHOLDER = re.compile(r"%%|%s")
-
-
-def _recover_placeholders(driver_sql: str, quote_char: str, placeholder: str) -> str:
-    """``driver_sql`` with each ``%s`` placeholder outside a quoted run spelled
-    ``placeholder`` and every escaped ``%%`` undoubled.
-
-    Both spellings are decoded in ONE left-to-right pass, because they overlap: a
-    canonical statement carrying a literal ``%s`` — the modulo operator applied to
-    a column named ``s`` — escapes to ``%%s``, whose tail is itself a placeholder.
-    Undoubling in a pass of its own would read that statement tail-first as a bind
-    and recover ``%?``, so neither order of two passes inverts the escape.
-    """
-    return "".join(
-        run.replace("%%", "%")
-        if index % 2
-        else _DRIVER_ESCAPE_OR_PLACEHOLDER.sub(
-            lambda match: "%" if match[0] == "%%" else placeholder, run
-        )
-        for index, run in enumerate(_split_quoted_runs(driver_sql, quote_char))
-    )
-
-
-# The neutral infinity sentinel (the open upper bound of a temporal interval,
-# m-core); Postgres binds it as native `'infinity'::timestamptz` at the adapter.
-INFINITY: Final[str] = "infinity"
 
 
 def _document_value_bind(value: object) -> object:
@@ -276,27 +246,6 @@ class Dialect:
     def project_document_read(self, expression: str) -> tuple[str, str]:
         """The adjacent SQL presence/document cells for ``expression``."""
         return f"not {expression} is null", expression
-
-    def parse_document_read(self, presence: object, document: object) -> DocumentRead:
-        """Parse one adjacent SQL presence/document pair into its neutral tag.
-
-        The discriminator is consulted first, so the same driver sentinel can
-        denote SQL NULL in the false arm and JSON null in the true arm.
-        """
-        if type(presence) is not bool:
-            raise ValueError(
-                "a document-read presence projection must be a SQL boolean, "
-                f"got {type(presence).__name__}"
-            )
-        if not presence:
-            return SQL_NULL
-        detached = detach_json_container(document)
-        if not is_document_value(detached):
-            raise ValueError(
-                "a present structured-document result must be a portable JSON value, "
-                f"got {type(document).__name__}"
-            )
-        return PresentDocument(detached)
 
     def parse_owned_document_read(self, presence: object, document: object) -> DocumentRead:
         """Parse a document pair whose plain JSON containers transfer to the result."""
@@ -484,19 +433,6 @@ class Dialect:
             )
         return expression, binds
 
-    def document_equals(self, left: str, right: str) -> str:
-        """The predicate deciding whether two documents are structurally equal.
-
-        A dialect decision because the two engines do not agree by default:
-        Postgres `jsonb` normalizes on storage — whitespace removed, duplicate
-        keys reduced, numerics canonicalized — so `=` is already structural,
-        while MariaDB `json` is a `longtext` alias whose `=` is a TEXT comparison
-        sensitive to key order and whitespace, and needs `json_equals`. A
-        consumer comparing documents MUST obtain the comparison here, or one
-        assertion would mean different things on the two engines.
-        """
-        return f"{left} = {right}"
-
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:
         """Translate the canonical `?` placeholders to this driver's form (`%s`),
@@ -516,27 +452,6 @@ class Dialect:
         in turn.
         """
         return _translate_placeholders(canonical_sql.replace("%", "%%"), self.quote_char, "?", "%s")
-
-    def from_driver_sql(self, driver_sql: str) -> str:
-        """The reverse of :meth:`to_driver_sql` — recover canonical `?`-placeholder
-        SQL text from this driver's own form, and undouble its escaped `%`.
-
-        Inverse over the whole statement, quoted runs included: a `%s` inside a
-        string literal or a quoted identifier is text this driver never bound, so
-        recovering the canonical spelling leaves it standing. The escape and the
-        placeholder are decoded together in one left-to-right pass, so neither an
-        escaped `%` nor the `%%` a placeholder was recovered out of can be read as
-        the other.
-
-        Being an EXACT inverse is what it is for: it makes
-        :meth:`to_driver_sql`'s escaping provably lossless over every statement a
-        model can produce, which is a property a one-way translation could only
-        be inspected for. Execution never travels this direction — a statement
-        always starts as canonical text and is translated outward — so a caller
-        recovering canonical text from driver text is reporting a statement it
-        did not lower, which the dialect admits rather than needs.
-        """
-        return _recover_placeholders(driver_sql, self.quote_char, "?")
 
     # -- inheritance (m-inheritance / m-sql) -------------------------------- #
     def null_cast(self, neutral_type: NeutralType, max_length: int | None) -> str:

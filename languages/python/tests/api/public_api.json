@@ -296,7 +296,6 @@
     "AttributeMetadata",
     "AttributePrimaryKey",
     "AttributeReference",
-    "COLUMNS",
     "CandidateMetamodel",
     "Cardinality",
     "Column",

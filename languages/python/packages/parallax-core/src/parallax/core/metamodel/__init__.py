@@ -95,7 +95,6 @@ from parallax.core.metamodel._temporal_structure import (
 )
 from parallax.core.metamodel._values import (
     APPLICATION_ASSIGNED,
-    COLUMNS,
     MAX,
     NOT_PRIMARY_KEY,
     TABLE_PER_CONCRETE_SUBTYPE,
@@ -158,7 +157,6 @@ __all__ = [
     "AS_OF_ATTRIBUTE_OWNER",
     "AS_OF_ATTRIBUTE_TYPE",
     "AS_OF_DIMENSION_DUPLICATE",
-    "COLUMNS",
     "DUPLICATE_ENTITY_IDENTITY",
     "INDEX_ATTRIBUTE_DUPLICATE",
     "INDEX_ATTRIBUTE_MISSING",
