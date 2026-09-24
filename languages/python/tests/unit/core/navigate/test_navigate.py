@@ -1,13 +1,12 @@
 """Relationship-navigation canonicalization unit tests (m-navigate).
 
-Exercises `parallax.core.navigate.canonicalize` independently of the Docker-gated
-compile/run sweeps: per-hop as-of propagation (declared-axis matching, the
-latest default, a non-temporal hop carrying no term, a temporal hop reached from
-a polymorphic position resolving through the family root), multi-hop
-propagation of the SAME root pin, and the strict-identity rule for a
-navigation-free predicate. The SQL assertions exercise the validated planning
-path separately; raw generated temporal terms are never fed back through strict
-serialized-literal elaboration.
+Exercises `parallax.core.navigate.canonicalize_validated` independently of the
+Docker-gated compile/run sweeps: per-hop as-of propagation (declared-axis
+matching, the latest default, a non-temporal hop carrying no term, a temporal
+hop reached from a polymorphic position resolving through the family root),
+multi-hop propagation of the SAME root pin, and the strict-identity rule for a
+navigation-free predicate. The as-of assertions read the `where` clause the
+validated planning path lowers each read to.
 """
 
 from __future__ import annotations
@@ -20,8 +19,8 @@ import pytest
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
-from parallax.core.navigate import canonicalize, canonicalize_validated, resolve_relationship
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.navigate import canonicalize_validated
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
 from tests._support.sql import compile_read
@@ -37,16 +36,16 @@ _P = "2024-02-01T00:00:00Z"
 _B_MANAGED = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _P_MANAGED = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 
-VALID_TIME = TemporalDimension.VALID_TIME
-TX_TIME = TemporalDimension.TRANSACTION_TIME
-
 # A hop's bare `Class.relationship` reference resolves relative to the Entity the
 # reference is written against, so every canonicalization names the read's own
 # queried Entity alongside its model.
 ORDER = target(ORDERS, "Order")
-POLICY_ENTITY = target(POLICY, "Policy")
-TENANT = target(LEASE, "Tenant")
 LEASE_ENTITY = target(LEASE, "Lease")
+
+
+def _canonical(op: oa.PredicateNode, model: Metamodel, entity: EntityMetadata) -> oa.PredicateNode:
+    """``op`` validated against ``entity`` and canonicalized, as authored."""
+    return canonicalize_validated(oa.validate_predicate(entity, op, model), model, entity).authored
 
 
 def _where(
@@ -71,37 +70,22 @@ def _where(
 # --------------------------------------------------------------------------- #
 # Strict identity for navigation-free predicates.                             #
 # --------------------------------------------------------------------------- #
-def test_canonicalize_is_identity_without_any_navigation_node() -> None:
-    op = oa.Or(
-        operands=(
-            oa.Comparison(op="lessThan", attr="Order.qty", value=10),
-            oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
-        )
-    )
-    assert canonicalize(op, ORDERS, ORDER) is op
-
-
-def test_canonicalize_is_identity_for_an_unfiltered_predicate() -> None:
-    op = oa.All()
-    assert canonicalize(op, ORDERS, ORDER) is op
-
-
-def test_relationship_resolution_rejects_an_unknown_member() -> None:
-    with pytest.raises(ValueError, match="names no declared relationship"):
-        resolve_relationship("Order.missing", ORDER.identity, ORDERS)
-
-
-def test_resolution_answers_a_reverse_hop_with_its_compiled_inverted_direction() -> None:
-    """`OrderItem.order` is authored as nothing but ``reverseOf: Order.items``, so
-    a many-to-one cardinality and a child-to-parent join exist only because the
-    Relationship Facet derived them. Resolving one proves this module reads that
-    compiled direction rather than pairing the peer declaration itself.
-    """
-    order_item = target(ORDERS, "OrderItem")
-    direction = resolve_relationship("OrderItem.order", order_item.identity, ORDERS)
-    assert direction.cardinality is Cardinality.MANY_TO_ONE
-    assert direction.join.source == AttributeIdentity(order_item.identity, "orderId")
-    assert direction.join.target == AttributeIdentity(ORDER.identity, "id")
+@pytest.mark.parametrize(
+    "op",
+    [
+        oa.Or(
+            operands=(
+                oa.Comparison(op="lessThan", attr="Order.qty", value=10),
+                oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
+            )
+        ),
+        oa.All(),
+    ],
+    ids=["navigation-free", "unfiltered"],
+)
+def test_canonicalization_is_identity_without_any_navigation_node(op: oa.PredicateNode) -> None:
+    product = oa.validate_predicate(ORDER, op, ORDERS)
+    assert canonicalize_validated(product, ORDERS, ORDER) is product
 
 
 def test_walk_recurses_through_predicate_combinators_only() -> None:
@@ -113,9 +97,10 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
         oa.Narrow(to=("Order",), operand=hop),
     ]
     for op in wrapped_ops:
-        canonical = canonicalize(op, ORDERS, ORDER)
-        assert canonical is not op
-        assert type(canonical) is type(op), op
+        product = oa.validate_predicate(ORDER, op, ORDERS)
+        canonical = canonicalize_validated(product, ORDERS, ORDER)
+        assert canonical is not product
+        assert type(canonical.authored) is type(op), op
 
 
 def test_validated_walk_rebuilds_not_and_group_wrappers_around_navigation() -> None:
@@ -135,15 +120,13 @@ def test_validated_walk_rebuilds_not_and_group_wrappers_around_navigation() -> N
 # --------------------------------------------------------------------------- #
 def test_non_temporal_target_carries_no_as_of_term() -> None:
     inner = oa.Comparison(op="eq", attr="OrderItem.sku", value="A-100")
-    op = oa.Exists(rel="Order.items", op=inner)
-    canonical = canonicalize(op, ORDERS, ORDER)
+    canonical = _canonical(oa.Exists(rel="Order.items", op=inner), ORDERS, ORDER)
     assert isinstance(canonical, oa.Exists)
-    assert canonical.op is inner
+    assert canonical.op == inner
 
 
 def test_non_temporal_bare_hop_stays_op_none() -> None:
-    op = oa.Exists(rel="Order.items")
-    canonical = canonicalize(op, ORDERS, ORDER)
+    canonical = _canonical(oa.Exists(rel="Order.items"), ORDERS, ORDER)
     assert isinstance(canonical, oa.Exists)
     assert canonical.op is None
 
@@ -157,8 +140,6 @@ def test_non_temporal_bare_hop_stays_op_none() -> None:
 # --------------------------------------------------------------------------- #
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
     op = oa.Exists(rel="Tenant.leases")
-    canonical = canonicalize(op, LEASE, TENANT)
-    assert canonical is not op
     where, binds = _where(op, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == ("infinity",)
@@ -166,9 +147,9 @@ def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_lat
 
 def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() -> None:
     inner = oa.Comparison(op="eq", attr="LeaseNote.text", value="renewed")
-    canonical = canonicalize(oa.Exists(rel="Lease.notes", op=inner), LEASE, LEASE_ENTITY)
+    canonical = _canonical(oa.Exists(rel="Lease.notes", op=inner), LEASE, LEASE_ENTITY)
     assert isinstance(canonical, oa.Exists)
-    assert canonical.op is inner
+    assert canonical.op == inner
 
 
 # --------------------------------------------------------------------------- #
@@ -179,8 +160,6 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
         rel="Policy.coverages",
         op=oa.Comparison(op="greaterThanEquals", attr="Coverage.amount", value="600.00"),
     )
-    canonical = canonicalize(op, POLICY, POLICY_ENTITY)
-    assert canonical is not op
     where, binds = _where(
         op,
         POLICY,
@@ -196,8 +175,6 @@ def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> 
 
 def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, POLICY_ENTITY)
-    assert canonical is not op
     where, binds = _where(
         op,
         POLICY,
@@ -216,8 +193,6 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
 # --------------------------------------------------------------------------- #
 def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
-    assert canonical is not op
     where, binds = _where(
         op,
         POLICY,
@@ -243,8 +218,6 @@ def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
 
 def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
     op = oa.Exists(rel="Policy.coverages")
-    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B})
-    assert canonical is not op
     where, binds = _where(
         op,
         POLICY,
@@ -271,8 +244,6 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
 # --------------------------------------------------------------------------- #
 def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
     op = oa.Exists(rel="Policy.coverages", op=oa.Exists(rel="Coverage.claims"))
-    canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
-    assert canonical is not op
     where, binds = _where(
         op,
         POLICY,
@@ -305,7 +276,7 @@ def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
 
 # --------------------------------------------------------------------------- #
 # Polymorphic relationship target: the family ROOT declares the as-of axes,   #
-# so `canonicalize` must resolve through it even when the relationship names  #
+# so canonicalization resolves through it even when the relationship names    #
 # an abstract subtype or a concrete leaf (m-inheritance "temporal axes are    #
 # declared on the family's abstract root and inherited by every concrete").   #
 # No corpus model combines a polymorphic target with a temporal family, so    #
@@ -370,8 +341,6 @@ def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_r
     # `Zoo.creatures` targets the abstract root `Creature` directly, so this also
     # covers the non-narrowed, whole-family case (m-sql injects no tag predicate).
     op = oa.Exists(rel="Zoo.creatures")
-    canonical = canonicalize(op, _ZOO, target(_ZOO, "Zoo"))
-    assert canonical is not op
     where, binds = _where(op, _ZOO, "Zoo")
     assert where == (
         "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"

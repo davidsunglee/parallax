@@ -21,6 +21,7 @@ from parallax.conformance._mechanism.model_facts import (
     case_serving_model,
     declaring_metadata,
     load_case_metamodel,
+    read_scans,
 )
 from parallax.conformance._mechanism.transaction_control import transact, underlying
 from parallax.core.base import normalize_instant
@@ -40,7 +41,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import Pin, scans_an_axis
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import Clock, Concurrency
 from parallax.snapshot import handle
 
@@ -299,7 +300,7 @@ def run_graph_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
-    if not _is_single_graph(query):
+    if not _is_single_graph(case, query, model):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
             "a milestone-set read asserts `then.graphs`"
@@ -362,7 +363,7 @@ def run_stream_case(
     """
     model = load_case_metamodel(case)
     query = _read_query(case, model)
-    if not _is_single_graph(query):
+    if not _is_single_graph(case, query, model):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
             "a milestone-set delivery asserts `then.graphs`"
@@ -397,7 +398,7 @@ def run_streamed_graphs_case(
     """
     model = load_case_metamodel(case)
     query = _read_query(case, model)
-    if _is_single_graph(query):
+    if _is_single_graph(case, query, model):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
             "a single-instant delivery asserts `then.graph`"
@@ -460,7 +461,7 @@ def run_graphs_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
-    if _is_single_graph(query):
+    if _is_single_graph(case, query, model):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
             "a single-instant read asserts `then.graph`"
@@ -474,14 +475,20 @@ def run_graphs_case(
     return _read_emissions(observed), graphs_wire, observed.round_trips
 
 
-def _is_single_graph(query: ObjectQueryNode) -> bool:
+def _is_single_graph(
+    case: case_format.Case, query: ObjectQueryNode, model: AcceptedMetamodel
+) -> bool:
     """Whether the read answers one graph rather than a milestone SET.
 
     The dispatch is the query's own — a scanned axis is what makes a read
-    milestone-set (`m-temporal-read`) — read here rather than inferred from the
-    result, because both forms now publish one ordered Snapshot.
+    milestone-set (`m-temporal-read`) — read as production validates it rather
+    than inferred from the result, because both forms now publish one ordered
+    Snapshot.
     """
-    return not scans_an_axis(query)
+    try:
+        return not read_scans(query, model)
+    except READ_ERRORS as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
 def _milestone_partition(

@@ -534,8 +534,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   are compiled and buffered DML is lowered, and the generated complement
   permits that edge rather than forbidding it. The composition scope's `m-navigate`
   edge follows the identical reasoning: `Transaction.find`
-  is a claimed find, so it composes `parallax.core.navigate.canonicalize`
-  immediately after `m-temporal-read`'s root injection, mirroring the
+  is a claimed find, and the `m-deep-fetch` plan it reads by canonicalizes
+  navigation immediately after `m-temporal-read`'s root injection, mirroring the
   conformance engine's own composition-at-the-engine order. The generator also encodes
   the core **conformance-family exception** (`modules.md`): the
   conformance-family scopes (`parallax.conformance.*`, plus the

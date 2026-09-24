@@ -853,8 +853,8 @@ def test_handle_scope_no_longer_grants_pk_gen() -> None:
 
 
 def test_handle_scope_still_grants_navigate() -> None:
-    # Deliberate, per spec/python.md §7: `Transaction.find` is a claimed find and
-    # composes `parallax.core.navigate.canonicalize` directly.
+    # Deliberate, per spec/python.md §7: `Transaction.find` is a claimed find, and
+    # the `m-deep-fetch` plan it reads by canonicalizes navigation.
     assert "parallax.core.navigate" in dag.PYTHON_FIRST_PARTY_GRANTS["parallax.snapshot.handle"]
 
 

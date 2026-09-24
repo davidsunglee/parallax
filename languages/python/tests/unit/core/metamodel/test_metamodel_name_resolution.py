@@ -344,8 +344,8 @@ def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> 
     wolf = _named(model, "Wolf")
 
     op = oa.Exists(rel="Beast.den")
-    validate_predicate(wolf, op, model)
-    assert navigate.canonicalize(op, model, wolf) == op
+    product = validate_predicate(wolf, op, model)
+    assert navigate.canonicalize_validated(product, model, wolf).authored == op
 
 
 def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
@@ -381,5 +381,5 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     ]
 
     navigation = oa.Exists(rel="zoo.Beast.den")
-    validate_predicate(wolf, navigation, model)
-    assert navigate.canonicalize(navigation, model, wolf) == navigation
+    product = validate_predicate(wolf, navigation, model)
+    assert navigate.canonicalize_validated(product, model, wolf).authored == navigation

@@ -21,24 +21,22 @@ from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, TemporalDimension
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, TemporalDimension
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._validated import (
     ValidatedAsOfSelection,
     ValidatedLatestSelection,
+    ValidatedObjectQuery,
 )
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     TemporalReadError,
-    inject_as_of,
     inject_resolved_as_of,
-    milestone_edge,
     milestone_edge_from_members,
     milestone_edge_of,
-    query_pin,
-    scans_an_axis,
+    scans_validated_axis,
     validated_hop_as_of_terms,
     validated_query_pin,
 )
@@ -80,6 +78,19 @@ def _query(
     )
 
 
+def _validated(
+    entity: EntityMetadata,
+    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    predicate: oa.PredicateNode | None = None,
+    **clauses: object,
+) -> ValidatedObjectQuery:
+    return oq.validate_object_query(
+        entity,
+        _query(entity, temporal, predicate, **clauses),
+        _ACCEPTED[entity.identity.name],
+    )
+
+
 def _where(
     entity: EntityMetadata,
     temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
@@ -87,7 +98,7 @@ def _where(
 ) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
-    query = oq.validate_object_query(entity, _query(entity, temporal, predicate), model)
+    query = _validated(entity, temporal, predicate)
     root = deep_fetch.plan(
         query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
     ).root
@@ -169,11 +180,6 @@ def test_hop_temporal_injection_rejects_axes_with_missing_members(
             malformed_model,
             {axis.dimension: dt.datetime(2024, 1, 1, tzinfo=dt.UTC)},
         )
-
-
-def test_authored_temporal_injection_requires_one_mode_for_every_declared_axis() -> None:
-    with pytest.raises(TemporalReadError, match="received no selection"):
-        inject_as_of(oa.All(), {}, POSITION)
 
 
 def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
@@ -335,7 +341,8 @@ def test_non_temporal_read_is_identity() -> None:
             oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
         )
     )
-    assert inject_as_of(op, {}, ORDERS) is op
+    query = _validated(ORDERS, predicate=op)
+    assert inject_resolved_as_of(query.predicate, query.temporal, ORDERS) is query.predicate
 
 
 def test_result_directives_survive_injection() -> None:
@@ -365,46 +372,51 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
     # silently re-associate into its weaker binding.
     predicate = oa.Comparison(op="eq", attr="Balance.id", value=1)
     conjunction = oa.And(
-        operands=(predicate, oa.Comparison(op="eq", attr="Balance.owner", value="Ada"))
+        operands=(predicate, oa.Comparison(op="eq", attr="Balance.acctNum", value="A"))
     )
     disjunction = oa.Or(operands=(predicate, oa.Comparison(op="eq", attr="Balance.id", value=2)))
     pin: dict[oq.TemporalDimension, oq.TemporalSelection] = {"transaction-time": oq.AsOf("latest")}
     as_of = oa.Comparison(op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity")
-    assert inject_as_of(oa.All(), pin, BALANCE) == as_of
-    assert inject_as_of(predicate, pin, BALANCE) == oa.And(operands=(predicate, as_of))
-    assert inject_as_of(conjunction, pin, BALANCE) == oa.And(
-        operands=(*conjunction.operands, as_of)
-    )
-    assert inject_as_of(disjunction, pin, BALANCE) == oa.And(
-        operands=(oa.Group(operand=disjunction), as_of)
-    )
 
+    def injected(authored: oa.PredicateNode) -> oa.PredicateNode:
+        query = _validated(BALANCE, pin, authored)
+        return inject_resolved_as_of(query.predicate, query.temporal, BALANCE).authored
 
-def test_undeclared_axis_is_rejected() -> None:
-    with pytest.raises(TemporalReadError, match="undeclared dimension"):
-        inject_as_of(oa.All(), {"valid-time": oq.AsOf("latest")}, BALANCE)
-
-
-def test_temporal_clause_on_non_temporal_entity_is_rejected() -> None:
-    with pytest.raises(TemporalReadError, match="non-temporal entity"):
-        inject_as_of(oa.All(), {"transaction-time": oq.AsOf("latest")}, ORDERS)
+    assert injected(oa.All()) == as_of
+    assert injected(predicate) == oa.And(operands=(predicate, as_of))
+    assert injected(conjunction) == oa.And(operands=(*conjunction.operands, as_of))
+    assert injected(disjunction) == oa.And(operands=(oa.Group(operand=disjunction), as_of))
 
 
 # --------------------------------------------------------------------------- #
 # Edge-pin + Pin / Edge value model.                                           #
 # --------------------------------------------------------------------------- #
-def test_milestone_edge_reads_each_axis_from_column() -> None:
-    row = {
-        "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-        "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+def _starts(entity: EntityMetadata, **values: object) -> dict[AttributeIdentity, object]:
+    """``values`` keyed by the start Attribute Identity of each named axis."""
+    return {
+        axis.start_attribute: values[axis.start_attribute.name]
+        for axis in entity.declared_as_of_axes
+        if axis.start_attribute.name in values
     }
-    edge = milestone_edge(POSITION, row)
+
+
+def test_milestone_edge_reads_each_axis_from_its_start_member() -> None:
+    edge = milestone_edge_of(
+        POSITION,
+        _starts(
+            POSITION,
+            validStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            txStart=dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        ),
+    )
     assert edge.valid_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 
 
 def test_edge_strict_accessor_raises_on_undeclared_axis() -> None:
-    edge = milestone_edge(BALANCE, {"in_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
+    edge = milestone_edge_of(
+        BALANCE, _starts(BALANCE, txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+    )
     assert edge.tx_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.valid_time_or_none is None
@@ -430,23 +442,22 @@ def test_edge_equality_and_hashing() -> None:
 
 def test_milestone_edge_on_non_temporal_entity_raises() -> None:
     with pytest.raises(TemporalReadError, match="not a temporal entity"):
-        milestone_edge(ORDERS, {})
+        milestone_edge_of(ORDERS, {})
 
 
-def test_milestone_edge_rejects_a_non_instant_from_column() -> None:
+def test_milestone_edge_rejects_a_non_instant_start_member() -> None:
     with pytest.raises(TemporalReadError, match="not a timestamp instant"):
-        milestone_edge(BALANCE, {"in_z": "not-a-datetime"})
+        milestone_edge_of(BALANCE, _starts(BALANCE, txStart="not-a-datetime"))
 
 
-def test_the_three_keying_schemes_derive_one_milestones_edge_identically() -> None:
-    # One milestone reaches three keying schemes on its way through the system:
-    # physical columns as a driver returns them, declared member names as a
-    # retained row payload holds them, and Attribute Identities as a materialized
-    # node answers in. All three name the SAME milestone, so all three must
-    # produce an EQUAL Edge — otherwise a write's evidence could be filed under
-    # one coordinate and looked up under another. Equality holds by shared
-    # derivation rather than by coincidence: every scheme resolves the axis start
-    # values and hands them to one computation.
+def test_the_two_keying_schemes_derive_one_milestones_edge_identically() -> None:
+    # One milestone reaches two keying schemes on its way through the system:
+    # declared member names as a retained row payload holds them, and Attribute
+    # Identities as a materialized node answers in. Both name the SAME
+    # milestone, so both must produce an EQUAL Edge — otherwise a write's
+    # evidence could be filed under one coordinate and looked up under another.
+    # Equality holds by shared derivation rather than by coincidence: each
+    # scheme resolves the axis start values and hands them to one computation.
     valid_start = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     tx_start = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     axes = {axis.dimension: axis for axis in POSITION.declared_as_of_axes}
@@ -455,13 +466,12 @@ def test_the_three_keying_schemes_derive_one_milestones_edge_identically() -> No
         axes[TemporalDimension.TRANSACTION_TIME].start_attribute: tx_start,
     }
 
-    by_column = milestone_edge(POSITION, {"from_z": valid_start, "in_z": tx_start})
     by_member = milestone_edge_from_members(
         POSITION, {"validStart": valid_start, "txStart": tx_start, "value": "carried"}
     )
     by_identity = milestone_edge_of(POSITION, starts)
 
-    assert by_member == by_column == by_identity
+    assert by_member == by_identity
 
 
 def test_a_member_keyed_edge_normalizes_an_offset_instant_to_utc() -> None:
@@ -496,62 +506,62 @@ def test_pin_reports_only_pinned_axes() -> None:
 
 
 def test_query_pin_reads_both_bitemporal_axes() -> None:
-    pin = query_pin(_query(POSITION, _bitemporal(_B, "latest")), POSITION)
+    pin = validated_query_pin(_validated(POSITION, _bitemporal(_B, "latest")).temporal)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
 
 
 def test_the_temporal_readers_are_unaffected_by_result_narrowing() -> None:
-    query = _query(
+    query = _validated(
         POSITION,
         {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
         narrow_to=("Position",),
     )
-    assert query_pin(query, POSITION).valid_time == dt.datetime.fromisoformat(_B)
-    assert scans_an_axis(query)
+    assert validated_query_pin(query.temporal).valid_time == dt.datetime.fromisoformat(_B)
+    assert scans_validated_axis(query.temporal)
 
 
 def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
-    # A scan is not a pin: `asOfRange` / `history` never set a
-    # coordinate, even though `query_pin` still reads them (called
-    # unconditionally ahead of the milestone-set/pinned-read branch decision).
-    ranged = _query(POSITION, {"transaction-time": oq.AsOfRange(start=_P, end="infinity")})
-    assert query_pin(ranged, POSITION) == Pin()
+    # A scan is not a pin: `asOfRange` / `history` never set a coordinate, even
+    # though the pin is still read off them (ahead of the milestone-set /
+    # pinned-read branch decision).
+    ranged = _validated(BALANCE, {"transaction-time": oq.AsOfRange(start=_P, end=_D)})
+    assert validated_query_pin(ranged.temporal) == Pin()
 
-    scanned = _query(POSITION, {"transaction-time": oq.History()})
-    assert query_pin(scanned, POSITION) == Pin()
+    scanned = _validated(BALANCE, {"transaction-time": oq.History()})
+    assert validated_query_pin(scanned.temporal) == Pin()
 
 
-def test_scans_an_axis_sees_a_scan_beside_a_pinned_dimension() -> None:
+def test_a_scan_is_seen_beside_a_pinned_dimension() -> None:
     # Each dimension carries its own selection, so the WHOLE clause decides:
     # pinning Valid Time beside a Transaction-Time scan still answers a
     # milestone set.
-    pinned_over_history = _query(
+    pinned_over_history = _validated(
         POSITION, {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)}
     )
-    assert scans_an_axis(pinned_over_history)
+    assert scans_validated_axis(pinned_over_history.temporal)
 
-    pinned_over_range = _query(
+    pinned_over_range = _validated(
         POSITION,
         {"transaction-time": oq.AsOfRange(start=_P, end=_D), "valid-time": oq.AsOf("latest")},
     )
-    assert scans_an_axis(pinned_over_range)
+    assert scans_validated_axis(pinned_over_range.temporal)
 
-    both_pinned = _query(POSITION, _bitemporal(_B, "latest"))
-    assert not scans_an_axis(both_pinned)
-    assert not scans_an_axis(_query(ORDERS))
+    both_pinned = _validated(POSITION, _bitemporal(_B, "latest"))
+    assert not scans_validated_axis(both_pinned.temporal)
+    assert not scans_validated_axis(_validated(ORDERS).temporal)
 
 
 def test_result_directives_never_hide_a_scan() -> None:
     # Ordering and a cap are siblings of the Temporal Selection clause, so
     # neither can stand between the reader and a scanned dimension.
-    query = _query(
+    query = _validated(
         POSITION,
         {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
-        order_by=(oq.OrderKey(attr="Position.qty"),),
+        order_by=(oq.OrderKey(attr="Position.id"),),
         limit=5,
     )
-    assert scans_an_axis(query)
+    assert scans_validated_axis(query.temporal)
 
 
 # Reading a `Pin` or an `Edge` OFF a materialized node is the producing
