@@ -63,8 +63,8 @@ models:
 
 - **Transaction time** records when a fact was stored in the database, letting
   you ask what the system knew at a past instant.
-- **Valid time** records when a fact applies in the domain, letting you model
-  effective dates independently of when a change was recorded.
+- **Valid time** records when a fact applies in the domain, independently of
+  when the change was recorded.
 
 Read the latest state, query as of a particular instant, or inspect histories
 and time ranges. Temporal coordinates carry through the requested object graph
@@ -79,7 +79,7 @@ query = Balance.where(Balance.all).as_of(
 ```
 
 Temporal writes preserve history rather than overwriting it. Bitemporal
-operations support effective-dated changes and bounded corrections: change a
+operations support valid-time changes and bounded corrections: change a
 value for a particular interval while preserving the portions before and after
 it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-update-until-splits-headmiddletail)
 shows an update restricted to a date range.
