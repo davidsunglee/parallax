@@ -673,9 +673,15 @@ child's own; this is what holds the last thing that varies, and it is what lets
 a reading be an exact equality rather than a tolerance."""
 
 
-def _child_environment() -> dict[str, str]:
+_SERVED_RECORD_VARIABLE: Final = "PARALLAX_SERVED_RECORD"
+"""The environment variable naming the file a child records the measurement it
+served in, which the parent reads once the child has exited."""
+
+
+def _child_environment(record: str) -> dict[str, str]:
     """The parent's environment, less what would trace the child, with its
-    hashing pinned, and marked as an interpreter of its own.
+    hashing pinned, marked as an interpreter of its own, and naming the file
+    ``record`` it reports what it served in.
 
     The paths are carried over because the runner rather than the interpreter is
     what puts this test tree on the path, and a child started from a module file
@@ -699,6 +705,7 @@ def _child_environment() -> dict[str, str]:
         "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
         "PYTHONHASHSEED": _HASH_SEED,
         OWN_INTERPRETER_VARIABLE: "1",
+        _SERVED_RECORD_VARIABLE: record,
     }
 
 
@@ -712,31 +719,54 @@ def in_a_child_interpreter(measurement: Callable[[], None]) -> Callable[[], None
 
     The child re-runs the defining module as a script, naming the measurement,
     and asserts for itself; the parent reports the child's whole output when it
-    exits nonzero. A module holding one of these MUST therefore answer
-    :func:`serve_one_measurement` from its ``__main__``, and MUST leave nothing
-    but definitions to run at import — the child pays for its import before every
-    reading it takes.
+    exits nonzero, and fails a child that exits cleanly without recording that it
+    served the measurement it was asked for. A module holding one of these MUST
+    therefore answer :func:`serve_one_measurement` from its ``__main__``, and
+    MUST leave nothing but definitions to run at import — the child pays for its
+    import before every reading it takes.
     """
     _MEASUREMENTS[measurement.__name__] = measurement
     script = measurement.__globals__["__file__"]
 
     @wraps(measurement)
     def taken_in_a_child() -> None:
-        report = subprocess.run(
-            [sys.executable, script, measurement.__name__],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_child_environment(),
-        )
+        # Imported here, in the parent, because an import at module level would
+        # load it into every child before the first reading it takes.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as scratch:
+            record = os.path.join(scratch, "served")
+            report = subprocess.run(
+                [sys.executable, script, measurement.__name__],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=_child_environment(record),
+            )
+            served = _served(record)
         if report.returncode != 0:
             raise AssertionError(
                 f"{measurement.__name__} failed in its child interpreter "
                 f"(exit {report.returncode})\n{report.stdout}{report.stderr}"
             )
+        if served != measurement.__name__:
+            raise AssertionError(
+                f"{measurement.__name__}'s child interpreter exited without serving "
+                f"it, so {script} likely has no `__main__` entry point calling "
+                f"serve_one_measurement(sys.argv[1])\n{report.stdout}{report.stderr}"
+            )
 
     setattr(taken_in_a_child, OWN_INTERPRETER_ATTRIBUTE, True)
     return taken_in_a_child
+
+
+def _served(record: str) -> str | None:
+    """The measurement a child recorded serving in ``record``, if it served one."""
+    try:
+        with open(record) as written:
+            return written.read()
+    except FileNotFoundError:
+        return None
 
 
 def takes_its_own_interpreter(test: object) -> bool:
@@ -756,6 +786,9 @@ def serve_one_measurement(name: str) -> None:
 
     The registered function is the one the decorator wrapped rather than the
     wrapper, so the child takes the reading instead of starting a child of its
-    own.
+    own. What it served is recorded only once the measurement has returned, so
+    the record is outside every window the measurement reads.
     """
     _MEASUREMENTS[name]()
+    with open(os.environ[_SERVED_RECORD_VARIABLE], "w") as record:
+        record.write(name)

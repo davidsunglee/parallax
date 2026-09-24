@@ -12,10 +12,6 @@ answered where the reading is taken: each reader refuses to run in a process the
 boundary did not start, so a test reaching one through a helper, a wrapper, or
 import-time code fails in the shared process instead of passing against its heap.
 
-A module holding a boundary must also answer ``serve_one_measurement`` from its
-``__main__``; otherwise its child imports the module, serves nothing, and exits
-cleanly.
-
 Three structural facts are checked with it, because the rule is vacuous without
 them: every declared reader must still name a function the instruments define,
 the boundary must exist, and the classifier's own attribute must be spelled the
@@ -37,7 +33,6 @@ import ast
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeIs
 
 _TOOL = "tools/check_instrument_access.py"
 WORKSPACE = Path(__file__).resolve().parents[1]
@@ -49,9 +44,6 @@ INSTRUMENT_MODULE_NAME = "memory_instruments"
 
 BOUNDARY = "in_a_child_interpreter"
 """The decorator that acquires an interpreter of its own for one measurement."""
-
-SERVER = "serve_one_measurement"
-"""What a module holding a measurement answers from its ``__main__``."""
 
 ATTRIBUTE_CONSTANT = "OWN_INTERPRETER_ATTRIBUTE"
 CLASSIFIER_CONSTANT = "_OWN_INTERPRETER_ATTRIBUTE"
@@ -162,38 +154,6 @@ def _called_readers(function: _Function, readers: dict[str, str], modules: set[s
     return called
 
 
-def _main_guard(node: ast.stmt) -> TypeIs[ast.If]:
-    """Whether *node* is ``if __name__ == "__main__":`` exactly, the one spelling
-    whose body runs in the child the boundary starts and nowhere else."""
-    if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
-        return False
-    test = node.test
-    named = isinstance(test.left, ast.Name) and test.left.id == "__name__"
-    compared = len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
-    main = test.comparators[0]
-    return named and compared and isinstance(main, ast.Constant) and main.value == "__main__"
-
-
-def _serves(tree: ast.Module, modules: set[str]) -> bool:
-    """Whether *tree*'s ``__main__`` block calls the server, by name or off the
-    instruments module."""
-    return any(
-        isinstance(node, ast.Call)
-        and (
-            (isinstance(node.func, ast.Name) and node.func.id == SERVER)
-            or (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == SERVER
-                and _dotted(node.func.value) in modules
-            )
-        )
-        for guard in tree.body
-        if _main_guard(guard)
-        for statement in guard.body
-        for node in ast.walk(statement)
-    )
-
-
 def _check_structure() -> list[Finding]:
     """The three facts the rule rests on."""
     findings: list[Finding] = []
@@ -203,7 +163,7 @@ def _check_structure() -> list[Finding]:
         for node in ast.walk(instruments)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     }
-    for name in sorted(WHOLE_INTERPRETER_READERS | {BOUNDARY, SERVER}):
+    for name in sorted(WHOLE_INTERPRETER_READERS | {BOUNDARY}):
         if name not in defined:
             findings.append(
                 Finding(
@@ -257,16 +217,6 @@ def audit(root: Path) -> list[Finding]:
                         f"rest of the suite shares",
                     )
                 )
-        if any(_decorated(node) for node in functions) and not _serves(tree, modules):
-            findings.append(
-                Finding(
-                    relative,
-                    1,
-                    f"this module holds a `@{BOUNDARY}` measurement but its "
-                    f'`if __name__ == "__main__":` block never calls `{SERVER}`, so the '
-                    f"child it starts can serve nothing",
-                )
-            )
     return findings
 
 
