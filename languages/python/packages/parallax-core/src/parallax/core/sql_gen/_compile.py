@@ -246,10 +246,7 @@ class CompiledRead:
     ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
         """The Entity one row names, its `familyVariant` spelling, the stored tag no
         composed concrete claimed, and the row's shared document."""
-        if isinstance(row, tuple) and len(row) != len(self.result_keys):
-            raise ValueError(
-                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
-            )
+        self._require_arity(row)
         stages = self._stages
         source = stages.resolve
         resolved, variant, unknown_tag = source.resolve_value(
@@ -271,12 +268,7 @@ class CompiledRead:
         aliases = self.coordinate_reads
         if not aliases:
             return (None,) * len(rows)
-        return tuple(
-            ContinuationCoordinate(
-                tuple(inert_scalar(self._value(row, alias)) for alias in aliases)
-            )
-            for row in rows
-        )
+        return tuple(self._coordinate(row, aliases) for row in rows)
 
     def raw_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
@@ -348,6 +340,20 @@ class CompiledRead:
         return self._stages.publication_keys(
             self.result_keys, self.coordinate_reads, resolved, variant
         )
+
+    def _coordinate(
+        self, row: Row | Mapping[str, object], aliases: tuple[str, ...]
+    ) -> ContinuationCoordinate:
+        self._require_arity(row)
+        return ContinuationCoordinate(
+            tuple(inert_scalar(self._value(row, alias)) for alias in aliases)
+        )
+
+    def _require_arity(self, row: Row | Mapping[str, object]) -> None:
+        if isinstance(row, tuple) and len(row) != len(self.result_keys):
+            raise ValueError(
+                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
+            )
 
     def _value(self, row: Row | Mapping[str, object], key: str) -> object:
         if isinstance(row, tuple):
