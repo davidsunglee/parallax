@@ -98,7 +98,9 @@ rather than to what is being measured. :func:`in_a_child_interpreter` is how a
 suite says so: the measurement is taken in a process that has loaded only what it
 needs, which is what leaves one reading comparable with the same reading taken
 beside anything else, and whose hashing is pinned, which is what leaves it
-comparable with the same reading taken again.
+comparable with the same reading taken again. Every reader refuses to run in a
+process that boundary did not start, so a reading reached by any route but the
+boundary fails where it is taken rather than passing against a shared heap.
 
 Three ``tests/unit`` cost suites read these, which is what puts them here beside
 them; ``tools/snapshot_delivery_reading.py`` reads them too, and names this
@@ -126,6 +128,7 @@ from typing import Final, NamedTuple
 
 __all__ = [
     "OWN_INTERPRETER_ATTRIBUTE",
+    "OWN_INTERPRETER_VARIABLE",
     "REPEATS",
     "WARMUP",
     "Heap",
@@ -137,6 +140,7 @@ __all__ = [
     "high_water",
     "in_a_child_interpreter",
     "live_graph",
+    "require_own_interpreter",
     "retained",
     "serve_one_measurement",
     "survivors",
@@ -192,6 +196,25 @@ def _unsampled() -> None:
     """The sampler a byte measurement passes: the sequence runs unobserved."""
 
 
+OWN_INTERPRETER_VARIABLE: Final = "PARALLAX_OWN_INTERPRETER"
+"""The environment variable that marks a process as an interpreter of its own,
+set in the environment of every child a reading is taken in."""
+
+
+def require_own_interpreter(reader: str) -> None:
+    """Refuse ``reader`` in a process no child-interpreter boundary started.
+
+    Every reader calls this on entry, before any window opens, so it moves no
+    reading.
+    """
+    if OWN_INTERPRETER_VARIABLE not in os.environ:
+        raise RuntimeError(
+            f"{reader} reads the whole interpreter, so it needs an interpreter of its "
+            f"own: take it inside a test decorated with @in_a_child_interpreter, whose "
+            f"child sets {OWN_INTERPRETER_VARIABLE}"
+        )
+
+
 @contextmanager
 def untraced() -> Generator[None]:
     """A window with the line tracer uninstalled, on this thread and on any the
@@ -227,6 +250,7 @@ def allocation(work: Seam) -> tuple[int, int]:
     while a transient allocation is a high-water mark that repetition does not
     accumulate.
     """
+    require_own_interpreter("allocation")
     with untraced():
         for _ in range(WARMUP):
             work(_unsampled)
@@ -255,6 +279,7 @@ def first_run(work: Seam) -> tuple[int, int]:
     has never run ``work``, which is why the allocation suite measures it in a
     child interpreter.
     """
+    require_own_interpreter("first_run")
     gc.collect()
     gc.collect()
     before, _ = tracemalloc.get_traced_memory()
@@ -300,6 +325,7 @@ def live_graph(seam: Seam) -> LiveGraph:
     and the list they were collected in are the only objects the comparison
     cannot avoid creating.
     """
+    require_own_interpreter("live_graph")
     sampled: list[list[object]] = []
 
     def sample() -> None:
@@ -354,6 +380,7 @@ def retained(seam: Seam) -> int:
     the two separately is what leaves this measuring the seam rather than the
     first measurement of it.
     """
+    require_own_interpreter("retained")
     sampled: list[int] = []
 
     def sample() -> None:
@@ -400,6 +427,7 @@ def high_water(span: Span) -> int:
     own level. The span is warmed for the reason :func:`retained` warms its seam,
     and ``tracemalloc`` must already be tracing, as it must be there.
     """
+    require_own_interpreter("high_water")
     marks: list[int] = []
 
     def opened() -> None:
@@ -478,6 +506,7 @@ def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
     sampled, and the whole set is then run and sampled a second time, with the
     first set's readings answered to nobody.
     """
+    require_own_interpreter("whole_heap")
     readings: list[Heap] = []
     sample = _marking(readings)
     with untraced():
@@ -516,6 +545,7 @@ def whole_heap_across(span: Span) -> tuple[Heap, Heap]:
     listing it takes and the reading already taken, so the process looks
     identical at both.
     """
+    require_own_interpreter("whole_heap_across")
     readings: list[Heap] = []
     mark = _marking(readings)
     with untraced():
@@ -644,8 +674,8 @@ a reading be an exact equality rather than a tolerance."""
 
 
 def _child_environment() -> dict[str, str]:
-    """The parent's environment, less what would trace the child and with its
-    hashing pinned.
+    """The parent's environment, less what would trace the child, with its
+    hashing pinned, and marked as an interpreter of its own.
 
     The paths are carried over because the runner rather than the interpreter is
     what puts this test tree on the path, and a child started from a module file
@@ -668,6 +698,7 @@ def _child_environment() -> dict[str, str]:
     return inherited | {
         "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
         "PYTHONHASHSEED": _HASH_SEED,
+        OWN_INTERPRETER_VARIABLE: "1",
     }
 
 

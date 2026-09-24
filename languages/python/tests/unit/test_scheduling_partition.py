@@ -33,7 +33,11 @@ from tests._support import cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
-from tests.unit.memory_instruments import takes_its_own_interpreter
+from tests.unit.memory_instruments import (
+    OWN_INTERPRETER_VARIABLE,
+    require_own_interpreter,
+    takes_its_own_interpreter,
+)
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
@@ -107,6 +111,14 @@ def test_an_items_class_agrees_with_what_it_requires(
         else:
             expected = {"dbfree"}
         assert _classes_of(item) == expected, item.nodeid
+
+
+def test_a_reader_refuses_a_process_no_boundary_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(OWN_INTERPRETER_VARIABLE, raising=False)
+    with pytest.raises(RuntimeError, match="in_a_child_interpreter"):
+        require_own_interpreter("a reader")
 
 
 def test_only_the_derivation_names_a_scheduling_class() -> None:
