@@ -31,7 +31,6 @@ from parallax.core.sql_gen._inheritance import (
 )
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
-from tests.unit.core.sql_gen._classified_member_support import classified_member
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
@@ -364,8 +363,12 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
     assert variant == "CardPayment"
     assert compiled.publication_keys(resolved, variant) == ("id",)
     assert compiled.classified_members(resolved) == {"detail", "authorization_code"}
-    assert classified_member(compiled, card, "detail") == ("visa-4242", ())
-    assert classified_member(compiled, card, "authorization_code") == ("AUTH-7", ())
+    assert compiled.raw_member_classifier(resolved, "detail")(
+        compiled.raw_member_of(card, resolved, "detail")
+    ) == ("visa-4242", ())
+    assert compiled.raw_member_classifier(resolved, "authorization_code")(
+        compiled.raw_member_of(card, resolved, "authorization_code")
+    ) == ("AUTH-7", ())
 
     cash = {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
     resolved, variant, _unknown, _document = compiled.row_identity(cash)
@@ -373,7 +376,9 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
     assert variant == "CashPayment"
     assert compiled.publication_keys(resolved, variant) == ("id",)
     assert compiled.classified_members(resolved) == {"detail"}
-    assert classified_member(compiled, cash, "detail") == (Decimal("12.50"), ())
+    assert compiled.raw_member_classifier(resolved, "detail")(
+        compiled.raw_member_of(cash, resolved, "detail")
+    ) == (Decimal("12.50"), ())
     _resolved, _variant, unknown, _document = compiled.row_identity(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
@@ -390,10 +395,15 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
     }
     card = target(DOCUMENT_LAYOUT, "CardPayment").identity
+    assert compiled.row_identity(row)[0] == card
     assert compiled.publication_keys(card, None) == ("id",)
     assert compiled.classified_members(card) == {"detail", "authorization_code"}
-    assert classified_member(compiled, row, "detail") == ("visa-4242", ())
-    assert classified_member(compiled, row, "authorization_code") == ("AUTH-7", ())
+    assert compiled.raw_member_classifier(card, "detail")(
+        compiled.raw_member_of(row, card, "detail")
+    ) == ("visa-4242", ())
+    assert compiled.raw_member_classifier(card, "authorization_code")(
+        compiled.raw_member_of(row, card, "authorization_code")
+    ) == ("AUTH-7", ())
 
 
 def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
@@ -925,7 +935,9 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     assert (resolved, variant, unknown) == (target(meta, "Leaf").identity, "Leaf", None)
     assert compiled.publication_keys(resolved, variant) == ("id", "x", "meta")
     assert compiled.raw_member_of(tagged, resolved, "x") == 7
-    assert classified_member(compiled, tagged, "meta") == ({"note": "tagged"}, ())
+    assert compiled.raw_member_classifier(resolved, "meta")(
+        compiled.raw_member_of(tagged, resolved, "meta")
+    ) == ({"note": "tagged"}, ())
     resolved, _variant, unknown, _document = compiled.row_identity(
         {
             "id": 2,
@@ -987,7 +999,9 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
     assert (resolved, variant, unknown) == (target(meta, "First").identity, "First", None)
     assert compiled.publication_keys(resolved, variant) == ("id", "payload_hex", "meta")
     assert compiled.raw_member_of(row, resolved, "payload_hex") == "00ff"
-    assert classified_member(compiled, row, "meta") == ({"note": "literal"}, ())
+    assert compiled.raw_member_classifier(resolved, "meta")(
+        compiled.raw_member_of(row, resolved, "meta")
+    ) == ({"note": "literal"}, ())
 
 
 def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
@@ -1142,7 +1156,9 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     resolved, _variant, _unknown, _document = compiled.row_identity(row)
     assert resolved == target(meta, "Tug").identity
     assert compiled.classified_members(resolved) == frozenset({"berth"})
-    assert classified_member(compiled, row, "berth") == ({"code": "A1"}, ())
+    assert compiled.raw_member_classifier(resolved, "berth")(
+        compiled.raw_member_of(row, resolved, "berth")
+    ) == ({"code": "A1"}, ())
     assert compiled.raw_member_of(row, resolved, "deck") is deck
     with pytest.raises(KeyError, match="deck"):
         compiled.raw_member_classifier(resolved, "deck")
@@ -1175,7 +1191,9 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
         }
         resolved = compiled.row_identity(row)[0]
         assert "payload" not in compiled.publication_keys(resolved, variant)
-        assert classified_member(compiled, row, member) == (320, ())
+        assert compiled.raw_member_classifier(resolved, member)(
+            compiled.raw_member_of(row, resolved, member)
+        ) == (320, ())
 
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:

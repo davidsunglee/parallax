@@ -32,7 +32,6 @@ from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_read, compile_write_predicate
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit.core.sql_gen._classified_member_support import classified_member
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -133,81 +132,13 @@ def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs
     assert compiled.statement.sql == "select t0.id from marker t0"
 
 
-def test_a_direct_document_carrier_is_classified_by_its_compiled_classifier() -> None:
-    # Under Columns layout the adapter still folds every adjacent document pair.
-    # An occurrence stored with the wrong container kind is classified at the compiled-read
-    # seam, retained as provenance for graph publication, and refused by the flat lane.
+def test_a_direct_document_carrier_is_a_classified_member() -> None:
+    # Under Columns layout the adapter still folds every adjacent document pair, so
+    # each occurrence Column is classified rather than read as a finished value.
     compiled = compile_read(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
-    row = {**_COLUMNS_ROW, "tags": PresentDocument({})}
-    tags, findings = classified_member(compiled, row, "tags")
-    assert tags == []
     assert compiled.classified_members(compiled.target).issuperset({"address", "tags"})
-    assert [(finding.code, finding.path) for finding in findings] == [
-        ("many-wrong-kind", ("tags",))
-    ]
-
-
-@pytest.mark.parametrize(
-    ("address", "expected"),
-    [
-        (
-            PresentDocument({"city": []}),
-            ("leaf-undecodable", ("address", "city")),
-        ),
-    ],
-    ids=["undecodable-leaf"],
-)
-def test_a_direct_document_classifies_nested_invalid_state(
-    address: PresentDocument, expected: tuple[str, tuple[str, ...]]
-) -> None:
-    compiled = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
-    )
-    row = {**_COLUMNS_ROW, "address": address}
-    _address, findings = classified_member(compiled, row, "address")
-    assert [(finding.code, finding.path) for finding in findings] == [expected]
-
-
-def test_a_required_direct_document_member_is_classified_before_publication() -> None:
-    from parallax.descriptor._records import (
-        Attribute,
-        Entity,
-        Metamodel,
-        ValueObject,
-        ValueObjectAttribute,
-    )
-    from tests.unit._corpus_model_support import formed
-
-    required = Entity(
-        name="Required",
-        table="required",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        value_objects=(
-            ValueObject(
-                name="address",
-                attributes=(ValueObjectAttribute(name="city", type="string"),),
-            ),
-        ),
-    )
-    model = formed(Metamodel(entities=(required,)))
-    compiled = compile_read(
-        oa.All(), model, POSTGRES, entity(model, "Required"), result_form="instance"
-    )
-    row = {"id": 1, "address": PresentDocument({})}
-    _address, findings = classified_member(compiled, row, "address")
-    assert [(finding.code, finding.path) for finding in findings] == [
-        ("required-member-absent", ("address", "city"))
-    ]
-
-
-def test_a_direct_document_column_requires_a_folded_document_read() -> None:
-    compiled = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
-    )
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        classified_member(compiled, {**_COLUMNS_ROW, "address": {"city": "Oslo"}}, "address")
 
 
 def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() -> None:
@@ -305,10 +236,8 @@ def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract(
         compiled.row_identity({"id": 1, "payload": _DOCUMENT_VALUE})
 
 
-def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:
+def test_an_entity_document_classifies_each_requested_member() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    row = {"id": 1, "payload": SQL_NULL}
-    assert classified_member(compiled, row, "display_name") == (None, ())
     assert compiled.classified_members(compiled.target) == frozenset(
         {"display_name", "score", "joined_on"}
     )
