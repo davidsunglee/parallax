@@ -31,43 +31,30 @@ Graph Construction, the row codec, and the write planner are all state a reading
 can reach. A catalog constructed directly would leave everything else preparation
 composed outside the claim.
 
-**Two instruments: one bounded by the arm, one bounded by nothing.** What each
-arm holds is read as a closure — every object one prepared structure reaches
-without crossing into another, and every reference between them. A closure is a
-total of one participant's own state rather than a difference between two sums,
-so it answers exactly what the claim asks. Beside it, each axis marks a REGION
-and reads what every Python object in the process weighs at each end of it. A
-holder older than every arm is no survivor of any of them and no window's
-difference contains it, so a process-global or data-keyed cache taking entries
-per row or per execution is visible only as a total — and it is visible there
-whether or not the collector tracks what it took, which a survivor sample cannot
-say.
+**Two instruments: one over structure, one over bytes.** What each arm holds is
+read as a closure — every object one prepared structure reaches without crossing
+into another, and every reference between them. A closure is a total of one
+participant's own state rather than a difference between two sums, so it answers
+exactly what the claim asks. Beside it, each axis reads with :func:`retained`
+what one more conversion leaves reachable once its Page is gone, which is what
+sees an entry taken by a holder no prepared structure reaches, and one the
+collector does not track.
 
-**A region rather than two arms, because a first-reach cache saturates.** A
-process-global cache keyed by what a row holds stops growing once the rows come
-back, so two arms compared in one process both read it already full. The region
-instead warms over one generated range and then converts a disjoint fixture
-range whose keys and authored names and labels have not reached conversion in
-this process. An entry taken for those rows lands between the two marks. The
-region releases every Page it builds, so what separates the marks is what
-something OUTSIDE the region kept.
+**Every conversion is of rows this process has never converted.** A holder keyed
+by what a row holds stops growing once the same rows come back, so a byte reading
+repeated over one root would read it already full. Each run the reading takes
+instead converts a root whose fixture-generated keys and authored names and
+labels no earlier run reached, built inside that run, so an entry taken for
+those rows keeps bytes of that run alive at the sample point. The fixture
+intentionally omits its other declared scalar and nested members; the reading
+therefore claims no coverage of holders keyed by values the workload does not
+author. A holder bounded by any fixed value domain grows with neither rows,
+Pages, nor executions once full and is outside this size claim.
 
-The disjoint generated ranges bound that claim. Every key and authored string in
-the later range is new, as are its composed rows and documents, so a container
-taking an entry per row, per key, or per composed value grows between the marks.
-The fixture intentionally omits its other declared scalar and nested members;
-the instrument therefore claims no coverage of caches keyed by values the
-workload does not author. A holder bounded by any fixed value domain grows with
-neither rows, Pages, nor executions once full and is outside this size claim.
-
-An ALLOCATOR total remains a report rather than this gate: its byte level is
-machine- and interpreter-relative, while this class requires exact equality and
-admits no tolerance. The ``tracemalloc`` totals therefore live in the non-gating
-the Snapshot member of ``just python-report-cost``. What is gated here instead is
-what the heap's own objects report through :func:`sys.getsizeof`, which two
-points of one process answer exactly. The neighbouring 64-Page item asserts
-allocator bytes because it grades a bounded maximum rather than equality between
-two process-wide states.
+Each byte reading is graded against a control that generates a root's rows the
+same way and converts none of them, so what is compared is the conversion alone.
+No threshold is needed: with the child's hashing pinned, a run that keeps nothing
+reads exactly what the control reads.
 
 Both layouts run in one child per axis: the equality is exact per layout, and a
 second child would pay for one more interpreter to prove the same thing twice.
@@ -77,8 +64,10 @@ from __future__ import annotations
 
 import gc
 import sys
+import tracemalloc
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from itertools import count, repeat
 from typing import Any, Final, cast
 
 from parallax.core.db_port import Row
@@ -106,24 +95,29 @@ from tests.unit._snapshot_materialization_support import (
     workload,
 )
 from tests.unit.memory_instruments import (
-    WARMUP,
-    Span,
+    Seam,
     in_a_child_interpreter,
+    retained,
     serve_one_measurement,
-    whole_heap_across,
 )
 
 _ONE_ROOT: Final = 1
 """Root objects the smaller row arm materializes, against :data:`OWNERS` in the
-larger one — eight rows against sixty-four, over the same five levels."""
+larger one — eight rows against sixty-four, over the same five levels — and the
+root each run of a byte reading converts."""
 
 _EXECUTIONS: Final = 64
 """Whole executions the larger execution arm runs and discards, against one."""
 
 _UNSEEN: Final = OWNERS
-"""The first root after every range the closure readings convert, so its
-fixture-generated keys, names, and labels are new to conversion whatever order
-the readings run in."""
+"""The first root after every range the closure readings convert, so the byte
+readings' fixture-generated keys, names, and labels are new to conversion
+whatever order the readings run in."""
+
+_UNSEEN_ROOTS: Final[Iterator[int]] = count(_UNSEEN)
+"""The root each run of a byte reading converts next, shared by every layout and
+reading in the process, because two layouts generate the same keys for the same
+root."""
 
 _EDITION: Final = "snapshot-materialization-scaling"
 
@@ -192,61 +186,79 @@ def _execute(layout: Layout, model: CatalogedModel, rows: Sequence[Sequence[Row]
     batch(model, plan, prepared_levels(model, reads), rows)
 
 
-def _unseen_rows(layout: Layout) -> Span:
-    """One prepared selection and one set of compiled and bound reads, warmed over
-    :data:`OWNERS` roots' rows until every cost paid once is paid, and then handed
-    the rows of :data:`OWNERS` FURTHER roots inside the marked region.
+def _generator(
+    layout: Layout, model: CatalogedModel, roots: Iterator[int]
+) -> Callable[[], tuple[tuple[Row, ...], ...]]:
+    """Every level's rows for the next of ``roots``, built when called.
 
-    Warmed at the region's own size and over its own levels, so the one thing the
-    region varies is that its fixture-generated keys, names, and labels are new.
-    A container keyed by a row, key, or composed value takes its entries between
-    the two marks rather than before them. The fixture-authored omissions stay
-    omissions in both ranges. The region's Page is released where it is built,
-    which is what leaves the two marks comparable at all."""
+    Called inside a measured run, so the rows it builds are that run's own: a
+    holder that keeps anything of them keeps bytes the reading counts. One root
+    per run because the fixture generates every root before the one asked for,
+    so what a run costs grows with how many roots every earlier run consumed."""
+    meta = model.meta
+    plan = fetch_plan(query(layout, meta), meta)
+    reads = compiled_levels(layout, plan, meta)
+
+    def rows() -> tuple[tuple[Row, ...], ...]:
+        return rows_per_level(layout, model, plan, reads, _ONE_ROOT, next(roots))
+
+    return rows
+
+
+def _unseen(layout: Layout, model: CatalogedModel) -> Callable[[], tuple[tuple[Row, ...], ...]]:
+    """Every level's rows for a root no earlier run reached, so no two runs share
+    a key or an authored string."""
+    return _generator(layout, model, _UNSEEN_ROOTS)
+
+
+def _generating(layout: Layout) -> Seam:
+    """The control: each run builds one root's rows and converts none of them.
+
+    Always the same root, since nothing converts it: what the control prices is
+    building and dropping rows, and a generation cost kept per new root would
+    only fail the comparison rather than hide anything from it."""
+    model = _catalog(_prepared(layout))
+    rows = _generator(layout, model, repeat(0))
+
+    def seam(sample: Callable[[], None]) -> None:
+        rows()
+        sample()
+
+    return seam
+
+
+def _converting_unseen_rows(layout: Layout) -> Seam:
+    """One prepared selection and one set of compiled and bound reads, each run
+    converting the next unseen root's rows into a Page it releases before the
+    sample."""
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
     plan = fetch_plan(query(layout, meta), meta)
     prepared = prepared_levels(model, compiled_levels(layout, plan, meta))
-    warm = _rows(layout, model, OWNERS)
-    unseen = _rows(layout, model, OWNERS, _UNSEEN)
+    unseen = _unseen(layout, model)
 
-    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        for _ in range(WARMUP):
-            batch(model, plan, prepared, warm)
-        opened()
-        batch(model, plan, prepared, unseen)
-        closed()
+    def seam(sample: Callable[[], None]) -> None:
+        batch(model, plan, prepared, unseen())
+        sample()
 
-    return span
+    return seam
 
 
-def _unseen_executions(layout: Layout) -> Span:
-    """A prepared selection warmed over :data:`OWNERS` roots' executions, and then
-    :data:`_EXECUTIONS` whole executions inside the marked region — each with its
-    own fetch plan, its own compiled and bound reads, and its own sealed Page,
-    none of which outlives it.
-
-    The warm executions run the region's own row count, while the marked region's
-    fixture-generated keys, names, and labels are new to conversion. Its first
-    execution is where a container keyed by what a row holds takes its entries,
-    and the sixty-four together are what an entry banked per execution accrues
-    across."""
+def _executing_over_unseen_rows(layout: Layout) -> Seam:
+    """One prepared selection, each run resolving one whole execution through it
+    — its own fetch plan, its own compiled and bound reads, and its own sealed
+    Page, none of which outlives it — over the next unseen root."""
     selection = _prepared(layout)
     model = _catalog(selection)
-    warm = _root_only(_rows(layout, model, OWNERS))
-    unseen = _root_only(_rows(layout, model, OWNERS, _UNSEEN))
+    unseen = _unseen(layout, model)
 
-    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        for _ in range(WARMUP):
-            _execute(layout, model, warm)
-        opened()
-        for _ in range(_EXECUTIONS):
-            _execute(layout, model, unseen)
-        closed()
+    def seam(sample: Callable[[], None]) -> None:
+        _execute(layout, model, _root_only(unseen()))
+        sample()
         assert selection is not None
 
-    return span
+    return seam
 
 
 def _settled() -> None:
@@ -288,32 +300,20 @@ def _held_after_executions(layout: Layout, executions: int) -> Closure:
     return closure(selection, _boundary(layout, selection))
 
 
-def _region_added_nothing(span: Span, where: str) -> None:
-    """That nothing in the process holds MORE where ``span``'s region closes than
-    where it opened — in any container anywhere, whether the region reaches it or
-    not, counted as objects, as the references among them, and as what they and
-    everything untracked they reach weigh.
+def _retains_nothing(seam: Seam, layout: Layout) -> None:
+    """That one run of ``seam`` leaves reachable exactly what one run of the
+    control does.
 
-    A reading across ONE region rather than between two arms catches a first-reach
-    cache that would be full in both arms. The region uses fixture-generated keys,
-    names, and labels this process has not converted, so entries taken per row,
-    key, or composed value land between the marks. A holder bounded by the model
-    or by any fixed value domain grows along none of the graded axes once full.
-
-    All three numbers gate rather than the weight alone: a container banking
-    untracked keys adds no object at all and moves the reference count by one for
-    every entry it takes.
-
-    One-sided, because the claim is one-sided. A FALL means the process released
-    something it held before the region opened — what a bounded container reaching
-    its own size does — and no requirement here forbids that, so gating it would
-    fail this item for a reading it does not make. There is no threshold in either
-    direction: one entry taken anywhere fails the comparison.
+    No threshold in either direction: one entry anything keeps of a run's rows or
+    of its execution fails the comparison.
     """
-    opened, closed = whole_heap_across(span)
-    assert closed.objects <= opened.objects, (where, opened, closed)
-    assert closed.references <= opened.references, (where, opened, closed)
-    assert closed.held <= opened.held, (where, opened, closed)
+    tracemalloc.start()
+    try:
+        converted = retained(seam)
+        generated = retained(_generating(layout))
+    finally:
+        tracemalloc.stop()
+    assert converted == generated, (layout, converted, generated)
 
 
 @in_a_child_interpreter
@@ -321,12 +321,12 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
     # the compiled reads it bound its levels from: eight times the rows through
     # one prepared read must leave the prepared side holding the same objects
-    # through the same references, and eight roots' worth of rows this process
-    # has never decoded must leave nothing anywhere in it holding more than
-    # before they arrived. A per-row shape, dispatch table, or classified-key set
+    # through the same references, and a root's rows this process has never
+    # decoded must leave no byte of their conversion reachable once their Page
+    # is gone. A per-row shape, dispatch table, or classified-key set
     # attached to either would move the closure, and a per-row entry banked in a
     # container neither of them reaches — keyed by what the row holds, so it
-    # never grows again once the same rows come back — would move the region.
+    # never grows again once the same rows come back — would move the bytes.
     for layout in LAYOUTS:
         one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
         many_reads, many_prepared = _held_after_rows(layout, OWNERS)
@@ -334,7 +334,7 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
         assert one_reads == many_reads, layout
         assert one_prepared == many_prepared, layout
     for layout in LAYOUTS:
-        _region_added_nothing(_unseen_rows(layout), layout)
+        _retains_nothing(_converting_unseen_rows(layout), layout)
 
 
 @in_a_child_interpreter
@@ -343,22 +343,21 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
     # Pages materialized and of the executions that materialized them. Sixty-four
     # whole executions — each planning, compiling, binding, converting, and
     # sealing a Page of its own — must leave the selection they were all
-    # resolved through holding what one execution left it holding, and must leave
-    # nothing anywhere in the process holding more than before the first of them
-    # opened. A query shape
-    # retained per execution is exactly what would move the closure — one banked
-    # once for the model and shared by every execution after it leaves both arms
-    # holding one, so a size equality answers nothing about it — and a
-    # process-global cache keyed by row or query primitives, which no prepared
-    # structure reaches at all and whose entries the collector need not track, is
-    # what the region beside it is marked for.
+    # resolved through holding what one execution left it holding, and one more
+    # execution over rows this process has never converted must leave no byte of
+    # it reachable. A query shape retained per execution is exactly what would
+    # move the closure — one banked once for the model and shared by every
+    # execution after it leaves both arms holding one, so a size equality answers
+    # nothing about it — and an entry banked per execution, or a cache keyed by
+    # what a row holds, which no prepared structure reaches and whose entries
+    # the collector need not track, is what the byte reading beside it sees.
     for layout in LAYOUTS:
         once = _held_after_executions(layout, 1)
         often = _held_after_executions(layout, _EXECUTIONS)
         assert once.tracked > 0 and once.references > 0, layout
         assert once == often, layout
     for layout in LAYOUTS:
-        _region_added_nothing(_unseen_executions(layout), layout)
+        _retains_nothing(_executing_over_unseen_rows(layout), layout)
 
 
 @in_a_child_interpreter

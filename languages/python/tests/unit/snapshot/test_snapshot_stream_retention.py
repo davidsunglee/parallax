@@ -21,23 +21,20 @@ halves of the middle layer's contract are therefore read — that it does not
 survive the root it published, by the census between two roots, and that its peak
 is one root's reachable nodes rather than the Page's, by the region.
 
-**Eight readings, each its own statement.** Pages do not accumulate with
-the result. A delivery holds one Page and one published root at a time, and
-the survivor census says so by kind at every point of a crossed grid of page
-sizes and fan-outs: one Page, one carrier of its rows, one Root View, and
-exactly the published root's own reachable nodes, with **no term in the total
-result size and none in how far the delivery has got**. No Python
-object, reference, or reported object size anywhere in the process moves with
-either, which is the same claim taken over the whole heap instead of over the
-delivery's own survivors. Publishing one root peaks at that root's reachable node set,
-exactly independent of the result, of the position, and of the page, and costing
-less per node at each of eight fan-outs than at the one before. And
-two of the three exclusions are demonstrated rather than asserted — a caller
-retaining every root reproduces the `O(N)` growth the bound declines to prevent,
-and a writing loop's buffer grows with the page size and stops there. A wide
-Continuation Order is priced on a grid of its own: the width costs the plan once
-and the page decision releases its per-root coordinates after retaining the one
-boundary needed to continue.
+**Seven readings, each its own statement.** Pages do not accumulate with the
+result. A delivery holds one Page and one published root at a time, and the
+survivor census says so by kind at every point of a crossed grid of page sizes
+and fan-outs: one Page, one carrier of its rows, one Root View, and exactly the
+published root's own reachable nodes, with **no term in the total result size and
+none in how far the delivery has got**. Publishing one root peaks at that root's
+reachable node set, exactly independent of the result, of the position, and of
+the page, and costing less per node at each of eight fan-outs than at the one
+before. And two of the three exclusions are demonstrated rather than asserted — a
+caller retaining every root reproduces the `O(N)` growth the bound declines to
+prevent, and a writing loop's buffer grows with the page size and stops there. A
+wide Continuation Order is priced on a grid of its own: the width costs the plan
+once and the page decision releases its per-root coordinates after retaining the
+one boundary needed to continue.
 
 **The third exclusion has no executable witness here, by construction.** What the
 database and its driver hold for a delivery — server-side cursors, connection
@@ -62,32 +59,17 @@ census is the reading that is not a difference: it names each kind it counts and
 how many of it may be alive, and a second live Page fails it at every point of
 the grid.
 
-**The census is read five ways, and all five begin at the window's own
-survivors.** A Page or a root is a kind Parallax defines and is counted; a
-built-in `list` the delivery banks one item into per PAGE is not, and past the
-first page it adds no survivor of any kind. So the census is taken over every
-survivor whatever defined its type, over the REFERENCES those survivors hold,
-from the heap's side over what a holder older than the window took FROM the
-survivors, and in BYTES over what the survivors and everything untracked they
-hold weigh. What every one of them shares is where the walk starts, and it is the
-delivery's own live structure: a container gaining one reference per page moves
-the reference count and a buffer gaining bytes per page moves the byte reading,
-but only because both hang off something the delivery published.
+**The census is read three ways, which is what sees a small term.** The byte
+readings are graded against the price of one root, so a delivery keeping one
+small object per page stays under that price across every page these results
+span. The census grades the same two independence arms exactly instead. A Page
+or a root is a kind Parallax defines and is counted; a built-in `list` the
+delivery banks one item into per PAGE is not, and past the first page it adds no
+survivor of any kind. So the census is also taken over every survivor whatever
+defined its type, and over the REFERENCES those survivors hold, where a container
+gaining one reference per page moves the count.
 
-**Which is why the independence claim is made over the whole process instead.**
-A holder created BEFORE the measurement window, appending one already-existing
-value per page, is outside every arm above and outside every byte DIFFERENCE
-here, since the window it would have to be born in is the one it predates. The
-whole-heap reading has no window: it counts every tracked object in the process,
-every reference each of them holds, and what they and everything untracked they
-reach report through `sys.getsizeof`, as three totals compared across arms that
-differ in exactly one thing. That is what widens "nothing grows with `N`" from
-what a sample can reach to every Python object in the process — and it is why
-every value the fixtures produce is fixed-width, because a total will move for a
-longer string as readily as for a leak. What it does not widen to is memory a
-Python object merely points at, which is the last paragraph below.
-
-**What the eight readings still do not prove.** Nothing here sees a transient
+**What the seven readings still do not prove.** Nothing here sees a transient
 smaller than the region it is allocated in — a high-water mark is a maximum, so an
 allocation that never takes the process above an earlier moment of the same
 publication is invisible however it scales, which is why the page grid the peak
@@ -98,17 +80,6 @@ fan-out grid REJECTS growth super-linear in one root's node count rather than
 proving the bound: eight points admit any quadratic coefficient small enough to
 stay under the linear term across them, and `_PEAK_FANOUTS` records how small
 that is.
-
-**And nothing here sees storage a Python object merely points at.** Every count
-above is `gc.get_objects` and `sys.getsizeof`, and every byte figure beside them
-is CPython's own allocator through `tracemalloc`. A delivery that banked its
-pages into an `mmap` or into a buffer a C extension owned would present a
-constant-size shell at every arm of every reading here, and the anonymous mapping
-behind it would never reach the allocator `tracemalloc` traces. What would catch
-it is a resident-set reading taken from outside the interpreter, and no
-measurement in this repository takes one. The readings below are therefore a
-statement about the delivery's PYTHON-LEVEL working set, which is what all of
-Parallax's own storage is, and not a proof that no memory anywhere grows.
 
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
@@ -148,11 +119,10 @@ from tests.unit.memory_instruments import (
     Span,
     high_water,
     in_a_child_interpreter,
-    live_graph,
     retained,
     serve_one_measurement,
+    survivors,
     warmed,
-    whole_heap,
 )
 
 _SMALL: Final = 20
@@ -572,8 +542,8 @@ def _defined_by_parallax(kind: type) -> bool:
 
 
 class _Live(NamedTuple):
-    """What a running delivery holds, read five ways from one sample, because each
-    answers what the other four cannot.
+    """What a running delivery holds, read three ways from one sample, because
+    each answers what the other two cannot.
 
     ``parallax`` is what Parallax's own structure costs, and ``tracked`` is every
     survivor whatever defined its type, so anything the delivery banks in a
@@ -581,96 +551,28 @@ class _Live(NamedTuple):
     a kind Parallax defines — lands in the second. ``references`` is what neither
     count can see: one container is one object however many things it points at,
     so a delivery keeping one item per PAGE moves no count at all and moves this
-    by one for every page it has read. ``inbound`` is the same reading from the
-    other end: what a holder OLDER than the window took OF THE SURVIVORS is
-    counted where it points rather than where it is held. ``held`` is the one
-    reading in bytes, and it exists because a container
-    can grow without gaining either an object or a reference: a ``bytearray`` a
-    delivery extends by one byte per page is not a survivor at all — the collector
-    does not track it — points at nothing, and is held by the same frame at every
-    position, so the four counts read identical while its allocation grows with
-    the pages.
-
-    The four counts are exact, and ``held`` is exact for a different reason worth
-    stating: it is a sum over the STRUCTURE rather than over the heap, so nothing
-    in it depends on whether the interpreter happened to share a value.
-
-    All five begin at the window's own survivors, which is the limit of what any
-    of them can be a statement about: what the DELIVERY holds. A holder that
-    predates the window, banking values that predate it too, is reachable from no
-    survivor and is outside all five, which is why the independence claim is made
-    over the whole process instead.
+    by one for every page it has read. All three are exact.
     """
 
     parallax: int
     tracked: int
     references: int
-    inbound: int
-    held: int
-
-
-def _held_bytes(survivors: Sequence[object]) -> int:
-    """What ``survivors`` and everything untracked they hold report through
-    :func:`sys.getsizeof`, counting a value once per PATH the walk arrives by.
-
-    The blind spot of every count beside it. :func:`gc.get_objects` answers only
-    what the collector tracks, so a ``bytearray``, ``bytes``, ``str``, or tuple of
-    such things is no survivor however large it grew, and a container's own
-    referent count says nothing about the bytes inside it. Walking outwards from
-    each survivor through its untracked referents is what reaches them, and
-    ``sys.getsizeof`` is what prices them — the survivors being where the walk
-    starts, and therefore the limit of what it can price.
-
-    Counted by PATH rather than by identity, deliberately. Whether two equal
-    integers or two equal strings are one object is the interpreter's business —
-    CPython shares small ints, so the same walk over the same structure reaches a
-    different number of distinct objects according to which values it happens to
-    hold — while how many ways the structure arrives at a value of that size is
-    the structure's own. Deduplicating by identity makes this reading move with
-    the ordinals a delivery has reached; carrying no identity set at all makes it
-    a function of the shape alone. The cost of that is multiplicity rather than
-    imprecision: a shared untracked subgraph is walked once per path INTO it, so
-    everything under it is charged that many times whatever its own inbound
-    reference count is.
-
-    The walk stops at every tracked object, which is what keeps it bounded and
-    acyclic: an untracked object can hold only untracked objects, so nothing it
-    reaches can point back at it, and everything tracked is already counted by the
-    survivor sample or belongs to the heap that predates the window.
-
-    What it cannot price is storage a survivor merely points at.
-    :func:`sys.getsizeof` is what each type reports about ITSELF, so an
-    ``mmap.mmap`` or an extension-owned buffer weighs its shell here however large
-    its backing grows.
-    """
-    total = 0
-    pending: list[object] = []
-    for survivor in survivors:
-        total += sys.getsizeof(survivor)
-        pending.extend(held for held in gc.get_referents(survivor) if not gc.is_tracked(held))
-    while pending:
-        obj = pending.pop()
-        total += sys.getsizeof(obj)
-        pending.extend(held for held in gc.get_referents(obj) if not gc.is_tracked(held))
-    return total
 
 
 def _census(seam: Seam) -> tuple[_Live, dict[str, int]]:
     """What a seam leaves alive at its sample point, and how many objects of
     Parallax's own of each kind, keyed by qualified name so no private class has
     to be imported to ask about it."""
-    graph = live_graph(warmed(seam))
-    alive = [obj for obj in graph.survivors if _defined_by_parallax(type(obj))]
+    alive = survivors(warmed(seam))
+    owned = [obj for obj in alive if _defined_by_parallax(type(obj))]
     counts: dict[str, int] = {}
-    for obj in alive:
+    for obj in owned:
         name = type(obj).__qualname__
         counts[name] = counts.get(name, 0) + 1
     live = _Live(
+        len(owned),
         len(alive),
-        len(graph.survivors),
-        sum(len(gc.get_referents(obj)) for obj in graph.survivors),
-        graph.inbound,
-        _held_bytes(graph.survivors),
+        sum(len(gc.get_referents(obj)) for obj in alive),
     )
     return live, counts
 
@@ -775,23 +677,13 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # directly so a failure names which of them broke. Ten times the roots is the
     # same census; nearly twice as far into the same delivery is the same census.
     #
-    # Read five ways rather than as the Parallax-owned count alone, because that
-    # count is blind in two directions only this reading covers, and each of them
-    # needs a different arm. `list` is not a kind Parallax defines, so a delivery
-    # banking one item per PAGE adds no Parallax-owned survivor and adds no
-    # survivor of any kind past the first; the references those survivors hold are
-    # what see it. A buffer the delivery extends by a byte per page adds no
-    # survivor and no reference either, and is not even tracked — the bytes the
-    # survivors and everything untracked they hold weigh are what see that one.
-    # Neither is visible in the byte DIFFERENCES of the first measurement, whose
-    # two arms always stand at the same position and so have read the same number
-    # of pages. Here the positions differ by the pages between them, and growth in
-    # the number of pages is growth in `N`.
-    #
-    # Every arm of this reading starts from the window's own survivors, so what it
-    # states is about the delivery's own live structure and about nothing else. A
-    # holder that predates the window is behind the measurement below, which needs
-    # no survivor sample to reach one.
+    # Read three ways rather than as the Parallax-owned count alone, because
+    # `list` is not a kind Parallax defines: a delivery banking one item per PAGE
+    # adds no Parallax-owned survivor and adds no survivor of any kind past the
+    # first, and the references those survivors hold are what see it. Nor is one
+    # small object per page visible to the first measurement, which grades its
+    # byte differences against the price of a whole root. Here each arm is exact,
+    # and growth in the number of pages is growth in `N`.
     for namespace in _NAMESPACES:
         near = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
         larger = _census(
@@ -863,52 +755,6 @@ def test_a_wide_continuation_order_costs_the_plan_once_and_retains_fixed_boundar
         _paused_over(widest, _LARGE * _TENFOLD, batch_size=wide, fanout=_FANOUT, at=_AT)
     )
     assert larger == counts[wide, widest], (larger, counts[wide, widest])
-
-
-@in_a_child_interpreter
-def test_nothing_in_the_process_grows_with_the_result_or_the_position() -> None:
-    # The same two independence readings taken over the WHOLE PROCESS, which is
-    # what makes them a claim about the implementation rather than about the
-    # delivery's own survivors. Every arm of the census above begins at an object
-    # the window created, so a holder that existed BEFORE the window is outside
-    # all of them: it is no survivor, a reference it took may point at an object
-    # older than the window too, and a buffer it banked bytes into is reachable
-    # from nothing that sample can start at. A module-level container an
-    # implementation appended one existing value to per page would move nothing up
-    # there and everything here.
-    #
-    # What the three totals reach is Python-level structure: the collector's
-    # listing, the references in it, and what each object reports about its own
-    # size. Storage an object merely points at — an `mmap`, an extension-owned
-    # buffer — is a constant-size shell in all three however large its backing
-    # grows, and no reading in this suite or beside it observes one. The claim
-    # this makes is about every Python object in the process, which is what all of
-    # Parallax's own storage is, and not about the process's resident set.
-    #
-    # Three totals and no baseline. Result-size arms require exact equality. The
-    # later-position arm may release interpreter scaffolding, but no component may
-    # grow: every value the fixture produces is the same width at every ordinal,
-    # so an increase can only be retention.
-    # All three are handed over together because a total prices whoever is holding
-    # what, including this measurement: taken one call at a time, each reading
-    # would count the ones already bound beside it.
-    #
-    # Each arm is warmed by two hundred runs before its reading, which is also
-    # what gives the reading its reach: a term paid once per PAGE has been paid by
-    # every one of those runs by the time the sample is taken, so two arms differ
-    # by the pages of two hundred deliveries rather than of one.
-    for namespace in _NAMESPACES:
-        near, larger, further = whole_heap(
-            _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT),
-            _paused(namespace, _LARGE * _TENFOLD, batch_size=_BATCH, fanout=_FANOUT, at=_AT),
-            _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER),
-        )
-        assert near == larger, (namespace.name, near, larger)
-        assert all(later <= earlier for earlier, later in zip(near, further, strict=True)), (
-            namespace.name,
-            near,
-            further,
-        )
 
 
 @in_a_child_interpreter

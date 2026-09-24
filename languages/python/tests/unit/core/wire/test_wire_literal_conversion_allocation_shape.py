@@ -1,4 +1,5 @@
-"""Whole-interpreter bounds for typed-bind metadata and numeric Wire conversion."""
+"""Retained and transient bounds for typed-bind metadata and numeric Wire
+conversion (`cost` class)."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from parallax.core.base import FLOAT64, STRING
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._context import (
+    LoweredStatement,
     StatementBuilder,
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
@@ -21,19 +23,21 @@ from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target
 from tests.unit.memory_instruments import (
-    Heap,
     Seam,
     Span,
     high_water,
     in_a_child_interpreter,
+    retained,
     serve_one_measurement,
-    whole_heap,
 )
 
 _MODEL: Final = corpus_model("wallet")
 _WALLET: Final = target(_MODEL, "Wallet")
-_SAME_TYPE_COUNTS: Final = (256, 512, 768)
-_ROW_COUNTS: Final = (128, 256, 384)
+# Every count is past CPython's small-integer cache, so the span bound each one
+# ends at is an integer the statement allocates at every count rather than at
+# some.
+_SAME_TYPE_COUNTS: Final = (300, 600, 900)
+_ROW_COUNTS: Final = (300, 600, 900)
 _DECIMAL_DIGITS: Final = (64, 128, 192)
 
 
@@ -46,8 +50,8 @@ def _builder() -> StatementBuilder:
     )
 
 
-def _same_type_statement(bind_count: int) -> Seam:
-    def build(sample: Callable[[], None]) -> None:
+def _same_type_statement(bind_count: int) -> Callable[[], LoweredStatement]:
+    def build() -> LoweredStatement:
         membership = predicate.Membership(
             op="in",
             attr="Wallet.owner",
@@ -59,13 +63,13 @@ def _same_type_statement(bind_count: int) -> Seam:
             f"where t0.owner in ({', '.join('?' for _ in range(bind_count))})"
         )
         assert statement.typed_bind_spans == (_TypedBindSpan(0, bind_count, STRING, "MANAGED"),)
-        sample()
+        return statement
 
     return build
 
 
-def _heterogeneous_rows(row_count: int) -> Seam:
-    def build(sample: Callable[[], None]) -> None:
+def _heterogeneous_rows(row_count: int) -> Callable[[], LoweredStatement]:
+    def build() -> LoweredStatement:
         builder = _builder()
         rows = (("managed", "comparison"),) * row_count
         builder.bind_typed_rows(
@@ -73,29 +77,59 @@ def _heterogeneous_rows(row_count: int) -> Seam:
             ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
         )
         statement = builder.finish("")
-        del builder, rows
         assert len(statement.binds) == row_count * 2
         assert len(statement.typed_bind_spans) == 2
-        sample()
+        return statement
 
     return build
 
 
-def _equal_step_growth(readings: Sequence[Heap]) -> None:
-    assert len(readings) == 3
-    first, second, third = readings
-    assert first.objects == second.objects == third.objects
-    assert first.references == second.references == third.references
-    assert second.held - first.held == third.held - second.held
+def _holding(
+    build: Callable[[], LoweredStatement], kept: Callable[[LoweredStatement], object]
+) -> Seam:
+    """``build``'s statement, of which only what ``kept`` answers is still held at
+    the sample point."""
+
+    def seam(sample: Callable[[], None]) -> None:
+        held = kept(build())
+        sample()
+        assert held is not None
+
+    return seam
+
+
+def _whole(statement: LoweredStatement) -> object:
+    return statement
+
+
+def _binds_and_sql(statement: LoweredStatement) -> object:
+    return statement.binds, statement.sql
+
+
+def _metadata_is_fixed(builds: Sequence[Callable[[], LoweredStatement]]) -> None:
+    """That what a statement holds beyond its binds and its SQL is the same number
+    of bytes at every bind count.
+
+    The binds and the SQL are what grows with the count, so each is read as its
+    own control: the statement against those two alone, built the same way. A
+    span, override, or slot kept per bind rather than per run is what would make
+    the difference grow."""
+    beyond = [
+        retained(_holding(build, _whole)) - retained(_holding(build, _binds_and_sql))
+        for build in builds
+    ]
+    assert beyond[0] > 0, beyond
+    assert len(set(beyond)) == 1, beyond
 
 
 @in_a_child_interpreter
 def test_typed_bind_metadata_stays_structural_as_bind_counts_grow() -> None:
-    same_type = whole_heap(*(_same_type_statement(count) for count in _SAME_TYPE_COUNTS))
-    heterogeneous = whole_heap(*(_heterogeneous_rows(count) for count in _ROW_COUNTS))
-
-    _equal_step_growth(same_type)
-    _equal_step_growth(heterogeneous)
+    tracemalloc.start()
+    try:
+        _metadata_is_fixed([_same_type_statement(count) for count in _SAME_TYPE_COUNTS])
+        _metadata_is_fixed([_heterogeneous_rows(count) for count in _ROW_COUNTS])
+    finally:
+        tracemalloc.stop()
 
 
 def _decimal_conversion(digits: int) -> Span:

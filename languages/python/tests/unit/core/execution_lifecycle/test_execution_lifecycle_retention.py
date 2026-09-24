@@ -61,14 +61,14 @@ is therefore the whole crossing — every combination of the three counts — ag
 the shape the expression itself names, which is a base plus a per-root cost
 affine in `P` and in `D` with no term in their product.
 
-Two instruments read that, at two grains. The four counts come off ONE sample, so
-no workload is covered in one of them and not in another: wherever a reading is
-taken, all four are taken. Bytes are the second instrument and are read at the
+Two instruments read that, at two grains. The three counts come off ONE sample,
+so no workload is covered in one of them and not in another: wherever a reading
+is taken, all three are taken. Bytes are the second instrument and are read at the
 crossing's corners rather than at every point of it, because a byte reading costs
 a warmed repetition of the whole workload where a count costs a single sample of
 it.
 
-| Workload varied | The four counts | Bytes |
+| Workload varied | The three counts | Bytes |
 | --- | --- | --- |
 | `N` | crossing, roots grid | crossing, roots grid |
 | `P` | crossing, roots grid, depth grid | crossing, depth grid |
@@ -134,21 +134,16 @@ per root clears the harness floor by two orders of magnitude.
 is open at once — the roots for the `N` and `P` grid, the joining scopes nested
 inside one another for the `D` one, and every worker's deepest callback at once
 for the crossing of all three — which is the only point at which they exist
-together, and one sample is read four ways because each way sees what the others
-cannot. The
-lifecycle-typed survivor count answers what the runtime's own structure costs per
+together, and one sample is read three ways because each way sees what the others
+cannot. The lifecycle-typed survivor count answers what the runtime's own structure costs per
 root, per active Provider, and per level of nesting. The whole survivor count
 answers the same question about state of ANY type, so a per-root buffer belonging
 to no lifecycle class lands in it. The reference count answers what neither can:
 one container is one object however many things it points at, so a scope that
 kept its ancestors, or the roots open beside it, shows up there and nowhere else.
-The inbound count answers what all three miss — a registry the installed
-composition owned before the roots opened is no survivor however many of them it
-accumulates, and every reference it took into the window is counted from the
-holder's side. A fifth reading stands beside those four at the points the table
-above names: the bytes still reachable at the same sample point, which is the
-only one of the five that moves at all when a holder grew by values the collector
-never tracked.
+A fourth reading stands beside those three at the points the table above names:
+the bytes still reachable at the same sample point, which is the only one of the
+four that moves at all when a holder grew by values the collector never tracked.
 
 **What a live root holds of a value it was HANDED** needs the same sample and one
 arrangement. A result is one borrowed object whatever its cardinality, so the
@@ -244,9 +239,9 @@ from tests.unit.memory_instruments import (
     Seam,
     allocation,
     in_a_child_interpreter,
-    live_graph,
     retained,
     serve_one_measurement,
+    survivors,
 )
 
 SMALL_ROWS: Final = 500
@@ -424,8 +419,8 @@ def _left_behind(work: Callable[[], None]) -> list[object]:
 
 
 class _Live(NamedTuple):
-    """What live roots hold, read four ways from one sample, because each answers
-    what the other three cannot.
+    """What live roots hold, read three ways from one sample, because each answers
+    what the other two cannot.
 
     ``lifecycle`` is what the runtime's own structure costs, and ``tracked`` is
     every survivor whatever defined its type, so state a root keeps in a list, a
@@ -433,22 +428,18 @@ class _Live(NamedTuple):
     ``references`` is what neither count can see: one container is one object
     however many things it points at, so a scope that kept a graph — its
     ancestors, the roots open beside it — moves no count at all and moves this by
-    one for every reference it kept. ``inbound`` is the same reading from the
-    other end, and the only one that sees a holder OLDER than the window: a
-    registry an installed composition already owned is no survivor, so what it
-    took is counted where it points rather than where it is held. All four are
-    counts of structure rather than readings of an allocator, so all four are
-    exact, and none of them sees a value the collector never tracked — which is
-    what :func:`retained` is read beside them for.
+    one for every reference it kept. All three are counts of structure rather
+    than readings of an allocator, so all three are exact, and none of them sees
+    a value the collector never tracked — which is what :func:`retained` is read
+    beside them for.
     """
 
     lifecycle: int
     tracked: int
     references: int
-    inbound: int
 
 
-_NOTHING: Final = _Live(0, 0, 0, 0)
+_NOTHING: Final = _Live(0, 0, 0)
 
 
 def _live(seam: Seam) -> _Live:
@@ -462,12 +453,11 @@ def _live(seam: Seam) -> _Live:
     member would read it as a difference between them.
     """
     seam(lambda: None)
-    graph = live_graph(seam)
+    alive = survivors(seam)
     return _Live(
-        sum(1 for obj in graph.survivors if _lifecycle_object(obj)),
-        len(graph.survivors),
-        sum(len(gc.get_referents(obj)) for obj in graph.survivors),
-        graph.inbound,
+        sum(1 for obj in alive if _lifecycle_object(obj)),
+        len(alive),
+        sum(len(gc.get_referents(obj)) for obj in alive),
     )
 
 
@@ -1066,51 +1056,6 @@ def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
         return tuple(closure(activity, activities) for activity in activities)
 
 
-class _RegisteringProvider:
-    """A Provider that notes, for every root it opens, the roots it opened beside.
-
-    A per-root cost that grows with `N`, in the shape that hides from every
-    reading but one. Both lists were built before any root opened, so neither is
-    a survivor; nothing is allocated per pair, so no survivor count moves; and
-    what a root's own structure holds is unchanged, so no count of ITS referents
-    moves either. What grows is the number of references a holder older than the
-    window took into it, which is the inbound reading and nothing else.
-    """
-
-    def __init__(self) -> None:
-        self.open_roots: list[object] = []
-        self.opened_beside: list[object] = []
-
-    def open(self, execution: object, /) -> ExecutionLifecycleHandler:
-        self.opened_beside.extend(self.open_roots)
-        self.open_roots.append(execution)
-        return _DiscardingHandler()
-
-    def report_handler_error(self, error: object, /) -> None:
-        return None
-
-
-def _registering_roots(count: int) -> Seam:
-    """``count`` Read roots open at once through a Provider that notes them all.
-
-    The registry is emptied at the start of each run and owned by a Provider
-    built before the window, so what the sample sees is a holder OLDER than every
-    root it holds.
-    """
-    provider = _RegisteringProvider()
-    installed = InstalledLifecycle(provider, DeliveryState())
-
-    def run(sample: Callable[[], None]) -> None:
-        provider.open_roots.clear()
-        provider.opened_beside.clear()
-        with ExitStack() as stack:
-            for _ in range(count):
-                _read_chain(stack, installed)
-            sample()
-
-    return run
-
-
 _HOARD: Final = 512
 """Bytes a hoarding Handler keeps for each level it is already inside.
 
@@ -1125,10 +1070,9 @@ class _HoardingHandler:
 
     A cost quadratic in `D`, in the shape that hides from every reading but one:
     a ``bytes`` object is untracked, so it is neither a survivor nor a referent
-    of one nor a reference into one, and the list holding them belongs to a
-    Handler built before any root opened, so that is no survivor either. All four
-    counts stay exactly on the line a linear cost sets while live bytes grow as
-    the square of the depth.
+    of one, and the list holding them belongs to a Handler built before any root
+    opened, so that is no survivor either. All three counts stay exactly on the
+    line a linear cost sets while live bytes grow as the square of the depth.
 
     The hoard is dropped when the root Invocation FINISHES rather than when the
     next one starts: a byte reading is the difference between what is reachable
@@ -1480,9 +1424,8 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
     # two. A per-root cost that grew with `N`, a registry each publisher joined,
     # or a per-Provider structure quadratic in the composition would all break a
     # line that has to hold at every count: in objects if it allocated one per
-    # root, in references if it only pointed at the roots that were already
-    # there, and in the inbound count if the pointing were done by something the
-    # composition owned before any root opened.
+    # root, and in references if it only pointed at the roots that were already
+    # there.
     for shape in (_read_chain, _write_batch_chain):
         measured = {
             (roots, providers): _live(_concurrent_roots(roots, providers, shape))
@@ -1506,7 +1449,7 @@ def test_live_lifecycle_memory_is_linear_in_the_roots_open_at_once() -> None:
             _at_most_proportional({roots: measured[(roots, providers)] for roots in _ROOTS}, _ROOTS)
         _at_most_proportional(per_root, _PROVIDERS)
     # Bytes down the same grid's `N` axis, on the deeper of the two shapes: what
-    # none of the four counts can answer is an UNTRACKED value — no object to
+    # none of the three counts can answer is an UNTRACKED value — no object to
     # `gc.get_objects` and no referent of one — so a holder accumulating strings
     # or integers per root, the roots' own correlation text say, moves every
     # count not at all and moves this.
@@ -1565,11 +1508,11 @@ def test_live_lifecycle_memory_is_linear_in_the_joining_calls_nested_at_once() -
     for providers in _PROVIDERS:
         _at_most_proportional({depth: measured[(depth, providers)] for depth in _DEPTHS}, _DEPTHS)
     # Bytes over the same grid, every point of it, because a level that grew by
-    # untracked values moves none of the four counts: a retained integer or
-    # `bytes` value is no survivor, no referent of one, and no reference into
-    # one. This is what refuses a per-level hold sized by the level's own
-    # depth — one lifecycle object and one referent per level however large the
-    # value it points at, and a total quadratic in `D`.
+    # untracked values moves none of the three counts: a retained integer or
+    # `bytes` value is no survivor and no referent of one. This is what refuses
+    # a per-level hold sized by the level's own depth — one lifecycle object and
+    # one referent per level however large the value it points at, and a total
+    # quadratic in `D`.
     tracemalloc.start()
     try:
         kept = {
@@ -1615,9 +1558,9 @@ def test_live_lifecycle_memory_is_affine_in_the_roots_providers_and_levels_at_on
 
 @in_a_child_interpreter
 def test_the_bytes_live_roots_keep_stay_within_the_bound_at_every_crossing_of_it() -> None:
-    # The fifth reading over the same crossing, at its corners. What none of the
-    # four counts can answer is an UNTRACKED value — no object to
-    # `gc.get_objects`, no referent of one, and no reference into one — so a hold
+    # The fourth reading over the same crossing, at its corners. What none of the
+    # three counts can answer is an UNTRACKED value — no object to
+    # `gc.get_objects` and no referent of one — so a hold
     # sized per root, per Provider, per level, or per any product of them moves
     # every count not at all and moves this. Read as a bound rather than as a
     # line because two workloads of the same shape do not allocate
@@ -1663,7 +1606,7 @@ def test_every_root_is_open_at_its_full_depth_when_the_workload_is_sampled() -> 
 @in_a_child_interpreter
 def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> None:
     # What the byte reading is worth, demonstrated rather than asserted, and the
-    # shape the four counts are blind to: a composition that keeps one untracked
+    # shape the three counts are blind to: a composition that keeps one untracked
     # value for every level it is already inside holds bytes quadratic in `D`
     # while each level still contributes exactly one lifecycle object and one
     # referent. The counts are read first to establish that they stay on their
@@ -1680,31 +1623,6 @@ def test_the_byte_reading_refuses_an_untracked_hold_sized_by_the_nesting() -> No
         tracemalloc.stop()
     with pytest.raises(AssertionError):
         _bytes_within_the_bound(kept)
-
-
-@in_a_child_interpreter
-def test_the_concurrency_readings_refuse_a_composition_that_keeps_what_is_open() -> None:
-    # What the readings above are worth, demonstrated rather than asserted, and
-    # what each one reaches: the same grid over a composition that notes, per
-    # root, the roots it opened beside. Every count of what the WINDOW created
-    # stays on its line under it — the pairs are references a pre-existing list
-    # took, not objects anything allocated — and the count taken from the holders'
-    # side does not. That is the whole reason one sample is read from both ends,
-    # and it is why the pin and the bound are both read: the line refuses the
-    # growth at any size, and the bound refuses it because a per-pair hold at
-    # thirty-two roots is fifteen times a per-root one.
-    measured = {roots: _live(_registering_roots(roots)) for roots in _ROOTS}
-    _affine(
-        {
-            roots: _Live(reading.lifecycle, reading.tracked, reading.references, 0)
-            for roots, reading in measured.items()
-        },
-        _ROOTS,
-    )
-    with pytest.raises(AssertionError):
-        _affine(measured, _ROOTS)
-    with pytest.raises(AssertionError):
-        _at_most_proportional(measured, _ROOTS)
 
 
 def test_a_joining_call_nests_a_live_scope_the_correlation_tree_does_not_show() -> None:
