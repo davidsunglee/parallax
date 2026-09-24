@@ -1,24 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceError
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
-    Attribute,
     Entity,
     Inheritance,
     Metamodel,
-    family_root_name,
     parent_identity,
 )
 
 __all__ = [
-    "Family",
-    "family_attributes",
-    "family_of",
-    "family_primary_key",
     "validate_families",
     "validate_inheritance_families",
 ]
@@ -51,22 +44,6 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
     validate_families(parse_document(document))
 
 
-@dataclass(frozen=True, slots=True)
-class Family:
-    """The inheritance participants of one descriptor, and its root if it has
-    exactly one."""
-
-    participants: tuple[Entity, ...]
-    root: Entity | None
-
-    @property
-    def strategy(self) -> str | None:
-        """The family mapping strategy declared by its root (``None`` if no root)."""
-        if self.root is None:
-            return None
-        return _inh(self.root).strategy
-
-
 def _inh(entity: Entity) -> Inheritance:
     if entity.inheritance is None:  # pragma: no cover - callers guard on participation
         raise ValueError(f"{entity.name} is not an inheritance participant")
@@ -87,52 +64,6 @@ def _parent_of(entity: Entity) -> str | None:
 
 def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
     return tuple(entity for entity in metamodel.entities if entity.inheritance is not None)
-
-
-def family_of(metamodel: Metamodel) -> Family:
-    """The inheritance :class:`Family` of ``metamodel`` (empty when none participate).
-
-    ``root`` is named only when the descriptor declares exactly one: a
-    descriptor carrying several independent families (or none at all) has no
-    single root to name, so ``root`` is ``None``.
-    """
-    participants = _participants(metamodel)
-    roots = [entity for entity in participants if _inh(entity).role == "root"]
-    root = roots[0] if len(roots) == 1 else None
-    return Family(participants=participants, root=root)
-
-
-def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
-    """Every attribute declared anywhere in ``entity``'s inheritance family.
-
-    Membership is decided by the root's CANONICAL identity
-    (:func:`~parallax.descriptor._records.family_root_name`), so two independent
-    families whose roots share a bare name across namespaces stay apart.
-
-    Assumes attribute names are unique within one family (the shared-table /
-    ancestry-derived column set is a disjoint union, m-inheritance).
-    """
-    root_name = family_root_name(meta, entity)
-    if root_name is None:
-        return entity.attributes
-    attrs: list[Attribute] = []
-    for candidate in meta.entities:
-        if candidate.inheritance is not None and family_root_name(meta, candidate) == root_name:
-            attrs.extend(candidate.attributes)
-    return tuple(attrs)
-
-
-def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
-    """``entity``'s FAMILY-EFFECTIVE primary key (m-inheritance "Inherited
-    members"): declared on the root alone and inherited unchanged by every
-    abstract and concrete descendant. ``Entity.primary_key`` is a bare LOCAL
-    view (``self.attributes`` filtered): for a concrete subtype whose key is
-    declared on an ancestor (every corpus family), that view is wrongly EMPTY,
-    which would silently make a keyed write / observation / coalescing lookup
-    unidentifiable. Composes with :func:`family_attributes` rather than
-    re-deriving the family walk.
-    """
-    return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
 
 
 def validate_families(metamodel: Metamodel) -> None:

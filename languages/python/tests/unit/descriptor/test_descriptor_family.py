@@ -1,5 +1,5 @@
-"""``parallax.descriptor._family``: the raw-descriptor inheritance-family walk,
-and the pre-formation family validator a caller reaches through the public
+"""``parallax.descriptor._family``: the pre-formation inheritance-family
+validator a caller reaches through the public
 :func:`~parallax.descriptor.validate_inheritance_families` door."""
 
 from __future__ import annotations
@@ -12,13 +12,7 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core.inheritance import InheritanceError
 from parallax.descriptor import validate_inheritance_families
-from parallax.descriptor._family import (
-    family_attributes,
-    family_of,
-    family_primary_key,
-    validate_families,
-)
-from parallax.descriptor._parse import parse_document
+from parallax.descriptor._family import validate_families
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 from tests.unit._corpus_model_support import corpus_records
 
@@ -146,88 +140,50 @@ def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
     assert caught.value.rule == "inheritance-missing-root"
 
 
-def test_family_of_reports_the_single_root_and_strategy() -> None:
-    family = family_of(_MODELS["animal"])
-    assert family.root is not None
-    assert family.root.name == "Animal"
-    assert family.strategy == "table-per-hierarchy"
-
-
-def test_family_of_is_empty_without_participants() -> None:
-    family = family_of(_MODELS["account"])
-    assert family.root is None
-    assert family.strategy is None
-    assert family.participants == ()
-
-
-def test_family_attributes_widens_across_the_whole_family() -> None:
-    animal = _MODELS["animal"]
-    names = {attr.name for attr in family_attributes(animal, animal.entity("Dog"))}
-    assert names == {"id", "name", "ownerId", "licenseId", "barkVolume", "indoor", "tuskLength"}
-
-
-def test_family_attributes_is_the_entitys_own_attributes_outside_a_family() -> None:
-    account = _MODELS["account"]
-    entity = account.entity("Account")
-    assert family_attributes(account, entity) == entity.attributes
-
-
 def test_two_families_with_same_named_roots_in_different_namespaces_stay_apart() -> None:
     # A local Entity name may be declared in more than one namespace of one
     # model, roots included. Family membership therefore has to key on the
     # root's CANONICAL identity: keyed on the bare one, both families answer
-    # "Record" and merge, so each side's family-effective primary key picks up
-    # the OTHER root's key attribute and no row can satisfy the composite.
-    descriptor = parse_document(
-        {
-            "entities": [
-                {
-                    "name": "Record",
-                    "namespace": "catalog",
-                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
-                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+    # "Record" and merge, so one root's table-per-hierarchy rules judge the other
+    # family's members.
+    document = {
+        "entities": [
+            {
+                "name": "Record",
+                "namespace": namespace,
+                "table": f"{namespace}_record",
+                "inheritance": {
+                    "role": "root",
+                    "strategy": "table-per-hierarchy",
+                    "tag": {"column": "kind"},
                 },
-                {
-                    "name": "Record",
-                    "namespace": "archive",
-                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
-                    "attributes": [{"name": "archiveId", "type": "int64", "primaryKey": True}],
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            }
+            for namespace in ("catalog", "archive")
+        ]
+        + [
+            {
+                "name": "Variant",
+                "namespace": namespace,
+                "inheritance": {
+                    "role": "concrete-subtype",
+                    "parent": f"{namespace}.Record",
+                    "tagValue": "variant",
                 },
-                {
-                    "name": "CatalogVariant",
-                    "namespace": "catalog",
-                    "table": "catalog_variant",
-                    "inheritance": {"role": "concrete-subtype", "parent": "catalog.Record"},
-                    "attributes": [{"name": "catalogLabel", "type": "string", "maxLength": 16}],
-                },
-                {
-                    "name": "ArchiveVariant",
-                    "namespace": "archive",
-                    "table": "archive_variant",
-                    "inheritance": {"role": "concrete-subtype", "parent": "archive.Record"},
-                    "attributes": [{"name": "archiveLabel", "type": "string", "maxLength": 16}],
-                },
-            ]
-        }
-    )
-    catalog = descriptor.entity("catalog.CatalogVariant")
-    archive = descriptor.entity("archive.ArchiveVariant")
-    assert [attr.name for attr in family_attributes(descriptor, catalog)] == [
-        "id",
-        "catalogLabel",
-    ]
-    assert [attr.name for attr in family_primary_key(descriptor, catalog)] == ["id"]
-    assert [attr.name for attr in family_primary_key(descriptor, archive)] == ["archiveId"]
+            }
+            for namespace in ("catalog", "archive")
+        ]
+    }
+    validate_inheritance_families(document)  # no raise
 
 
 def test_a_bare_parent_reaches_its_own_namespaces_root() -> None:
     # Each subtype below spells its parent bare, and the local name `Record`
     # names a root in two namespaces. A bare parent is relative to the declaring
     # entity's namespace, so both sides still reach a root: read as a model-wide
-    # name, neither would, and each subtype's family-effective primary key would
-    # collapse to its own EMPTY local one — leaving every row of it
-    # unidentifiable for keyed writes, observations, and coalescing lookups.
-    descriptor = parse_document(
+    # name, neither would, and each subtype would name a parent the descriptor
+    # does not declare.
+    validate_inheritance_families(
         {
             "entities": [
                 {
@@ -256,40 +212,66 @@ def test_a_bare_parent_reaches_its_own_namespaces_root() -> None:
                 },
             ]
         }
-    )
-    catalog = descriptor.entity("catalog.CatalogVariant")
-    archive = descriptor.entity("archive.ArchiveVariant")
-    assert [attr.name for attr in family_primary_key(descriptor, catalog)] == ["id"]
-    assert [attr.name for attr in family_primary_key(descriptor, archive)] == ["archiveId"]
+    )  # no raise
 
 
-def _cyclic_pair() -> Metamodel:
-    attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
-    return Metamodel(
-        entities=(
-            Entity(
-                name="A",
-                table="a",
-                inheritance=Inheritance(role="concrete-subtype", parent="B"),
-                attributes=attrs,
-            ),
-            Entity(
-                name="B",
-                table="b",
-                inheritance=Inheritance(role="concrete-subtype", parent="A"),
-                attributes=attrs,
-            ),
+def test_a_bare_parent_is_never_read_across_a_namespace_boundary() -> None:
+    # Resolution has no model-wide unique-name fallback: a bare parent the
+    # declaring namespace does not declare reaches nothing, even when exactly
+    # one entity of the whole model carries that local name. Adopting the other
+    # namespace's `Record` would enrol this leaf in a foreign family.
+    with pytest.raises(InheritanceError) as caught:
+        validate_inheritance_families(
+            {
+                "entities": [
+                    {
+                        "name": "Record",
+                        "namespace": "catalog",
+                        "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                    },
+                    {
+                        "name": "StrayLeaf",
+                        "namespace": "elsewhere",
+                        "table": "stray_leaf",
+                        "inheritance": {"role": "concrete-subtype", "parent": "Record"},
+                    },
+                ]
+            }
         )
-    )
+    assert caught.value.rule == "inheritance-unknown-parent"
+    assert caught.value.entity == "StrayLeaf"
 
 
-def test_family_attributes_falls_back_to_local_when_ancestry_is_malformed() -> None:
-    # A malformed (cyclic) ancestry resolves to no root: `family_attributes`
-    # falls back to the entity's own local attributes, the same "resolve to
-    # what it can reach" posture `declaring_entity` itself takes.
-    cyclic = _cyclic_pair()
-    entity = cyclic.entity("A")
-    assert family_attributes(cyclic, entity) == entity.attributes
+def test_a_chain_that_repeats_a_local_name_is_no_cycle() -> None:
+    # A local Entity name may be declared in more than one namespace, so two
+    # positions of ONE valid chain may share it. The cycle guard therefore has
+    # to remember canonical identities: keyed on the bare name, reaching the
+    # second `Node` looks like a revisit and the walk reports a cycle the
+    # descriptor never declared.
+    validate_inheritance_families(
+        {
+            "entities": [
+                {
+                    "name": "Root",
+                    "namespace": "top",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "Node",
+                    "namespace": "mid",
+                    "inheritance": {"role": "abstract-subtype", "parent": "top.Root"},
+                },
+                {
+                    "name": "Node",
+                    "namespace": "leaf",
+                    "table": "leaf_node",
+                    "inheritance": {"role": "concrete-subtype", "parent": "mid.Node"},
+                },
+            ]
+        }
+    )  # no raise
 
 
 def _minimal_attrs() -> tuple[Attribute, ...]:

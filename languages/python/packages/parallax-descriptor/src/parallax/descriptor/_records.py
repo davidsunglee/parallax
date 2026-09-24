@@ -10,7 +10,6 @@ from parallax.core.metamodel import default_column_name
 
 __all__ = [
     "TEMPORAL_DIMENSIONS",
-    "UNSET",
     "AsOfAxisMetadata",
     "Attribute",
     "DefiningRelationship",
@@ -32,16 +31,10 @@ __all__ = [
     "RelationshipJoin",
     "RelationshipTarget",
     "ReverseRelationship",
-    "Temporal",
     "TemporalDimension",
     "Temporality",
-    "Unset",
     "ValueObject",
     "ValueObjectAttribute",
-    "declaring_entity",
-    "effective_as_of_axes",
-    "effective_temporal",
-    "family_root_name",
 ]
 
 Persistence = Literal["read-write", "read-only"]
@@ -56,11 +49,6 @@ carries. Every As-Of Axis, its two endpoint attributes, and their framework-fixe
 columns are derived from it, so it is the only temporal fact a descriptor
 spells."""
 
-Temporal = Literal[
-    "non-temporal",
-    "transaction-time-only",
-    "bitemporal",
-]
 PkStrategy = Literal["none", "max", "sequence"]
 RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many"]
 Multiplicity = Literal["one", "many"]
@@ -78,22 +66,6 @@ TEMPORAL_DIMENSIONS: Final[Mapping[CanonicalTemporalDimension, TemporalDimension
 """How a descriptor spells each canonical Temporal Dimension."""
 
 
-class Unset:
-    """Sentinel for an absent optional value distinct from ``None``.
-
-    A declared default of ``None`` is a real default, so absence needs a marker
-    of its own that ``None`` cannot serve as.
-    """
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return "UNSET"
-
-
-UNSET: Final[Unset] = Unset()
-
-
 @dataclass(frozen=True, slots=True)
 class PkGenerator:
     """A primary-key generation strategy (m-pk-gen)."""
@@ -104,20 +76,10 @@ class PkGenerator:
     initial_value: int | None = None
     increment_size: int | None = None
 
-    @property
-    def generates(self) -> bool:
-        """Whether the strategy allocates a key the caller did not supply."""
-        return self.strategy in ("max", "sequence")
-
 
 @dataclass(frozen=True, slots=True)
 class Attribute:
-    """A scalar entity attribute mapped to one physical column.
-
-    ``default`` is a declaration-frontend affordance that write validation reads
-    to exempt an omitted value; the canonical descriptor has no such property, so
-    it is neither parsed from nor written to a document.
-    """
+    """A scalar entity attribute mapped to one physical column."""
 
     name: str
     type: str
@@ -128,7 +90,6 @@ class Attribute:
     read_only: bool = False
     optimistic_locking: bool = False
     pk_generator: PkGenerator | None = None
-    default: object = UNSET
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,45 +265,6 @@ class Entity:
     inheritance: Inheritance | None = None
 
     @property
-    def primary_key(self) -> tuple[Attribute, ...]:
-        """The primary-key attributes in declaration order."""
-        return tuple(attr for attr in self.attributes if attr.primary_key)
-
-    @property
-    def temporal(self) -> Temporal:
-        """This entity's OWN LOCAL temporal classification, derived from its own
-        ``temporality`` only.
-
-        For an inheritance participant this is a **structural, non-flattening**
-        view, not necessarily the family's effective one: an abstract-subtype or
-        concrete-subtype legitimately declares no profile of its own even when
-        its family is temporal (only the root may declare ``temporality`` —
-        `m-inheritance` "Inherited members"). Every consumer that needs the
-        entity's EFFECTIVE classification within its family (introspection,
-        validation, write classification, …) **MUST** use
-        :func:`effective_temporal` instead (`m-descriptor` "the `temporality` an
-        entity declares" — ADR 0026); this property alone is not family-aware
-        because a bare :class:`Entity` carries no sibling context to resolve one.
-        """
-        match self.temporality:
-            case None | "nontemporal":
-                return "non-temporal"
-            case "transaction-time":
-                return "transaction-time-only"
-            case "bitemporal":
-                return "bitemporal"
-
-    @property
-    def is_temporal(self) -> bool:
-        """Whether the entity's OWN LOCAL ``temporality`` names any dimension.
-
-        Same local/structural caveat as :attr:`temporal`: use
-        :func:`effective_temporal` for an inheritance participant's
-        family-effective temporality.
-        """
-        return self.temporal != "non-temporal"
-
-    @property
     def canonical_name(self) -> str:
         """The exact Entity spelling used for model-wide identity and lookup."""
         return self.name if self.namespace is None else f"{self.namespace}.{self.name}"
@@ -360,88 +282,6 @@ def parent_identity(entity: Entity, parent: str | None) -> str | None:
     if parent is None or entity.namespace is None or "." in parent:
         return parent
     return f"{entity.namespace}.{parent}"
-
-
-def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
-    """The entity that actually DECLARES ``entity``'s primary key and temporal
-    (as-of) axes: the family root for an inheritance participant — temporality,
-    like the physical primary key, is a FAMILY-WIDE property declared only on
-    the root and inherited unchanged by every abstract and concrete descendant
-    (`m-inheritance` "Inherited members") — else ``entity`` itself.
-
-    A pure metamodel-RECORD walk over the ``parent`` / ``role`` fields the
-    descriptor already carries: never raises. An ancestry that does not resolve
-    to a root (a cycle, an unresolvable parent) falls back to ``entity``
-    unchanged — a deliberate "resolve to what it can reach" posture; the
-    pre-formation family validator (:mod:`parallax.descriptor._family`) is the
-    sole authority on REJECTING a malformed family, not this lookup. This is the
-    one place the ancestry-to-root walk is implemented; every caller needing a
-    raw descriptor record's own declaring entity composes with this rather than
-    re-deriving it.
-
-    Every step of the walk is by CANONICAL identity: each ``parent`` resolves
-    under the exact/relative reference rule (:func:`parent_identity`) against
-    the canonical spellings alone, and the cycle guard remembers canonical
-    names. A local name may repeat across namespaces, so a bare one identifies
-    neither the position reached nor the positions already visited — a family
-    whose chain passes through two namespaces sharing a local name is valid, and
-    treating the repeat as a revisit would report a cycle the descriptor does
-    not declare.
-    """
-    inheritance = entity.inheritance
-    if inheritance is None:
-        return entity
-    by_canonical = {candidate.canonical_name: candidate for candidate in metamodel.entities}
-    current = entity
-    seen: set[str] = set()
-    while True:
-        current_inheritance = current.inheritance
-        if current_inheritance is None or current_inheritance.role == "root":
-            return current
-        ancestor = parent_identity(current, current_inheritance.parent)
-        if ancestor is None or current.canonical_name in seen or ancestor not in by_canonical:
-            return entity
-        seen.add(current.canonical_name)
-        current = by_canonical[ancestor]
-
-
-def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
-    """The CANONICAL name of ``entity``'s family root, or ``None`` if it has none.
-
-    Canonical rather than local because this value identifies a family: a local
-    name may be declared in more than one namespace of one model, so two
-    independent families whose roots share a bare name would otherwise answer
-    with the same string and merge. ``Entity.canonical_name`` is the spelling
-    that is unique model-wide, and it is also what :attr:`Metamodel.by_name`
-    always keys, so the result stays a usable lookup key.
-
-    ``None`` covers both a non-participant and a participant whose ancestry does
-    not resolve to a root: :func:`declaring_entity` already falls back to
-    ``entity`` itself for a malformed (cyclic or unresolvable) chain, and
-    ``entity`` is then never a root, so checking the resolved role alone
-    distinguishes the two without re-walking ``parent`` links.
-    """
-    if entity.inheritance is None:
-        return None
-    resolved = declaring_entity(metamodel, entity)
-    if resolved.inheritance is None or resolved.inheritance.role != "root":
-        return None
-    return resolved.canonical_name
-
-
-def effective_as_of_axes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAxisMetadata, ...]:
-    """``entity``'s FAMILY-EFFECTIVE as-of axes: the declaring entity's own — the
-    family root's, for an inheritance participant — never re-derived from a
-    possibly-empty LOCAL ``as_of_axes`` (`m-descriptor` "For an
-    inheritance participant…"; ADR 0026)."""
-    return declaring_entity(metamodel, entity).as_of_axes
-
-
-def effective_temporal(metamodel: Metamodel, entity: Entity) -> Temporal:
-    """``entity``'s FAMILY-EFFECTIVE ``temporal`` classification — the one every
-    consumer other than a non-flattening structural reader MUST use
-    (`m-descriptor`; ADR 0026)."""
-    return declaring_entity(metamodel, entity).temporal
 
 
 @dataclass(frozen=True, slots=True)

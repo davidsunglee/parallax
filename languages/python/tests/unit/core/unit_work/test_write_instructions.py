@@ -751,8 +751,8 @@ def test_member_name_honesty_accepts_a_family_participants_inherited_members() -
     # A concrete-subtype keyed write naming a ROOT-declared inherited member
     # (`id` / `amount`, Payment's own) alongside its OWN declared member
     # (`cardNetwork`) is well-formed (m-inheritance "Inherited members") — the
-    # ancestry-effective member set, not CardPayment's bare local declarations
-    # (`family_attributes`), decides validity.
+    # ancestry-effective member set, not CardPayment's bare local declarations,
+    # decides validity.
     keyed = wi.deserialize(
         {
             "mutation": "insert",
