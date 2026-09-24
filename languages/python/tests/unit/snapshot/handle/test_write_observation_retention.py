@@ -28,6 +28,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core.base import INFINITY, FrozenMap
+from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
@@ -48,7 +49,12 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
+from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence
+from parallax.snapshot.materialize import PageBuilder, RootView
+from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
+from parallax.snapshot.materialize._page import page_rows
+from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
@@ -495,6 +501,62 @@ def test_evidence_is_keyed_by_the_rows_own_entity_through_inherited_members() ->
     assert isinstance(observation, TemporalObservation)
     assert observation.predecessor.member("grade") == "A"
     assert observation.predecessor.member("validEnd") is _INFINITY
+
+
+def _instrument_root(builder: PageBuilder, concrete: str, price: Decimal) -> int:
+    """One Instrument row of ``concrete`` registered as a root provider row is,
+    its own subtype member stored null."""
+    layout = LayoutCatalog(_accepted("instrument")).entity(corpus_entity(concrete))
+    stored: dict[str, object] = {
+        "id": 1,
+        "price": price,
+        "from_z": _VALID_START,
+        "thru_z": _INFINITY,
+        "in_z": _TX_START,
+        "out_z": _INFINITY,
+    }
+    witness = tuple(stored.get(attribute.storage.name) for attribute in layout.attributes)
+    return convert_deferred(
+        witness,
+        LevelContext(layout),
+        builder,
+        source=ROOT_LEVEL,
+        classifiable=(1 << len(witness)) - 1,
+    )
+
+
+def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibling() -> None:
+    # Two roots of one Page claim one Logical Key under sibling concretes of a
+    # table-per-hierarchy family, and their stored values are equal position by
+    # position. The witness includes the resolved concrete, so they are two
+    # witnesses with two judged states, and each root's evidence is read from
+    # the state judged for its own row: the Stock's retained `price` is the very
+    # value its own row carried, not the Bond's equal one.
+    model = _accepted("instrument")
+    bond_price, stock_price = Decimal("2.50"), Decimal("2.50")
+    builder = PageBuilder(ViewSchema.of())
+    bond = _instrument_root(builder, "Bond", bond_price)
+    stock = _instrument_root(builder, "Stock", stock_price)
+    page = builder.finish((bond, stock), Pin())
+    assert page_rows(page).logical_ids[bond] == page_rows(page).logical_ids[stock]
+    assert page_rows(page).witnesses[bond] == page_rows(page).witnesses[stock]
+    RootView(page, 0)
+    RootView(page, 1)
+    observations = ObservedRows()
+    observations.observe_occurrence(bond, corpus_entity("Bond"), None)
+    observations.observe_occurrence(stock, corpus_entity("Stock"), None)
+    # Page judgment and Read Origin retention meet only inside the read that
+    # owns both, so its retention step is called directly.
+    sources = Materializer._retained(  # pyright: ignore[reportPrivateUsage]
+        model, (), observations, page=page, ledger=None, pin=Pin()
+    )
+
+    for projection, price in ((bond, bond_price), (stock, stock_price)):
+        observation = sources[projection].observation
+        assert observation is not None
+        evidence = observation.evidence
+        assert isinstance(evidence, TemporalObservation)
+        assert evidence.predecessor.member("price") is price
 
 
 # --------------------------------------------------------------------------- #

@@ -36,10 +36,12 @@ __all__ = [
     "StoredDataIssueInput",
     "dedupe_issues",
     "exact_stored_equal",
+    "judged_state",
     "page_edges",
     "page_rows",
     "release_page_rows",
     "root_last_uses",
+    "same_witness",
 ]
 
 _NO_VIEWS: Final[tuple[()]] = ()
@@ -319,6 +321,41 @@ def page_rows(page: object) -> PageRows:
     if not isinstance(page, Page):
         raise TypeError("a Root View requires a finished Page")
     return page._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a finished page through
+
+
+def same_witness(rows: PageRows, left: int, right: int) -> bool:
+    """Whether two projections carry one Payload Witness: the same resolved
+    concrete and member layout, and exactly equal stored values."""
+    left_layout = rows.layouts[left]
+    right_layout = rows.layouts[right]
+    return (
+        left_layout.concrete == right_layout.concrete
+        and left_layout.members == right_layout.members
+        and (
+            rows.witnesses[left] is rows.witnesses[right]
+            or exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
+        )
+    )
+
+
+def judged_state(rows: PageRows, projection: int) -> EntityState | None:
+    """The Entity State already judged for ``projection``, if any.
+
+    A singleton claim holds at most one. A grouped claim holds one per
+    witness-distinct state, and ``projection`` shares only the one whose
+    witness is :func:`same_witness` as its own.
+    """
+    logical = rows.logical_ids[projection]
+    if isinstance(rows.claims[logical], int):
+        return rows.judged_states.singleton(logical)
+    return next(
+        (
+            state
+            for stored, state in rows.judged_states.group(logical)
+            if same_witness(rows, projection, stored)
+        ),
+        None,
+    )
 
 
 def release_page_rows(page: Page) -> None:
