@@ -144,25 +144,9 @@ def known(path: Path = COST_DURATIONS) -> dict[str, float]:
     return durations
 
 
-def store(
-    observed: Mapping[str, float],
-    *,
-    collected_the_whole_class: bool,
-    collected: Collection[str],
-    succeeded: bool,
-    path: Path = COST_DURATIONS,
-) -> None:
-    """Record *observed* as what the cost items it names last cost.
-
-    Replaces the file only for a session that measured the whole class: it
-    collected the class entire, reported a call for every cost item it collected,
-    and ended successfully. Only then is an unobserved entry an item that has
-    been deleted or renamed, which must leave no record behind to weigh a shard
-    that will never run it again. Every other session merges: whatever it did
-    measure, it cannot establish that the file is a complete refresh, and an
-    entry it left unobserved may be the only record of an item it never ran.
-    """
+def store(observed: Mapping[str, float], *, replace: bool, path: Path = COST_DURATIONS) -> None:
+    """Record *observed* as what the cost items it names last cost, replacing
+    the stored durations or merging into them."""
     measured = {node_id: round(duration, 1) for node_id, duration in observed.items()}
-    whole_class = collected_the_whole_class and succeeded and set(collected) == set(observed)
-    stored = measured if whole_class else known(path) | measured
+    stored = measured if replace else known(path) | measured
     path.write_text(json.dumps(dict(sorted(stored.items())), indent=1) + "\n", encoding="utf-8")

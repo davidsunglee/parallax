@@ -59,6 +59,14 @@ boundary on every test that calls a whole-interpreter reader directly; any other
 route fails at run time, because each reader refuses a process the boundary did
 not start.
 
+`--shard I/N` splits the `cost` class into CI cells, balanced by what each item
+last cost in [cost_durations.json](tests/_support/cost_durations.json). A change
+that adds cost items merges their durations in with
+`uv run pytest <selection> --store-cost-durations`. A periodic refresh, which
+also drops renamed or deleted items, replaces the file from the whole class
+with `uv run pytest -m cost -n auto --store-cost-durations=replace`, and writes
+nothing unless that session passes.
+
 Use `just python-test-<surface>` for focused iteration, or select a module from
 this directory with `uv run pytest tests/<surface>/<path>`.
 The focused selectors are intentionally outside aggregates. Inspect actual

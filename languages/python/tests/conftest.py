@@ -10,7 +10,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -37,13 +37,11 @@ _DATABASE_FIXTURES = frozenset({"profile_run"})
 _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 _WHOLE_CLASS = "1/1"
+_MERGE, _REPLACE = "merge", "replace"
 
-# The key an xdist worker hands its collected cost items up under.
-_COLLECTED_COST_ITEMS = "parallax_collected_cost_items"
-
-_collected_cost_items: set[str] = set()
 _recorded_durations: dict[str, float] = {}
 _store_durations = False
+_DURATION_REFUSALS: list[str] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -53,20 +51,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="I/N",
         help="run the I-th of N shards of the cost class; every other class is unaffected",
     )
+    # Bare to merge, `=replace` to replace. The value is optional, so a path
+    # argument following the bare flag is taken as the value; `choices` makes
+    # that the option's usage error rather than a silently dropped path.
     parser.addoption(
         "--store-cost-durations",
-        action="store_true",
+        nargs="?",
+        const=_MERGE,
+        choices=(_REPLACE,),
+        default=None,
+        metavar="replace",
         help=(
             f"after the run, record every cost item's call duration in "
-            f"{cost_durations.COST_DURATIONS.name}: a run that measured the whole class replaces "
-            f"what is stored, and every narrower or unfinished run merges into it"
+            f"{cost_durations.COST_DURATIONS.name}, merged into what is stored; "
+            f"`--store-cost-durations=replace` instead replaces the file, and only when "
+            f"the session passed"
         ),
     )
 
 
 def pytest_configure(config: pytest.Config) -> None:
     global _store_durations
-    _store_durations = bool(config.getoption("--store-cost-durations")) and not hasattr(
+    _store_durations = config.getoption("--store-cost-durations") is not None and not hasattr(
         config, "workerinput"
     )
 
@@ -127,84 +133,34 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             excluded = set(deselected)
             items[:] = [item for item in items if item not in excluded]
 
-    # Recorded here rather than read off the finished session because pytest's
-    # own deselection — `--deselect`, `-k`, `--lf` — runs after this hook, and
-    # what a store compares against is the class this session was handed.
-    _collected_cost_items.update(
-        item.nodeid for item in items if item.get_closest_marker("cost") is not None
-    )
-
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Record a cost item's call duration.
+
+    Under xdist the controller receives every worker's reports, so the one
+    process that writes the file observes the whole session.
+    """
     if _store_durations and report.when == "call" and "cost" in report.keywords:
         _recorded_durations[report.nodeid] = report.duration
 
 
-def _collected_the_whole_class(config: pytest.Config) -> bool:
-    """Whether this session collected every cost item there is.
-
-    Only the narrowing that happens before collection is answered for here,
-    because it is the narrowing that leaves nothing to observe: a shard, a path
-    argument, an ignored path or glob. A marker expression and a keyword deselect
-    after the collection hook above has recorded the class, so an item either one
-    drops stays counted as collected and unobserved. That is what tells an
-    expression holding the class whole — `cost`, or any wider one — from an
-    expression cutting into it, without reading either. Everything that narrows a
-    session after collection is caught by :func:`pytest_sessionfinish` instead,
-    which is what makes this necessary rather than sufficient.
-    """
-    _, count = cost_durations.index_and_count(str(config.getoption("--shard")))
-    return (
-        count == 1
-        and config.args_source is not pytest.Config.ArgsSource.ARGS
-        and not config.option.ignore
-        and not config.option.ignore_glob
-    )
-
-
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Record what the cost items this session ran cost, and how completely it
-    measured the class.
+    """Store what the cost items this session ran cost.
 
-    A store replaces the file only for a session that measured the whole class,
-    which takes more than collecting it: the run must also have reached a call
-    report for every cost item it collected and ended successfully, or an
-    interruption, a failure, or a late deselection would delete the entries of
-    items it merely never reached.
-
-    A distributed session collects in its workers and never in the process that
-    writes the file, so each worker hands its collection up rather than storing
-    anything itself.
+    A replacement drops every item the session did not observe, so it is refused
+    for a session that did not pass: an item it failed to reach would lose its
+    only record.
     """
-    if not session.config.getoption("--store-cost-durations"):
-        return
-    worker_output: dict[str, object] | None = getattr(session.config, "workeroutput", None)
-    if worker_output is not None:
-        worker_output[_COLLECTED_COST_ITEMS] = sorted(_collected_cost_items)
-        return
     if not _recorded_durations:
         return
-    cost_durations.store(
-        _recorded_durations,
-        collected_the_whole_class=_collected_the_whole_class(session.config),
-        collected=_collected_cost_items,
-        succeeded=exitstatus == pytest.ExitCode.OK,
-    )
-
-
-def pytest_testnodedown(node: Any) -> None:
-    """Take the finished xdist worker's collection as part of this session's.
-
-    The workers collect and the process holding this one does not, so what a
-    store measures its observations against arrives here or nowhere. Each worker
-    collects the whole selection, so a worker that goes down without handing
-    anything up leaves the collection short only when no other worker handed the
-    same set up; after a crash it is the unsuccessful exit status that keeps the
-    session from replacing the file.
-    """
-    _collected_cost_items.update(
-        cast("list[str]", getattr(node, "workeroutput", {}).get(_COLLECTED_COST_ITEMS, []))
-    )
+    replace = session.config.getoption("--store-cost-durations") == _REPLACE
+    if replace and exitstatus != pytest.ExitCode.OK:
+        _DURATION_REFUSALS.append(
+            f"{cost_durations.COST_DURATIONS.name} left unchanged: the session did not pass "
+            f"(exit status {int(exitstatus)})"
+        )
+        return
+    cost_durations.store(_recorded_durations, replace=replace)
 
 
 def record_db_skip(reason: str) -> None:
@@ -274,7 +230,11 @@ def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 def pytest_terminal_summary(terminalreporter: Any) -> None:
-    """Print the database-backed skip summary; silent skips are forbidden."""
+    """Print a refused duration replacement and the database-backed skip summary;
+    silent skips are forbidden."""
+    for refusal in _DURATION_REFUSALS:
+        terminalreporter.write_sep("=", "--store-cost-durations=replace refused", red=True)
+        terminalreporter.write_line(refusal)
     if not _DB_SKIPS:
         return
     terminalreporter.write_sep("=", "database-backed checks skipped")
