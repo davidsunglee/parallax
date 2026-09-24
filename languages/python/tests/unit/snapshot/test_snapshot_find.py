@@ -748,9 +748,9 @@ def test_find_history_does_not_reclassify_a_native_primary_key() -> None:
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
     # `DepositRate` declares NO `as_of_axes` of its own (`Rate`, the
-    # family root, does). `milestone_edge`, `_edge_pin`, and `_edge_sort_key`
-    # must resolve through the root rather than consulting the concrete
-    # entity's empty local axis collection.
+    # family root, does). Every milestone edge the read derives must resolve
+    # through the root rather than consulting the concrete entity's empty local
+    # axis collection.
     port = QueuePort(
         [
             [

@@ -764,10 +764,9 @@ def find_history(
         raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
     # `declaring_metadata` resolves the entity whose as-of axes are this target's
     # FAMILY's actual temporal declaration (the root, for a participant —
-    # temporality is family-wide, `m-inheritance`); every
-    # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
-    # `_edge_sort_key`) MUST resolve through it rather than the queried target's
-    # own (possibly locally-empty) axes.
+    # temporality is family-wide, `m-inheritance`); every milestone edge the
+    # result derives (`page_edges`, through `milestone_edge_of`) MUST resolve
+    # through it rather than the queried target's own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
     compiled, prepared = plan.root_read()
 

@@ -611,8 +611,8 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     port = ScriptedAdapter(Read(rows=_balance_history_rows()))
     db = own_root(Database.connect(port, BALANCE, clock=FixedClock(FIXED))).using_database_login()
     # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
-    # `scans_an_axis` reads the Temporal Selection map, so no other clause can
-    # stand between the scan and its classification.
+    # `scans_validated_axis` reads the validated Temporal Selections alone, so no
+    # other clause can stand between the scan and its classification.
     query = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).limit(5)
     snapshot = db.find(query)
     assert len(snapshot.results()) == 2

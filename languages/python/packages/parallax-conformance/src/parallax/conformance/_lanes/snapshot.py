@@ -42,8 +42,8 @@ from parallax.conformance._mechanism.model_facts import (
     canonicalize_read,
     case_entity,
     case_serving_model,
-    declaring_metadata,
     load_case_metamodel,
+    read_pin,
 )
 from parallax.conformance._mechanism.transaction_control import (
     underlying,
@@ -62,7 +62,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read
-from parallax.core.temporal_read import Pin, query_pin
+from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     KeyedWrite,
     WriteRejectedError,
@@ -666,9 +666,8 @@ def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
     the materialized view carries (`m-snapshot-read`), read from the SAME
     Object Query the find executor consumes. This is the pin
     :func:`_grade_mutate_step` hands the production write seam's finite-pin
-    rule, resolved through the family-declaring entity exactly as the read
-    path resolves it."""
-    return query_pin(query, declaring_metadata(model, query.target.canonical))
+    rule, resolved exactly as the read path resolves it."""
+    return read_pin(query, model)
 
 
 def _grade_mutate_step(
