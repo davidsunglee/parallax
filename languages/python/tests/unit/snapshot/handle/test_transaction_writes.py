@@ -1,11 +1,11 @@
-"""Keyed write-verb unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
+"""Keyed write-verb unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
 
 The instance-taking verbs and their neutral `_buffer` seam: the
 buffer -> flush -> lower -> execute wiring proof, sparse-update no-op
 elimination, the shared `validate_write` model-aware rejection matrix, the typed
 KEYED temporal-window family (`update`/`terminate`/`update_until`/
 `terminate_until`, and `insert`/`insert_until`), keyed window-order
-validation, and the §5 prior-observation license enforced at the developer verb.
+validation, and the prior-observation license enforced at the developer verb.
 """
 
 from __future__ import annotations
@@ -139,7 +139,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     # observation the source value itself retained). The edited copy is built
     # from a row `tx.find` fetches INSIDE this transaction, which is what an
     # effective-Locking target requires; an effective-Optimistic one may import
-    # a standalone source's own observation instead (python.md §5).
+    # a standalone source's own observation instead.
     #
     # `Account` declares an explicit version, so the default `optimistic`
     # preference resolves it to the Optimistic strategy: the find takes no
@@ -208,7 +208,7 @@ def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source(
 def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> None:
     # m-unit-work-006, migrated to the m-opt-lock observation flow: a keyed
     # DELETE of a versioned row requires
-    # a PRIOR observation exactly like a keyed update (python.md §5) — the
+    # a PRIOR observation exactly like a keyed update — the
     # deleted row must be fetched INSIDE this transaction first, under the
     # shared read lock the `locking` preference this test declares produces.
     # The observation licenses the write; under the Locking strategy it renders
@@ -447,7 +447,7 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
 
 def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # An `edit()` with no changes carries forward the SAME (empty)
-    # Change Record: the sparse-update no-op rule (spec §3/§5).
+    # Change Record: the sparse-update no-op rule.
     port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
@@ -600,7 +600,7 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 
 
 def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
-    # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
+    # The SAME sparse-update no-op rule `update` applies: a
     # An `edit()` whose Change Record nets to zero issues no DML at all --
     # but only AFTER its (here, valid) Valid-Time window is validated
     # (window validation runs BEFORE the
@@ -627,7 +627,7 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
 def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds() -> None:
     # Window validation runs BEFORE
     # the empty-effective-change-set no-op return -- equal bounds reject even
-    # when the edited copy's own Change Record nets to zero, per spec §5
+    # when the edited copy's own Change Record nets to zero
     # ("all validated at build"): validating the window only after the no-op
     # return would let an equal/reversed window slip through when the change
     # set is empty.
@@ -807,7 +807,7 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 
 # --------------------------------------------------------------------------- #
 # Window-order validation:                                                    #
-# `python.md` §5 "the `*_until` trio additionally requires `until`, with      #
+# The `*_until` trio additionally requires `until`, with                       #
 # `valid_from < until` ... all validated at build" — an EQUAL and a        #
 # REVERSED window both reject, at the verb call, before any buffering, for    #
 # BOTH the KEYED (`update_until`/`terminate_until`) and `_where`              #
@@ -853,7 +853,7 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The §5 prior-observation license for keyed TEMPORAL update/terminate:       #
+# The prior-observation license for keyed TEMPORAL update/terminate:           #
 # the temporal sibling of the versioned                                       #
 # `require_observed` rule, enforced at the developer verb.                    #
 # --------------------------------------------------------------------------- #

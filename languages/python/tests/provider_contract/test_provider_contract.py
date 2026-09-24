@@ -11,7 +11,7 @@ a neutral ``DatabaseError`` -- narrowed to the FULL-shape assertions
 the preserved driver message) the corpus's own case-driven grading of this SAME
 choreography (`m-db-error-004`, `parallax.conformance.concurrency_runner`) does not
 check; the exact `errorClass`/`nativeCode` pin lives there now. Docker-gated; a
-skip is reported, never silent (spec §6).
+skip is reported, never silent.
 """
 
 from __future__ import annotations

@@ -533,7 +533,8 @@ construction it may reference any behavioral module it harnesses.
   that fails the build on any dependency the graph does not permit — the common
   failure mode being a wrong-direction edge. Each records its tool and the
   behavioral-module → source-ownership / enforcement-scope mapping (see the
-  [language-spec template](language-spec-template.md), §9).
+  [language-spec template](language-spec-template.md), under
+  "Source-enforcement topology").
 
 ### The coverage gate
 

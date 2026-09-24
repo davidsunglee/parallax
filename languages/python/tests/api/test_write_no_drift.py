@@ -510,7 +510,7 @@ REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 # through `validate_write` over a raw document. The class grammar carries
 # nullability on the annotation alone, so a declared-non-nullable member is a
 # required Python field and the same defect is refused one step earlier, at
-# construction — the representation-specific rejection spec §2 sanctions for a
+# construction — the representation-specific rejection the declarations binding sanctions for a
 # shape only one grammar can spell. Each entry names the member the corpus case
 # omits, so the two stay pinned to the same defect.
 #
@@ -518,7 +518,7 @@ REJECTED_WRITE_MODELS: dict[str, str] = {"m-inheritance-088": "payment"}
 # obligations and a regression in either must fail:
 #
 #   `test_the_class_grammar_refuses_the_corpus_incomplete_document` discharges
-#   python.md §2's "grammar-level failures stay representation-specific — the
+#   `declarations.md` "grammar-level failures stay representation-specific — the
 #   descriptor rejects through its ingestion phases, Python through class
 #   creation — so a shape only one grammar can spell, or can reject before the
 #   shared seam, carries no equivalence obligation": it pins WHERE the Python

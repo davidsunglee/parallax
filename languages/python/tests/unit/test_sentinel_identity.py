@@ -10,8 +10,8 @@ a second instance would answer ``is`` with ``False`` while looking identical in
 a traceback, and the subclass such an instance would otherwise belong to.
 
 The public API snapshot diffs export lists and recorded constructor sets, so it
-cannot see this. Nothing else grades it either, which is why the contract is
-stated in ``python.md`` and pinned here.
+cannot see this. The identity contract is stated in ``declarations.md`` and
+pinned here.
 """
 
 from __future__ import annotations

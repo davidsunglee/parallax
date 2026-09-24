@@ -283,7 +283,7 @@ def test_edited_copy_refuses_the_whole_set_when_one_name_is_unassignable() -> No
 
 
 def test_edited_copy_refuses_an_assignment_to_the_primary_key() -> None:
-    # `python.md`'s edit contract: a primary-key target may not be assigned. The
+    # `declarations.md`'s edit contract: a primary-key target may not be assigned. The
     # engine reaches the SAME verdict the typed `edit(**changes)` does rather
     # than merging whatever the case authored.
     step = {"action": "mutate", "on": 0, "set": {"id": 2}}

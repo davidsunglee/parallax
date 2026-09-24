@@ -1,4 +1,4 @@
-"""`DatabaseOptions` (spec §5): the built-in record, the field rules
+"""`DatabaseOptions` (`execution.md`): the built-in record, the field rules
 construction is held to — the same rules an explicit `db.transact` keyword
 meets — the immutability of what a root is connected with, and the private
 marker an omitted transaction keyword defaults to.

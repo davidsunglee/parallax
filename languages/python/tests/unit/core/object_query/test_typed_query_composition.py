@@ -13,7 +13,7 @@ one reason: the composition the parameter refuses builds a VALID canonical
 query, so the wire carries no record of the mistake and no preflight rule
 could restate it. Which ones those are is settled by a test rather than by a
 count — canonicalize the refused spelling and the accepted one, and they are one
-document — and `python.md` §2 states that test, names the same families as
+document — and this test names the same families as
 examples, and says plainly that the list is open. A case belongs here when it
 fails that test; adding one is the obligation, not keeping a tally.
 

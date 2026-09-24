@@ -788,7 +788,7 @@ def test_member_name_honesty_rejects_foreign_assignment_owner() -> None:
 
 
 def test_member_name_honesty_rejects_a_duplicate_assignment() -> None:
-    # `python.md` §5 requires each field to be assigned at most once. The same
+    # Each field may be assigned at most once. The same
     # member assigned twice raises even though each
     # individual assignment is otherwise well-formed.
     predicate = wi.deserialize(
@@ -1013,7 +1013,7 @@ def test_member_name_honesty_covers_value_object_members() -> None:
 
 # --------------------------------------------------------------------------- #
 # The engine/serialized-path half of the shared assignment check               #
-# (`python.md:667-676`; `m-case-format.md:700`): a CASE-AUTHORED PredicateWrite #
+# (`m-unit-work` "Assigned members"): a CASE-AUTHORED PredicateWrite           #
 # assignment naming a primary-key or framework-owned (version) column, or       #
 # carrying an ill-typed scalar value, is rejected with the SAME classification  #
 # `entity.expressions.AttributeExpr.set` raises at build time for the typed     #
@@ -1189,7 +1189,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Every query-wide clause `python.md` §5 rejects on a write target — ordering,  #
+# Every result-shaping query clause is rejected on a write target — ordering,  #
 # the cap, Includes, Temporal Selection, result narrowing — is a clause of      #
 # `m-object-query` rather than a Predicate node, so a write target carrying one #
 # is a MALFORMED document rather than a rule a model-aware validator applies.   #
@@ -1281,7 +1281,7 @@ def test_a_bare_navigation_filter_carrying_no_inner_predicate_is_accepted(
 
 
 def test_a_top_level_narrow_is_a_predicate_scoped_filter() -> None:
-    # `narrow` is the one entry of `python.md` §5's enumeration that survives in
+    # `narrow` is the one result-shaping entry that survives in
     # the Predicate grammar, and it is unambiguously a FILTER there: whole-result
     # narrowing is `narrowTo` on the Object Query, which a write target has no
     # clause for. A write predicate narrowing its own position is therefore an
@@ -1381,10 +1381,10 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
 # validator both predicate-write ingresses call, so the typed `_where` verbs    #
 # and the conformance engine classify one instruction identically. Its position #
 # is fixed from both sides: AFTER the predicate rules `m-case-format` orders    #
-# first, and BEFORE the assignments, which `python.md` §5 requires — "every     #
+# first, and BEFORE the assignments — every                                    #
 # assigned attribute or value-object member must be declared by the exact       #
 # target entity — set-based writes already reject inheritance-family targets,   #
-# so ancestry resolution never arises."                                         #
+# so ancestry resolution never arises.                                         #
 # --------------------------------------------------------------------------- #
 def test_a_predicate_write_on_an_inheritance_family_target_is_rejected() -> None:
     instruction = wi.deserialize(

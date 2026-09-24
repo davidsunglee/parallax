@@ -534,7 +534,7 @@ def test_a_required_member_no_value_was_carried_for_reads_as_its_position_holds(
     # carried null from a position no read filled.
     #
     # Publication refuses neither. A required position a read did not carry is a
-    # recorded finding on the projection (spec §5) rather than a row this seam may
+    # recorded finding on the projection rather than a row this seam may
     # reject, and refusing one here would refuse a document collapse the read
     # specification defines.
     with pytest.raises(AttributeError, match="city"):

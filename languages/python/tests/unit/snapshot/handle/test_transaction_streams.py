@@ -1,4 +1,4 @@
-"""Participating-stream unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
+"""Participating-stream unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
 
 `Transaction.stream` and `tx.wire.stream`: what participation adds to a delivery
 whose own contract — the state table, statement accounting, root-local identity,

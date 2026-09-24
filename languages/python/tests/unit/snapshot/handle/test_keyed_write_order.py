@@ -1,8 +1,7 @@
 """The Keyed Write Validation Order, stated once and asserted of both representations.
 
 Every keyed verb runs one order, and that order is what a caller observes as
-refusal precedence (`python.md` §5 "The Keyed Write Validation Order is one
-order"). One private ingress owns it and each representation answers only source
+refusal precedence. One private ingress owns it and each representation answers only source
 facts into it, so what a row here fixes is the ANSWER — the refusal's class,
 code, message, and the point it landed at, or the DML a completing write emitted
 — and each row asserts that same answer of the Typed verbs and of ``tx.wire``'s
@@ -884,7 +883,7 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
 # `delete` against a temporal target. `delete` physically removes rows and     #
 # carries no temporal meaning, so a target that milestones its rows spells its #
 # removal `terminate` and refuses `delete` at the verb, whichever              #
-# representation asked and whatever the source (`python.md` §5) — including    #
+# representation asked and whatever the source — including                     #
 # over a row this unit of work itself inserted, where the pair would otherwise #
 # cancel and commit no DML at all rather than name the verb.                   #
 # --------------------------------------------------------------------------- #

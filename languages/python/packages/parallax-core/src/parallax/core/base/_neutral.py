@@ -289,8 +289,8 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:
 
 def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     """``value`` normalized by the adjacent forms the developer input policy
-    admits for ``declared`` (`python.md` "Neutral scalar type mapping", the
-    input-policy column), and otherwise returned unchanged.
+    admits for ``declared`` (`declarations.md` "Python scalar carriers"), and
+    otherwise returned unchanged.
 
     This is the boundary the DEVELOPER-facing write validators call — a
     runtime argument already carries a native Python value, never a wire

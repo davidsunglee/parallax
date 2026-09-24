@@ -12,7 +12,7 @@ required-ness (a corpus shape none of the ten witness — every witnessed case
 happens to keep the entity's own scalar attributes complete), the DB-computed-
 marker exemption, sparse-mutation leniency at every level, to-many value-object
 array walking, and the full m-core neutral-type vocabulary at the DEVELOPER
-input-policy boundary (`python.md` "Neutral scalar type mapping") — a native
+input-policy boundary (`declarations.md` "Python scalar carriers") — a native
 carrier, plus the narrow adjacent forms the input policy itself widens (an
 `int` for a `decimal` / `float`, a canonical UUID string), conform; a
 wire-only spelling (a float for a `decimal`, an ISO date/time/timestamp
@@ -347,7 +347,7 @@ def test_a_nested_many_element_violation_keeps_its_index_on_the_nested_member() 
 # --------------------------------------------------------------------------- #
 # Value conformance: the full m-core neutral-type vocabulary, exercised       #
 # through `validate_write` over each depth-0 attribute against the DEVELOPER  #
-# input policy (`python.md` "Neutral scalar type mapping") — a native carrier #
+# input policy (`declarations.md` "Python scalar carriers") — a native carrier #
 # and the input policy's own narrow adjacent forms (an `int` for a `decimal`  #
 # or `float`, a canonical UUID string) conform; a WIRE-only spelling (a       #
 # `float` for a `decimal`, an ISO date/time/timestamp string, a hex `bytes`   #

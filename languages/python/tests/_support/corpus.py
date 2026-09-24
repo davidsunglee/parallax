@@ -203,7 +203,7 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     name ``orderedOn`` an Entity Row Codec row is keyed by).
     ``family_variant=True``
     additionally reports ``familyVariant`` as ``type(instance).__name__`` —
-    the API-suite's own observation of polymorphism (`python.md` §4: "every
+    the API-suite's own observation of polymorphism (`queries-and-results.md`: "every
     materialized node is an instance of its concrete entity class, so the
     corpus's `familyVariant` is observable as `type(node)`"), needed only when
     grading a case whose oracle projects the raw tag column for an

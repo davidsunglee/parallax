@@ -36,6 +36,24 @@ to expire before the pool does. `parallax-aws` supplies `RdsIamCredentials`;
 its optional `parallax.aws.postgres.rds_postgres` composer returns a configured
 adapter with the credential source and TLS mode required for IAM authentication.
 
+`read_plan_cache_capacity` controls per-root reuse of immutable read plans. It
+must be a nonnegative exact built-in `int`; invalid values raise `ValueError`
+before the adapter runtime opens. The default is `16`, and zero disables reuse
+between deliveries while preserving the normal planning path. A positive value
+bounds a true least-recently-used cache by entry count. Concurrent cold requests
+for the same key share one build and its success or failure; failures are not
+cached, while unrelated keys can build concurrently.
+
+Cache identity includes the exact model edition, cataloged model and dialect,
+authored query structure and ordinary predicate values, result form, and
+concurrency preference. Exact container and scalar types remain distinct.
+Stream continuation coordinates and page limits are execution values rendered
+into a cached template, not cache identity. Plans retain immutable planning and
+conversion data, not runtimes, connections, rows, pages, origins, or results.
+The cache has the `Database` lifetime; closing the root does not promise to clear
+plans while the closed root is still referenced, and eviction or release makes
+otherwise unreferenced plans and retained query values collectible.
+
 `using_principal` reads `subject` once and `database_authorization` once, captures
 their values and the runtime's bound source, and does not retain the Principal.
 An empty, non-string, or `db-login:`-prefixed subject and an

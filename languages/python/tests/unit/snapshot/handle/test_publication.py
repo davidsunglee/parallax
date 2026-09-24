@@ -1,5 +1,4 @@
-"""Prepared Model Selections and the Serving Model (spec §2 *Model preparation
-and the Serving Model*).
+"""Prepared Model Selections and the Serving Model (`execution.md`).
 
 What preparation guarantees is graded as completeness: every product a request
 path reads is derived while ``prepare_model`` runs, so the derivations are made

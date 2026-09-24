@@ -1,6 +1,5 @@
 """Two editions serving one connection's reads, A then B, against real Postgres
-(spec §4 *Every result retains the edition it was read under* and *A standalone
-stream adopts at entry*, §2 *Sources across editions*, m-api-conformance).
+(`spec/queries-and-results.md` and `spec/execution.md`, m-api-conformance).
 
 The Docker-free suites grade adoption and the stamp over fake ports. What only a
 real database shows is that a delivery keeps reading under the selection it

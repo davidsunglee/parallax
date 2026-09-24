@@ -1,4 +1,4 @@
-"""Built-wheel content and public-export health (§8 / §10 `artifact` marker)."""
+"""Built-wheel content and public-export health (§8 / `artifact` marker)."""
 
 from __future__ import annotations
 

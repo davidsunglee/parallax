@@ -1,5 +1,5 @@
 """``Entity.edit(**changes)``, the refused copy doors, and the Change Record it
-stamps (spec §3).
+stamps.
 
 What that record then MEANS to a write — the effective change set, the derived
 row, and the refusals of a value carrying none — is the Entity Row Codec's, and

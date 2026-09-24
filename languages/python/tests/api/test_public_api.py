@@ -1,4 +1,4 @@
-"""Griffe public-API snapshot diff (§10 `api_surface` marker).
+"""Griffe public-API snapshot diff (`api_surface` marker).
 
 Python tooling cannot prove an export unused, so the compensating control is a
 committed snapshot of every production distribution's declared public surface

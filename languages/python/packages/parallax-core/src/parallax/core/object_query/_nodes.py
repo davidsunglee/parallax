@@ -42,7 +42,7 @@ class Latest:
     A canonical Object Query always states it (``asOf: latest``) rather than
     leaving the dimension absent. It is deliberately not a coordinate — it
     re-resolves to whatever milestone is current at read time, so it is never
-    replayable (python.md, the stale-web-edit recipe).
+    replayable.
 
     Sameness is identity: :data:`LATEST` is the one instance, construction
     answers it rather than making a second, and it stays that one instance

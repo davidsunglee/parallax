@@ -112,9 +112,9 @@ member of this set, because it has no axis to hold the milestone
 
 Non-membership grants nothing in the other direction. The complement — `insert`,
 `update`, `delete` — is not a triad every target admits: a temporal target spells
-its removal `terminate` and rejects `delete` (`python.md` "Write verbs and
-temporal spellings"), and `insert` is not on the predicate-selected surface at
-all. What a TEMPORAL target admits is a question this set does not answer."""
+its removal `terminate` and rejects `delete` (`m-unit-work`), and `insert` is
+not on the predicate-selected surface at all. What a TEMPORAL target admits is
+a question this set does not answer."""
 
 _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
@@ -949,7 +949,7 @@ def _prepare_managed_write(
     Those two are the whole of it, and `m-case-format`'s rule that the
     model-aware validator "requires only the temporal coordinates the target
     profile uses" is NOT yet enforced here. A TEMPORAL target's verb goes
-    unmeasured, so a `delete` `python.md` rejects is accepted, and no bound is
+    unmeasured, so a temporal `delete` is accepted, and no bound is
     measured against a profile at all: a `validFrom` on a non-temporal or
     Transaction-Time-Only target passes, and so does a Bitemporal write that
     omits the one it requires.

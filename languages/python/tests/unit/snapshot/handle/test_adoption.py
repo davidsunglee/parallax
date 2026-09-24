@@ -1,4 +1,4 @@
-"""The adoption seam every root execution runs through (spec §3, Docker-free).
+"""The adoption seam every root execution runs through (`execution.md`, Docker-free).
 
 `AdoptedExecution` owns two things: which selection an execution runs under
 from the moment it adopts, and the one `except` clause that turns an ordinary

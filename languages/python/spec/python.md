@@ -17,6 +17,10 @@ the independently checked dependency/artifact topology.
 - [Execution](execution.md): model publication, root/scope composition,
   transaction options, Python failure boundaries, and observation spelling.
 
+Stable diagnostic text may still use the former monolithic section addresses.
+For navigation, §2 moved to the declarations and queries pages, §3 to the
+declarations and execution pages, §4 to queries and results, and §5 to execution.
+
 The [core module index](../../../core/spec/modules.md) routes portable semantics;
 [slices](../../../core/spec/slices.md) owns the canonical claim. Public Python
 signatures and types live in their defining modules. The [API suite](../tests/api/)

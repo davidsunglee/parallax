@@ -1,4 +1,4 @@
-"""Scoped transaction runner unit tests (spec §§3, 5, Docker-free fake ports).
+"""Scoped transaction runner unit tests (`execution.md`, Docker-free fake ports).
 
 The observable behavior of `parallax.snapshot.handle._transaction_runner`,
 driven entirely through the public `ScopedDatabase` surface:
@@ -9,7 +9,7 @@ loop over an injected `m-db-port` — commit and abort wiring, join semantics
 omitted options against the root's `DatabaseOptions` and inspection of the
 resolved record, withheld values on
 abort, escaped transaction references, the retry classification matrix,
-including the spec §5 requirement that a rollback-only commit refusal keeps its
+including the requirement that a rollback-only commit refusal keeps its
 original cause's retriability, and the adoption every attempt makes from the
 Serving Model: which edition a transaction, a join, a retry, and a failure
 report, and what stays on its own type because it happened before adoption.
@@ -720,7 +720,7 @@ def test_the_retired_retries_keyword_is_refused() -> None:
 
 
 def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
-    # Spec §5: an inner deadlock dooms the transaction; even though the outer
+    # An inner deadlock dooms the transaction; even though the outer
     # callback catches it and returns normally, the commit refusal preserves the
     # cause's classification — the retry loop re-executes, and the fresh attempt
     # succeeds.
@@ -848,7 +848,7 @@ def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Adoption (spec §3): every outer attempt adopts the Serving Model's current    #
+# Adoption: every outer attempt adopts the Serving Model's current              #
 # selection before its boundary opens, a join inherits it, a retry adopts       #
 # afresh, and a failure names the edition of the attempt that failed last.      #
 # --------------------------------------------------------------------------- #
@@ -1165,7 +1165,7 @@ def _observe_update_then_force_flush(tx: Transaction) -> None:
 
 
 def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() -> None:
-    # Spec §5's join rule extended to an optimistic-lock conflict (pinned
+    # The join rule extended to an optimistic-lock conflict (pinned
     # semantics #5): a JOINED scope's own conflict, discovered by its OWN
     # forced flush (read-your-own-writes), dooms the ROOT rollback-only; the
     # outer callback catches it and returns normally, but commit is refused —
@@ -1191,7 +1191,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
 
 
 # --------------------------------------------------------------------------- #
-# Root defaults (spec §5): an outer invocation resolves each omitted keyword   #
+# Root defaults: an outer invocation resolves each omitted keyword              #
 # against the root's DatabaseOptions, an explicit keyword overrides it, a join  #
 # inherits the invocation's resolved value, and `tx.options` is that record.    #
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 """The Entity Row Codec: ``full_row`` / ``identity_row`` / ``authored_row``, its
 construction over one accepted Metamodel, and the four closed
-``EntityRowError`` codes (spec §5).
+``EntityRowError`` codes.
 
 Whether an authored value changed anything is not asked here: that is the
 document codec's one rule, pinned at its own interface by

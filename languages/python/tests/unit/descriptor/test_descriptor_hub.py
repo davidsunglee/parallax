@@ -1,4 +1,5 @@
-"""The six public doors of ``parallax.descriptor`` (spec §2 "Canonical descriptor input").
+"""The six public doors of ``parallax.descriptor``
+(`declarations.md` "Descriptor and metadata boundary").
 
 The three ``domain_model_from_*`` doors converge on one sealed fixed-source
 ``DomainModel`` and share a
