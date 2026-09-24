@@ -2,16 +2,6 @@
 # LEADING wildcard, the mirror of m-value-object-058 (m-predicate wildcard rule +
 # any-element, m-sql). Postgres golden only — a non-equality element predicate is outside
 # MariaDB's containment scope (m-dialect, "Scope of the containment golden").
-#
-# nestedEndsWith(Customer.address.phones.number, '9999') binds '%9999'. Ada (1) matches
-# on her SECOND element ({work, 555-9999}) while her first does not, which is the point
-# of any-element: one satisfying element is enough and the predicate never asks which.
-# Linus (2) matches on his only element. Nils (7) carries 555-0000 and is out.
-#
-# Priya (10) is the trap: her non-array OBJECT `phones` carries the number '555-9999'
-# and would match were the array-type guard missing; she collapses to zero elements with
-# the JSON null (8), the scalar (9), the empty array (3), the null column (4), and the
-# missing keys (5, 6).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

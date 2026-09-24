@@ -1,16 +1,3 @@
-"""The error lane: an `error`-shape case's authored single-connection trigger
-run verbatim at the port, and the raised failure's classification reported.
-
-The trigger IS the case's ``then.statements`` — ordered DML whose final
-statement raises — so there is no neutral instruction to translate and no
-Handle to build: the lane executes at the port it is handed, opens no
-Execution Activity, and reports the emissions it issued, the neutral category
-and native code of the classified failure, and a round-trip count that is the
-trigger's own length. A two-session ``when.concurrency`` trigger is refused
-here unconditionally; the case-driven rounds runner grades it. Grading the
-classification against ``then`` is the adapter's.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

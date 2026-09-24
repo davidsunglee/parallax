@@ -1,15 +1,7 @@
-"""The Usage-Guide Snapshot read recipes, against real Postgres.
+"""Snapshot recipes against real Postgres.
 
-Each recipe (`parallax.conformance.snapshot_recipes`) mirrors a spec section
-rather than one corpus case, so it is graded here as a standalone Docker-backed
-proof rather than as a case-keyed `api_suite.EXAMPLES` entry, while the Usage
-Guide renders the same body through the case-free `api_suite.RECIPES` section.
-
-Each test seeds its own rows through the public write surface instead of
-borrowing a case's fixtures, which is what makes the family recipes proofs of
-the ACCEPTED DECLARATIONS end to end: the same `AbstractRoot` /
-`AbstractSubtype` / `ConcreteSubtype` classes decide the tables written and the
-concrete class each row materializes back as.
+Tests seed through public writes so declarations determine both stored tables
+and materialized classes. The guide publishes a selection of these recipes.
 """
 
 from __future__ import annotations

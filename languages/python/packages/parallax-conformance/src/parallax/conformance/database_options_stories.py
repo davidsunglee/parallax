@@ -1,18 +1,3 @@
-"""``parallax.conformance.database_options_stories`` — the executable API-suite
-story for configuring transaction defaults on the Database Root and overriding
-them per call (`m-unit-work`, `m-auto-retry`, `m-db-port`; ADR 0065).
-
-`m-unit-work-041`'s portable oracle states what a joining call is held to when
-the outer call overrode the root, and the boundary runner grades it. What no
-oracle can state is the SPELLING an application reaches that through: one
-:class:`~parallax.snapshot.DatabaseOptions` record handed to ``connect``, a
-sparse keyword on the one call that wants something else, and
-``Transaction.options`` answering the resolved record inside the work — which
-is the story here, executed against real Postgres by
-``tests/api/test_database_options.py`` so the documented spelling cannot drift
-from the executed one.
-"""
-
 from __future__ import annotations
 
 import inspect

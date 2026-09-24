@@ -1,7 +1,4 @@
 # Negative (m-inheritance): a table-per-concrete-subtype root declares a table.
-#
-# A TPCS root is an abstract model position and owns no storage container; each
-# concrete subtype owns its own table. The root-owned table is valid only for TPH.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -1,26 +1,3 @@
-"""The typed Object Query authoring surface (support scope, query half).
-
-``Entity.where(first, *rest)`` builds a side-effect-free :class:`ObjectQuery` —
-the big-AND of its filter criteria, or the explicitly unfiltered ``Entity.all``.
-``.narrow`` / ``.as_of`` / ``.as_of_range`` / ``.history`` / ``.order_by`` /
-``.limit`` / ``.include`` fill the remaining clauses, each returning a new value
-and leaving its receiver unchanged.
-
-An Object Query holds the CANONICAL query value the whole time: a clause method
-rebuilds :class:`~parallax.core.object_query.ObjectQueryNode` with one more
-clause filled, and no clause nests inside another, so clause invocation order
-cannot reach the wire. Permuting otherwise valid calls therefore produces the
-identical canonical query by construction rather than by discipline.
-
-Authoring reaches no model. Every rule stated here is class-local — clause
-arity, single-shot clauses, the target's own declared temporal axes, literal
-shapes — and every rule that needs a whole model is stated once at execution
-preflight, which is also what covers the wire path and any untyped caller. The
-one class-local rule that cannot be settled while clauses are still being added
-is the target's own temporal completeness, which :func:`object_query_node`
-settles when the query is read.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -108,7 +85,7 @@ class ObjectQuery[E, S]:
     _as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
 
     def include(self, *paths: RelationshipPath[E, Any]) -> ObjectQuery[E, S]:
-        """Deep-fetch one or more relationship paths (python.md §2):
+        """Deep-fetch one or more relationship paths:
         ``Order.where(...).include(Order.items, Order.tags)``. One path grammar
         shared with predicates; a longer path implies its intermediates.
         Accumulates across calls (not single-shot) into the canonical include
@@ -126,7 +103,7 @@ class ObjectQuery[E, S]:
         A path seeded through a subtype (``include(Dog.owner, Cat.owner)``)
         carries that class's source guard, so the two are one relationship
         fetched for disjoint sets of queried objects — never two relationships,
-        and never two views (spec §3).
+        and never two views.
         """
         if not paths:
             raise QueryDefinitionError(
@@ -212,7 +189,7 @@ class ObjectQuery[E, S]:
     @overload
     def narrow(self, *subtypes: type[Entity]) -> ObjectQuery[E, S]: ...
     def narrow(self, *subtypes: type[Entity]) -> ObjectQuery[E, Any]:
-        """The whole-result subtype-narrowing clause (python.md §2):
+        """The whole-result subtype-narrowing clause:
         ``Animal.where(...).narrow(Dog, Cat)``. A PURE result-set narrowing that
         fills the query's own ``narrowTo`` clause — single-shot, like each
         temporal dimension. ``Entity.where(Entity.narrow(Dog, where=...))``
@@ -445,7 +422,7 @@ def mutation_selection(query: ObjectQuery[Any, Any]) -> MutationSelection:
     """``query`` as a write selection, or refuse it as not mutation-compatible.
 
     A query becomes a write target only in its mutation-compatible form —
-    carrying nothing but a target and a predicate (`python.md` §5). Every
+    carrying nothing but a target and a predicate. Every
     result-shaping, temporal, narrowing, and Includes clause is refused here,
     before the write boundary builds anything from it, because each shapes a
     RESULT and a set-based write has none to shape.

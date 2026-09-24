@@ -1,5 +1,3 @@
-"""Case-driven grading for every native ``edit`` compatibility case."""
-
 from __future__ import annotations
 
 import json

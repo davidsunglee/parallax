@@ -2,16 +2,6 @@
 # joining call is held to the retry bound the OUTER invocation resolved, and the
 # root's own bound is a conflict where the outer call overrode it —
 # `api-conformance` lane.
-#
-# The root is configured `maxRetries: 2` and the outer call requests
-# `maxRetries: 5`, so the outer invocation reports `retries: 5`. The first join
-# names nothing and inherits; the second names 5 — the outer value — and is
-# accepted; the third names 2, the root's value, and is refused before its
-# callback runs. A bound belongs to the invocation that opened the loop, and a
-# joining call opens none.
-#
-# Two joined invocations, activities 6 and 7, and no third; the refused join
-# leaves no activity, and `roundTrips: 1` is the observing read alone.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, join, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

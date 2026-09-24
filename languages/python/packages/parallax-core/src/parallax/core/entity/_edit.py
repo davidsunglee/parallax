@@ -1,12 +1,3 @@
-"""The derivation sequence both edit surfaces use (spec §3).
-
-``Entity.edit(**changes)`` and ``ValueObject.edit(**changes)`` derive an edited
-copy through :func:`derive`: partition, change-free restatement, assignment
-judgement, validating reconstruction, and state carry happen here in one order.
-Only resolution and surface-specific outcomes differ, so each frontend supplies
-one :class:`Resolution` and wraps the result it receives.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -189,7 +180,7 @@ def unresolved_member_violation(
 
 
 def use_edit(cls_name: str, door: str, *, location: ModelLocation, remedy: str) -> EditError:
-    """The refusal of an inherited copy path (spec §3).
+    """The refusal of an inherited copy path.
 
     It examines no argument and names no member, so it carries no member name and
     locates wherever the refusing class's own violations locate. ``remedy`` is the

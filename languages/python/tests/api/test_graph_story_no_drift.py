@@ -1035,11 +1035,7 @@ def test_the_edited_copy_story_answers_the_source_nodes_unloaded_view() -> None:
 
 
 def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
-    # SUPPLEMENTAL, like the history proof below: `m-identity-map-010` cannot be
-    # a `GRAPH_STORIES` entry (see the story's own docstring), so its body needs
-    # this Docker-free driver exactly like a registered story does. The canned
-    # port's `execute_write` refuses outright, so reaching the raise at all is
-    # also the proof that the verb rejects the value before buffering any DML.
+    # The canned port refuses execute_write, proving rejection precedes DML.
     db = own_root(
         Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
     ).using_database_login()
@@ -1050,10 +1046,5 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
 
 
 def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> None:
-    # SUPPLEMENTAL: `history_of_a_concrete_temporal_node_
-    # distinguishes_milestones` is deliberately NOT a `GRAPH_STORIES` entry (not
-    # counted toward any case's exercised status — see `graph_stories`'s own
-    # module docstring), but its body still needs a Docker-free driver exactly
-    # like every registered story.
     db = own_root(Database.connect(_CannedPort(), MODELS["rate"])).using_database_login()
     graph_stories.history_of_a_concrete_temporal_node_distinguishes_milestones(db)

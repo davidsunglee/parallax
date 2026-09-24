@@ -1,16 +1,3 @@
-"""Model-free canonicalization of an Object Query's set-valued clauses.
-
-Every path into an :class:`~parallax.core.object_query._nodes.ObjectQueryNode`
-goes through :func:`object_query`: the fluent clause methods, ``deserialize``,
-and the class-less neutral constructor. Canonicalization is idempotent, so a
-clause method that rebuilds the node re-canonicalizes harmlessly.
-
-The rules here need no model — Subtype Selection ordering and the Includes
-maximal-set fixed point are decided from the document alone. Everything that
-needs a model (a selection's effective set, a hop's relationship target, a
-declared temporal dimension) is a preflight rule instead.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

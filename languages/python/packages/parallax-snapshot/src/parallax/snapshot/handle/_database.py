@@ -1,5 +1,3 @@
-"""Database-root composition and immutable scoped execution views."""
-
 from __future__ import annotations
 
 import threading
@@ -164,7 +162,11 @@ class _DatabaseResources[Authorization]:
 
 
 class Database[Authorization]:
-    """The resource-owning Database Root and authority-selection surface."""
+    """Owns a runtime; close it explicitly or use it as a context manager.
+
+    Option aliases and execution scopes share that runtime. Closing any root
+    alias closes it for all of them; creating a scope acquires no connection.
+    """
 
     __slots__ = ("_options", "_resources")
 

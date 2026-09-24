@@ -1,17 +1,3 @@
-"""Metamodel records (m-descriptor).
-
-The neutral, frozen ``slots`` dataclasses that make up a parsed model
-descriptor — an in-memory instance of ``core/schemas/metamodel.schema.json``.
-Every record is immutable and shareable; derived facts, such as an entity's
-effective ``temporal`` classification, are computed accessors, never re-authored
-fields. Physical table shape is not among them: these records stay the frontend
-input a model forms from, and ``m-storage-layout`` composes the physical answer.
-Within ``m-descriptor``, they are the substrate for descriptor operations; no
-other behavioural scope reads them directly. The raw-descriptor family walk
-answers structural family questions here — through :func:`declaring_entity` and
-:func:`family_root_name` — for a document that has not formed, or never will.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

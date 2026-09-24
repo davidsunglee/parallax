@@ -1,13 +1,4 @@
 # Scalar type round trip on MariaDB — the dialect-divergent type mappings (m-dialect).
-#
-# m-core-001 proves the less-common m-core scalars on Postgres only, because byte / time /
-# uuid driver return types differ by dialect. This is the MariaDB witness for the
-# same five scalars, exercising the divergent MariaDB column types from the m-dialect
-# seam: float32 -> float, float64 -> double, bytes -> longblob, time -> time,
-# uuid -> char(36). The byte payload is rendered to hex text in SQL (like
-# Postgres' `encode`, but MariaDB's `hex(...)` takes no argument); the provider
-# reads MariaDB's TIME (a driver timedelta) and CHAR(36) uuid back as stable
-# text, so the expected row matches the Postgres witness value-for-value.
 model: models/scalars.yaml
 tags: [m-core, m-descriptor, m-sql, m-dialect, scalar, mariadb]
 shape: read

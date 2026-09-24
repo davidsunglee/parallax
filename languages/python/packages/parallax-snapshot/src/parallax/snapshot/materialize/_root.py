@@ -1,61 +1,3 @@
-"""One root's view over page-owned occurrences and shared Entity State.
-
-The Root View is the internal read-only INDEXED interface all three consumers read
-directly. Nothing is composed per node: :meth:`RootView.layout`,
-:meth:`RootView.member_values`, :meth:`RootView.issues`, and
-:meth:`RootView.view_layout` each hand back a reference to something the view
-or its Page already holds, and :meth:`RootView.view` reads one slot of
-a row built once. The whole-view answers are frozen where the walk ends for the
-same reason: :attr:`RootView.order`, :attr:`RootView.roots`, and
-:attr:`RootView.invalid_roots` are tuples the view retains rather than tuples
-it builds per read. That is deliberate rather than incidental: the three consumers
-read genuinely different subsets — the typed materializer never reads issues,
-wire never reads issues, classification never reads member values — so any
-composed per-node record would over-produce for every one of them.
-
-What it retains is the logical-node-to-allocation mapping, the projection-to-
-allocation mapping, the allocation order, the canonical occurrence per logical
-node, one fixed view row per logical node aligned to that node's unioned view
-layout, that layout itself by reference to the schema that owns it, and the
-Page-owned Entity State. It clones no member payload: every Root View borrows
-the judged state.
-
-**Every one of those is sized by what the Root View REACHES, never by the Page's own
-projection array, and that is a bound rather than an economy.** A view narrowed
-to one root borrows the arrays of the whole Page — narrowing them would cost the
-copy the view exists to avoid — so a Root View over one root of a
-page is handed a projection index space as wide as the page. Anything here
-allocated against that width would carry the page into a per-root cost, which is
-exactly what `m-snapshot-read` gives to the page's own layer and to no other. The
-projection-to-allocation mapping is therefore keyed rather than indexed, and a
-projection nothing reached has no entry.
-
-Two passes over one order. Pass 1 walks roots in first-encounter preorder,
-assigning each logical node its zero-based allocation index and recording the
-first projection to carry each view. Pass 2 is the caller's own
-allocate/populate loop over the same order.
-
-The preorder is fixed: roots in result order; each projection's relationship
-views in accepted metadata declaration order; the broad view before that
-relationship's narrowed views; narrowed views by their canonical derived key;
-children in to-many result order. Nothing here sorts or unions to achieve it —
-the execution's view schema fixed both a projection's slot order and its Root
-View node's before any row was converted. A walk carries each written slot
-across through a precomputed translation and reads the Root View layout off the
-schema.
-
-A repeated logical node reuses its first index, and every projection is walked
-exactly once, so a projection reached late still contributes its own children at
-its own position.
-
-Before payload judgment, every occurrence claiming one logical key compares its
-exact Payload Witness in canonical witness order. Unequal witnesses refuse the
-Snapshot with ``snapshot-projection-conflict``; equal witnesses decode once into
-one Page-owned Entity State reused by every Root View. Relationship views are
-unioned — a view any projection loaded is loaded on the resolved node — with the
-first projection to carry a given view key deciding that view's value.
-"""
-
 from __future__ import annotations
 
 from array import array
@@ -295,23 +237,16 @@ class RootView:
             self._complete_invalid()
             self._rows = None
 
-    # ----------------------------------------------------------------------- #
-    # The whole-Root-View surface.                                                  #
-    # ----------------------------------------------------------------------- #
-
     @property
     def order(self) -> tuple[EntityIdentity, ...]:
-        """Each allocation index's own concrete Entity, in allocation order."""
         return self._order
 
     @property
     def roots(self) -> tuple[int | None, ...]:
-        """Constructible allocation indices and invalid-root holes, in result order."""
         return self._roots
 
     @property
     def invalid_roots(self) -> tuple[InvalidRootInput, ...]:
-        """Non-hydrating roots in result order."""
         return self._invalid_roots
 
     @property
@@ -321,7 +256,6 @@ class RootView:
 
     @property
     def pin(self) -> Pin:
-        """The Page pin every occurrence in this Root View was read at."""
         return self._pin
 
     def by_allocation[T](self, by_projection: Mapping[int, T]) -> Mapping[int, T]:
@@ -436,10 +370,6 @@ class RootView:
             )
             self._pending_invalid = ()
 
-    # ----------------------------------------------------------------------- #
-    # The per-node indexed reads.                                               #
-    # ----------------------------------------------------------------------- #
-
     def layout(self, node: int) -> EntityLayout:
         """The member layout ``node``'s state is read against — the canonical
         occurrence's own, and therefore its resolved concrete Entity's."""
@@ -468,10 +398,6 @@ class RootView:
         than two equal translations of it.
         """
         return self._view_rows[node][slot]
-
-    # ----------------------------------------------------------------------- #
-    # Pass 1.                                                                   #
-    # ----------------------------------------------------------------------- #
 
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder from the roots through every reached logical
@@ -624,10 +550,6 @@ class RootView:
             members=differing,
             occurrences=cast("tuple[tuple[int, int], tuple[int, int]]", positions),
         )
-
-    # ----------------------------------------------------------------------- #
-    # Pass 1's epilogue: a walked projection's edges as allocation indices.     #
-    # ----------------------------------------------------------------------- #
 
     def _allocation(self, value: object) -> object:
         """One view value's projection references as allocation indices."""

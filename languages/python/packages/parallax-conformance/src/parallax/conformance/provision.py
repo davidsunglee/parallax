@@ -1,17 +1,3 @@
-"""Self-managed provisioning (spec §6, m-conformance-adapter ``self-managed``).
-
-The simple reset path — the only path in v1: one session-scoped
-Testcontainers Postgres pinned to :data:`~parallax.conformance.constants.POSTGRES_IMAGE`,
-and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → the shipped
-generator's Schema Delta for the evolution from ABSENT (``applyDdl``) → fixture
-rows in Entity Layout order (``loadFixtures``).
-
-Statement generation is pure and unit-tested without Docker — the DDL by
-`m-schema-delta`'s own suite, the fixtures by ``fixture_statements``' — while the
-container lifecycle and driver execution live behind :class:`Provisioner`, proven
-by the Docker provider / conformance lanes.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -290,7 +276,7 @@ def fixture_statements(
     resolves every ancestry-inherited member by name exactly as a standalone
     Entity's does. Columns and binds follow that order rather than the fixture
     mapping's key order, so re-spelling a row with permuted keys emits
-    byte-identical SQL (python.md §6 ``loadFixtures``). A physical column with no
+    byte-identical SQL (the Python binding ``loadFixtures``). A physical column with no
     member in the row is skipped, so only authored members bind; a
     table-per-hierarchy concrete's discriminator always binds its own derived
     ``tagValue``.

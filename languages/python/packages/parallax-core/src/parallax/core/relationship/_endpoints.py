@@ -1,13 +1,3 @@
-"""Candidate-position Attribute lookup and the join-endpoint projection.
-
-Rule Sets run in unspecified order over one Candidate Metamodel, so a Rule Set
-that needs relationship facts cannot consume the Relationship Facet. This module
-owns the bounded fact those Rule Sets need — which Attributes an accepted
-Relationship Join designates — and the position lookup both it and this module's
-own Rule Set resolve endpoints through, so the projection and the rejections it
-sidesteps can never disagree about what "resolves locally" means.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

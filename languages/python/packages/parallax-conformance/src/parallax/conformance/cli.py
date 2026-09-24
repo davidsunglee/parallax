@@ -1,13 +1,3 @@
-"""``parallax.conformance.cli`` enforcement scope (m-conformance-adapter).
-
-The ``parallax-conformance`` console script: argv → the in-process adapter core
-→ exactly one JSON envelope on stdout, plus the contract's exit codes
-(0 ok / 10 unsupported / 11 compile-run-only / 1 error / 2 CLI usage error).
-Human-readable logs, if any, go to stderr; stdout is always a single schema-valid
-envelope. The ``run`` command self-provisions (spec §6 ``self-managed``): a fresh
-container per claimed case, reset from the case's descriptor and fixtures.
-"""
-
 from __future__ import annotations
 
 import argparse

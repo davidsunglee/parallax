@@ -1,11 +1,3 @@
-"""Shared preparation and validation of authored managed documents.
-
-The traversal in this module is the one interpreter of authored document
-structure. Callers supply leaf conversion and source access; the codec owns
-occurrence recursion, required nested members, ``many`` normalization, immutable
-output, and sparse structural findings.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence

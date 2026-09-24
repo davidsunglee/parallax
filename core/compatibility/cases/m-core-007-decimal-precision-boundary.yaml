@@ -1,12 +1,5 @@
 # Decimal precision/scale WRITE boundary (m-core): a decimal(18,4) value round-trips
 # all four fractional digits exactly.
-#
-# Every asserted decimal write in the corpus uses the money type decimal(18,2). This
-# witnesses a different scale: writing 9999.9999 into a decimal(18,4) column and
-# reading it back UNCHANGED proves the write boundary preserves scale-4 precision
-# (decimal(18,2) would truncate the value to 10000.00). The value is compared in
-# exact decimal space (never binary float), so all four fractional digits must
-# survive the bind + read round-trip.
 model: models/writable-scalars.yaml
 tags: [m-core, m-sql, scalar, decimal, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

@@ -1,18 +1,3 @@
-"""The member authoring vocabulary and the installed class/instance descriptors.
-
-``Attr[T]`` and ``Rel[T]`` are the only two member annotations; the assignment
-slot optionally holds one ``attr(...)`` or exactly one ``rel(...)`` value.
-``index(...)``, ``asc(...)``, and ``desc(...)`` complete the surface. Each
-factory rejects an intrinsically invalid argument at the call itself, so a
-malformed option never reaches class creation.
-
-The same two names double as the installed descriptors: class access yields a
-query-authoring seed — ``Attr`` an attribute expression a predicate is built
-from, ``Rel`` a relationship path an Include Path or a relationship quantifier is
-built from — and instance access yields the member value. This is the only module
-in the Entity cluster whose runtime behavior touches owner classes.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence as _Sequence

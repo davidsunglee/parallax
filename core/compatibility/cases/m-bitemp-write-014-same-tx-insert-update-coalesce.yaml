@@ -6,17 +6,6 @@
 # handling; the coalescing rule is m-unit-work). Contrast m-bitemp-write-006, whose
 # plain update spans a prior COMMITTED rectangle and therefore inactivates + chains
 # head/tail.
-#
-# Against the loaded Position fixtures, step 0 buffers a plain INSERT of NEW position 9
-# (value 100, valid [2024-01-01, infinity)) then an UPDATE to 150, flushing as ONE
-# fully-Latest rectangle INSERT (thru_z = out_z = infinity) at the FINAL value 150 —
-# no inactivation UPDATE, no head/tail split. Step 1's bitemporal Latest find on BOTH
-# dimensions (an optimistic-mode object find, so it omits the shared read lock) observes that one rectangle. In the
-# write input `validFrom` is the canonical Valid-Time lower bound (from_z), which
-# every plain bitemporal write states and the coalescing then consumes from the
-# surviving insert alone; a plain write omits `until` (the window runs to
-# infinity), and `at` is the Clock-supplied Transaction-Time instant (in_z),
-# never an instruction field.
 model: models/position.yaml
 tags: [m-bitemp-write, m-unit-work, m-temporal-read, bitemporal, same-transaction-coalescing, scenario, slice-snapshot-1]
 shape: scenario

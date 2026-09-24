@@ -1,20 +1,3 @@
-"""Transaction control for the conformance run lanes.
-
-Every write-, read-, or conflict-executing lane drives a boundary through the
-shipped ``db.transact`` entry point or straight against a port, and grades what
-the callback, the write, the boundary, or the read raised rather than the
-contextualized form the handle wraps it in. This module owns that translation,
-and the one outcome a caller cannot ask a real database for: a `rollback: true`
-step, whose boundary ALWAYS aborts after the unit of work inside it has done
-its own work.
-
-A `rollback: true` step's transaction ends by raising a private sentinel, and
-:func:`absorbing_rollback` is the only correct way to end that step. The
-sentinel and the aborting decorator never leave this module: a lane installs
-the decorator through :func:`write_connection` or :func:`write_adapter`,
-runs the step, and absorbs the abort around whatever else it entered.
-"""
-
 from __future__ import annotations
 
 import contextlib

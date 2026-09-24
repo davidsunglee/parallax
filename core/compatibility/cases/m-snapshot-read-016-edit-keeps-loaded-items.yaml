@@ -7,48 +7,6 @@
 # m-snapshot-read-015 holds the copy's half, accessing the COPY rather than the
 # read — which is why it is an api-conformance-lane case, graded by each language's
 # Suite, where a copy exists as an object at all.
-#
-# Step 0 materializes order 1 WITH its `items` — the ordinary 1 + L deep fetch, one
-# statement per level, two round trips. Step 1 derives an edited copy, assigning
-# `name` in memory: no DML at all, exactly as m-snapshot-read-010 pins. Step 2
-# accesses `items` on the view step 0 materialized, now that an edit has intervened,
-# and states its WHOLE contents through `expectGraph` — both OrderItem rows, every
-# declared member, unchanged. A relationship collection compares as a multiset, so
-# what the statement pins is the elements and their multiplicity, never their order.
-#
-# Three implementations fail here. One that RE-QUERIES on access costs a round trip
-# that this step's `roundTrips: 0` and the case's `then.roundTrips: 2` both refuse,
-# however right the rows it answers back — the closed-world half. One whose access
-# answers other contents — an element dropped, a leaf disturbed — fails the graph
-# comparison, the survival half. And one whose edit reaches back into the node it
-# derives FROM, taking that node's views with it as it builds the copy, fails the
-# same comparison: that is what makes the intervening edit load-bearing here rather
-# than decorative, and it is graded wherever the edit happens in memory — an
-# executor that models a `mutate` as its authored golden DML alone holds no node to
-# disturb. The distinction is against a read-back, which no arrangement of these
-# steps could substitute for: a fresh find after the edit re-queries the database
-# and grades a NEW materialization, so it would pass on an implementation that
-# discarded every view. Only an access on the node the scenario already materialized
-# tells a surviving view from a re-derived one, which is why this case reaches for
-# `expectGraph`'s ACCESS placement. The observable's READ placement would be admitted
-# here too — step 0 carries `includes`, and would state its graph in place of the
-# `expectRows` it states now — but what a read step's `expectGraph` states is the graph
-# THAT read materialized, so it grades a materialization and never a survival
-# (m-case-format *Relationship contents at a step*).
-#
-# Two things no observable here states. The CONTENTS OF THE COPY'S OWN VIEW: the
-# access names step 0, because `on` names the step whose Include Paths materialized
-# the view whose contents are stated, and a copy carries a view it never fetched. An
-# implementation that published a copy rebuilt from its declared members alone —
-# `items` gone from the copy, intact on the source — passes. That half is the
-# reference-identity assertion each language's API Conformance Suite runs
-# (m-api-conformance), which grades the copy's own `items` as the SAME objects the
-# read produced. And DERIVING rather than rewriting: one whose `mutate` assigns into
-# the node it names and republishes that same node passes too, because the only
-# assignment here is `name` and nothing states `name` after step 0 read it.
-# `sameObjectAs: 0` rides along for consistency with the other zero-round-trip
-# accesses (m-op-list-002); on the wire lane it is primary-key equality against this
-# step's own reused source rows.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-edit, m-deep-fetch, closed-world, relationship, mutation, scenario, slice-snapshot-1]
 shape: scenario

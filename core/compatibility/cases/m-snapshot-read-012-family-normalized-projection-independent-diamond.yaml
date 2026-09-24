@@ -1,19 +1,6 @@
 # Family-normalized, projection-independent diamond (m-snapshot-read): a root-typed
 # and a leaf-typed include path reaching ONE inheritance row share a node; the
 # differing fetched projections do not fork identity.
-#
-# Person 10 (Alice) owns Rex (Dog) and Whiskers (Cat) in the table-per-hierarchy
-# `animal` family. The snapshot includes two paths that both reach Rex:
-#   - `animals`      -> the abstract ROOT Animal (whole table, no tag): Rex + Whiskers,
-#                       full concrete superset + tag column, familyVariant materialized.
-#   - `pets[Dog]`    -> the concrete LEAF Dog (narrowed, `t0.kind = ?`): Rex only, the
-#                       Dog superset, no familyVariant.
-# Rex is reached by BOTH paths with DIFFERENT fetched projections (the root view
-# carries indoor/tusk_length/familyVariant, the leaf view does not), yet it is ONE
-# normalized node keyed by (family, primary key, coordinate) — projection-independent.
-# The wire proves the shared row (same primary key in both views); reference identity
-# is deferred to the API Conformance Suite, exactly like the plain diamond
-# (m-snapshot-read-001). 1 (root) + 2 (one per view) = 3 round trips.
 model: models/animal.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
 shape: read

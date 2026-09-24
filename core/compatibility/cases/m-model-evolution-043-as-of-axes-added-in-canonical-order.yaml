@@ -1,11 +1,5 @@
 # Adding BOTH As-Of Axes at once (m-model-evolution): Valid Time precedes
 # Transaction Time in canonical order.
-#
-# One Temporality Profile derives two axes, so one evolution carries two
-# independent axis additions at one Entity, ordered by the dimension rank rather
-# than by anything the descriptor spells. Their four endpoint Attributes sort
-# ahead of both, because within one Entity every Attribute precedes every As-Of
-# Axis.
 tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
 shape: evolution
 when:

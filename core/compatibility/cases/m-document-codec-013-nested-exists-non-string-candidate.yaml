@@ -1,27 +1,6 @@
 # The containment candidate carries each constrained leaf's DOCUMENT ENCODING, which
 # is neither of the two comparison forms (m-document-codec `encodeCandidate`, m-sql
 # to-many, m-dialect containment scope), on Postgres AND MariaDB.
-#
-# A same-element `where` requires ONE element to satisfy the whole compound. Postgres
-# puts every element predicate on the same unnested alias, so each leaf compares
-# exactly as it would at the top level — cast for `boolean` and `decimal`, text for
-# `date`. MariaDB expresses it as `json_contains` against a candidate OBJECT, and
-# containment compares JSON VALUES type-strictly, so neither comparison form is what
-# it binds: the boolean's cast form is MariaDB's `1` and `{"active": 1}` matches no
-# element storing a JSON boolean, while the decimal's managed value is a JSON number
-# and `{"price": 19.99}` matches no element storing the digit string `"19.99"`. Every
-# one of those misses is SILENT — the statement plans, executes, and answers empty.
-#
-# This is the corpus's first NON-STRING candidate, and it is what makes that concrete:
-# the candidate constrains a `string`, a `boolean`, a `decimal`, and a `date` at once,
-# so a candidate assembled from anything but the encoding table fails here. The
-# candidate crosses the bind seam as the DOCUMENT the codec returns — the provider
-# serializes it (m-case-format), so no golden holds its rendered text.
-#
-# Ada's first element and Bo's only element agree on `kind`, `price`, and `issued` and
-# differ only on `active`, so the answer is Ada alone; Ada's second element carries
-# `work`/`false`, so no cross-element pairing satisfies the compound either. The
-# empty-array row (3), the null-occurrence rows (4/5) contribute no element.
 model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,38 +1,3 @@
-"""``parallax.conformance.another_source`` — a second framework-managed source.
-
-`m-unit-work` *Write value provenance* defines a framework-managed source as one
-managed value lifecycle: the machinery that materializes values from reads and
-attaches to each the state by which it later recognizes its own. The Snapshot
-runtime is exactly one such lifecycle (ADR 0010), so no read it performs answers
-a value some OTHER source produced — which is the provenance a case states as
-`anotherSource` (`m-case-format` *Keyed write action steps*).
-
-This module is the second source, supplied by the adapter rather than shipped:
-:class:`AnotherSource` runs its own query through the shared find executor and
-then materializes each Page root ITSELF through the shared Root View seam,
-its own Entity Graph Construction drive, and per-node state, which the Snapshot
-never attached and therefore never claims.
-It is constructed over a prepared Model Selection and reads that selection's
-read projection, so the cataloged model it resolves against and the Entity Graph
-Construction it drives are the products preparation derived whole, exactly as
-the source under test holds them.
-:meth:`AnotherSource.produced` is the definition's other half: a source
-recognizes its own. So a value arranged here is a value a managed read of a
-second source produced, which is the antecedent the ForeignLifecycle rule states
-rather than a stand-in for it.
-
-It shares its Database Port with the source under test deliberately. A
-connection is not a source, and any number of them over one lifecycle are one
-source (`m-unit-work`); what separates two sources is which one materialized the
-value and whose state it carries, so a second connection would witness nothing a
-shared one does not.
-
-Materialization covers root-only Pages — attributes and Value Objects, no
-relationship views — which is the whole of what the write-value corpus reads. A
-deep fetch is refused at the query, before any I/O, rather than read and then
-materialized without the levels it asked for.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator

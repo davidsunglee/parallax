@@ -1,17 +1,6 @@
 # Scalar WRITE round-trip for the less-common m-core scalar mappings — float32,
 # float64, bytes, time, uuid — on Postgres AND MariaDB (the dialect IS the
 # assertion, m-core / m-dialect).
-#
-# m-core-001/-004 prove these five scalars on the READ side only (scalars.yaml is
-# read-only). This is the first asserted WRITE round-trip for them: insert one row
-# binding each type, then read the table back and assert the value survived the
-# encode-at-bind / decode-at-read boundary. The INSERT DML is identical on both
-# dialects (a plain column bind); only the physical column type diverges (float32 ->
-# real / float, bytes -> bytea / longblob, uuid -> uuid / char(36)), so the single
-# authored `then.tableState` holds on each. The write-sequence oracle reads the row
-# back with the harness's stable decoders — bytes as lowercase hex text, time / uuid
-# as text — so `payload` compares as `"01020304"` on both dialects. `amount` and
-# `label` are unset, so they read back null.
 model: models/writable-scalars.yaml
 tags: [m-core, m-sql, m-dialect, scalar, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

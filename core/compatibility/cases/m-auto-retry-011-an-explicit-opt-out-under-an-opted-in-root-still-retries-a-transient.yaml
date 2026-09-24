@@ -2,16 +2,6 @@
 # requesting `retryOptimisticConflicts: false` under a Database Root that opted
 # in disables the opt-in and nothing else — an injected transient is still
 # retried away — `api-conformance` lane.
-#
-# The root is configured `retryOptimisticConflicts: true`, and the invocation
-# overrides it with `false`; `m-opt-lock-025` shows that override surfacing a
-# conflict after one attempt. Here the fault is a `deadlock`, which is retriable
-# by default whatever the opt-in says, so the closure re-executes and commits.
-# The opt-in widens the retriable set and never narrows it: turning it off, at
-# the root or at the call, leaves the transient exactly as retriable as it was.
-#
-# `roundTrips: 4` is the retried pair's cost — each attempt's observing read plus
-# its write, the failed one included.
 model: models/account.yaml
 tags: [m-auto-retry, m-opt-lock, m-api-conformance, transient, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

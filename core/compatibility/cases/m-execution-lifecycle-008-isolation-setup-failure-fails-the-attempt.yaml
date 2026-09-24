@@ -2,51 +2,6 @@
 # opens NO boundary — the attempt that had already adopted its Model Edition
 # finishes `beginFailed`, the callback never runs, and the failure is terminal —
 # `api-conformance` lane.
-#
-# The body asks for `serializable` and the session setup that would open the
-# boundary at it fails. An adapter that cannot open a boundary at the requested
-# level reports a boundary failure rather than opening one at a different level,
-# because a request silently downgraded is indistinguishable from one honored.
-#
-# The stream states four things at once, and it is the only place all four are
-# visible together. The outer invocation carries `isolation: serializable` — the
-# level was REQUESTED, whatever became of it. A `transactionAttemptStarted`
-# follows it carrying `edition: account`: an attempt adopts the Serving Model's
-# current selection and starts BEFORE the boundary is asked to begin, so a
-# boundary that never opened is an attempt that ran and finished rather than no
-# attempt at all. That attempt finishes `beginFailed` with `attribution: direct`,
-# naming no cause: it HAS children — it acquired a connection and gave it back —
-# but neither of them reported this failure, because the connection was granted
-# and the setup that failed is boundary mechanics the attempt owns itself. And
-# the invocation finishes `failed` with `attribution: caused`, naming the
-# attempt, under the ordinary chaining rule: the attempt reported its failure up
-# under its own Activity ID, so the invocation names it rather than claiming the
-# failure as its own. A `beginFailed` attempt is a different fact from an
-# attempt that ran and was undone: it carries no phase, because nothing inside
-# it ran, and no classifier verdict, because it is terminal by rule.
-#
-# The Acquisition/Release pair is what separates this case from its sibling
-# m-execution-lifecycle-009, where the acquisition itself grants nothing: there
-# the attempt's `beginFailed` is `caused` by the Acquisition and no Release
-# follows. Here the connection was real, so it goes back — a boundary that never
-# opened still borrowed something, and the release is what returns it.
-#
-# `roundTrips: 0` is the same fact counted. Setting the level is boundary
-# mechanics like begin, commit, and rollback and constructs no Database Call, so
-# nothing this invocation did reached the database as a counted round trip — and a
-# callback that never ran issued nothing either.
-#
-# The error the setup fails with carries NO `m-db-error` category: a request the
-# engine would not honor is not a contention, so nothing above the port may read
-# it as retriable. The stream shows the bound going unspent on it — `retries`
-# stands at its default of 10, and one attempt beneath the invocation is the
-# whole of it. Whether a begin failure carrying a retriable category would be
-# terminal too is `m-execution-lifecycle`'s own rule; no observable here
-# distinguishes it, because this failure carries no category to be judged by.
-#
-# `lane: api-conformance`: a failed session setup is injected at the database-port
-# seam and observed as a boundary that never opened — neither an authored statement
-# nor a single-connection harness reaches it.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, isolation, slice-snapshot-1]
 lane: api-conformance

@@ -1,71 +1,9 @@
-"""The backing beneath a published value, and every question that reads it.
+"""Published rows store the presence bitmap at tuple index 0.
 
-A published Entity or Value Object holds its declared members in one immutable
-tuple on a dedicated slot instead of in Pydantic's instance dictionary. That is a
-second backing, and without one Module owning it the compact-versus-ordinary
-branch would appear at every descriptor, at edit, at row derivation, at pickle,
-and inside Pydantic's own equality, repr, iteration, and compiled serializer. So
-the representation lives here alone: the per-class publication plan, the slot,
-the tuple and its presence bitmap, both Adapters, and the framework root that
-answers Pydantic for a value's instance state. Delete this Module and the layout
-reappears at each of those sites.
-
-**Pydantic reads instance state by name, never through the struct pointer.** Its
-compiled serializer reaches ``__dict__``, ``__pydantic_fields_set__``, and
-``__pydantic_extra__`` as interned attribute names, and so does its validator. So
-a data descriptor bound under those names on a shared framework root decides what
-Pydantic sees, and a published value can present its row as the instance
-dictionary Pydantic believes it is reading — without the row ever becoming one.
-Everything Pydantic implements over that dictionary is then correct again by
-construction rather than by restatement: equality, hashing, repr, the compiled
-serializer, and every documented serialization option, including the ones no
-reimplementation of the model schema can reach.
-
-**What the seam costs is part of what it offers.** A published value retains
-materially less than an ordinary one — one tuple and two pointers against a
-dictionary and a name-keyed set, with `spec/python.md` §2 stating the contract
-and `docs/instance-state-baseline.md` recording what it measures to — and pays
-for that every time
-Pydantic reads its state. The compiled serializer reaches ``__dict__`` twice per
-instance per dump and each read builds a mapping, so serializing a published
-value runs about twice an ordinary one and about three times a plain
-``BaseModel`` of the same fields, and equality comparably. Ordinary values pay
-none of it: their reads reach Pydantic's own slot descriptor and answer with the
-storage itself, and an ordinary attribute read is a plain model's. That is a
-settled trade rather than an unfinished one — :class:`_DeclaredState` states why
-the cache that would flatten it is forbidden.
-
-Only three questions vary by backing — what a declared member holds, whether the
-read carried it (:func:`is_present`), and what a relationship position holds
-(:func:`relationship`). Everything else needs declared values and, at most,
-presence, so it is written once over both.
-
-Which way a question is asked is part of that. A caller reading one member's
-presence asks :func:`is_present`, which tests one bit and allocates nothing; the
-populated-member set a published value has no room for is synthesized only where
-a caller asks the value itself for it, and by :func:`carry_presence`, whose
-product is ordinary backing and has nowhere else to keep presence. Deriving a
-copy is likewise the backing's own question, because the answer is always the
-same one (:func:`restated`): a copy built out of semantic state is ordinary,
-whichever backing it came from.
-
-The scope is sealed and granted two siblings: the sentinels a construction input
-spells, and the seam that reaches a value's real storage past every name a class
-body can bind. It therefore reaches neither the declaration engine that builds a
-class nor the writer that publishes one, which is what forces a publication plan
-to arrive as plain data its owner computed. What it does read of a class is the
-class's own Pydantic facts — collected fields, their defaults, their order —
-because those are what a plan has to agree with.
-
-Two index spaces run through everything below and must not be conflated::
-
-    bit index      i                     presence, one bit per declared field
-    tuple index    i + 1                 that field's position; the bitmap is 0
-    tuple index    1 + members + j       relationship j, which carries no bit
-
-A descriptor is handed the absolute tuple index and nothing else, so it knows how
-to address the backing and nothing about how it is laid out.
-"""
+Declared field i uses bit i and tuple index i + 1; relationship j uses tuple
+index 1 + member_count + j and has no presence bit. Pydantic reads state by
+attribute name, so the presentation descriptors must preserve its normal
+serialization and equality behavior without retaining synthesized dictionaries."""
 
 from __future__ import annotations
 
@@ -293,9 +231,7 @@ def _declares_auxiliary_state(cls: type) -> bool:
     )
 
 
-# --------------------------------------------------------------------------- #
 # The instance state Pydantic reads, and the root that answers for it
-# --------------------------------------------------------------------------- #
 
 
 class _PresentedState(dict[str, Any]):
@@ -610,9 +546,7 @@ presence reaches the same answer Pydantic does without resolving the name throug
 a class that may answer for it."""
 
 
-# --------------------------------------------------------------------------- #
 # The two Adapters, and the three questions that vary
-# --------------------------------------------------------------------------- #
 
 
 def _compact(value: BaseModel) -> tuple[object, ...] | None:
@@ -781,9 +715,7 @@ def is_present(value: BaseModel, bit: int) -> bool:
     return bool(cast("int", row[0]) >> bit & 1)
 
 
-# --------------------------------------------------------------------------- #
 # One implementation over both
-# --------------------------------------------------------------------------- #
 
 
 def allocate(cls: type[Any]) -> Any:

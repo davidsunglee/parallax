@@ -1,17 +1,3 @@
-"""The Inheritance Facet's Model Compiler (m-inheritance).
-
-Compilation runs only after the Rule Set accepted the candidate, so it decides
-no validity and emits no issue: every family is a closed tree under exactly one
-abstract root, and the compiler walks each Entity's ancestry once, names the
-concrete leaves it resolves to, and reads the physical facts the root's strategy
-fixes. Reaching a state validation ruled out raises, so the formation runner
-reports a compiler contract failure rather than publishing a facet.
-
-Standalone Entities are compiled too: a behavioral consumer asks the facet about
-any Entity, and answering "this one is its own family" is cheaper than making
-every caller branch on participation first.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

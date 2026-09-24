@@ -1,44 +1,3 @@
-"""The Entity Row Codec — one model-bound authoring codec (spec §5).
-
-Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
-``parallax.core``: it is the seam a write path derives rows through, not
-developer surface.
-
-Three operations answer one question each — every member the caller populated,
-the identity, and every member an edit chain named beside the original it first
-recorded — and a consumer asking for one learns nothing about Pydantic, the
-private Change Record slot, physical column names, temporal planning, or Audit
-Provenance. It is an **authoring** codec: it
-emits only what a caller authored, never computes or stamps a framework-owned
-value, and is never an Audit Provenance extension point. Its dependencies are the
-accepted Metamodel's member layouts, the value's own class, and — for the private
-slot alone — the value's own instance storage, and nothing else.
-
-Weighing effectiveness is no operation's rule here.
-:meth:`EntityRowCodec.authored_row` answers both sides of the comparison and
-judges neither, and the write ingress decides which of them changed anything
-through ``parallax.core.document_codec.classify_effective_change``, the one
-definition of an effective change.
-
-Input validation **resolves; it does not own.** The codec resolves the Entity
-Identity the value's class declares and refuses at resolution only when its model
-declares no such Entity, so a value from another model whose identity this model
-also declares reaches the member rule rather than a resolution refusal: the row
-is a function of the resolved identity's declared members alone. The Entity
-Identity/Entity Class index is never consulted, which is also why a model
-composing no class at all reaches a fully functional codec.
-
-**The candidate set is the model's; the selection is the operation's.** The
-model's family-effective metadata supplies the candidates, their canonical keys,
-and their order; each operation then selects from those candidates by its own
-rule, and :data:`ENTITY_ROW_MEMBER_MISSING` reaches an operation's own selection
-and nothing else. It names one harm from either side of that pairing: the
-resolved identity declares no such member, so no canonical key names it, or the
-value's class carries no attribute for one it does declare. Both leave the
-operation unable to emit a member its selection claims, and a row is never
-emitted short of one.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -239,8 +198,6 @@ class EntityRowCodec:
         self._require_declared(facts, touched, operation)
         self._require_supplied(facts, names, facts.primary_key, operation)
         return touched, self._require_supplied(facts, names, touched, operation)
-
-    # --- resolution and the shared emission ------------------------------- #
 
     def _resolved(self, value: object) -> tuple[_RowFacts, WireNames]:
         """``value``'s row facts and its class's own name correspondences."""

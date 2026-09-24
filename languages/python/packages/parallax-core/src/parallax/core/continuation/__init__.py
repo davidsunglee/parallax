@@ -1,34 +1,3 @@
-"""``parallax.core.continuation`` — the page node a streamed read advances by.
-
-Pure, and shaped like its neighbour :mod:`parallax.core.deep_fetch`: an Entity,
-a canonical Object Query, and a model in; a plan out; no I/O anywhere. It lives
-beside deep fetch rather than inside a handle because the page statement is the
-same cross-language contract the ``1 + L`` shape is — every target must lower
-the same SQL for the same page — so the keyset algebra is stated once here
-rather than re-derived per implementation.
-
-The plan answers two nodes. :meth:`ContinuationPlan.first` is the first page:
-the caller's own query under the Continuation Order, capped at the page size.
-:meth:`ContinuationPlan.after` is every later page: the same node carrying the
-seek that skips everything already delivered.
-
-That seek is a VALUE rather than predicate nodes. Continuation owns which terms
-are in the order and in what precedence; what "strictly after" expands into
-cannot be settled here, because it depends on where the dialect placed a NULL in
-the clause m-sql emitted. So this module hands over a
-:class:`~parallax.core.object_query._validated.ValidatedSeek` — the order plus
-one opaque coordinate — and m-sql lowers the branch tree.
-
-The coordinate is the one the database itself evaluated for the last delivered
-root, carried through here without being inspected. Nothing about a root's
-decoded members reaches this module, which is what lets a delivery continue past
-a root whose stored data contradicted the model.
-
-The Continuation Order itself is deliberately NOT readable off the plan: where
-it is observable is where it is graded, as the ``orderBy`` of the node
-:meth:`ContinuationPlan.first` returns.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, replace

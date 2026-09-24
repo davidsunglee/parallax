@@ -1,14 +1,5 @@
 # Removing every AS-OF AXIS from an Entity (m-model-evolution): coordinated for
 # BOTH reasons, on every operation.
-#
-# Removal invalidates every previously valid temporal operation, and unlike a
-# removal that takes its stored shape with it, this one leaves the shape behind:
-# the `Gauge` Table survives, its four endpoint Columns still demand values the
-# later model no longer describes, and the axis end Attributes leaving the
-# derived physical key make the later logical identity NARROWER than the one the
-# surviving history was written under, so that history collides beneath it. A
-# Temporal Dimension participates in axis identity, so the two axes are removed
-# independently rather than altered.
 tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
 shape: evolution
 when:

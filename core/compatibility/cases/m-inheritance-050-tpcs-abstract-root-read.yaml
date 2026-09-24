@@ -1,27 +1,5 @@
 # Table-per-concrete-subtype ABSTRACT-ROOT read: the whole Document family via
 # `union all` (m-inheritance, m-sql).
-#
-# Targeting the abstract root Document resolves to every concrete descendant
-# {Invoice, Memo, Receipt} (ALPHABETICAL order by entity name — a total order
-# independent of the descriptor's declaration layout, which is Invoice, Receipt, Memo).
-# With no shared table and no tag, the read lowers to canonical `union all` over
-# exactly those three concrete tables, one branch per concrete subtype IN ALPHABETICAL
-# ORDER. Every branch projects the SAME stable superset column list — inherited
-# (id, title, folder_id) first, then the subtype OWN-column blocks in alphabetical
-# subtype order (Invoice's amount_due, Memo's body, Receipt's paid_amount; `currency`
-# is FinancialDocument's inherited attribute, surfaced where Invoice's ancestry chain
-# first carries it), then the `familyVariant` literal. Columns not applicable to a
-# branch are `NULL` PLACEHOLDERS with a dialect cast to the column's type, so the
-# union's column types resolve deterministically. The cast spelling is a dialect
-# decision (m-dialect): a bounded string casts to Postgres `varchar(n)` but MariaDB
-# `char(n)` (MariaDB's CAST target grammar does not accept `varchar`); `decimal(18, 2)`
-# is identical on both — hence the per-dialect `postgres` / `mariadb` goldens below.
-#
-# This is the canonical `union all` witness: three branches, alphabetical branch order,
-# the stable superset projection, NULL placeholders with dialect casts, and the
-# per-branch `familyVariant` subtype-name literal (the settled TPCS asymmetry vs table-
-# per-hierarchy — TPCS has no tag column, so each branch projects the subtype NAME
-# directly rather than a raw tag the harness maps at materialization).
 model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

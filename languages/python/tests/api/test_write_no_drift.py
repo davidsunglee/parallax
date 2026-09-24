@@ -1,20 +1,7 @@
-"""Write no-drift guard (m-api-conformance).
+"""Compare public write-story DML and reads with corpus goldens over a fake port.
 
-The registered write stories (``parallax.conformance.stories`` — the single
-source the Usage Guide renders and the real-Postgres suite executes) are driven
-here against a recording fake port as the supplementary wire-golden proof.
-Commit stories must emit the mirrored corpus case's golden DML (and
-participating reads) byte-exact through the **public** developer surface — the
-documented spelling cannot drift from the graded wire protocol. Abort stories
-prove the m-unit-work abort contract instead: the discarded buffer emits
-nothing, the deliberate failure surfaces (or is suppressed by the story itself),
-and the surrounding reads still match their goldens — their rolled-back round
-trips are graded by the conformance run lane, which executes-then-aborts; the
-developer surface discards the buffer before it ever reaches the wire.
-
-Pure, Docker-free, in-process behaviour, so it classifies ``dbfree`` and the
-story executions contribute to the database-free branch-coverage gate — the
-story bodies' only database-free driver.
+Aborted buffers emit no DML; committed writes and participating reads match the
+case's wire expectations.
 """
 
 from __future__ import annotations

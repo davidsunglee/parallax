@@ -1,5 +1,3 @@
-"""Case-format carrier normalization before strict core semantic ingresses."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

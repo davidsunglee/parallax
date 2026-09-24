@@ -1,23 +1,3 @@
-"""Private lowering from managed planned writes to SQL statements.
-
-:func:`compile_write_step` answers the single PHYSICAL question a finalized
-:class:`~parallax.core.unit_work.PlannedWrite` leaves open: how one storage
-layout and one dialect express it. It reads the target's Storage Layout Entity
-view for column participation and order, derives the table-per-hierarchy tag at
-its own slot, quotes through the dialect, and orders binds — and it consults no
-concurrency mode, no unit of work, no Transaction Instant, and no temporal
-topology, because a step arrives with all of those already decided.
-
-The one thing a step carries that lowering still has to READ is what an insert
-entry's Insert Origin retains: the milestone that entry succeeds, whose own raw
-Structured Column document a successor is patched from (`m-unit-work`). That is
-state the plan settled rather than a decision left open — the origin says which
-milestone, and this module only spells what the row now holds.
-
-It lives in SQL generation because everything here renders a prepared step that
-carries no undecided fact.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

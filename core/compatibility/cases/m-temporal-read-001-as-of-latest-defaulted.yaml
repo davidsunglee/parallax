@@ -1,14 +1,4 @@
 # Defaulted Transaction-Time authoring (normalization to explicit Latest, made observable).
-#
-# The authoring call omits Transaction Time, and authoring normalization records
-# that choice as the canonical explicit `asOf(transaction-time, latest)` below.
-# The current-row predicate is `out_z = infinity`. Latest over the fixture history returns only the
-# CURRENT milestone of each live account — (1, 150.00) and (2, 200.00) — excluding
-# the superseded id-1 row and the terminated id-3 account, whose out_z is finite.
-# The cross-dialect infinity-fallback proof lives in the dedicated
-# m-temporal-read-021 (a MariaDB `then.statements` twin whose `then.referenceSql` is
-# dialect-neutral); this case stays Postgres-only because its `then.referenceSql`
-# uses the Postgres-specific `'infinity'::timestamptz` cast.
 model: models/balance.yaml
 tags: [m-temporal-read, m-object-query, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1, slice-managed-1]
 shape: read

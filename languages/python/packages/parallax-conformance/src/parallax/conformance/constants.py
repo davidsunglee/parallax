@@ -1,10 +1,3 @@
-"""Pinned provisioning constants (spec §6).
-
-The single module that pins the self-managed Testcontainers Postgres image to an
-exact version **and** sha256 digest. Bumps are reviewed diffs: change the tag and
-the digest together here, nowhere else.
-"""
-
 from __future__ import annotations
 
 from typing import Final

@@ -1,15 +1,3 @@
-"""Behavioral Impacts derived from the two endpoints.
-
-Each impact compares effective facts read through the owning module's facet on
-both endpoints — never re-derived here — on scopes present in the earlier
-endpoint. A wholly new Entity's members are described by its own addition, so a
-parent addition contributes no impact of its own.
-
-An analyzer emits each impact beside the Model Location its scope occupies,
-because the analyzer already knows which kind of position it reports on; one
-sort over the closed variant order and that location is the whole ordering law.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -179,9 +167,6 @@ def _order(located: _Located) -> tuple[int, ModelLocationKey]:
     return (BEHAVIORAL_IMPACT_ORDER.index(type(impact)), canonical_location_key(location))
 
 
-# --------------------------------------------------------------------------- #
-# Uniqueness enforcement.                                                      #
-# --------------------------------------------------------------------------- #
 def _uniqueness_enforcement(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Entity whose secondary uniqueness rules differ.
 
@@ -277,9 +262,6 @@ def _rules_of(analysis: _Analysis, index: IndexIdentity) -> frozenset[UniqueTupl
     return frozenset(rule for metadata in present if (rule := _rule(metadata)) is not None)
 
 
-# --------------------------------------------------------------------------- #
-# Value admissibility.                                                         #
-# --------------------------------------------------------------------------- #
 def _value_admissibility(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving value-bearing path whose accepted domain differs.
 
@@ -349,9 +331,6 @@ def _occurrence(occurrence: Occurrence) -> OccurrenceAdmissibility:
     return OccurrenceAdmissibility(occurrence.nullable)
 
 
-# --------------------------------------------------------------------------- #
-# Delete propagation.                                                          #
-# --------------------------------------------------------------------------- #
 def _delete_propagation(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Relationship whose dependency policy differs."""
     for identity, (earlier, later) in analysis.matching.relationships.surviving.items():
@@ -381,9 +360,6 @@ def _propagation(facts: RelationshipFacts) -> DeletePropagation:
     return DeletePropagation.DOES_NOT_PROPAGATE
 
 
-# --------------------------------------------------------------------------- #
-# Concurrency control.                                                         #
-# --------------------------------------------------------------------------- #
 def _concurrency_control(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Entity whose behavior under the ``optimistic``
     Concurrency Preference differs.
@@ -466,9 +442,6 @@ def _moves_the_optimistic_key(
             return False
 
 
-# --------------------------------------------------------------------------- #
-# Query result membership.                                                     #
-# --------------------------------------------------------------------------- #
 def _query_result_membership(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Entity or Relationship position whose
     predicate-free selection differs."""
@@ -575,9 +548,6 @@ def _moves_the_denoted_rows(
             return False
 
 
-# --------------------------------------------------------------------------- #
-# Query result ordering.                                                       #
-# --------------------------------------------------------------------------- #
 def _query_result_ordering(analysis: _Analysis) -> Iterator[_Located]:
     """One impact per surviving Relationship whose ordering rule differs.
 
@@ -610,9 +580,6 @@ def _ordering(facts: RelationshipFacts) -> tuple[RelationshipOrder, ...]:
     return tuple(facts.direction.order_by)
 
 
-# --------------------------------------------------------------------------- #
-# Write capability.                                                            #
-# --------------------------------------------------------------------------- #
 def _write_capability(analysis: _Analysis) -> Iterator[_Located]:
     """The Entity write surfaces that changed, and the Attribute input
     capabilities no Entity-level change already dominates."""
@@ -779,9 +746,6 @@ def _shape_moved(analysis: _Analysis, entity: EntityIdentity) -> bool:
     return _write_shape(analysis.earlier, entity) != _write_shape(analysis.later, entity)
 
 
-# --------------------------------------------------------------------------- #
-# Shared reads over an operation, a family, and a Relationship pair.           #
-# --------------------------------------------------------------------------- #
 def _family(earlier: EntityFacts, later: EntityFacts) -> frozenset[EntityIdentity]:
     """Every position whose declarations reach this Entity on either endpoint."""
     return frozenset(earlier.family.ancestry) | frozenset(later.family.ancestry)

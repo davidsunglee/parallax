@@ -1,16 +1,4 @@
 # Write sequence: TERMINATE an audit-only balance (milestone chaining, m-txtime-write).
-#
-# A terminate closes the current milestone (out_z = the transaction instant) and
-# inserts NOTHING. The terminated state is the ABSENCE of any current row: no row
-# has out_z = infinity. The superseded value remains as a closed milestone (the
-# audit trail of what was known and when).
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert    : open [2024-01-01, infinity) value 100.00     (1 statement)
-#   step 2 terminate : close the current row (out_z = 2024-08-01)    (1 statement)
-#
-# Resulting state: one CLOSED milestone, out_z finite — and crucially no
-# out_z = infinity row, the observable signature of termination.
 model: models/balance.yaml
 tags: [m-txtime-write, m-sql, write-sequence, terminate, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

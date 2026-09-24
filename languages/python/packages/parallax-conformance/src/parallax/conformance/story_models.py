@@ -1,26 +1,3 @@
-"""Idiomatic Entity Classes the API-suite stories construct instances of.
-
-Mirrors ``models/account.yaml``, ``models/wallet.yaml``, ``models/position.yaml``
-and the FULL ``models/orders.yaml`` family (``Order`` / ``OrderItem`` /
-``OrderStatus`` / ``OrderTag`` / ``OrderNote``, every declared relationship
-included), each
-composed into the Domain Model named for its corpus model. ``Order`` / ``OrderItem``
-carry the family's full relationship set so the SAME classes serve the API
-Conformance Suite's navigate / deep-fetch / snapshot-graph examples and stories.
-``NicknamedAccount`` mirrors no corpus model: it is ``Account`` one Unilateral
-Evolution later, the later endpoint the model publication story evolves to.
-
-Owned by ``parallax.conformance`` (not the test suite's own ``mirrored_models``,
-which lives under ``tests/`` and is unreachable from an installed
-``parallax-conformance`` distribution) since ``stories.py`` / ``graph_stories.py``
-— real dev-only package modules, exercised by the fake-port write no-drift guard
-and the real-Postgres story-run suite alike — need classes resolvable at ordinary
-import time, not only under pytest's test-path magic.
-
-This module deliberately avoids ``from __future__ import annotations`` so the
-engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
-"""
-
 import datetime as dt
 from decimal import Decimal
 

@@ -2,26 +2,6 @@
 # occurrences of item 1 and each is REPLACED whole, at either cardinality, while the
 # member outside them rides forward as stored. Its twin authors the same update and
 # the same expected row under Relational Document Layout.
-#
-# The stored `spec` carries `title`, `note`, a nested `one` `origin`, and a nested
-# `many` `stops`; the assignment names `title` alone. Afterwards `note` and `origin`
-# are gone and `stops` is the empty array, because the author stated a complete value
-# and no stored member is merged back into it — replacement reaches every depth of
-# the occurrence, not just its own level. The dependent find is where the removal is
-# observable: the published occurrence carries the members the row now holds, so
-# `note` and `origin` are ABSENT from it rather than present and null. `marks` shows the same rule at the top
-# level: the two stored elements are gone and the assigned one-element array is the
-# whole of it. `label` was never mentioned, so it is still `north`.
-#
-# The semantic distinction this pair pins down is that the unit of replacement is the
-# ASSIGNED OCCURRENCE — narrower than the row, wider than the members the assignment
-# named. An implementation that merged the stored subtree back would keep `origin`;
-# one that rewrote the row would lose `label`. Both members publish the same row
-# afterwards, which is what makes the unit layout-independent rather than a property
-# of storing one occurrence per Column. `WriteTwinItem` declares no version and no
-# As-Of Axis, so its Effective Concurrency Strategy is Locking: the write's own
-# resolving read takes the shared row lock that licenses it, and the dependent find
-# takes it again.
 model: models/write-transparency-layout-twin-columns.yaml
 tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario

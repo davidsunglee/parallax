@@ -1,24 +1,3 @@
-"""``parallax.snapshot.handle._options`` — the Database Root's transaction option
-record, the field rules it shares with an explicit ``db.transact`` request, and
-the private marker that keeps an omitted keyword distinguishable from every
-value a caller could pass.
-
-:class:`DatabaseOptions` is the one record three surfaces share (spec §5): the
-root defaults ``connect`` takes, the resolved options an outer invocation runs
-under, and what ``Transaction.options`` answers. It holds concrete values only —
-never the marker — so a record read anywhere is complete. The field rules live
-beside it because construction and an explicit request are held to the same
-contract: the two core vocabularies are validated by their owning modules, and
-the two scalar fields by the rules here.
-
-A leaf of the handle package: it imports the core vocabularies and nothing from
-its siblings, and both the composition root and the transaction runner import
-it. ``Omitted`` and ``OMITTED`` carry no leading underscore because they cross
-module boundaries inside the package; neither is re-exported through the
-package's frozen ``__all__``, so the omission marker stays out of the public
-vocabulary.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

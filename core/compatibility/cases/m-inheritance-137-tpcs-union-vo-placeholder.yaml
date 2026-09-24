@@ -2,36 +2,6 @@
 # Value Object occurrence: an INSTANCE-FORM abstract-root read whose position holds one
 # OWNING branch and two branches whose concrete declares no occurrence at all
 # (m-inheritance, m-value-object, m-sql, m-dialect, m-document-codec).
-#
-# `annotation` is declared on Memo alone, and this family keeps the default `Columns`
-# layout, under which a top-level occurrence claims a Structured Column of its own. So
-# `memo` physically carries `annotation` while `invoice` and `receipt` do not, and the
-# union has to reconcile that in one aligned projection: the Memo branch emits the
-# document read pair over its own Column — `not t0.annotation is null, t0.annotation` —
-# and each non-owning branch emits the constant-false presence cell beside the typed
-# `NULL` document, `false, cast(null as jsonb) annotation`. That second shape is the
-# claim. Its sibling m-inheritance-136 witnesses only the owning half, and could not
-# reach this one: its Structured Column is a Relational Document Layout's shared column,
-# which the family root declares and every concrete table therefore carries, so no branch
-# of it owns none.
-#
-# The cast target is where the two dialects part: Postgres casts to its `jsonb` document
-# type, while MariaDB's `JSON` is an alias for `LONGTEXT` and its `CAST` grammar rejects
-# `json` outright, so the placeholder casts to `char` there (m-dialect).
-#
-# Instance form is what admits the slot at all. `m-sql` *Read projection* rule 3 projects
-# a top-level Value Object `Document` slot for an instance-form read and omits it from a
-# row-form one, so m-inheritance-050 — this very query in row form — projects no
-# `annotation` cell whatsoever and the two goldens differ by exactly the pair the rule
-# adds.
-#
-# The observed graph is what makes the placeholder more than SQL text. The Memo node
-# carries the decoded occurrence; the Invoice and Receipt nodes carry no `annotation` key
-# at all — omission rather than a null-valued member — which is the same per-variant node
-# shape the sibling-only scalars `body` and `amount_due` already take. `referenceSql`
-# reaches the same row set through a different formulation, with the branches in another
-# order and no document column projected at all, so the identity compare is independent
-# of how the occurrence is carried.
 model: models/document.yaml
 tags: [m-inheritance, m-value-object, m-sql, m-dialect, m-document-codec, table-per-concrete-subtype, union-all, root, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read

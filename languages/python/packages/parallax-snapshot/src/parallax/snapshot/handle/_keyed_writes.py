@@ -1,63 +1,3 @@
-"""``parallax.snapshot.handle._keyed_writes`` — the keyed write ingress (spec §5).
-
-A keyed write is one order, and that order is the whole of what a caller
-observes as refusal precedence: re-entry is refused; the representation's own
-input shape is judged and captured; the source is resolved and its provenance
-and pin judged; the temporal window is judged; member names, values, and
-assignment legality are judged and the instruction prepared; the effective
-change set and its restorations are reduced, with the no-op return; the
-buffered-insert exemption applies; write evidence resolves; the claim is taken
-and the write buffered. An insert enters by its own door, with no source, null
-or synthetic: it opens a row rather than revising one, so it resolves no source,
-reduces no change set, settles against no evidence, and takes no claim. What it
-keeps of the stages above is what a value alone can be wrong about — the pin its
-own view carries and the provenance it states, in that order — and, once its row
-is prepared, the buffered-insert REFUSAL: the ledger that exempts an update of a
-row this transaction opened refuses a second opening of it.
-
-What differs between one representation's keyed verbs and another's is not that
-order but where the facts it consumes come from — a Typed value carries its own
-Change Record and lifecycle, a Wire source carries a frozen published row and a
-Read Origin. A **Keyed Write Source** is that difference and nothing else: three phases,
-run once each in the order above, answering the concrete Entity, the source Pin,
-the Read Origin, the canonical identity row, the value's provenance, which
-interface stated the write, and the canonical authored and original values of
-every named member. A source exposes
-no codec, carrier, selected model, unit of work, mutation, prepared front door,
-or insert ledger, and it judges nothing: it answers facts, and the order judges
-them.
-
-The two records crossing that seam split where the order splits.
-:class:`ResolvedKeyedWriteSource` carries what a source can answer before the
-window is judged, and :class:`PreparedSourceWrite` what it can answer only
-after — which is why the protocol needs no typestate to say which question is
-askable when. The ingress owns every call, so which record it holds is which
-stage it stands at.
-
-:class:`KeyedWriteContext` is the transaction state a keyed write reads and
-nothing wider. It is built once per ``Transaction`` and handed in per call,
-because nothing here is retained: this module is a composition rather than a
-scope. Both representations reading one ``BufferedInserts`` through that context
-is what makes a Typed insert followed by a Wire update of one object one
-read-your-own-writes pair rather than two ingresses each with their own idea of
-what this transaction stores.
-
-Its ``spec/python.md`` §7 scope states what a keyed write reaches. A keyed write
-addresses a row the caller already holds, so it resolves nothing from the store:
-row-to-graph materialization, the read result, and the read lock are forbidden
-here although the parent scope is granted all three, as are the write lowerings
-the sibling scopes own. The Database Port, deep fetch, and navigation are NOT
-among those exclusions and the row claims no such thing — a forbidden row is the
-complement of a closure, and each of the three rides in through a dependency the
-ingress does need: the port through the execution lifecycle the re-entry gate
-requires, the two traversals through the Entity values a Typed write is stated
-over.
-
-Names crossing a module boundary are spelled bare; a helper whose every caller
-lives here keeps its underscore. Privacy is carried by this MODULE's leading
-underscore and by the package's frozen ``__all__``, not by per-name underscores.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -332,7 +272,7 @@ def keyed_write(
     until: dt.datetime | None = None,
 ) -> None:
     """Run one keyed write over existing state, in the Keyed Write Validation
-    Order (`python.md` §5).
+    Order.
 
     The body IS the order, and the order is the contract: a caller learns it
     once, and every source entering here observes the same refusal precedence
@@ -420,7 +360,7 @@ def keyed_insert(
     valid_from: dt.datetime | None = None,
     until: dt.datetime | None = None,
 ) -> OpenedKeyedWrite:
-    """Open a row through the insert's own door (`python.md` §5).
+    """Open a row through the insert's own door.
 
     The same three phases over the facts an opening row has, and the stages it
     has no meaning for are absent rather than guarded: nothing is restored, no

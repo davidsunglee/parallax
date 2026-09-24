@@ -1,10 +1,5 @@
 # Retargeting a REVERSE Relationship (m-model-evolution): classification reads
 # the direction, not the declaration.
-#
-# The reverse declaration names a different defining peer, so the direction it
-# navigates now reaches another Entity through another join — facts the
-# declaration itself never spells. That is what makes it coordinated, and it is
-# the same `ReverseOfChanged` operation that causes the membership impact.
 tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

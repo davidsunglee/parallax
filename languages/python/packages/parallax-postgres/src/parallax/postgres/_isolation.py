@@ -1,5 +1,3 @@
-"""Postgres' own spelling of each portable Isolation Level (m-db-port)."""
-
 from __future__ import annotations
 
 from typing import Final

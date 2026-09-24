@@ -1,14 +1,3 @@
-"""The closed Write Observation algebra (m-unit-work).
-
-A Write Observation is the database evidence a surviving write against existing
-state retains. Absence is **structural**: an insert and an unversioned
-Non-Temporal write carry no observation value at all, rather than a null one, so
-there is no ``NoObservation``, no nullable observation flowing downstream, and no
-representable "a version *and* a predecessor" or "neither" state. A required
-observation that is missing is a planning error, raised while the step is being
-settled, in **both** concurrency modes.
-"""
-
 from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, Mapping, Sequence

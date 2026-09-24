@@ -3,22 +3,6 @@
 # any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
 # non-equality element predicate is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
-#
-# nestedBetween(Customer.address.phones.number, '555-0000', '555-1234') matches a row
-# iff SOME element's number lies in the inclusive range. Ada's first element
-# ('555-1234') sits exactly on the upper bound and Nils's only element ('555-0000')
-# exactly on the lower, so both inclusive edges are witnessed; Linus ('555-9999') is
-# above. The trap is Omar (id 9): his `phones` is the JSON scalar STRING "555-0000",
-# the exact lower bound, and it must NOT match, because a non-array `phones` has no
-# elements — the array-type guard collapses it, along with the JSON-null (8) and the
-# object (10), exactly as m-value-object-021 pins for equality.
-#
-# The range rides ONE element predicate on ONE unnested alias, which is what makes
-# `nestedBetween` a canonical node rather than a lowered pair: two independent flat
-# comparisons through the same array could be satisfied by two DIFFERENT elements.
-# The oracle guards with an outer `jsonb_typeof` instead of the golden's inline
-# `case`, reads the element field with `->>` instead of jsonb_extract_path_text, and
-# spells the range as two comparisons on the SAME element.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

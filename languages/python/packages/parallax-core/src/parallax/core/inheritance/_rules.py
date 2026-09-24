@@ -1,22 +1,3 @@
-"""The inheritance Model Formation Rule Set (m-inheritance).
-
-This module rejects family invariants: whether parent links form a closed tree
-under exactly one abstract root with every concrete subtype at a leaf, whether
-the strategy's physical mapping is declared where that strategy puts it,
-whether facts a family owns as a whole stay on its root, whether a descendant's
-own members leave the inherited namespace unambiguous, and whether rendered
-materialization keys remain distinct. Physical Table and Column collisions
-belong to ``m-storage-layout``.
-A family is a position's own ancestry, never the model: one model carries as
-many independent families as it declares roots, and each is judged alone.
-Parent resolution is not here — foundational resolution owns it, so a
-candidate's parents already name existing Entities.
-
-A position whose ancestry does not resolve is reported for that alone: the rest
-of these rules are questions about a chain, and there is no chain to ask them
-of.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence

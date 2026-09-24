@@ -1,13 +1,5 @@
 # `exists` over a polymorphic target NARROWED to ONE concrete subtype
 # (m-navigate, m-predicate, m-inheritance, resolved Q10).
-#
-# The relationship-target narrowing reuses the `narrow` predicate node in the
-# navigation filter's `op` position, where context supplies Pet as the position;
-# the shared selection narrows it to [Cat]. The narrow lifts into the EXISTS's tag selection exactly
-# as it does for a top-level read — one concrete resolves to `t1.kind = ?` (bind
-# [cat]). Only Alice owns a Cat (Whiskers); Bob owns only a Dog, Carol only a boar.
-#
-# Non-trivial (semi-join + tag) case => referenceSql is the naive `id in (select fk …)` oracle.
 model: models/animal.yaml
 tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read

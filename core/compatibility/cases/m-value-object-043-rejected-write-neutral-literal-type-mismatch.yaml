@@ -1,11 +1,5 @@
 # Negative (m-wire typed-literal conversion): a write whose document field cannot
 # denote its declared type is refused PRE-SQL.
-#
-# A value-object document's field values are TYPED by the declared structure. Contact's
-# `address.street` is a `string`; this otherwise-complete write supplies the NUMBER
-# `42` for it, so model-aware write validation MUST reject the document before any DML
-# (m-value-object writes: type-mismatched values are rejected). Every other member is
-# present and well-typed, isolating the mismatch to `street`.
 model: models/contact.yaml
 tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1, slice-managed-1]
 shape: rejected

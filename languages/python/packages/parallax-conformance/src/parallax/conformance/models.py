@@ -1,29 +1,3 @@
-"""Corpus model ingestion (the conformance descriptor frontend).
-
-The adapter path builds the metamodel by **direct ingestion** of canonical YAML
-descriptors from ``core/compatibility/models/*.yaml`` — corpus cases never
-require Python entity classes. Each model file goes through the public
-:func:`~parallax.descriptor.domain_model_from_document` door, which runs the
-descriptor schema, value, and Model Formation phases in one call, and the
-accepted :class:`~parallax.core.metamodel.Metamodel` behavioral modules consume
-is read out of the sealed Domain Model through the first-party
-``parallax.core.entity._model.model_of`` seam.
-
-Both forms are offered because the two consumers need different ones. Every
-neutral lane names Entities rather than classes and is stated over the accepted
-Metamodel, which is what :func:`accepted_model` and :func:`load_model` answer; a
-Snapshot connection takes the Domain Model itself, which is what
-:func:`domain_model` and :func:`load_domain_model` keep. A lane that does both
-forms once and unwraps through :func:`accepted_model_of`.
-
-The accepted model enumerates its Entities canonically, so a corpus model's own
-AUTHORING order is not recoverable from it. `m-case-format`'s default-target
-convention for a case naming no target ends at "the model's own first entity",
-which is a fact about the document; :func:`declared_entity_spellings` is where
-that fact is read, and it is the only reason this module still looks at a
-decoded document after forming one.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

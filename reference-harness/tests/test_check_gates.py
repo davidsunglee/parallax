@@ -147,6 +147,17 @@ def test_a_scope_without_an_operational_map_is_reported(
     )
 
 
+def test_navigation_does_not_have_to_mirror_ci_jobs(
+    conforming_repository: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _copy(conforming_repository, tmp_path / "concise-navigation")
+    for path in (root / OPERATIONAL_MAP, root / _MIRRORED_PYTHON_MAP):
+        path.write_text("# Testing\n\nInspect `just show-gates`.\n", encoding="utf-8")
+
+    assert main([str(root)]) == 0
+    assert "gate check OK" in capsys.readouterr().out
+
+
 def test_a_scope_without_runner_configuration_is_reported(
     conforming_repository: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

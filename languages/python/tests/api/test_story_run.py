@@ -1,26 +1,7 @@
-"""API-suite stories against real Postgres (m-api-conformance, spec §"API
-Conformance Suite").
+"""Execute public-API stories through the shipped Postgres adapter.
 
-Every registered story — write (`parallax.conformance.stories`) or graph-read
-(`parallax.conformance.graph_stories`); the same executable functions the Usage
-Guide renders — executes here through the **shipped** surface:
-`parallax.snapshot.connect` over the `parallax-postgres` adapter against the
-real Testcontainers Postgres, inside the documented API-conformance lane
-(python.md: pytest under ``tests/api/``,
-"executing idiomatic public-API code through the shipped `parallax-snapshot`
-extension and `parallax-postgres` adapter"; IMPLEMENTING.md "Continuous API
-Conformance Lane" step 2). Docker-backed: the shared ``profile_run`` fixture
-skips with a recorded reason when Docker is unavailable (never silently), and
-the ``python-check-db`` CI job fails on any skip. A write story's grading is
-the mirrored case's own oracle: a story returning rows must observe its final
-find's `expectRows`; a writeSequence story must leave exactly `then.tableState`
-behind. The one `kind == "boundary"` story (`m-unit-work-004`) is excluded from
-this file's grading loop because the case-driven boundary runner
-(`test_boundary_run.py`) grades it — and every other boundary-shape case —
-directly against the corpus. The story remains registered for the Usage Guide
-and the fake-port wire
-pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
-(see the section below).
+Boundary cases run in test_boundary_run; their hand-authored stories retain the
+fake-port DML proof in test_write_no_drift.
 """
 
 from __future__ import annotations
@@ -113,15 +94,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     return MODELS[Path(case.model).stem]
 
 
-# `kind == "boundary"` (m-unit-work-004) is excluded from execution here because
-# the case-driven boundary runner (`tests/api/test_boundary_run.py`)
-# grades it directly
-# against the corpus, case-driven like every other boundary case — the hand
-# story's function stays registered (`stories.WRITE_STORIES`) ONLY so the
-# Usage Guide keeps rendering it (`api_suite.EXAMPLES`) and the fake-port
-# wire pin (`test_write_no_drift.test_boundary_story_withholds_the_callback_
-# value`) keeps proving its own DML shape — this hand-mirrored REAL-DATABASE
-# grading is what retires.
+# Boundary cases execute in test_boundary_run and retain their fake-port DML proof.
 _EXECUTED_STORIES = [story for story in WRITE_STORIES if story.kind != "boundary"]
 _STORY_IDS = [story.case_id for story in _EXECUTED_STORIES]
 
@@ -174,7 +147,7 @@ class _CountingDatabase(ScopedDatabase):
     """A ``Database`` that records what each of its own operations put on the wire.
 
     A result carries no record of the execution that produced it
-    (`m-execution-lifecycle`), and a Usage Guide story's code is production's —
+    (`m-execution-lifecycle`), and stories use the public API —
     so the per-operation round-trip counts a scenario step's own oracle grades
     are observed here, at the one boundary where "one operation" exists as a
     thing. ``round_trips`` holds one entry per :meth:`find` and :meth:`transact`
@@ -723,8 +696,8 @@ def test_a_grouped_read_observes_its_own_relationship_writes(profile_run: Any) -
 
 def test_a_finite_transaction_time_pinned_view_is_read_only(profile_run: Any) -> None:
     # `m-identity-map-010` is graded here rather than through a `GraphStory`
-    # because it sits outside the claimed active slice (see the story's own
-    # docstring). What the corpus lane's own mutate-step grading cannot reach:
+    # because it sits outside the claimed active slice. What the corpus lane's
+    # own mutate-step grading cannot reach:
     # that refusal is derived from the step's Object Query, never from the
     # value the derivation produced, so it holds whether or not an edited copy
     # carries its source node's pin. This runs the ordinary developer sequence —
@@ -1058,11 +1031,7 @@ def test_tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instance
 
 
 def _assert_customer_predicate_rows(case_id: str, snapshot: Any) -> None:
-    """The row-form predicate original's own ``then.rows`` oracle — id/name
-    only, never the exact SQL the corpus's row-form classification would
-    otherwise demand (`graph_stories`'s own module docstring explains why
-    this grades here, bespoke, rather than through ``ReadStory``'s
-    byte-exact generic runner)."""
+    """Compare the corpus's id/name projection with the materialized instances."""
     expected = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["then"]["rows"])
     observed = [
         {field: row[field] for field in ("id", "name")}

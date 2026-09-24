@@ -1,34 +1,4 @@
 # Optimistic-lock conflict (m-opt-lock): a stale-version UPDATE affects ZERO rows.
-#
-# Account id 2 (Linus) is read at version 1 — a REAL read, whose retained
-# observation is the evidence the write is licensed by; an Optimistic target
-# gates on the state its source saw, so the read need not be in the writing
-# transaction. Before our UPDATE flushes, a CONCURRENT transaction commits a
-# change to the same row, bumping its version to 2 — the out-of-band
-# `given.apply` (a naive UPDATE the harness applies verbatim), which for a
-# non-temporal conflict case commits BETWEEN the source read and the write,
-# because that is the only ordering in which a stale gate is reachable at all.
-#
-# Our golden UPDATE then gates on the version the read observed (1):
-#   update account set balance = ?, version = ? where id = ? and version = ?
-# Because the row's version is now 2, the `... and version = ?` predicate (bind 1)
-# matches NO row, so the UPDATE affects ZERO rows — the `updatedRows != 1`
-# conflict signal (m-opt-lock). The harness asserts the affected-row count is 0; the
-# conflict is detected against real data, not merely asserted.
-#
-# The new balance (275.00) differs from the one the read observed (250.00), so
-# the write is an effective change rather than a restoration of what the row
-# already held: a write that assigns every member the value its source published
-# issues no DML at all and could not reach a gate to be stale against.
-#
-# The zero-row enforcement this reaches — a port call that COMPLETED with a
-# count of zero, whose post-call enforcement is what failed — is graded as
-# a lifecycle stream by m-execution-lifecycle-004, which records the identical shape on its
-# first attempt.
-#
-# The resulting table state confirms our write did NOT apply: id 2 still carries
-# the precondition's values (the concurrent writer's balance 999.00, version 2),
-# never our stale-version balance.
 model: models/account.yaml
 tags: [m-opt-lock, m-sql, conflict, optimistic-lock-conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict

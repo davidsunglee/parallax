@@ -1,46 +1,3 @@
-"""``parallax.core.navigate`` enforcement scope (m-navigate).
-
-Relationship-navigation **canonicalization** over the flat predicate produced at
-the read-planning boundary.
-Its single job is **per-hop as-of propagation**: for every ``navigate`` / ``exists`` /
-``notExists`` hop reached anywhere in an already root-injected predicate, resolve the
-relationship's target entity and, when that entity (or its inheritance family) is
-temporal, inject the propagated as-of predicate into the hop's own interior as
-**plain** ``m-predicate`` predicate nodes — composed from the identical templates
-``m-temporal-read`` uses at the root, matched by axis, latest-defaulted — so nothing
-downstream of this module ever needs temporal knowledge.
-
-Polymorphic **SQL emission** (the TPH tag predicate, the TPCS grouped ``OR``) is an
-``m-sql`` lowering concern (``m-sql`` legally imports ``m-inheritance``
-transitively through ``m-predicate``); this module resolves only what
-**as-of propagation** needs from a
-polymorphic target — the inheritance family's temporal declaration, always carried on
-the family root (`m-inheritance`) — never the tag/branch shape ``m-sql`` derives
-independently and directly from the same metamodel.
-
-Per the dependency graph, ``m-navigate``
-depends on ``m-predicate`` (the ``navigate``/``exists``/``notExists`` nodes it walks
-**are** algebra vocabulary), ``m-unit-work`` (navigation resolves through the unit of
-work), ``m-temporal-read`` (a pinned as-of value propagates per hop — the reason this
-module exists at all, since the DAG forbids ``m-sql`` from importing
-``m-temporal-read``), and ``m-inheritance`` (a relationship target may be a
-polymorphic position; its temporal declaration lives on the family root).
-
-The raw-node :func:`canonicalize` path uses :func:`resolve_relationship` and
-:func:`hop_as_of_terms` to resolve and author each hop. Validated planning does
-not return to those authored helpers: predicate elaboration has already retained
-the resolved relationship direction, and :func:`canonicalize_validated` composes
-managed terms through :func:`validated_hop_as_of_terms`.
-
-A hop resolves to the navigable **direction** the Relationship Facet already
-compiled, so this module never pairs a reverse declaration with its peer nor
-swaps a join to find the far side: every direction — defining or reverse —
-names the Entity it reaches as its own ``join.target.entity``. As-of propagation
-needs that target and nothing else, so this module reads no cardinality, join
-column, or ordering itself; it resolves the direction downstream consumers need
-and stops there.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -191,9 +148,6 @@ def _walk_validated(
             return product
 
 
-# --------------------------------------------------------------------------- #
-# Fast pre-check (identity for navigation-free predicates).                   #
-# --------------------------------------------------------------------------- #
 def _contains_navigation(op: PredicateNode) -> bool:
     match op:
         case Navigate() | Exists() | NotExists():
@@ -209,9 +163,6 @@ def _contains_navigation(op: PredicateNode) -> bool:
             return False
 
 
-# --------------------------------------------------------------------------- #
-# The rewrite walk (only run once navigation is known to exist somewhere).    #
-# --------------------------------------------------------------------------- #
 def _walk(
     op: PredicateNode,
     model: Metamodel,

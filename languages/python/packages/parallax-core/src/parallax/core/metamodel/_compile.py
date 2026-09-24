@@ -1,15 +1,3 @@
-"""The Metadata Compiler and the sole accepted metadata implementation (m-metamodel).
-
-Compilation is the one issue-free step of Model Formation: it runs only after
-every Rule Set accepted the candidate, so it decides no semantic validity,
-pairs no relationships, inverts no cardinality, derives no inheritance, and
-classifies no temporal behavior. It expands the already-valid Value Object
-occurrence graph into path-identified Metadata, discards every Shape Key, and
-builds the immutable local indexes accepted lookup uses. Reaching an impossible
-state raises so the formation runner can report a compiler contract failure;
-nothing here is a model issue.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence

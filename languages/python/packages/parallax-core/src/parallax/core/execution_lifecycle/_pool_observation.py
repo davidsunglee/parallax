@@ -1,24 +1,3 @@
-"""Registering an interest in pool-wide measurements, and giving it up again.
-
-The execution stream describes ONE operation at a time: what it ran, how long it
-held a connection, how that connection came back. A pool is the other axis —
-capacity, idleness, queue depth — and it belongs to no operation at all, so it
-reaches an application through a separate registration rather than through a
-Handler that would have to be retained for a root that never ends.
-
-The seam is the Provider an application already names at composition. A Provider
-that also implements :meth:`PoolMetricsObserver.observe_pool` is offered the
-runtime's source once, at composition, and answers with the registration it wants
-closed at shutdown, or ``None``. Interest in the pool is independent of interest
-in execution: a Provider may decline every root and still observe the pool, or
-accept every root and ignore it.
-
-What the registration OWNS is the registration. Closing it stops the interest;
-it does not close the exporter, the queue, the metrics client, or anything else
-the application built — those outlive the handle and are the application's to
-shut down.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

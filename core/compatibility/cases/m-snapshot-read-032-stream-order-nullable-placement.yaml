@@ -1,29 +1,6 @@
 # A Sort Key over a NULLABLE member changes what a streamed page can seek
 # (m-snapshot-read): a non-null coordinate gives the range arm its hoist, while
 # a disjoint second arm retains the trailing NULL region.
-#
-# `Order.sku` is nullable and order 4 has none, so the Continuation Order
-# `sku asc (nulls last), id asc` places that root last. The consequence the
-# authored pages spell out is that every continuing statement has two arms: the
-# seekable `t0.sku >= ?` arm covers non-NULL values, and `t0.sku is null` covers
-# the disjoint tail before an outer order and limit merge one page. Nothing here
-# seeks PAST a null coordinate: the null root sorts last, so the page delivering
-# it comes back short of the lookahead root it asked for and the delivery ends.
-# m-snapshot-read-046 is where that branch is reachable, under the mirrored
-# placement that puts a null root first.
-#
-# The two dialects order the same rows differently spelled — Postgres trails
-# NULLs on `asc` natively while MariaDB forces it with a leading `sku is null`
-# rank term (m-dialect) — and the appended key is where that difference reaches
-# the seek: `id asc` is non-nullable, so it takes each dialect's OWN placement
-# rather than an authored one, and only Postgres, which trails `NULL`s on `asc`,
-# admits them in the key's branch. `sku`'s own branches are identical on both,
-# its authored placement being what its compensated clause emitted.
-#
-# Pages of 2 over 6 roots, each asking for 3: {1, 3}, then {42, 2} seeking past
-# ('A-300', 3), then {5, 4} seeking past ('B-200', 2) — two roots for a requested
-# three, which proves exhaustion. Three root statements, and the delivered graph
-# is the eager read's own.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-dialect, stream, streamed-delivery, orderBy, ordering, nulls, nullable, graph, materialization, slice-snapshot-1]
 shape: read

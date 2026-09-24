@@ -2,16 +2,6 @@
 # string predicates at this scope (m-predicate elementPredicate + wildcard rule, m-sql).
 # Postgres golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's
 # containment scope (m-dialect, "Scope of the containment golden").
-#
-# nestedExists(Customer.address.phones, where: type = 'home' AND number contains '-99')
-# binds the derived '%-99%' and matches only Linus (2). Ada (1) discriminates the
-# readings: the number carrying the infix is on her `work` element, not her `home` one,
-# so the unscoped AND of the two flat any-element predicates admits her while this form
-# requires ONE element to carry both.
-#
-# Priya (10) is the trap her non-array OBJECT `phones` would spring on an unguarded
-# traversal; the array-type guard reads it as zero elements, with the JSON null (8), the
-# scalar (9), the empty array (3), the null column (4), and the missing keys (5, 6).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,16 +1,5 @@
 # Deep fetch, SHARED-PREFIX levels — the canonical maximal path materializes its
 # exact prefix once (m-deep-fetch dedup).
-#
-# m-deep-fetch-004 fetches two INDEPENDENT paths off the root; this is the spec's
-# shared-prefix example after Includes canonicalization retains only the maximal
-# `Order.items -> OrderItem.statuses` path. Its `Order.items` prefix remains a
-# materialized level and MUST be fetched ONCE, so the level count is 3:
-#   level 0 (root)     : all orders
-#   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
-#   level 2 (statuses) : item-level statuses keyed by the distinct item ids
-#                        {11,12,21,421,422}
-# A naive reading would fetch `Order.items` twice (once per path); the harness
-# asserts exactly 3 statements, proving the prefix is shared.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, shared-prefix, relationship, slice-managed-1]
 shape: read

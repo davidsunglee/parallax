@@ -1,18 +1,5 @@
 # Two EQUIVALENT path-root guards over one relationship deduplicate to a single hop
 # (m-deep-fetch, m-inheritance).
-#
-# The read targets the abstract root Animal, so its result set is every animal, and
-# both paths guard the SAME relationship `Animal.owner` at the path ROOT: one spells
-# the guard `to: [Pet]`, the other `to: [Cat, Dog]`. Both resolve to the identical
-# source set {Cat, Dog}, so they are ONE hop — `1 + L` = 2 statements, and the child
-# level's IN list carries only the owner ids gathered from the Cat and Dog roots
-# (10, 11), never Carol's 12. This is the semantic distinction the case pins down:
-# hop identity at the ROOT position keys on the RESOLVED SOURCE SET, deliberately
-# unlike a segment narrow, whose identity keys on whether a narrow was AUTHORED.
-# A root guard also creates NO view of its own — Rex, Fido, and Whiskers each carry
-# the ORDINARY `owner` view (there is no `owner[Cat,Dog]` key anywhere), while the
-# unguarded WildBoar Tusker carries no `owner` key at all: an excluded root never
-# participated in the path, which is not the same observation as having no owner.
 model: models/animal.yaml
 tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,12 +1,5 @@
 # Every operation a Dialect cannot render, at once (m-schema-delta): a refusal is
 # an aggregated value, never the first finding.
-#
-# Two Entities in two Tables each gain an access path over an unbounded String,
-# so MariaDB refuses both. The cell carries the complete sequence in the order
-# the statements would have run — physical Table first, which is what makes it a
-# deterministic account rather than whichever refusal happened to be reached —
-# and no statement escapes beside it. Postgres builds both paths, so the same
-# Evolution is a two-statement delta there.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,14 +1,5 @@
 # Narrowing a member's domain in the edition its shape leaves the position
 # (m-model-evolution): the contraction reaches no stored value.
-#
-# `Record` is reparented from the abstract `Filed` onto the root, and
-# `Filed.clerk` becomes required in the same edition. A contraction is a claim
-# about values already stored under the position and about a write the later
-# edition must still accept in that shape; `Filed` denotes none afterwards, so the
-# `AttributeAltered` is unilateral. The rows themselves stay where they are and
-# lose the member with the ancestor, which `Record`'s own inheritance alteration
-# reports: the narrowing through the departed branch stops resolving, and the
-# member it withdraws was nullable, so the authoring surface is the whole of it.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

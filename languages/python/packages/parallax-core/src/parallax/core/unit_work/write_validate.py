@@ -1,84 +1,3 @@
-"""The model-aware write validator (m-value-object write validation x
-m-inheritance concrete-subtype write protocol).
-
-:func:`validate_write` is the SHARED validator every ingress carrying a write
-ROW calls: the conformance engine's rejected run lane, and both keyed write
-representations through the one prepared-write producer their two entry points
-share (``instructions.prepare_typed_write`` and
-``instructions.prepare_wire_write``, which differ in how a leaf and a temporal
-bound decode, and in that only the wire entry point takes a keyed assignment set
--- the managed-value lane's authored member names, checked against the single
-addressed row before this validator runs) -- the "one validator, many callers"
-pattern
-``validate_predicate`` established
-(`parallax.core.predicate.validate`): the SAME rule classification and check
-order runs on every path, so they cannot drift.
-
-A PREDICATE-SELECTED write reaches it nowhere (``_predicate_writes``'s own
-buffering seam): it selects rows by predicate and
-carries assignments rather than a row, so there is no write row for a row
-validator to measure, and member-name honesty
-is part of the prepared-write producer its ingress runs.
-
-Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
-``m-predicate``, ``m-db-port``, and ``m-temporal-read`` only, and its
-import-linter contract forbids
-``parallax.core.value_object`` outright (no module outside that scope's own DAG
-edge may reach it) -- but does NOT forbid ``parallax.core.inheritance``
-(transitively reachable through the ``m-predicate --> m-inheritance`` edge).
-So the payload-shape / target-validity rules (`m-inheritance` "Concrete-subtype
-writes") are PURE functions living in their own owning scope
-(:func:`parallax.core.inheritance.validate_subtype_write`) and called directly
-from here; the declared-composite walk (`m-value-object` "Writing") is the
-error-neutral authored-document traversal `m-document-codec` owns, and this
-module renders ITS OWN rule vocabulary and message text from its sparse findings.
-This applies the composition-at-the-engine pattern to writes: pure
-per-concern rule functions in their owning scopes, ONE shared compose function
-(this module) both callers invoke, so the rule ORDER stays a single source of
-truth regardless of which scope a given rule's logic lives in.
-
-Check order: the inheritance payload-shape/target-validity rules run FIRST,
-unconditionally, whenever ``entity`` participates in a family -- resolving
-those rules does not need (and must not wait on) the value-object composite,
-and a malformed inheritance payload has no well-defined "target entity" for the
-composite walk to run against (`m-inheritance` "A validator checks these
-payload-shape rules... before the target-validity rule"). The declared-composite
-walk (required-attribute / required-value-object / value-type-mismatch) runs
-second, over ``entity``'s family-effective scalar attributes and value objects
-(`m-inheritance` "Inherited members"), so an inherited required member and an
-inherited Attribute's declared type are enforced on a concrete-subtype write.
-
-``mutation`` classifies whether ``row`` is expected to be a FULL document
-(``insert`` / ``insertUntil`` -- every declared member must be present, save a
-``many`` Value Object occurrence, whose absence IS its empty collection rather
-than a member to require, `m-value-object`) or a SPARSE row (``update`` /
-``delete`` / ``terminate`` / ``updateUntil`` /
-``terminateUntil`` -- an ABSENT top-level member is simply untouched, never a
-violation; the corpus's own sparse keyed-update goldens, e.g.
-``m-unit-work-005``'s ``{id, balance}`` omitting the required ``owner``, are
-exactly this shape). Sparseness licenses an absent member, never a VALUE, so
-naming a ``many`` occurrence explicitly NULL is refused under either
-classification: null is a state the model gives it none of, so a row carrying
-one has not left the member alone. A value-object document, once PRESENT in
-the row at any mutation kind, is always validated as a whole (`m-value-object`
-"one atomic document bind" -- there is no sparse write below the document
-boundary): every declared member the document's OWN composite requires must be
-present inside it, regardless of the outer mutation's sparseness. The rejected
-run lane's own ``when.write`` input carries no mutation context at all (a bare
-neutral write row, `m-case-format` "Read targeting" ①) and is graded against
-the strictest, full-document interpretation (the default), matching every
-witnessed rejected case's own complete-except-for-the-one-defect shape.
-
-A scalar ATTRIBUTE column's value that is a single-key mapping shaped
-``{"computed": ...}`` / ``{"increment": ...}`` is a DB-computed write marker
-(`m-value-object` "Writing" -- pk-gen / the framework version advance) and is
-exempt from type-checking; the disambiguation is by the field's declared
-metamodel ROLE (scalar attribute vs. value object), never by the value's
-shape, so this exemption applies ONLY at a scalar attribute leaf, never inside
-a value-object document (a value object binds its whole document even when
-that document happens to be shaped like a marker).
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -192,11 +111,9 @@ def validate_write(
         )
 
 
-# --------------------------------------------------------------------------- #
 # The entity's own top-level scalar attributes (depth 0): a DB-computed marker #
-# exempts a marker-shaped value; the concept does not exist below the top      #
-# level (`m-value-object` "Writing").                                          #
-# --------------------------------------------------------------------------- #
+
+
 def _check_entity_attribute(
     row: Mapping[str, object],
     attribute: AttributeMetadata,
@@ -223,16 +140,11 @@ def _check_entity_attribute(
         )
 
 
-# --------------------------------------------------------------------------- #
-# Value-object members: a PRESENT document is always validated as a whole,     #
-# regardless of the outer mutation. An UNNAMED `many` occurrence is not an     #
 # absence to require -- `m-document-codec` fixes Missing and [] as one logical #
-# zero state, so the write stores the empty array. Naming one explicitly null  #
+
 # is refused at EVERY mutation, sparse ones included: the model gives a `many` #
-# no null state to name, so the null is not a member left untouched but a      #
-# value the occurrence cannot hold -- one that would bind SQL NULL to a NOT    #
-# NULL Column or patch JSON null at the occurrence's Document Path.            #
-# --------------------------------------------------------------------------- #
+
+
 def _check_value_object_member(
     row: Mapping[str, object],
     vo: ValueObjectMetadata,
@@ -266,10 +178,7 @@ def _normalize_leaf(neutral_type: NeutralType, value: object, _path: str) -> tup
     return managed, matches_neutral_type(managed, neutral_type)
 
 
-# --------------------------------------------------------------------------- #
-# Renders THIS module's own rule vocabulary / message text from the shared,   #
 # error-neutral document-codec finding, which owns no policy text of its own. #
-# --------------------------------------------------------------------------- #
 def _rejected_error(violation: VoDocumentViolation, *, base: str) -> WriteRejectedError:
     path = _joined(base, violation.path)
     if violation.reason == "not-a-list":
@@ -311,10 +220,6 @@ def _joined(base: str, path: str) -> str:
     return f"{base}.{path}"
 
 
-# --------------------------------------------------------------------------- #
-# DB-computed write markers (scalar attribute columns only, `m-value-object`   #
-# "Writing" marker disambiguation).                                            #
-# --------------------------------------------------------------------------- #
 def _is_scalar_write_marker(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False

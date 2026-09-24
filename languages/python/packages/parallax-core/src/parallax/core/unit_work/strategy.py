@@ -1,23 +1,3 @@
-"""The strategy ports write finalization reaches its sibling policies through
-(m-unit-work).
-
-The module DAG runs from each optional policy module *to* this scope, so
-finalization cannot import batching, concurrency, temporal, or provenance
-policy directly. It declares the ports here instead and the composition root
-injects one implementation of each. Implementations are structural: nothing
-inherits these Protocols, exactly as no clock inherits ``Clock``.
-
-The temporal port is the load-bearing one. Its answer is a **neutral topology
-description**, scoped to one authored mutation rather than to one resolved row:
-which milestone closes and why, what an optimistic close gates on, and the
-interval and state of each successor the mutation opens. A predicate-selected
-mutation resolving many rows therefore yields one description, not one per row,
-so the description's size never grows with the result set. The description names
-no SQL, dialect, physical column, or statement — which is exactly what lets
-temporal expansion live inside finalization while column participation and
-quoting stay in lowering.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

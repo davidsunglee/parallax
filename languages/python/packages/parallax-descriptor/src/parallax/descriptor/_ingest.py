@@ -1,21 +1,3 @@
-"""Three-phase descriptor ingestion (m-descriptor "Descriptor ingestion").
-
-Ingestion is a fixed three-phase contract: syntax, then schema, then value.
-Each phase either passes the document forward or fails with that phase's own
-error; no phase reports another phase's failures, no failing phase produces an
-Unresolved Metamodel, and only a document every phase accepts reaches the
-adapter (:func:`~parallax.descriptor._adapter.unresolved_metamodel`) for
-semantic formation.
-
-The schema phase (phase 2) evaluates the whole document against the canonical
-``metamodel.schema.json`` (JSON Schema Draft 2020-12) with ``jsonschema``, which
-``parallax-descriptor`` declares directly alongside ``pyyaml``, so every
-installed Descriptor Frontend can execute all three phases and neither
-dependency has an optional-import failure branch. The schema itself is read from
-this distribution's own packaged copy through :mod:`importlib.resources`;
-installed runtime code never searches repository-relative paths.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -108,9 +90,6 @@ def ingest_document(document: object) -> Metamodel:
     return parse_document(mapping)
 
 
-# --------------------------------------------------------------------------- #
-# Phase 1 — syntax.                                                           #
-# --------------------------------------------------------------------------- #
 def _utf8(text: str | bytes, format: DescriptorFormat) -> str:
     """``text`` as source text, decoding bytes as UTF-8.
 
@@ -143,9 +122,6 @@ def _decode_yaml(text: str) -> object:
         raise DescriptorSyntaxError("yaml", line=line, column=column, cause=exc) from exc
 
 
-# --------------------------------------------------------------------------- #
-# Phase 2 — schema.                                                           #
-# --------------------------------------------------------------------------- #
 @functools.cache
 def _validator() -> Validator:
     return jsonschema.Draft202012Validator(json.loads(schema_text()))
@@ -164,9 +140,6 @@ def _validate_schema(document: object) -> None:
     raise DescriptorSchemaError(canonical_schema_violations(violations))
 
 
-# --------------------------------------------------------------------------- #
-# Phase 3 — value.                                                            #
-# --------------------------------------------------------------------------- #
 def _type_spelling_violations(
     document: Mapping[str, object],
 ) -> tuple[DescriptorValueViolation, ...]:

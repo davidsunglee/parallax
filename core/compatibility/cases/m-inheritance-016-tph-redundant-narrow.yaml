@@ -1,13 +1,4 @@
 # Table-per-hierarchy VALID redundant narrow (m-inheritance, m-object-query, m-sql).
-#
-# The queried target is the abstract subtype Pet; narrowing it to [Pet] is a no-op — the
-# resolved effective set {Cat, Dog} equals the position's own set, so it is a valid
-# (redundant) narrow, not a rejection. It lowers to the same `t0.kind in (?, ?)` (binds
-# [cat, dog], alphabetical order) an unnarrowed Pet read does (m-inheritance-011). This
-# pins that narrowing a position to itself is accepted (the subset rule holds with
-# equality); familyVariant per row.
-#
-# Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
 tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

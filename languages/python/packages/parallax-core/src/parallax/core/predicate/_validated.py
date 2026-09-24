@@ -1,5 +1,3 @@
-"""Immutable model-bound Predicate products consumed by planning and SQL."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, replace

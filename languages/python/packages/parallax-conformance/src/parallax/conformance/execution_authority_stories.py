@@ -1,5 +1,3 @@
-"""Executable API-suite story for scoped execution authority."""
-
 from __future__ import annotations
 
 import inspect

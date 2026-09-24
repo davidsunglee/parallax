@@ -1,15 +1,5 @@
 # Table-per-hierarchy UPDATE: a concrete-subtype update is tag-GUARDED (m-inheritance,
 # m-sql).
-#
-# Fixtures are loaded first (the three persisted concrete rows). Updating CardPayment 1
-# corrects its amount (100.00 -> 130.00, a ROOT-declared attribute on Payment). The
-# UPDATE is keyed on the primary key `id`, and the concrete-subtype tag GUARD
-# `and kind = ?` joins the identity predicates immediately AFTER the primary-key
-# equality (resolved Q9): `where id = ? and kind = ?`. The tag value ('card') is
-# framework-derived from the subtype's tagValue, never authored in the neutral write
-# input (①), and `kind` is never in the SET clause (the tag is framework-owned
-# metadata, not a mutable domain attribute). Only row 1's amount changes; its kind
-# stays 'card' and the other two rows are untouched.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, tag, write-sequence, update, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

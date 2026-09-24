@@ -2,34 +2,6 @@
 # projects and retains the Structured Column, so a rectangle split carries a key the
 # model decodes nowhere (m-storage-layout x m-sql *Read projection* rule 5 x
 # m-unit-work), on Postgres AND MariaDB.
-#
-# `Mooring` declares the layout and five members, and every one of them holds a
-# direct-column role: the primary key and the four axis bounds. Nothing the model
-# declares lives inside its Structured Column, so no member a read asks for could ever
-# make it project one — and it projects one anyway, because an OBSERVING read carries
-# the stored document itself. That is the half of the projection rule `Mooring` exists
-# for, and `m-storage-layout-019` is the other half: the same shape read row-form for
-# its direct members alone projects nothing.
-#
-# `given.apply` writes `berthCode` into the fixture row's Structured Column out of
-# band, because no authored member of this model can produce a key it declares
-# nowhere. That is exactly the state a newer version of an application writing this
-# table leaves behind for an older one.
-#
-# The sequence:
-#   step 1 resolve         : the materializing read of the one open rectangle — its
-#                            select list carries `t0.payload`, which is the whole
-#                            claim, since no member the read asked for lives there
-#   step 2 terminateUntil  : excise Valid-Time [2026-03-01, 2026-09-01) — close the
-#                            rectangle and chain head and tail, each binding the
-#                            document the closed rectangle held
-#   step 3 verify          : an instance-form find inside the excised window resolves
-#                            no rectangle, and it too projects the Structured Column
-#
-# The teeth are step 2's two INSERT binds. An implementation whose resolve projected
-# no Structured Column would observe no document, rebuild `{}` from the members this
-# model declares, and write two rectangles that read back identically for every
-# declared member while `berthCode` is gone.
 model: models/document-layout.yaml
 tags: [m-bitemp-write, m-storage-layout, m-document-codec, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, json, document-layout, scenario, slice-snapshot-1]
 shape: scenario

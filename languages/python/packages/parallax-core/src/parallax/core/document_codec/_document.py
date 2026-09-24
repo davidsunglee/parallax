@@ -1,9 +1,3 @@
-"""The document operations (m-document-codec, "Operations").
-
-Every operation is a pure function of its arguments: none mutates its input document,
-and a returned document shares no mutable state with one passed in.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence

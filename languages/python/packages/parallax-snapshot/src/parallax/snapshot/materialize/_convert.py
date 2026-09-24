@@ -1,28 +1,3 @@
-"""Per-row conversion: the one place a physical column becomes a member identity.
-
-One SQL-materialized row's transformed values plus its level context and
-classified provenance yield one compact projection row. Nothing below this
-seam sees a physical column, a storage key, or a Document Path again. Any bulk
-path is a thin loop over :func:`convert_row`, and the Page-local identity scope
-it registers into is an explicit argument rather than a whole-result index.
-
-A compiled read first extracts provider-neutral member carriers into an exact
-Payload Witness and establishes identity from that positional row. Only after a
-Root View has compared every reached witness does conversion classify and decode
-Entity-document members and Value Object occurrences into positional member rows
-laid out by the declaration-owned canonical Member Shape, recursively at every
-depth. An undeclared stored key never contributes, and every
-declared one occupies its own position — holding the value exactly where the read
-contract says the value carries it, and ``ABSENT`` where the stored document held
-nothing (`m-snapshot-read` *What a materialized value carries*). This is the seam
-that realizes that contract, so a member present here is the same member a getter
-and a published node agree the value has. No raw document mapping continues past
-here.
-
-Write observation reads this same positional Entity State through a physical-key
-mapping view, so conversion builds no second payload for the write side.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
@@ -617,11 +592,6 @@ def _attribute_issue(
     return StoredDataIssueInput(
         code, entity, attribute.identity, stored_value=freeze_evidence(value)
     )
-
-
-# --------------------------------------------------------------------------- #
-# Document decoding.                                                           #
-# --------------------------------------------------------------------------- #
 
 
 def build_positional_object(shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:

@@ -1,50 +1,6 @@
 # Optimistic-lock conflict ABORTS the unit of work (m-opt-lock + m-unit-work): a
 # `updatedRows != 1` conflict mid-flush discards EVERY buffered write in the UoW,
 # not just the conflicting one — no partial flush survives.
-#
-# m-opt-lock-005 proves the conflict SIGNAL (a stale-version UPDATE affects 0 rows);
-# this composes it with the m-unit-work abort contract: when a versioned write in a
-# unit of work conflicts, the WHOLE unit of work rolls back, so an unrelated insert
-# buffered in the same UoW is discarded too. The classic optimistic race is authored
-# as TWO INTERLEAVED `uow` groups — OUR unit of work (`ours`) and a CONCURRENT one
-# (`concurrent`) — because `m-opt-lock` forbids a caller-authored version value
-# (`CallerAuthoredVersionError`): each UPDATE's SET version bind is instead the
-# framework-owned advance of a version its OWN group's observing find returned,
-# and its WHERE gate binds that SAME observed version, never the advance.
-# The scenario:
-#   step 0 find  : OUR unit of work (group `ours`) observes account 2 (Linus,
-#                  250.00, version 1) — this optimistic object find omits the shared lock.
-#   step 1 find  : a CONCURRENT unit of work (group `concurrent`) observes the SAME
-#                  account 2 at the SAME version 1 — the classic race: both sides
-#                  read before either writes.
-#   step 2 write : the CONCURRENT unit of work commits FIRST — a GATED update of
-#                  account 2 (balance 999.00), advancing its OWN observed version
-#                  1 -> 2 (optimistic mode gates every keyed update). Group
-#                  `concurrent` COMMITS after this, its last step.
-#   step 3 write : OUR unit of work (group `ours`) buffers TWO writes and flushes
-#                  them, then ABORTS (`rollback: true` — the observable form of the
-#                  conflict abort):
-#                    (a) insert a brand-new account 9 (would succeed on its own), then
-#                    (b) a version-GATED update of account 2 at OUR OWN observed
-#                        version (1) — but the row is now version 2 (the concurrent
-#                        commit above), so the gate matches ZERO rows
-#                        (updatedRows != 1). That conflict dooms the group, so (a)
-#                        is rolled back with it. Group `ours` ROLLS BACK after this,
-#                        its last step.
-#   step 4 find  : query account 9, UNGROUPED (after both groups have resolved) —
-#                  it MUST observe NO rows. The would-be-successful insert never
-#                  became durable: the conflict discarded the entire UoW (no
-#                  partial flush). This is the teeth.
-# The conflict is ASSERTED against real data, not merely simulated: then.affectedRows
-# (0) pins the gated update of account 2 inside the doomed `ours` group to the 0-row
-# conflict count, and the harness makes the abort a CONSEQUENCE of detecting it — a
-# gated write that affected 1 row (no conflict) would fail this case rather than pass
-# on the rollback alone. Every version bind here is observation-derived (never a
-# literal caller-authored value), so the case is `compileEligibility: run-only`
-# (query-result-dependent) — the reference harness is its green gate; it stays out
-# of the Python exercised sets until increment 5's set-based/batch work flips it.
-# roundTrips = 6 (the two observing finds + the concurrent commit + the two aborted
-# writes + the dependent find).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, optimistic-lock-conflict, abort, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

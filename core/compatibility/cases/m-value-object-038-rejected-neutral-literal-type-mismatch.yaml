@@ -1,12 +1,5 @@
 # Negative (m-wire typed-literal conversion): a nested comparison whose literal
 # cannot denote the declared attribute type is refused PRE-SQL.
-#
-# Because a value object's structure is DECLARED, the leaf attribute has a neutral
-# type and the comparison is TYPED. `Customer.address.city` is a `string` attribute,
-# so comparing it against the NUMBER `42` is a type mismatch a model-aware resolver
-# MUST reject before any SQL (m-predicate: "a resolver MUST reject a type-mismatched
-# literal"). The node is schema-valid — the polymorphic `literal` admits a number —
-# so only model-aware validation, resolving the leaf's declared `string` type, catches it.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-wire, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
 shape: rejected

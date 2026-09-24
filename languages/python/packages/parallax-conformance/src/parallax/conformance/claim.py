@@ -1,12 +1,3 @@
-"""``parallax.conformance.claim`` — the canonical ``slice-snapshot-1`` claim.
-
-The exact ``describe`` capability envelope the Python target claims, copied
-verbatim from the canonical claim in ``core/spec/slices.md`` (adapter identity
-aside) except for the dialects, which are derived from the declared matrix
-profiles rather than restated here. This is the single in-code source of truth
-for the adapter's ``describe`` output and its unsupported-classification filters.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -69,7 +60,6 @@ class Claim:
         return capabilities
 
 
-# The Python adapter identity (spec/python.md §1).
 ADAPTER: Final[Adapter] = Adapter(language="python", name="parallax-core", version="0.1.0")
 
 # The canonical slice-snapshot-1 claim (core/spec/slices.md, adapter aside).

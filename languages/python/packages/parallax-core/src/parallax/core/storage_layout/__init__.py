@@ -1,14 +1,3 @@
-"""``parallax.core.storage_layout`` enforcement scope (m-storage-layout).
-
-Storage Layout validates independent physical Table ownership, physical Column
-uniqueness, and the consequences of the declared Storage Layout, then compiles
-one immutable canonical layout per accepted Table. The compiled layout answers
-both physical questions — which slot does this contributor own — and logical
-ones — where does this member live. Consumers retrieve the facet through
-:func:`view`; this module is the supported advanced import path and is not
-re-exported from ``parallax.core``.
-"""
-
 from __future__ import annotations
 
 from parallax.core.storage_layout._compile import (

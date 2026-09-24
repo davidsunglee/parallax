@@ -1,24 +1,3 @@
-"""``parallax.conformance.scripted_clock`` — a harness-owned, ordered-instant Clock.
-
-Every temporal writeSequence
-story needs SUCCESSIVE DISTINCT Transaction-Time instants across its own choreography
-(one corpus writeSequence entry, one flushing ``db.transact`` call, one Clock
-read each — the case-driven engine's own precedent,
-:func:`~parallax.conformance.engine.run_write_sequence_case`) — a single
-``FixedClock`` (`parallax.core.unit_work.clock`) pins only ONE instant, so it
-cannot drive a multi-entry story on its own.
-
-:class:`ScriptedClock` satisfies core's structural, ``runtime_checkable``
-``Clock`` protocol (`parallax.core.unit_work.Clock`) without any core change —
-this is harness-owned machinery, never a core seam: an ORDERED sequence of
-instants, consumed one per :meth:`~ScriptedClock.now` call, in entry order.
-Exhaustion raises loudly (:class:`ClockExhaustedError`) rather than silently
-repeating the last instant — a silent reuse would corrupt a later entry's own
-goldens without any signal at all. Every instant is normalized on construction
-(mirroring :class:`~parallax.core.unit_work.clock.FixedClock`'s own rule): a
-naive datetime is rejected here, at story-authoring time, never at flush.
-"""
-
 from __future__ import annotations
 
 import datetime as _dt

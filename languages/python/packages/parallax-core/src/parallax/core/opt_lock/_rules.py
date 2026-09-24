@@ -1,14 +1,3 @@
-"""The optimistic-locking Model Formation Rule Set (m-opt-lock).
-
-Two things make a version undeterminable, and both are statements about one
-declaring position: naming more than one version Attribute, and naming a version
-Attribute on a family whose version is already the Transaction-Time milestone
-start. Neither reads an ancestry, because a version Attribute and an As-Of Axis
-are both root-owned facts that ``m-inheritance`` rejects on a descendant — so the
-effective set of either is the declaring position's own, and checking a chain
-here would report one defect once per position that inherits it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

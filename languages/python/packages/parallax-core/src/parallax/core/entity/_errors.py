@@ -1,24 +1,3 @@
-"""Entity-frontend errors — a strict leaf within the Entity implementation cluster.
-
-Every module in the cluster may depend on this one; it depends on none of them,
-imports only the standard library and class-free core identity, location, and
-issue-ordering values, and
-retains structured values rather than classes, models, or declarations.
-Rejections carry a stable code drawn from a closed per-family set, so a caller
-branches on the rule that fired rather than on a message substring.
-
-The six families are disjoint by the question they answer.
-:class:`EntityDefinitionError` says a declaration is outside the grammar;
-:class:`MetamodelDefinitionError` says a Domain Model constructor call is
-malformed before any model exists; :class:`MetamodelLookupError` says a
-developer-facing ``models.meta(...)`` lookup found nothing;
-:class:`GraphConstructionError` says a caller drove the advanced Entity Graph
-Construction collaboration outside its contract; :class:`EntityRowError` says a
-caller asked the Entity Row Codec for a row it cannot derive; and
-:class:`EditError` says an authored assignment to a live value breaks the shared
-assignment rules.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -257,7 +236,7 @@ class EntityRowError(RuntimeError):
 
 class UnloadedRelationshipError(AttributeError):
     """A closed-world relationship (or narrowed view) was not fetched by the read
-    that produced this node (spec §3): access raises, naming the path and the
+    that produced this node: access raises, naming the path and the
     ``.include(...)`` fix rather than issuing lazy SQL."""
 
     def __init__(self, path: str) -> None:

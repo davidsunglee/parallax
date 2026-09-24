@@ -1,10 +1,5 @@
 # Changing a Relationship's ORDERING (m-model-evolution): unilateral, and the
 # only result ordering the model itself defines.
-#
-# The navigation answers with the same Entities in a different order, which is
-# reported exclusively as `QueryResultOrderingChanged`. Declaration order, Index
-# component order, and unspecified physical row order are not model-defined
-# result ordering and never reach this impact.
 tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

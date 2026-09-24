@@ -1,10 +1,5 @@
 # Changing a Relationship's effective TARGET ENTITY (m-model-evolution):
 # coordinated.
-#
-# The join moves to another Entity, so a previously valid navigation now answers
-# with a different type and every operation authored against the old one has to
-# change. The membership impact is reported beside it: the two are independent,
-# and a target change causes both.
 tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

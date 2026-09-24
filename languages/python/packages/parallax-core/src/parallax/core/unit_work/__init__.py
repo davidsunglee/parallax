@@ -1,25 +1,3 @@
-"""``parallax.core.unit_work`` enforcement scope (m-unit-work).
-
-The transaction scope: the unit of work that **buffers, finalizes, and flushes**
-writes, the write-instruction IR it buffers, the Clock Strategy that supplies the
-Transaction-Time instant at flush, the model-scoped :class:`WritePlanner` — the
-single pure finalization authority — and the finalized **Planned Write** algebra
-its writes settle into — one closed semantic step per execution, delivered as an
-immutable, execution-ordered :class:`WritePlan`.
-
-The module DAG pins ``m-unit-work -> m-predicate``, ``m-unit-work -> m-db-port``,
-and ``m-unit-work -> m-temporal-read`` (the Edge a Write Observation is filed
-under) — there is deliberately **no** edge to ``m-sql``, ``m-dialect``, or any
-optional policy module (``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
-``m-bitemp-write``, ``m-read-lock``). So this scope holds no SQL generation and
-reaches those optional policies only through the strategy ports it declares: the
-planner emits a neutral :class:`WritePlan`, and the write-DML -> SQL lowering (the
-deliberate ``m-sql`` edge) happens one layer up, at the composition surface that
-legally sees both and injects the strategy adapters. These are internal engine
-seams, not part of the developer surface — nothing here is re-exported from
-``parallax.core``.
-"""
-
 from __future__ import annotations
 
 from parallax.core.unit_work.claims import (

@@ -1,17 +1,6 @@
 # valueObject atomic document INSERT: the whole embedded composite binds as ONE
 # document value in its layout `Document` position (m-value-object write, m-sql), on Postgres
 # AND MariaDB.
-#
-# Inserting a Customer writes the `address` valueObject as a single structured-
-# document bind in the entity's layout position ([id, name, address]) — the
-# third `?` carries the WHOLE nested-plus-to-many document (street/city, nested
-# `geo`, to-many `phones`) atomically, never decomposed into path-level binds. The
-# INSERT DML is identical on both dialects (a plain column bind, no JSON function);
-# only the document VALUE is adapted at bind time (Postgres `jsonb`, MariaDB `json`
-# text), so the hole structure is shared and `binds` is a single flat array with the
-# document riding as one element. The write-sequence oracle applies the golden DML
-# and reads the row back, decoding the document column so `then.tableState`'s
-# authored document compares identically on both dialects.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, write-sequence, insert, json, nested, to-many, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

@@ -1,5 +1,3 @@
-"""The corpus edit model and Python's native state-carry witnesses."""
-
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Final, Self, cast

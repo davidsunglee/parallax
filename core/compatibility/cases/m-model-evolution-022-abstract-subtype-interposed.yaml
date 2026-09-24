@@ -1,12 +1,5 @@
 # Interposing an abstract subtype (m-model-evolution): unilateral, because the
 # EFFECTIVE consequences are unchanged.
-#
-# `Entry` extends the new abstract `Posting` instead of extending `Ledger`
-# directly. An inheritance change is never classified by the raw parent change: it
-# is unilateral here because every narrowing the earlier model admitted still
-# resolves, `Entry` keeps its Table, tag Column, and tag value, and the inherited
-# member `Posting` introduces is nullable and so independently unilateral. The
-# root's concrete set is unchanged, so the evolution holds no Behavioral Impact.
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

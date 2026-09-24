@@ -1,10 +1,5 @@
 # Changing a Relationship's DEPENDENCY (m-model-evolution): unilateral in either
 # direction, with delete propagation changing behind the preserved surface.
-#
-# Every previously valid navigation keeps its identity, target, and result shape.
-# What changes is what deleting the source does to the rows each direction
-# reaches, which is a `DeletePropagationChanged` per Relationship and prescribes
-# no remediation.
 tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

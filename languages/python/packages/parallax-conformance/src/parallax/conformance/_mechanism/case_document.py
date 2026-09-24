@@ -1,16 +1,3 @@
-"""The facts a conformance lane reads off a case's DOCUMENT: its compile
-eligibility, its ``when`` and the scenario steps or write-sequence entries
-under it, its unit-of-work Concurrency Preference, a step's streamed page
-size, and the translations of an authored step into the canonical shapes the
-core ingresses accept.
-
-Every reader here is a pure read of the case document that names the case
-file in its refusal, so a mis-authored corpus reports the case rather than an
-engine frame. No reader consults a model or a database: what a case SAYS is
-settled here, and what it means against its model is the lanes' and
-:mod:`~parallax.conformance._mechanism.model_facts`'s.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

@@ -1,29 +1,3 @@
-"""The snapshot action-step lane: a scenario whose steps carry a `mutate` or
-`access` action over the graph a find step materialized, compiled to its find
-and write steps' DML or run and reported as the observations its ``then``
-members grade.
-
-A find step reads through the same public Wire read every graph read uses;
-`mutate` runs the production write seam's finite-Transaction-Time-pin refusal
-against the named view's own pin and, when that verdict accepts, derives an
-Edited Copy carrying the step's `set` as this step's own result — zero round
-trips, nothing at the port, because a snapshot node is never enrolled in a unit
-of work (`m-snapshot-read` closed world); `access` navigates a relationship on
-the view an earlier step holds, likewise touching the port not at all. A
-`write:` step commits as its own unit of work through the write core this lane
-consumes from :mod:`~parallax.conformance._lanes.scenario`, and the views
-earlier find steps materialized stand untouched across it.
-
-The run lane builds its own Handle over the caller's port, applies the case's
-``given.apply`` ahead of the first step, and closes the Handle where the case
-ends; the compile lane lowers purely, with no database. Both are reached from
-the façade, which dispatches a scenario here by the presence of an action
-step. The :class:`~parallax.conformance._mechanism.envelope.ScenarioRun` the
-run lane returns — its `errors` channel filled from `expectError` grading, its
-`stepRows` and `stepGraphs` from each step's own placement — is graded against
-``then`` by the adapter.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

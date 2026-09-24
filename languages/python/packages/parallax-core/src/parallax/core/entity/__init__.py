@@ -1,36 +1,3 @@
-"""``parallax.core.entity`` enforcement scope (the Python class frontend, support).
-
-The sole supported Python model-authoring surface: the frozen ``Entity`` and
-``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
-``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
-``desc`` factories, the core-algebra spellings those take, ``DomainModel`` and
-its closed error-code sets, and the Object Query surface it re-exports from
-``m-object-query``. The underscored modules
-behind these names are implementation detail rather than caller seams.
-
-It additionally exposes ``model_of``, the durable first-party collaboration seam
-a schema-owning or separately distributed frontend reads a model's accepted
-Metamodel through. It is an operation over a ``DomainModel`` rather than a
-collaborator anything constructs or retains, and top-level ``parallax.core`` does
-not re-export it.
-
-It further exposes the **advanced Entity Graph Construction collaboration**
-— ``EntityGraphConstruction``, its writer, the opaque ``NodeHandle`` its
-positional rows name a node by, and the ``UNLOADED`` sentinel a relationship
-position spells, plus the two operations a lifecycle reads back
-(``relationship_value_of``, ``lifecycle_state_of``) — and the **Entity Row
-Codec** a write path derives rows through. Each is constructed over an accepted
-Metamodel by the runtime that composes it, derives every Entity's facts at
-construction, and is retained by that runtime rather than by the model; there
-is no composite value over them and no reach seam on the model. Top-level
-``parallax.core`` re-exports neither: a first-party lifecycle or persistence
-package reaches them here on purpose, and a developer never needs either.
-
-Entity Classes are their own formation input: the declaration engine builds each
-class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
-imports no descriptor interchange code at all.
-"""
-
 from __future__ import annotations
 
 from parallax.core.entity._construction_input import UNLOADED, NodeHandle

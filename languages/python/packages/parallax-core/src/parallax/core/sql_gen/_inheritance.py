@@ -1,60 +1,3 @@
-"""Inheritance-family read PLANNING (m-sql "Metamodel-extension lowering").
-
-Two `inheritance` names meet in this file, and they are not the same thing:
-
-* ``parallax.core.inheritance`` — the METAMODEL module (`m-inheritance`), whose
-  compiled :class:`~parallax.core.inheritance.InheritanceFacet` this module
-  reads. It answers model questions: a family's root, its effective concrete
-  subtypes, its ancestry chain, its projection supersets.
-* ``parallax.core.sql_gen._inheritance`` — THIS module, the family lane of the SQL
-  compiler. It answers lowering questions: what a family read projects, which tag
-  predicate it carries, how a table-per-concrete-subtype union splits into
-  branches, and how a row's `familyVariant` is materialized. Siblings import it
-  by its dotted path and alias each name down (`plan_inheritance_read as
-  _plan_inheritance_read`).
-
-Every family answer arrives PRECOMPUTED. A plan reads an
-:class:`~parallax.core.inheritance.InheritanceEntityView` (one Entity's position)
-or an :class:`~parallax.core.inheritance.InheritancePositionView` (a narrow's
-resolved members), never an ancestry walk of its own — the two view shapes agree
-on the three members this module needs (``concrete_subtypes``,
-``superset_attributes``, ``superset_value_objects``), which is what lets the
-narrowed and un-narrowed lanes share one planner.
-
-**This module returns PLANS and never lowers a predicate.** Every plan below
-carries its read's own predicate as an un-lowered node, and the tag guard as its
-INPUTS (:class:`TagPredicate`) rather than as anything bound. `_compile`
-constructs the statement's :class:`~parallax.core.sql_gen._context.StatementBuilder` and
-assembles the family reads; `_predicate` owns every descent, including the
-mid-predicate `narrow` that :func:`plan_validated_branch_narrow` describes. Either way the
-caller lowers its own operand first and only THEN calls :func:`tag_guard` and
-appends what it returns. That split is what keeps the m-sql "Grouped branch
-predicates" ordering (binds read branch-predicate-first, then tag) structural
-rather than contingent.
-
-Two rules make it checkable by reading this file alone. **Nothing here lowers a
-predicate**: the module imports no predicate lowering, and contains no `match`
-over the node union — the one Predicate node it inspects is a TOP-LEVEL `narrow`,
-and only to resolve the read's position, never to descend into it. **Nothing here
-binds**, and that is now checked rather than asserted: lowering state reaches
-this module through exactly one signature, :func:`tag_guard`, and it arrives as a
-:class:`~parallax.core.sql_gen._context.ColumnScope` — a protocol carrying
-`own_column` and nothing else, so `bind`, `binds`, and `next_alias` are not
-merely unused here, they are unreachable.
-
-The read's queried **position** is the resolved effective concrete-subtype set
-the whole read targets: the query's own `narrowTo` clause replaces its `target`'s
-position with that clause's resolved set; a `narrow` inside the predicate (nested
-inside and/or/not/group) is a local BRANCH guard and never changes the read's own
-position (`m-inheritance-015`'s `or` of two narrowed branches is the corpus
-witness — the projection and the whole-family "no tag" rule stay keyed to the
-query's `target`, only each branch's own tag guard is injected).
-
-Named without a leading underscore because the MODULE carries the privacy, the
-package convention `_context` already established: importers alias to the
-module-private spelling.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -126,11 +69,6 @@ from parallax.core.storage_layout import (
 )
 
 
-# --------------------------------------------------------------------------- #
-# Facet reads. Each of the four below is total for an accepted model, so its   #
-# absence branch names a state formation cannot produce rather than a model    #
-# defect a read could carry.                                                    #
-# --------------------------------------------------------------------------- #
 def entity_view(facet: InheritanceFacet, entity: EntityIdentity) -> InheritanceEntityView:
     """``entity``'s family-effective view; the facet covers every accepted Entity."""
     view = facet.entity(entity)
@@ -165,37 +103,22 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
     return value
 
 
-# --------------------------------------------------------------------------- #
 # Row materialization stages: what a read's own projection decided each observed #
-# row still needs (m-case-format / m-conformance-adapter). Table-per-hierarchy  #
+
 # derives `familyVariant` from the projected raw tag column, table-per-concrete- #
-# subtype reads it straight from the projected literal column, a Relational     #
-# Document Layout read fans its one projected Structured Column out into the    #
-# members it asked for, and a Value Object stored in its own Column is          #
-# classified where it lies. This lane is not family-specific — it lives here    #
-# because the projection it mirrors does.                                       #
-#                                                                              #
-# ONE staged record rather than a union of forms with a `kind` tag: a read      #
-# always names how its rows identify their Entity, fills the document stages    #
-# its projection decided, and leaves the rest `None`, so every point of the     #
+
+
 # stage product is a legal materializer and materialization asserts nothing. An #
-# absent stage does not run, and a present stage's per-entity index answers a   #
-# `dict.get` whose miss means "this stage does not apply to this row". Every    #
-# fact a row would otherwise re-derive — the tag map, a branch's renames, each  #
-# occurrence's document shape, the member keys the codec already judged — is    #
-# compiled once here, so a row allocates its own values dict and the few pairs  #
-# a branch rename moves, and no map, set, scan, or shape of its own — save the  #
+
+
 # row that reaches materialization without a projected occurrence Column, which #
-# narrows the compiled classified-key set to the keys it held. Stored fields    #
-# stay tuples of pairs and every index is derived in `__post_init__`, so a      #
-# compiled read still pickles, deep-copies, compares, and reprs exactly.        #
-#                                                                              #
+
+
 # The stages keep their module's spelling and `_compile` aliases each down, the #
-# package convention `_context` established. `_compile` sequences them because  #
+
 # raw positional carriers remain owned by the compiled read that fills them #
-# sits below it: what a stage cannot write into the row's values it returns,    #
-# and nothing here names the carrier.                                          #
-# --------------------------------------------------------------------------- #
+
+
 type ResolvedVariant = tuple[EntityIdentity, str | None, UnknownFamilyTag | None]
 """What resolving one row answers: the concrete Entity it names, the
 `familyVariant` spelling it publishes, and the stored discriminator no composed
@@ -883,9 +806,6 @@ def direct_documents(
     return DirectDocuments(per_entity)
 
 
-# --------------------------------------------------------------------------- #
-# Position resolution.                                                         #
-# --------------------------------------------------------------------------- #
 def query_narrow_position(
     facet: InheritanceFacet, to: tuple[EntityIdentity, ...]
 ) -> InheritancePositionView:
@@ -899,9 +819,6 @@ def query_narrow_position(
     return position
 
 
-# --------------------------------------------------------------------------- #
-# The DEFERRED tag guard.                                                      #
-# --------------------------------------------------------------------------- #
 def tag_pairs(
     facet: InheritanceFacet, concretes: Sequence[EntityIdentity]
 ) -> tuple[tuple[str, EntityIdentity, str], ...]:
@@ -1002,15 +919,6 @@ def tag_guard(
     return f"{col} in ({holes})", tuple(tag_values)
 
 
-# --------------------------------------------------------------------------- #
-# The plans.                                                                   #
-#                                                                              #
-# Each is a frozen description of ONE family read: what it selects from, what  #
-# it projects (rendered on demand against the statement's own alias, the one   #
-# thing only `_compile` knows), the un-lowered `inner` predicate, the tag       #
-# guard's inputs, and the row materialization stages. Nothing here holds a     #
-# `StatementBuilder`, a bind list, or an alias.                                 #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class ProjectedColumn:
     """One selected physical Column and the seam the dialect renders it through.
@@ -1540,9 +1448,6 @@ class BranchNarrowPlan:
     tag: TagPredicate | None
 
 
-# --------------------------------------------------------------------------- #
-# Planning.                                                                    #
-# --------------------------------------------------------------------------- #
 def plan_inheritance_read(
     entity: EntityMetadata,
     predicate: PredicateNode,

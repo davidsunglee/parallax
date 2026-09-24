@@ -1,17 +1,3 @@
-"""The Optimistic Lock Facet's Model Compiler (m-opt-lock).
-
-Compilation runs only after every Rule Set accepted the candidate, so it decides
-no validity and emits no issue: it asks the Inheritance Facet for each Entity's
-family root and the Temporal Facet for that family's shape, then reads whichever
-of the two version sources applies. The Transaction-Time shape wins by
-construction rather than by precedence — a temporal family declaring a version
-Attribute was already rejected — so the two keyed variants stay mutually
-exclusive.
-
-Reaching a state validation ruled out raises, so the formation runner reports a
-compiler contract failure rather than publishing a facet.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,11 +1,5 @@
 # Exchanging which side of an association DEFINES it (m-model-evolution):
 # unilateral, and `DeclarationFormChanged` is exclusive.
-#
-# Each declaration changes form, so each retains both complete declarations and
-# carries no accompanying delta — the defining and reverse forms do not expose
-# the same fields. Neither direction's target, cardinality, join, dependency, or
-# ordering moves, because classification and the impacts read the symmetric
-# facet rather than the declaration, so the evolution carries no impact at all.
 tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:

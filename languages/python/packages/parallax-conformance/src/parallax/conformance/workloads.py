@@ -1,5 +1,3 @@
-"""Shared Snapshot delivery workloads defined by benchmark fixtures."""
-
 from __future__ import annotations
 
 import hashlib

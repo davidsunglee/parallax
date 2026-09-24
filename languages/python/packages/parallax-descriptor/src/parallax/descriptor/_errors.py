@@ -1,13 +1,3 @@
-"""Descriptor-scope errors (m-descriptor): the three-phase ingestion failure
-family and the canonical violation-ordering law phases 2 and 3 share.
-
-Ingestion is judged in a fixed order — syntax, then schema, then value — and
-each phase fails with its own error; no phase ever reports another phase's
-failures. Model Formation is beyond ingestion: every failure past the
-Unresolved Metamodel seam is a representation-independent
-``MetamodelValidationError``, never a :class:`DescriptorError`.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence

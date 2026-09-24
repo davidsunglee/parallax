@@ -1,11 +1,6 @@
 # Deferred multi-hop load (m-deep-fetch): an ad-hoc `load` of a two-hop path over
 # managed objects emits ONE statement per non-empty level — the same N+1 elimination
 # a materialized deep fetch proves, driven explicitly.
-#
-# Step 0 finds orders {1, 42}. Step 1 loads `items.statuses`: level items keyed by
-# the two order ids, then level statuses keyed by the four DISTINCT item ids
-# {11, 12, 421, 422} — two statements, not 1 + N + N. The load costs two round
-# trips (root already resolved at step 0), so the whole scenario is three.
 model: models/orders.yaml
 tags: [m-deep-fetch, relationship, deferred-load, multi-hop, slice-managed-1]
 shape: scenario

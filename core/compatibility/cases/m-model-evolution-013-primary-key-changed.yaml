@@ -1,13 +1,5 @@
 # Changing the primary key (m-model-evolution): membership and generation are two
 # facts with two reason sets.
-#
-# `Voucher` moves its key from `id` to `code`, which is one member joining the key
-# and one leaving it: both change the physical constraint as well as the lookup
-# and insert shape, so both carry BOTH reasons. `Coupon.id` keeps its membership
-# and is allocated from the stored maximum instead of being supplied by the
-# application: nothing physical changes, so `AuthoringSurfaceChangeRequired` stands
-# alone. All three change what caller input the Attribute admits, so each causes
-# its own `WriteCapabilityChanged`.
 tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
 shape: evolution
 when:

@@ -1,19 +1,3 @@
-"""The Inheritance Facet and its typed retrieval (m-inheritance).
-
-An inheritance family answers questions no single Entity can: which concrete
-variants a polymorphic position denotes, which members apply there, which
-physical container and discriminator a read or write of it targets, and which
-Persistence Mode the family's root fixed. This module owns those answers as one
-immutable per-formation view, precomputed once so behavioral modules never walk
-an ancestry again.
-
-The projection law lives here rather than in the compiler because an Entity's
-own supersets are defined as its one-member position: computing both through the
-same operation makes that equality hold by construction. Every Metadata value a
-view returns is the accepted declaration itself, so an inherited member still
-names the ancestor that introduced it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence

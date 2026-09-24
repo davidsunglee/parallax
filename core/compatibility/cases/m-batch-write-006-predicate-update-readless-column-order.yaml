@@ -1,20 +1,5 @@
 # Predicate-selected UPDATE over an UNVERSIONED, non-temporal entity is READLESS, and
 # its SET clause filters assignments from Entity Layout order (m-batch-write, ADR 0014).
-#
-# As with the readless delete (m-batch-write-005), Wallet has no version to gate and no
-# temporal chain, so the set update collapses to one predicate-shaped
-# `update wallet set ... where balance < ?` with no materializing read. This case
-# additionally pins SET-clause determinism: the assignments are authored balance-first
-# then owner, but the golden SET emits `owner = ?, balance = ?` — the assigned cells
-# filtered from the entity's canonical layout (id, owner, balance) — with binds
-# [Updated, 150.00, 200.00] following that SET order, not the authored assignment order.
-# The emitted write is byte-identical across runs and implementations.
-#
-# The trailing find keys on the NEW owner value (owner = 'Updated') and expects the two
-# rows the predicate touched (id 1 and 3, now Updated / 150.00), proving the update
-# applied to exactly the matching set. Total roundTrips 2 = write (1) + verify read (1).
-# Wallet is unversioned, so the default `optimistic` preference resolves the verifying
-# find to the Locking fallback and it carries the shared-row-lock suffix.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, m-unit-work, predicate-write, readless, scenario, slice-snapshot-1]
 shape: scenario

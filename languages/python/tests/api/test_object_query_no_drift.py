@@ -1,43 +1,8 @@
-"""Object Query no-drift guard (m-api-conformance).
+"""Compare idiomatic queries with their corpus Object Queries.
 
-Each idiomatic public-API query the suite authors must CANONICALIZE to the exact
-``m-object-query`` document the mirrored corpus case authors — the developer
-surface cannot drift from the graded protocol. The builders here are the source of
-truth for the ``api_suite.EXAMPLES`` snippets; the guard compares each query's
-canonical lowering to the case's ``when.objectQuery``.
-
-Two case shapes carry queries outside a single top-level ``when.objectQuery``.
-An ``edit`` case's source query is still one ordinary ``ObjectQuery``, so its
-read-origin cases have ``BUILDERS`` entries and the comparison reads
-``when.edit.source.objectQuery``. A ``rejected`` case gets its OWN comparison
-instead of a ``BUILDERS`` entry (the invalid input is authored under ``when.objectQuery``,
-but building it through the idiomatic surface never returns a ``ObjectQuery`` at all
-— the model-aware validator raises immediately, exactly as it does for the corpus's
-own query-input path) proves no-drift by comparing
-the RAW built predicate's own serialization to the case's ``when.objectQuery`` and
-separately asserting the SAME build raises the classified ``then.rejectedRule``;
-a ``scenario`` case's per-step queries are built inside the executable graph
-stories' own bodies rather than by a ``BUILDERS`` entry, so they are compared
-with their authored steps where those bodies run — ``test_graph_story_no_drift``
-records the query each story's ``db.find`` receives and compares the sequence
-with the case's own find steps — and its mutation and access steps are not
-queries at all.
-
-Most read-only entries below are **derived** from
-``parallax.conformance.read_stories.READ_STORIES`` — the SAME ``build()`` the
-real-database generic runner (``test_story_run.py``) executes against real
-Postgres, so this guard's no-drift proof and that execution share one source,
-never a second, hand-duplicated expression that could drift from it. The
-remaining hand-authored entries are the ones that genuinely have no executable
-real-database story yet, OR that pair with a `graph_stories.GraphStory` (a
-graph story's own bare-query half — including the Customer value-object
-family: `db.find`'s
-always-instance-form materialization means these grade bespoke there rather
-than through `read_stories.ReadStory`'s byte-exact generic runner, see that
-module's own docstring), OR that genuinely cannot: a multi-concrete
-polymorphic read `db.find` cannot grade as flat rows — see ``read_stories``'s
-own module docstring and ``api_suite.CASE_SKIP_REASONS`` for exactly why each
-remaining one stays build-only.
+Rejected queries are compared before validation; scenario queries are recorded
+by test_graph_story_no_drift. ReadStory builders are shared with database tests;
+CASE_SKIP_REASONS records why any remaining query has no execution story.
 """
 
 from __future__ import annotations
@@ -118,8 +83,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     # `then.rows` comparison for these (a table-per-hierarchy multi-concrete
     # row's own typed instance carries only its own concrete class's fields;
     # table-per-concrete-subtype instance-form projection over 2+ resolved
-    # concretes has no goldened lowering yet) — see `read_stories`'s own
-    # module docstring.
+    # concretes has no goldened lowering yet).
     "m-inheritance-003": lambda: im.Payment.where(im.Payment.all),
     "m-inheritance-013": lambda: sm.Animal.where(sm.Animal.all).narrow(sm.Pet),
     "m-inheritance-015": lambda: sm.Animal.where(
@@ -128,9 +92,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     ),
     "m-inheritance-052": lambda: im.Document.where(im.Document.all).narrow(im.FinancialDocument),
     # Value-object traversal over the installed Customer mirror — the query-shape
-    # no-drift half of the executable graph stories in `graph_stories.py`
-    # (see that module's own docstring for why these land as `GraphStory`
-    # entries, bespoke-graded, rather than `read_stories.ReadStory` ones).
+    # no-drift half of the executable graph stories in `graph_stories.py`.
     "m-value-object-001": lambda: Customer.where(Customer.address.city == "Oslo"),
     "m-value-object-002": lambda: Customer.where(Customer.address.geo.country == "US"),
     "m-value-object-007": lambda: Customer.where(Customer.address.city.is_null()),

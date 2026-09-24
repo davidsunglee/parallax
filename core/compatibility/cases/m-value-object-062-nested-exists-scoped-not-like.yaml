@@ -2,20 +2,6 @@
 # the element, not around the existence test (m-predicate elementPredicate, m-sql).
 # Postgres golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's
 # containment scope (m-dialect, "Scope of the containment golden").
-#
-# nestedExists(Customer.address.phones, where: type = 'work' AND number not like
-# '555-9999') asks for one element that is a work phone whose number is something else.
-# Only Nils (7) has one ({work, 555-0000}).
-#
-# Ada (1) is the discriminating row: her `work` element IS 555-9999, so she fails the
-# same-element compound — yet the unscoped AND of the two flat any-element predicates
-# would admit her, since her `work` element satisfies the equality and her `home` element
-# (555-1234) satisfies the negated pattern. Linus (2) has no `work` element at all.
-# Reading the negation as "no element matches the pattern" would also be wrong: it would
-# drop Nils only if some OTHER element matched, and would admit every element-free row.
-#
-# The negation renders INFIX (`not like`) on the same alias t1 the equality uses, never
-# as a `not` around the `exists` — that spelling is nestedNotExists, a different node.
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

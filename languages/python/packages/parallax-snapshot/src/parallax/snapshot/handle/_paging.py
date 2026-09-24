@@ -1,12 +1,3 @@
-"""Pure streamed-Page request and verdict policy.
-
-A delivery asks :class:`PagePlan` how many roots its next statement may read,
-then gives :func:`page_decision` only the evaluated coordinates. The policy owns
-lookahead, limit, tie, and maximal-prefix arithmetic; SQL compilation, execution,
-Page assembly, and continuation retention belong to
-:class:`~parallax.snapshot.handle._materialization.Materializer`.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

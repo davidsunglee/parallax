@@ -1,16 +1,5 @@
 # Negative (m-inheritance, binding decision): a table-per-concrete-subtype family
 # whose CONCRETE subtype declares the family's Temporality Profile.
-#
-# Temporality is a family-wide property: the root ALONE declares the profile,
-# and every descendant inherits EXACTLY the axes it derives — a descendant MUST
-# NOT declare, add, remove, override, or shadow one (a root-result's identity
-# would otherwise mix `(family, PK)` and `(family, PK, coordinates)` depending on
-# which branch a row resolved through). `Rate` (root) declares no profile;
-# `DepositRate` (concrete) declares `transaction-time` — a model-aware validator MUST
-# reject the family before any SQL. Different physical strategy and different
-# position than the sibling witness (`m-inheritance-098`, an abstract subtype
-# under table-per-hierarchy), so both strategies and both descendant roles
-# exercise the same invariant.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -1,5 +1,3 @@
-"""The single refusal boundary for publishing issue-bearing read results."""
-
 from __future__ import annotations
 
 from typing import Final

@@ -1,12 +1,5 @@
 # A transaction holding the outer locking SELECT for a cast-safe, tag-partitioned
 # TPH document read prevents a concurrent writer from updating a matched base row.
-#
-# Round A joins the outer payment_document locking SELECT to a tag-filtered,
-# cast-safe derived identity union and holds its transaction open; round B updates
-# the matching cash row and must time out on both providers. This distinguishes
-# locking the base alias from merely locking or materializing the derived union,
-# while the companion read case pins one statement, one round trip, result
-# correctness, and each dialect's canonical lock suffix.
 model: models/document-layout.yaml
 tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error

@@ -1,15 +1,3 @@
-"""Temporal read products and predicate injection (m-temporal-read).
-
-Authored Temporal Selections are validated into closed, model-bound variants before
-planning. The production path consumes those variants: it appends managed temporal
-predicate terms, derives pins without reparsing authored strings, and reports whether
-a validated selection scans an axis. Raw-node helpers remain only as the authored
-serialization utility surface; SQL consumes neither authored selections nor temporal
-concepts.
-
-This module also owns the immutable Temporal Facet compiled for each accepted model.
-"""
-
 from __future__ import annotations
 
 import datetime as _dt
@@ -284,9 +272,6 @@ def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) ->
     )
 
 
-# --------------------------------------------------------------------------- #
-# As-of injection (Temporal Selections -> plain m-predicate terms).          #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _Latest:
     """Pin a dimension to its latest milestone (``end = infinity``)."""

@@ -109,13 +109,15 @@ satisfies each is language-local.
 ## Usage Guide
 
 A language implementation MUST also ship a **Usage Guide**: a rendered document
-that demonstrates idiomatic usage of the developer surface. The Usage Guide is the
-genuinely demonstrative artifact — human-readable prose and examples — and it MUST
-be generated from the API Conformance Suite's own source, with a CI drift check
-that fails when the rendered guide falls out of lockstep with the suite. This keeps
-the documented examples identical to executed, passing tests: prose and proof
-cannot diverge. The rendering and drift-check mechanism is language-local; core
-requires only the property.
+that teaches idiomatic usage through a curated selection of executable examples.
+Examples MUST be generated from the API Conformance Suite's source, with a CI
+drift check. Selection for the guide MUST NOT change the suite's coverage
+partition or which examples execute. The guide need not reproduce every case or
+variant the suite grades.
+
+Explanatory prose is non-normative and should explain how to use the API rather
+than restate its complete contract. Generation checks example drift; it does not
+prove prose correct. The rendering and drift-check mechanism is language-local.
 
 ## Mechanism is language-local
 

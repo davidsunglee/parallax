@@ -1,33 +1,3 @@
-"""One compiled read's prepared half: every level its rows can convert under,
-derived once where the read was compiled.
-
-A read lane hands rows here and receives projections. What a row converts under
-— the exact Entity's member layout, the position's document contributors, and
-the statement's own Attribute contracts — is fixed by the model and the compiled
-read together, so it is derived at :func:`bind` and shared by every row of that
-read. Nothing about a row decides it; a row only names which of the prepared
-levels answers it.
-
-Every Entity the read can resolve gets its level at bind
-(``CompiledRead.resolvable``), including the ones no row may ever name: a family
-root an unrecognized tag falls back to, and a sibling outside a narrow whose tag
-the position still maps. Preparing them all at once is what keeps this state a
-property of the compiled read rather than of the rows that arrived — a level
-derived on first reach would be a lazy, data-keyed cache whose cost no
-preparation figure reports and whose contents depend on which rows came back.
-
-The reference direction is one-way and load-bearing. A prepared read holds its
-levels, which hold the catalog's layouts and the statement's contracts; nothing
-prepared holds a row, a builder, or a Page, so a read's prepared state outlives
-its rows without retaining any of them and one execution's Page cannot be
-reached from the next one's preparation.
-
-This scope may not import `m-sql`, so what a compiled read publishes is read
-structurally: :class:`_CompiledRead` is the ordinal-access interface a prepared
-read needs. Provider rows cross it unchanged, so the object lane allocates no
-per-row lookup wrapper or mapping.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping

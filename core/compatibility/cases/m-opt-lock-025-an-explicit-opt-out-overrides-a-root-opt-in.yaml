@@ -2,16 +2,6 @@
 # `retryOptimisticConflicts: false` at the call overrides a Database Root that
 # opted in, so an optimistic-lock conflict surfaces after one attempt —
 # `api-conformance` lane.
-#
-# The root is configured `retryOptimisticConflicts: true`, under which
-# `m-opt-lock-024`'s conflict is retried away; the invocation here names `false`
-# and the explicit value wins. The injected conflict is therefore not retried,
-# and it surfaces as the `optimistic-lock-conflict` kind after the single
-# attempt. `m-auto-retry-011` is the same override under a transient fault,
-# which stays retriable: the override disables the opt-in and nothing more.
-#
-# `roundTrips: 2` is the single attempt's cost: the observing read, and the gated
-# UPDATE, which reached the database and reported zero rows.
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-api-conformance, conflict, database-options, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

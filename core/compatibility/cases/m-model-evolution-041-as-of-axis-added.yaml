@@ -1,13 +1,5 @@
 # Adding an AS-OF AXIS to an Entity that already stores rows
 # (m-model-evolution): coordinated for both reasons, with three impacts.
-#
-# The Temporality Profile derives the axis and its two framework-owned endpoint
-# Attributes, so the evolution names each addition in its own right. The axis
-# changes the temporal operation surface and the framework ownership of its
-# endpoints, and it moves the derived physical primary key and the bounds
-# existing rows must carry. Behind that, the Entity selects through a temporal
-# shape it did not have, gates its writes on the milestone start, and writes
-# through a different temporal shape.
 tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
 shape: evolution
 when:

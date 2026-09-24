@@ -1,18 +1,3 @@
-"""The Value Object Model Formation Rule Set (m-value-object).
-
-Everything this module rejects is a statement about a declared composite shape
-rather than about how it is stored: whether a shape has any member at all,
-whether the reusable shape graph is acyclic, and whether an occurrence's
-multiplicity and nullability can both be honored. Name collisions inside a shape
-are not here — foundational resolution owns them.
-
-The walk descends occurrence declarations rather than the shape graph alone,
-because every diagnostic names the containment path a reader authored. Reuse of
-one shape at several disjoint paths is legal and expands to distinct occurrence
-trees, so only a shape reached twice on a single path is a cycle; descent stops
-there, which is also what keeps the walk finite.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

@@ -1,56 +1,3 @@
-"""The sealed Snapshot Page: compact positional rows, and the builder that seals them.
-
-One projection is a reference to its exact Entity's member layout plus one raw
-positional Payload Witness, a deferred decoder, the managed correlation values
-needed by later levels, one relationship view row, the source level that produced
-it, one dense Page-local logical-node ID, and its identity findings. A Root View
-creates the decoded Entity State and remaining findings only when it reaches the
-projection. Member payload cells stay unwrapped; when overlapping fetch positions
-write one relationship slot, the Page retains those root-local edges until the
-Root View has merged their continuations.
-
-The view row is positional too, against the
-:class:`~parallax.snapshot.materialize._views.ViewSchema` the execution planned:
-its width is what the levels below that projection's own source attach, so a
-fan-back names a view and the builder resolves the slot, and no key travels
-beside a value.
-
-Absence stops being spelled by omission, because a positional row has no way to
-omit. :data:`~parallax.core.entity._construction_input.ABSENT` carries it — the one
-sentinel the common runtime owns beside the member layouts a row is read
-against, re-exported here because this is where the Snapshot's absence algebra
-is stated — and the four spellings stay mutually distinct at every depth:
-
-===============================  =========================================
-``ABSENT``                       absent or unloaded, and what an
-                                 undecodable cell becomes beside its issue
-``None``                         an explicit null
-``()``                           loaded empty, a Many with zero occurrences
-                                 included
-``value_tuple``                  one Value Object record, in its own
-                                 declaration order
-``tuple[value_tuple, ...]``      a Many occurrence, order preserved
-``int`` / ``tuple[int, ...]``    a to-one / to-many edge, by projection index
-===============================  =========================================
-
-Edges and roots are exact nonnegative built-in ``int`` projection indexes, and
-:class:`PageBuilder` refuses ``bool``, a non-``int``, a negative, and an
-out-of-range index where the edge is recorded — so a Page that exists is a Page
-whose references resolve, and no whole-Page validation pass stands between
-building and sealing it.
-
-:meth:`PageBuilder.finish` transfers the accumulated arrays into an opaque
-:class:`Page` and invalidates the builder in one step, so nothing
-observes a half-published Page and nothing writes to a published one. The
-per-family key map the builder assigns logical identity through is discarded
-there: identity is computed once, while building, and each Root View consumes the dense
-IDs without re-extracting or re-hashing a key.
-
-A Page is also where result scope is expressed. A Root View selects one root
-without copying any page-owned array. :func:`page_edges` supplies the milestone
-each root of a scan stands at, or its absence for a root at the Page's own pin.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -397,7 +344,6 @@ class Page:
 
     @property
     def pin(self) -> Pin:
-        """The Page pin every occurrence was read at."""
         return self._rows.pin
 
     @property
@@ -407,12 +353,10 @@ class Page:
 
     @property
     def judged_states(self) -> Mapping[LogicalKey, list[tuple[int, EntityState]]]:
-        """The witness-distinct states judged so far for this Page."""
         return self._rows.judged_states
 
     @property
     def observer(self) -> object | None:
-        """The aggregate-only observer for this delivery, when installed."""
         return self._rows.observer
 
 
@@ -586,10 +530,6 @@ class PageBuilder:
         self._decoders: dict[int, _Decoder | None] = {}
         self._witnesses: list[object] = []
         self._sealed = False
-
-    # ----------------------------------------------------------------------- #
-    # Accumulate.                                                               #
-    # ----------------------------------------------------------------------- #
 
     def add(
         self,
@@ -797,10 +737,6 @@ class PageBuilder:
         self._witnesses = []
         return Page(rows)
 
-    # ----------------------------------------------------------------------- #
-    # Read back, for the read executor's fan-out helpers alone.                 #
-    # ----------------------------------------------------------------------- #
-
     def member_value(self, projection: int, member: MemberIdentity) -> object:
         """``projection``'s value at ``member``, by position.
 
@@ -831,10 +767,6 @@ class PageBuilder:
             None,
         )
         return None if logical is None else self._first[logical]
-
-    # ----------------------------------------------------------------------- #
-    # Internals.                                                                #
-    # ----------------------------------------------------------------------- #
 
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)

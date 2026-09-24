@@ -1,15 +1,3 @@
-"""Select the corpus cases reachable by the compile and run sweeps.
-
-Selection is derived at runtime from the active slice and
-:data:`IMPLEMENTED_MODULES`; a case is reachable only when every module tag it
-declares is implemented. This keeps sweep coverage aligned with the module DAG
-without hard-coded case counts. The selected modules cover descriptor and
-query processing, SQL and database execution, inheritance and graph
-materialization, writes, temporal behavior, locking, retries, and concurrency.
-Cases that need run-only state or multi-session choreography remain reachable
-and are routed to their specialized runners by case shape.
-"""
-
 from __future__ import annotations
 
 from typing import Final

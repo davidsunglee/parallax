@@ -1,16 +1,6 @@
 # A concrete position turning abstract under table-per-hierarchy
 # (m-model-evolution): the authoring surface alone, and the mirror of
 # m-model-evolution-063.
-#
-# `Note` gives up the concrete-subtype role and its `note` tag value. The family
-# loses a shape, so a narrowing that resolved to `Note` no longer denotes anything
-# and the previously valid authored operation it stood in must change. It stops
-# there: the rows carrying `note` are addressed by nobody afterwards and may be
-# left in place, exactly as a concrete subtype's removal leaves them. Only a shape
-# the position keeps at BOTH endpoints has data to carry, and this position keeps
-# none. Two surviving positions change what they denote, and `Note` stops being a
-# write handle: a write names a concrete subtype, so the position admits no
-# persistence operation once it is abstract.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

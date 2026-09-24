@@ -1,25 +1,3 @@
-"""``parallax.snapshot._read_result`` enforcement scope (m-snapshot-read).
-
-What a snapshot read HANDS BACK: the sealed delivery Page, and nothing about the
-execution that produced it. A read publishes its transient Read activity through
-the composition-supplied lifecycle seam while it runs (`m-execution-lifecycle`),
-so a result carries no trace, no round-trip count, and no lifecycle record at
-all — which is why nothing in this module names that vocabulary.
-
-This scope alone carries the module tag's full grant, `m-execution-lifecycle`
-included. The row-to-Page work sits in the separate, narrower
-``parallax.snapshot.materialize`` scope, which turns driver rows into Page
-inputs. The split is what keeps `m-sql` outside the closure of the grant every
-consumer of the row-to-Page surface holds: a forbidden contract is the
-complement of a closure, so a scope that must stay clear of SQL generation has
-to be granted a scope that does not reach it.
-
-Every lane's result sits here rather than beside Root View construction because a result is
-what the read ANSWERS, while the row-to-Page vocabulary is what a materializer
-consumes; keeping the answer in the wider scope is what leaves the narrower one
-free of everything `m-execution-lifecycle` drags in, `m-sql` included.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

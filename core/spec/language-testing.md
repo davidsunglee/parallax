@@ -6,11 +6,10 @@ vocabulary and the structural rules. It fixes no test framework, no runner
 mechanism, and no command names.
 
 Rationale for these rules lives here and only here, in
-[Why this shape](#why-this-shape). A completed language spec records that
-language's quality policy — thresholds, matrices, exclusions, and required proof.
-An implementation's testing map records that implementation's concrete
-mapping — its directories, its classes, its commands, and its CI jobs. Neither
-restates the rules below.
+[Why this shape](#why-this-shape). Executable tool configuration owns quality
+thresholds and exclusions; CI configuration owns its matrices. An implementation's
+testing map explains test placement, fixtures, and how to select checks. It links
+to the command graph and CI workflow rather than maintaining their inventories.
 
 ## 1. Command grammar
 
@@ -110,9 +109,9 @@ scope MUST provide these six surfaces under its test root:
 `dialect/` is mandatory for every implementation: `m-dialect` is an active core
 module, not one language's local concern.
 
-An additional surface is permitted only for a genuinely distinct contract, and
-requires synchronized updates to the language spec, the implementation's
-testing map, its commands, its CI jobs, and its drift enforcement.
+An additional surface is permitted only for a distinct contract. Update its
+test placement, command selection, and enforcement; update CI only when execution
+ownership changes. A language binding needs no edit for a test-layout change.
 
 A tooling scope declares no semantic surface. It proves one subject rather than
 a portfolio of contracts, so the six-way split has nothing to classify, and the
@@ -281,9 +280,8 @@ For each scheduling class `<class>` a scope declares:
   plus the quality execution commands assigned to the class.
 
 A language scope MUST additionally expose `<scope>-check`, a dependency-only
-aggregate over its scheduling-class aggregates: its language spec names one
-complete verification command for the implementation, and nothing else in the
-graph provides it. Any other scope MAY expose one.
+aggregate over its scheduling-class aggregates, providing one complete
+verification command for the implementation. Any other scope MAY expose one.
 
 A scope that declares no scheduling class exposes `<scope>-check` as a
 dependency-only aggregate over its execution commands directly.
@@ -312,9 +310,8 @@ threshold anything passes ([§6](#6-runtime-classification)). Excluding a class 
 therefore a change to this section, never a local decision.
 
 `check` is consequently NOT complete, and nothing may describe it as though it
-were. Every document naming these commands MUST say which aggregate is complete
-and which gates a merge, and [§8](#8-graph-inspection)'s blocking check compares
-what they say against the graph.
+were. The repository testing map explains that distinction once. Other documents
+may link to that map without repeating the explanation.
 
 Every composition rule above quantifies over blocking commands
 ([§2](#2-operation-vocabulary)). A non-blocking command belongs to no gate, and a
@@ -372,6 +369,11 @@ verification runs. A second gate manifest MUST NOT be introduced.
   declared-metadata, test-layout, runner-configuration, documentation, and CI
   drift. `check` MUST depend on it: a graph that has drifted is a gate that has
   drifted, and a merge is what that costs.
+
+Documentation checks validate commands that navigation and binding documents
+actually cite. They MUST NOT require those documents to enumerate commands, CI
+jobs, matrices, or tool settings. CI coverage is checked directly against the
+command graph, independently of prose.
 
 ## 9. Continuous integration contract
 

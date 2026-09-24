@@ -1,75 +1,3 @@
-"""Model-aware Predicate validation (m-predicate, m-navigate, m-value-object).
-
-A schema-valid predicate can still be **structurally invalid** against a
-specific metamodel: a `narrow` that broadens past the polymorphic position in
-scope, a predicate that reaches a concrete-subtype attribute nobody in the
-active position declares, a navigation aimed at a value object rather than a
-relationship, or a predicate rooted at a value object rather than a queryable
-entity. It can also be invalid on its own authored terms, needing no model at
-all: a range predicate whose two bounds are inverted. `m-case-format`'s
-`rejected` case shape requires these refusals to happen **before any SQL is
-emitted**. The query-wide clauses that carry a predicate — result narrowing,
-ordering, Includes, Temporal Selection — are validated by ``m-object-query``,
-which threads the position it resolves into this walk.
-
-Rule provenance:
-
-- `between-bounds-inverted` — `m-predicate` "Bound-ordering rule": a range
-  predicate whose `lower` bound is strictly greater than its `upper` names an
-  empty range, and is refused rather than lowered into a predicate that
-  silently matches nothing. Bounds are compared by literal kind (two numbers or
-  two strings), so the top-level `between` needs no model resolution at all. The
-  two nested ranges share the identical rule, but resolve their subject and
-  type-check both bounds FIRST, so a mistyped bound is named as a type mismatch
-  rather than ordered as a raw literal.
-- `narrow-outside-position` / `narrow-empty-effective-set` /
-  `subtype-attribute-outside-narrow-scope` / `attribute-outside-active-position`
-  — `m-predicate` "Subtype narrowing" / "The four-step validation rule": a
-  `narrow` node's resolved concrete set is clamped (intersected) against the
-  **active polymorphic position** threaded into it (the query's own `target`,
-  narrowed by its `narrowTo` clause and by every enclosing `narrow`), and an
-  attribute reference must be applicable to every concrete in that position. The
-  two attribute rules partition one condition by whether the reference's Entity
-  and the position share an inheritance family: inside one, narrowing is the
-  remedy; outside it, nothing is.
-- `reference-ambiguous-entity-name` — `m-predicate` "Entity spellings in a
-  reference position": every reference position — an `attr`, a `rel`, a nested
-  path's root, a `narrow`'s `to` entries — spells its Entity either canonically or BARE, and a
-  bare local name two namespaces of the model declare names no single Entity and
-  resolves nowhere. The canonical spelling of either of those two names one of them
-  and resolves. It is the resolution half of the positional rules above, which
-  presuppose a reference that resolved: those fire when a reference resolves to an
-  Entity outside the position, this one when it resolves to more than one and
-  therefore to none.
-- `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
-  a `narrow` inside a navigation filter's `op` resolves its Subtype Selection
-  inside the relationship target's effective concrete set.
-- `nested-path-first-segment-not-value-object` / `nested-path-unknown-member` /
-  `nested-literal-type-mismatch` — `m-predicate` "Nested value-object
-  predicates": a dotted `Class.valueObject(.valueObject)*.attribute` path MUST
-  resolve against the entity's **declared** value-object structure, and a
-  comparison / range-bound / membership literal MUST match the leaf's declared
-  neutral type.
-- `nested-string-predicate-non-string-member` — `m-predicate` "Non-string-member
-  rule": a nested string predicate reads text, so its resolved leaf MUST be a
-  `String` member. It is a rule of its own, checked ahead of the typed-literal one,
-  because the portable literal vocabulary carries a `Date` / `Time` / `Timestamp` /
-  `Uuid` / `Bytes` value as a `str` — the literal rule alone would accept the very
-  case this one exists to name.
-- `navigate-value-object-target` / `find-root-value-object` — `m-value-object`
-  "Materialization and navigation contract" (points 4 and 5): a value object
-  carries no correlation columns and is never a navigation or query root — it is
-  reached only by value, through its owner.
-
-The active position's effective concrete-subtype sets come from the Inheritance
-Facet; value-object paths resolve through the accepted Metadata's own O(1)
-nested lookups (`entity.value_object(name)`, then `scope.attribute` /
-`scope.value_object` per segment), classifying each miss at the call site.
-Relationship targets come from the queried Entity's own identity-resolved
-declarations — a defining declaration's join target, or a reverse declaration's
-peer source — so this validator needs no relationship facet.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -417,9 +345,6 @@ def _check_managed_bound_ordering(subject: str, operands: ValidatedOperands | No
         )
 
 
-# --------------------------------------------------------------------------- #
-# Entity / position resolution.                                               #
-# --------------------------------------------------------------------------- #
 def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
     """The accepted Metadata a bare-or-canonical Entity spelling names, or
     absence, over the authored `Class` prefix of a predicate reference —
@@ -554,10 +479,6 @@ def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[
     return frozenset(resolved)
 
 
-# --------------------------------------------------------------------------- #
-# Narrow / subtype-attribute position tracking (m-predicate x m-inheritance,  #
-# m-navigate relationship scope).                                             #
-# --------------------------------------------------------------------------- #
 def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel) -> PositionScope:
     """Resolve a Subtype Selection inside the position supplied by context, and
     answer the narrowed position.
@@ -671,9 +592,6 @@ def _check_attribute_position(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Navigation / deep-fetch relationship targets (m-value-object contract 4).    #
-# --------------------------------------------------------------------------- #
 def _declaration_target(declaration: RelationshipDeclaration) -> EntityIdentity:
     """The Entity a declared relationship navigates to: a defining declaration's
     join target, or a reverse declaration's peer source (the reverse direction
@@ -704,12 +622,6 @@ def relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str)
     raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
 
 
-# --------------------------------------------------------------------------- #
-# Nested value-object predicates (m-predicate "Nested value-object            #
-# predicates"), resolved through the accepted Metadata's own O(1) nested       #
-# lookups — the value-object structural checks classify each miss at the call  #
-# site, so m-predicate needs no m-value-object dependency.                    #
-# --------------------------------------------------------------------------- #
 def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:
     return any(entity.value_object(name) is not None for entity in model.entities)
 

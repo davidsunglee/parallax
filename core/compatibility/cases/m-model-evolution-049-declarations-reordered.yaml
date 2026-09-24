@@ -1,11 +1,5 @@
 # Reordering every local collection (m-model-evolution): one operation per
 # collection, all unilateral.
-#
-# Each operation names only the identities present in both endpoints, and the
-# later model is never normalized back into the earlier order. Every
-# declaration-order operation sorts after every declaration operation, and among
-# themselves by owner Model Location key and then by collection — which is why
-# the Entity's four collections precede the occurrence's two.
 tags: [m-model-evolution, m-schema-delta, evolution, declaration-order, slice-snapshot-1]
 shape: evolution
 when:

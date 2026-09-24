@@ -1,23 +1,5 @@
 # A READLESS predicate write selects on a valueObject inner field, and its DML renders
 # the extraction UNALIASED (m-batch-write, m-value-object, m-sql rule 1).
-#
-# Customer is transactional, non-temporal and unversioned, so — exactly like the Wallet
-# readless cases (m-batch-write-005/-006) — a predicate-selected delete has nothing to
-# gate per row and lowers straight to one `delete from customer where ...` with no
-# materializing read. What is new here is the PREDICATE: it extracts from the `address`
-# structured-document column rather than comparing a scalar.
-#
-# The two steps make the contrast the case exists to pin. A read keeps m-sql rule 1's
-# alias-qualified columns, so its extraction reads `jsonb_extract_path_text(t0.address,
-# ?)`; DML keeps the unaliased target table with bare columns, so the SAME predicate
-# must render `jsonb_extract_path_text(address, ?)`. Emitting the read's spelling in the
-# DELETE would name an alias the statement never declares and fail at the database.
-#
-# Grace (id 3) is the only Boston address and owns no dependent Location or Depot rows,
-# so the one statement removes exactly her; the trailing find reads the same predicate
-# back and expects NO rows. Total roundTrips 2 = write (1) + verify read (1). Customer is
-# unversioned, so the default `optimistic` preference resolves the verifying find to the
-# Locking fallback and it carries the shared-row-lock suffix.
 model: models/customer.yaml
 tags: [m-batch-write, m-value-object, m-sql, m-unit-work, predicate-write, readless, nested, json, scenario, slice-snapshot-1]
 shape: scenario

@@ -1,18 +1,3 @@
-"""The Root Execution descriptor and the transitions its activities emit.
-
-Every transition is its own immutable concrete type admitting only its own
-fields: there is no generic attribute bag, no kind-plus-payload record, and no
-callback return value. :data:`ActivityStarted` and :data:`ActivityFinished` are
-union aliases over those concretes, so a consumer matches a transition type
-rather than a discriminator — and the aliases gain a member for each activity
-kind that becomes observable, which is why matching them is not a stable
-exhaustiveness claim.
-
-The correlation envelope is shared by inheritance rather than restated per
-transition, so ``event.sequence`` reads the same off any member of the union
-while each transition stays a concrete type of its own.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

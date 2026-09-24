@@ -2,16 +2,6 @@
 # configuration): an explicit level at the call overrides the Database Root's
 # configured level, and it is the explicit level every attempt opens at —
 # `api-conformance` lane.
-#
-# The counterpart of `m-auto-retry-009`: the root is configured `serializable`
-# and the invocation requests `repeatable-read`. The injected `deadlock` retries
-# the closure once, and the outer invocation reports `repeatable-read` over both
-# attempts — the value it resolved to, never the root's. Under a Serializable
-# root the retried attempt would otherwise have opened at a level the case never
-# authored for it; that it does not is what the explicit request proves.
-#
-# `roundTrips: 4` is the retried pair's cost — each attempt's observing read plus
-# its write, the failed one included.
 model: models/account.yaml
 tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, isolation, transient, database-options, slice-snapshot-1]
 lane: api-conformance

@@ -1,24 +1,5 @@
 # Table-per-concrete-subtype BITEMPORAL plain TERMINATE: the inactivation targets the
 # subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql).
-#
-# A plain bitemporal terminate inactivates the original Latest rectangle on the
-# Transaction-Time dimension and chains only a HEAD (valid [from_z, B)) — no tail, no middle
-# (m-bitemp-write). In a table-per-concrete-subtype family the concrete subtype is selected
-# by WHICH table the DML targets, so terminating a DepositRate inactivates and chains in the
-# concrete `deposit_rate` table: the inactivation is `update deposit_rate set out_z = ?
-# where id = ? and thru_z = ? and out_z = ?`, binds [2024-07-01, 1, infinity, infinity],
-# with NO tag guard (contrast the table-per-hierarchy inactivation m-inheritance-094,
-# whose `update instrument` carries `and kind = ?`).
-#
-# The MILESTONE SHAPES are IDENTICAL to the standalone m-bitemp-write-007 and to the
-# table-per-hierarchy composed variant m-inheritance-094 (same dates, same 2-row result),
-# differing ONLY in table/tag routing.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert    : open the Latest rectangle, amount 2.50, valid [2024-01-01, inf),
-#                      transaction [2024-01-01, inf), grade A               (1 statement)
-#   step 2 terminate : end from Valid Time B = 2024-06-01 at txInstant 2024-07-01 —
-#                      inactivate the original and chain head only         (2 statements)
 model: models/rate.yaml
 tags: [m-inheritance, m-bitemp-write, m-sql, table-per-concrete-subtype, temporal, bitemporal, write-sequence, plain-terminate, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

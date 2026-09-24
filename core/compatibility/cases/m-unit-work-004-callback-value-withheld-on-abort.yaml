@@ -1,25 +1,5 @@
 # Boundary case (m-unit-work abort contract / ADR 0006): the transaction callback's return
 # value is WITHHELD on abort — `api-conformance` lane.
-#
-# The portable boundary observable for m-unit-work's normative abort contract: when
-# the closure throws, the unit of work ABORTS — its writes (buffered, force-flushed
-# for a dependent read, or cached) are discarded — and `px.transaction` REJECTS with
-# the thrown error, returning NO value. The callback-withheld-on-abort row of the
-# abort matrix lives here as a boundary case so the whole retry/abort surface is
-# single-sourced.
-#
-# No fault is injected: the closure itself throws after a write a dependent find has
-# already observed (forcing the read-your-own-writes flush first), so the case also
-# witnesses that the forced flush never escapes the atomic scope the abort discards.
-#
-# `roundTrips: 3` is what the aborted attempt cost: the observing read, the write the
-# dependent find force-flushed, and that dependent find. All three reached the
-# database before the abort erased their effect — the count records work done, not
-# work that survived.
-#
-# `lane: api-conformance`: it proves a boundary control-flow observable (the promise
-# rejects; no value is produced); the suite runs `px.transaction` with a throwing
-# body and asserts the rejection propagates and the pre-transaction state stands.
 model: models/account.yaml
 tags: [m-unit-work, m-api-conformance, abort, slice-snapshot-1, slice-managed-1]
 lane: api-conformance

@@ -1,16 +1,6 @@
 # orderBy DESCENDING with `nulls: first` over a NULLABLE key — the fourth and last
 # direction/placement combination, proven on BOTH dialects (m-object-query orderBy +
 # m-dialect NULL ordering).
-#
-# This is the row of the table where MariaDB carries the whole compensation: it treats
-# NULL as smallest, so `desc` would trail NULLs, and it has no NULLS FIRST syntax —
-# the leading rank term `not t0.sku is null` (the m-sql normalizer's canonical
-# spelling of `is not null`) pulls the NULL row to the front instead. Postgres treats
-# NULL as largest and already leads with it on `desc`, emitting nothing. `limit 2`
-# makes the placement observable through row MEMBERSHIP, since top-level row
-# comparison is order-insensitive: order 4 (no sku) takes the slot the canonical
-# nulls-last default would have given to the second-largest sku, which is how this
-# case separates from m-object-query-005.
 model: models/orders.yaml
 tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read

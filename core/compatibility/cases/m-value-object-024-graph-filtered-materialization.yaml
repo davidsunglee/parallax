@@ -1,27 +1,6 @@
 # valueObject materialization under a FILTER: the matched owners' nested composite
 # still arrives in ONE round trip (m-value-object "Materialization and navigation
 # contract"), on Postgres AND MariaDB.
-#
-# A nested-field filter selects the owners (nestedEq(Customer.address.city, Oslo)
-# -> Ada and Linus, the same extraction as m-value-object-001), and the same
-# single statement projects the `address` document slot's adjacent presence/value
-# pair so their whole nested
-# composite — the to-one `geo` -> `point` (three levels) and the to-many `phones`
-# array — materializes with them. There is NO deep-fetch statement: roundTrips is
-# 1, and `then.graph` carries the decoded composite for exactly the matched rows.
-# This pins that materialization rides the owner's own read even when that read is
-# filtered, and that the getter surface reaches arbitrary depth.
-#
-# The extraction bind holes diverge per dialect (Postgres per-segment key, MariaDB
-# one '$.city' path bind), so `binds` is a dialect-keyed map; the independent
-# `referenceSql` oracle re-selects the matched row SET a different way (a naive
-# native extraction), verifying the filter without routing the JSON document
-# through row comparison.
-#
-# The `phones` arrays below are authored in the order the stored documents hold:
-# element order in a to-many value-object member is SEMANTIC (m-value-object), so
-# `then.graph` array comparison is POSITIONAL and a reordered `phones` array is a
-# mismatch.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read

@@ -1,19 +1,3 @@
-"""``parallax.core.model_formation`` enforcement scope (m-model-formation).
-
-Deterministic composition of module-owned model rules and compilers. This scope
-owns the Formation Manifest data types, the contributor protocols, the two
-formation failure families, and the runner that drives one formation from an
-Unresolved Metamodel to an accepted Metamodel. It owns no semantic rule and no
-Issue Code, imports no contributor implementation, and performs no discovery:
-it learns what a formation consists of only from the immutable manifest an
-explicit composition root hands it. ``m-model-formation`` depends only on
-``m-metamodel``.
-
-Import-time registration, decorators, entry points, plugins, ambient registries,
-and mutable contributor lists have no place here by construction — a
-contributor the manifest does not declare is drift, not configuration.
-"""
-
 from __future__ import annotations
 
 from parallax.core.model_formation._contributors import (

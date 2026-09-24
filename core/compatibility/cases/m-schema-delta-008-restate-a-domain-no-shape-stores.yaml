@@ -1,17 +1,5 @@
 # Contracting a value domain at a position that denotes no stored shape
 # (m-schema-delta): unilateral, and still one physical statement.
-#
-# `Draft` is abstract and composes no concrete subtype, so `caption` narrowing
-# from 64 to 32 contracts a domain no row is stored against and the boundary is
-# silent — the same reading m-model-evolution-057 gives a narrowed nullability
-# there. What that case does not reach is the PHYSICAL consequence: an empty
-# effective concrete set does not un-materialize the Column, so
-# `evolution_registry.caption` really is `varchar(64)` at the earlier endpoint and
-# `varchar(32)` at the later one. A delta that emitted nothing would leave a
-# database the later model's own provisioning does not describe, which is why
-# `RestateColumnDomain` is legal in this second shape and not only over a
-# widening: the same empty applicable set that makes the evolution unilateral is
-# what makes restating the Column destroy nothing.
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

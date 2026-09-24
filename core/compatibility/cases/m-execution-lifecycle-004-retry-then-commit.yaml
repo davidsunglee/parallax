@@ -1,62 +1,6 @@
 # Retry then commit (m-execution-lifecycle): ONE Root Execution spans both
 # physical attempts of one logical invocation, and zero-row enforcement is
 # attributed to the call that COMPLETED.
-#
-# An injected optimistic-lock conflict makes the first attempt's gated UPDATE
-# match nothing, and `retryOptimisticConflicts: true` joins that conflict to the
-# retriable set, so the boundary RE-EXECUTES the whole closure: the second
-# attempt re-reads the now-current version and its re-applied UPDATE lands.
-#
-# Two distinctions ride on that. The first is that both attempts are ONE root:
-# activity 1 is the Transaction Invocation, activities 2 and 9 are the two
-# Transaction Attempts under it, and one `sequence` runs 1..30 across both. A
-# retry is a physical re-execution of the same logical invocation, so the
-# rolled-back attempt is delivered rather than discarded with the transaction
-# that produced it — nothing else in the corpus can observe a failed attempt at
-# all, because nothing retains one.
-#
-# Each attempt owns its own connection, and the ORDER of the two pairs is what
-# "a retry adopts and acquires afresh" looks like: attempt 2 acquires (3),
-# releases (8), and only then does attempt 9 acquire (10). The first attempt's
-# connection is back before the second one asks for anything, so a retry never
-# runs on a connection the attempt it replaced is still holding — the pool may
-# well hand back the same physical connection, which is its business and
-# nothing this stream claims either way.
-#
-# The second is causal attribution. The first attempt's UPDATE is an ordinary
-# `writeCompleted` with `affectedRows: 0` — the call REACHED the database and
-# came back, so a shortfall is not a failed call. What records the shortfall is
-# the Write Batch, which finishes `failed` naming `cause: 7`: the call that
-# completed. Attribution follows exception identity, never "the last call", so a
-# completed call can be named as what caused an enclosing failure. The chain is
-# then walked one link at a time — the batch (6) names the call (7), the attempt
-# (2) names the batch (6) — because each level names its own DIRECT child rather
-# than the deepest activity beneath it. The Release that follows the batch is
-# not in that chain and could not be: a cleanup fact never becomes another
-# activity's cause.
-#
-# The attempt's failure states `phase: pre-commit` (the boundary-owned batch
-# raised it, not the callback) and `retryEligible: true` — the classifier's
-# verdict under this invocation's optimistic-conflict opt-in. That verdict is
-# what licensed the second attempt, and its sibling
-# m-execution-lifecycle-005 is the SAME verdict with the budget spent instead of
-# left. The committed attempt carries no failure at all, and neither does the
-# invocation: `committed` is a terminal outcome with no payload.
-#
-# No failure here carries a stable `code`: `code` is the string an exception
-# publishes as its OWN, and the Write Effect Error family publishes none, so the
-# oracle states the shape rather than a name. `then.roundTrips` counts every
-# attempted call across attempts — 4 for a read-then-write closure retried once,
-# the one number a per-attempt count cannot reconstruct — and the four
-# `databaseCallStarted` events are the same four calls.
-#
-# `lane: api-conformance`: an injected conflict and a re-executed closure are
-# observables a single-connection harness cannot provoke, and the conflict-shape
-# `when.attempts` form cannot express them either — that form authors each
-# attempt's own write and drives each as its own transaction, which is a
-# sequence of invocations rather than one invocation retried. No golden SQL is
-# authored, so each Database Call omits its `statement` index. Satisfied by each
-# language's API Conformance Suite.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-opt-lock, m-auto-retry, m-api-conformance, slice-snapshot-1, retry]
 lane: api-conformance

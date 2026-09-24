@@ -1,9 +1,4 @@
 # Two equivalent unique INDICES are ONE enforcement rule (m-model-evolution).
-#
-# The two additions differ in name and component order and in nothing else that
-# uniqueness depends on, so the Entity gains one rule rather than two. Both
-# operations caused it, and both are named — `causedBy` carries all and only the
-# operations whose changed facts contribute.
 tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:

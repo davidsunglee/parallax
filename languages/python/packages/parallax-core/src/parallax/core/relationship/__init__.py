@@ -1,18 +1,3 @@
-"""``parallax.core.relationship`` enforcement scope (m-relationship).
-
-Relationship-specific model formation and the immutable symmetric Relationship
-Facet. Accepted Entity Metadata preserves the defining-versus-reverse
-declaration union exactly as authored; this scope alone validates those
-declarations, pairs the two directions of one association, and compiles the
-directional values behavioral modules navigate. It owns no runtime navigation,
-deep fetch, SQL lowering, or cascade execution, and it reads no facet of another
-module. ``m-relationship`` depends on ``m-metamodel`` and ``m-model-formation``.
-
-Consumers reach the facet through :func:`view`, so generic facet retrieval stays
-an internal formation seam. A Rule Set that needs relationship facts before any
-facet exists reaches :func:`project_join_endpoints` instead.
-"""
-
 from __future__ import annotations
 
 from parallax.core.relationship._compile import (

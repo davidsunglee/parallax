@@ -6,13 +6,6 @@
 # The ordering expression is untouched by that verdict: `decimal` compares through
 # a dialect cast, and the cast of `1.500` is `1.50`, an ordinary member of the
 # declared value space that the database ranks smallest of the three.
-#
-# So the delivery reads `1.50` as the coordinate it continues from and never as a
-# repaired value: the root it belongs to still publishes `null` and still states
-# `stored-data-leaf-undecodable`. The two values sit side by side in this file —
-# `given.corrupt` states what the model rejects, and the second page's leading
-# seek binds what `order by` evaluated — and a page that derived its coordinate
-# from the rejected value instead would have nothing to bind.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, m-sql, stream, streamed-delivery, stored-data, corrupt, decimal, document-layout, graph, slice-snapshot-1]
 shape: read

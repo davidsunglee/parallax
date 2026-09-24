@@ -1,22 +1,5 @@
 # Write sequence: audit-only update starting from EXISTING persisted history
 # (milestone chaining, m-txtime-write).
-#
-# m-txtime-write-002 chains from an empty table (it opens the original milestone
-# itself). This case instead LOADS the model fixtures (given.fixtures: true) — the
-# persisted milestone history the as-of READ cases query — and closes the ONE
-# CURRENT row among the priors, chaining a new current milestone on top. It proves
-# the close predicate (bal_id AND out_z = infinity) selects exactly the open row
-# even when superseded (finite-out_z) priors for the SAME key already exist.
-#
-# Fixture history for id 1 (acct A): value 100.00 known [2024-01-01, 2024-06-01)
-# — SUPERSEDED — then value 150.00 known [2024-06-01, infinity) — CURRENT. The
-# single update step:
-#   step 1 update : close the ONE current id-1 row (out_z = 2024-09-01) and chain a
-#                   new current row [2024-09-01, infinity) value 175.00  (2 statements)
-#
-# Resulting state for id 1: the original superseded row (unchanged), the previously
-# current row now closed at 2024-09-01, and the new current row — three milestones,
-# one key. Ids 2 and 3 are untouched: the close is keyed, not a table-wide set.
 model: models/balance.yaml
 tags: [m-txtime-write, m-sql, write-sequence, update, audit-only, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

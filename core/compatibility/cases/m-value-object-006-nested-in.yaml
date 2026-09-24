@@ -1,12 +1,5 @@
 # valueObject structured-column filter: nested field membership (m-value-object,
 # m-sql), on Postgres AND MariaDB.
-#
-# nestedIn(Customer.address.city, [Oslo, Boston]) lowers the extraction into an
-# `in (?, ?)` membership: Postgres `jsonb_extract_path_text(t0.address, ?) in
-# (?, ?)` carries the JSON key then the list values; MariaDB
-# `json_value(t0.address, ?) in (?, ?)` carries one '$.city' path bind then the
-# list values. Oslo (1, 2) and Boston (3) match; Berlin (6) and every not-present
-# city — missing key (5), null column (4), JSON `null` leaf (7) — are excluded.
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, in, slice-snapshot-1, slice-managed-1]
 shape: read

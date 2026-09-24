@@ -1,26 +1,6 @@
 # A streamed read's Sort Keys are measured against the NARROWED position while
 # its primary key comes from the family root (m-snapshot-read, m-object-query's
 # positional rule, m-inheritance).
-#
-# The read is positioned at the abstract root `Animal` and `narrowTo` moves the
-# result to [Dog], which is the only reason `Dog.barkVolume` is referenceable at
-# all — asked of the unnarrowed root the identical key is
-# `attribute-outside-active-position`. The Continuation Order composed over it
-# spans two positions at once: the narrowed subtype's own Sort Key, then
-# `Animal.id`, because the physical primary key is family-wide and root-owned and
-# a concrete subtype declares none of its own.
-#
-# A non-null `barkVolume` coordinate hoists the leading range into one arm, and
-# the descending Nulls Last placement leaves a disjoint `t0.bark_volume is null`
-# tail arm. The narrowing's own tag guard `t0.kind = ?` binds after each arm's
-# predicate, which is what a page whose query carries clauses of its own looks
-# like.
-#
-# Pages of 1 over the family's two dogs, each asking for 2: {Rex} at barkVolume 7
-# out of both, then {Fido} at 3 seeking past (7, 1) — ONE root for a requested
-# two, which proves exhaustion. Two root statements, no includes, and the
-# delivered graph carries each node's `familyVariant` with no sibling branch's
-# columns.
 model: models/animal.yaml
 tags: [m-snapshot-read, m-object-query, m-inheritance, m-sql, table-per-hierarchy, narrow, stream, streamed-delivery, orderBy, ordering, nullable, familyVariant, graph, materialization, slice-snapshot-1]
 shape: read

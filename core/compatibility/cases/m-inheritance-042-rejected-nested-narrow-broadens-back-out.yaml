@@ -1,15 +1,5 @@
 # Negative (m-inheritance, m-predicate): a NESTED narrow broadens back out of the
 # position the enclosing narrow established.
-#
-# The outer selection constrains the family-root position to [Dog], so the active
-# polymorphic position inside its operand is {Dog}. The inner selection asks for
-# [Cat] — a concrete subtype of the family but OUTSIDE the {Dog} position now in
-# scope. A narrow can only constrain the position supplied by context, never broaden
-# it: the inner resolved set is non-empty yet not a subset of the threaded active
-# position, so a model-aware validator MUST reject pre-SQL as
-# `narrow-outside-position`. The flat sibling case m-inheritance-040 asks the same
-# subset rule at the root; this case pins that every nested operand receives the
-# enclosing narrow's resolved position.
 model: models/animal.yaml
 tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected

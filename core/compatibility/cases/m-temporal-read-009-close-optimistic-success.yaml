@@ -1,16 +1,5 @@
 # Optimistic temporal close with a FRESH observed in_z gates on the Transaction-Time start
 # the unit of work observed and closes EXACTLY one row (m-temporal-read + m-opt-lock).
-#
-# A Transaction-Time-axis (audit-only) temporal entity has no version column, so the
-# observed Transaction-Time start (in_z) is the optimistic-lock version analogue (Reladomo's
-# IN_Z rule). In optimistic mode the milestone-closing UPDATE gains an `and in_z = ?`
-# gate bound to the in_z the unit of work read; a fresh, still-current in_z matches
-# the one current milestone, so the close affects 1 row. Balance id 2 (acct B) has a
-# single clean current milestone (value 200.00, known [2024-02-01, infinity)) whose
-# in_z (2024-02-01) the unit of work observed; the gated close closes it at the
-# transaction instant 2024-10-01. A conflict case runs only that single close, not
-# the chained replacement INSERT, so `then.tableState` is the fixtures with id 2's
-# current row now closed at 2024-10-01.
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict

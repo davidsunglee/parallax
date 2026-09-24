@@ -1,23 +1,3 @@
-"""``parallax.conformance.profile`` — the declared matrix profiles (spec §6).
-
-A profile is one named database-backed recipe: the provisioner that opens the
-adapter the suite executes against. It authors no dialect of its own — the
-adapter already declares the one it executes in (`m-db-port`), so a profile reads
-that back off class-level metadata and a profile naming a dialect its adapter
-does not execute in is unrepresentable rather than merely wrong. Resolving a
-profile, and reading its dialect, opens no container and no connection: the reach
-to the concrete adapter is deferred inside the provisioner, keeping the driver out
-of every import graph that only needs to answer which SQL a profile is spelled in.
-
-A profile also constitutes its own runs. :class:`ProfileRun` pairs the name a run
-reports under with the port it executes through, and it is constructed from a
-profile rather than from a name, so the pairing is made by the profile instead of
-checked after the fact (`database-provider-test-contract.md`). The lanes that
-publish a run name no port at all, and a :class:`ProvisionedRun` opens the
-profile's own provisioning rather than being handed one, so the recipe that
-opened the database and the name the run reports are one declaration.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Mapping, Sequence
@@ -224,7 +204,6 @@ class ProvisionedRun(ProfileRun):
 
     @property
     def credentials(self) -> Any:  # pragma: no cover - Docker
-        """This run's login secret, as the adapter's credential source takes it."""
         return self._provisioner.credentials
 
     @property

@@ -1,14 +1,5 @@
 # Negative (m-storage-layout): a Secondary Index names a document-resident
 # Attribute, which has no Column to index.
-#
-# Under Relational Document Layout every Index component must be a direct-role
-# Attribute, so `byDisplayName` over `displayName` reaches into the shared
-# Structured Column `payload` and resolves to nothing a DDL consumer can build.
-# This contract adds no document-path, expression, generated-column, or
-# provider-native document index, so the model is refused rather than silently
-# indexed on a Column that does not exist. The Issue is located at the Index
-# declaration, because the Index is what must change, and relates the offending
-# Attribute, distinguishing an invalid Index from a valid Document layout.
 model: models/member-column-defaults.yaml
 tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, index, slice-snapshot-1, slice-managed-1]
 shape: rejected

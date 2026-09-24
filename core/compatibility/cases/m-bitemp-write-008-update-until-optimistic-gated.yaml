@@ -3,39 +3,6 @@
 # is GATED on the observed rectangle's Transaction-Time start (in_z), so the
 # whole gated split (close + head/middle/tail) is witnessed, not just the single
 # gated UPDATE that -004/-005 pin (m-bitemp-write + m-opt-lock).
-#
-# A bitemporal entity has no version column, so the observed Transaction-Time start (in_z)
-# is the optimistic-lock version analogue. It rides the GATE alone; the close's
-# ADDRESS (pos_id plus one exclusive upper bound per axis, thru_z then out_z) carries
-# no concurrency decision at all.
-#
-# What this case pins that -001 does not is the EQUIVALENCE `m-unit-work` states:
-# omission and an explicit `optimistic` resolve to the same Concurrency Preference.
-# -001 declares no `when.uow` and this one declares `concurrency: optimistic`, and
-# every other authored byte — steps, statements, binds, table state, round trips —
-# is identical. The two goldens agreeing IS the observation. The `locking`
-# counterpart of the same split, whose close is ungated, is -019's document-layout
-# sibling and -002/-007's terminate pair.
-#
-# The optimistic gate rides the GOLDEN close directly (no `observedTxStart` token on the
-# writeSequence step): the writeSequence steps are identical to -001's, self-
-# describing the preference via `when.uow.concurrency` (descriptive only —
-# the harness executes the authored golden SQL either way, `compatibility-case.
-# schema.json`); the close statement in `then.statements` carries the
-# trailing `and in_z = ?` gate, whose bind is drawn from the
-# currently-open row.
-#
-# The sequence (self-contained, from an empty table):
-#   step 1 insert      : open the Latest rectangle, value 100,
-#                        valid [2024-01-01, infinity), transaction [2024-01-01, infinity)  (1 statement)
-#   step 2 updateUntil : set value 200 for Valid-Time window [2024-03-01, 2024-09-01)
-#                        at txInstant 2024-02-15 — GATED-inactivate the observed
-#                        rectangle (out_z = 2024-02-15 where thru_z = infinity and
-#                        out_z = infinity and in_z = 2024-01-01) and chain head /
-#                        middle / tail                                              (4 statements)
-#
-# Resulting state (4 rows): identical to m-bitemp-write-001 — the inactivated
-# original (out_z finite) + head (100) + middle (200) + tail (100).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, bitemporal, temporal, write-sequence, update-until, rectangle-split, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

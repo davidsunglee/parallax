@@ -1,15 +1,4 @@
 # Cascade delete leaves a NON-dependent relationship untouched (m-cascade-delete).
-#
-# m-cascade-delete-001 pins that a cascade deletes the dependent children before the
-# root. This case pins the complementary boundary: a related entity reached over a
-# NON-dependent relationship is NOT cascaded. Order.items and Order.statuses are
-# `dependent: true`; Order.tags is NOT — so deleting Order 1 removes its statuses,
-# then its items, then the order itself, but its order_tag rows survive (now orphaned,
-# but provably untouched — the cascade walks only dependent edges).
-#
-# Fixtures are loaded first. Order 1 owns items 11/12, statuses 101/201/202/203, and
-# tags 1/2/3. After the cascade, the tags for order 1 remain while its dependents are
-# gone; other orders are untouched throughout.
 model: models/orders.yaml
 tags: [m-cascade-delete, m-unit-work, m-sql, write-sequence]
 shape: writeSequence

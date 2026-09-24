@@ -1,21 +1,3 @@
-"""Canonical export over the accepted Metamodel (m-descriptor).
-
-The inverse of ingestion: an accepted :class:`~parallax.core.metamodel.Metamodel`
-becomes the canonical minimal descriptor document — authored facts only, with
-every re-derivable default omitted, so re-importing it and exporting again
-yields that same document. Export reads only the representation-independent
-Metadata (identities, closed value vocabularies, storage locations) and renews
-no validation: an accepted model is exportable by contract, so the only way
-export fails is an implementation defect, which surfaces as
-:class:`DescriptorExportError` rather than a :class:`DescriptorError`.
-
-Every optional key whose value equals the fact ingestion re-derives is dropped —
-a column that matches its member's portable derived default, a Read Write
-persistence mode, a Columns storage layout, an application-assigned generation,
-and the other members of the omission set — and the single-versus-multi
-``entity``/``entities`` form is chosen by entity count.
-"""
-
 from __future__ import annotations
 
 from typing import Final, Literal

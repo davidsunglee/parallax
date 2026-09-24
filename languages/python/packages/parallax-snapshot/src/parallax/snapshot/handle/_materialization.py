@@ -1,5 +1,3 @@
-"""The shared read-page and root-publication seam for every Snapshot lane."""
-
 from __future__ import annotations
 
 from array import array

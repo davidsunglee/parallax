@@ -1,13 +1,3 @@
-"""``parallax.core.base`` enforcement scope (m-core).
-
-The normative primitives the whole spine rests on: the structured
-:data:`~parallax.core.base.NeutralType` algebra, managed value membership,
-developer-input coercion, provenance-neutral float projection, the interchange
-neutral-type name vocabulary, UTC normalization, temporal infinity, and the
-``json`` value-object document column type.
-``m-core`` depends on nothing.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -455,8 +445,8 @@ def admits_stored_scalar(
 def normalize_instant(value: dt.datetime) -> dt.datetime:
     """Normalize a ``timestamp`` to the m-core boundary form: UTC, microsecond.
 
-    A naive datetime carries no offset and is rejected at the boundary (§2
-    input policy); an aware value is converted to UTC. ``datetime`` already
+    A naive datetime carries no offset and is rejected; an aware value is
+    converted to UTC. ``datetime`` already
     caps precision at the microsecond, so no sub-microsecond truncation is
     possible for a ``datetime`` input.
 

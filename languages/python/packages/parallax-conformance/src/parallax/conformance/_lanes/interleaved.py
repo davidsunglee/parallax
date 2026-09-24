@@ -1,38 +1,3 @@
-"""The interleaved ``uow`` lane: a scenario whose two `uow` groups interleave —
-the optimistic-lock race (`m-opt-lock-012`) and the Isolation Level scenarios
-alike — run as two real ``db.transact`` calls held open concurrently over two
-dedicated sessions, their steps sequenced across two worker threads in
-authored order, and reported as the emissions, round trips, conflict
-``actual``, and find rows the run sweep grades.
-
-Each group runs on a session the caller's execution factory opens for this
-choreography alone (the scoped ``ProvisionedRun.interleaved_execution`` seam —
-a different scoped-control consumer than the ``when.concurrency`` rounds
-runner, which drives production routing rather than authored steps). The lane
-constructs no connection of its own, and what it destroys to unstick a worker
-is only a session it opened. The caller's port serves the case's out-of-band
-``given.apply`` statements and the trailing ungrouped verify find, which the
-write core this lane consumes from :mod:`~parallax.conformance._lanes.scenario`
-runs over that port through a Handle of its own. A
-:class:`~parallax.conformance._lanes.turnstile.Turnstile` hands control from
-one thread to the other at every step, so there is never a genuine
-Python-level race — optimistic mode's own reads take no lock — and a step
-hands off only once it is whole: a streamed read's every page is drained
-before the turnstile advances, so a peer's commit lands between two
-deliveries and never inside one.
-
-One admission guard, on oracle shape: a step stating `expectGraph` is refused
-for lack of a `stepGraphs` channel to answer it, so read oracles here are
-row-valued only, and a write step, stating no oracle of its own, is asked for
-nothing. Which of the rest a sweep routes here is the sweep's own to say
-(`test_run_sweep._INTERLEAVED_RUNNER_CASES`); a choreography needing a peer's
-DML on the wire BEFORE that peer's own flush edge is left out there, not for
-want of a channel here — a real unit of work buffers to its boundary, so that
-window never opens and those oracles hold at EVERY isolation level, a pass
-asserting nothing about isolation. The run sweep routes to this entry point
-explicitly; the façade's ``run_scenario_case`` refuses the shape and names it.
-"""
-
 from __future__ import annotations
 
 import contextlib

@@ -1,21 +1,3 @@
-"""``parallax.core.value_object`` enforcement scope (m-value-object).
-
-The recursive embedded-composite model: a top-level value object and all its
-nested value objects (to arbitrary depth) map to one ``json`` document column.
-This scope owns the shape invariants a declared composite must satisfy, resolves
-a dotted access path against the declared structure, reports the leaf's neutral
-type for literal typing, and answers whether a path crosses a
-``multiplicity: many`` member — the fact that decides core's flat **any-element**
-vs terminated **same-element** semantics. ``m-value-object`` depends on
-``m-metamodel`` and ``m-model-formation``.
-
-It contributes a Rule Set and no compiler: accepted occurrences are expanded
-into path-identified Metadata by the mandatory Metadata Compiler, so there is no
-Value Object facet to view. Path resolution walks that expanded Metadata through
-its own nested lookups, so this scope keeps no second index of a composite's
-members.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Sequence

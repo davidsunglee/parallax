@@ -1,26 +1,3 @@
-"""The raw-descriptor inheritance-family walk and invariant validator.
-
-Every other frontend forms a descriptor into an accepted Metamodel before asking
-any inheritance-family question, and answers it through the formed model's
-Inheritance Facet (:func:`parallax.core.inheritance.view`). This module is the one
-exception, and the reason is structural rather than convenient: a descriptor MAY
-declare a family that never forms — an unknown parent never resolves, a parent
-cycle never terminates, and a non-root's own ``strategy`` is discarded during
-adaptation — so those defects are observable on the raw record graph and nowhere
-after it. Classifying such a document therefore needs a walk that runs before and
-independently of formation.
-
-The rejection vocabulary stays single-sourced: every refusal here raises
-:class:`~parallax.core.inheritance.InheritanceError` with the same rule string
-``m-inheritance``'s own Rule Set uses, so a family defect reads identically
-whichever side observed it. That is the whole of this package's
-``m-inheritance`` dependency.
-
-The family read helpers beside the validator answer the same
-never-forming-descriptor question — which attributes and which primary key a
-position inherits — over the same raw records.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

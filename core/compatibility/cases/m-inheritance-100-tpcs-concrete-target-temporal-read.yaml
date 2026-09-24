@@ -2,21 +2,6 @@
 # axes, referenced through the concrete position (m-inheritance x m-temporal-read x
 # m-sql — binding decision: temporal axes are family-wide and root-owned, but every
 # concrete-target read still inherits and uses them).
-#
-# Targeting the CONCRETE subtype DepositRate directly (never the abstract root Rate)
-# is an ordinary single-table read of `deposit_rate` — no union, no tag, no
-# familyVariant (m-inheritance "Physical mapping"). The query pins `dimension:
-# DepositRate.transaction-time` — DepositRate's OWN class-name prefix over an axis it
-# never locally declares (Rate, the root, does) — proving the inherited spelling
-# resolves. Pinning transaction-time to 2024-01-15 (inside the strengthened
-# fixtures/rate.yaml's CLOSED first milestone's window [2024-01-01, 2024-02-01))
-# with Valid-Time explicitly selected as Latest (`thru_z = ?`) selects the SUPERSEDED historical
-# row (amount 2.25 / grade B), not the current one (amount 2.50 / grade A,
-# m-inheritance-093) — proving the milestone history is genuinely queryable through
-# the concrete position, not just materialized at it.
-#
-# Non-trivial (temporal) case => referenceSql is the independent oracle (inline
-# infinity / instant literals, a different formulation returning the same row).
 model: models/rate.yaml
 tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-concrete-subtype, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
 shape: read

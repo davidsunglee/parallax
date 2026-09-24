@@ -1,26 +1,3 @@
-"""``parallax.conformance.database_pooling_stories`` — the executable stories the
-PostgreSQL lifecycle guide is written out of.
-
-The guide (`languages/python/docs/postgresql-lifecycle.md`) is operational
-advice, and operational advice that has never run is how a deployment snippet
-comes to name a keyword that no longer exists. So every Python block in it that
-shows an application composing or serving through a handle is the exact source
-of a function here, guarded by ``tests/unit/test_postgresql_lifecycle_guide.py``
-and executed against real Postgres by ``tests/api/test_database_pooling.py``.
-
-Three shapes, each answering a question the guide raises:
-
-* **Retention.** One configuration, two independent handles, and what closing one
-  does to the other.
-* **Pool observation.** A Provider that observes the runtime rather than any
-  operation, what it registers, and what it reads.
-* **Application lifetime.** The lifespan an ASGI application composes the handle
-  in, and the boundary a synchronous operation crosses to be served from an
-  async endpoint. Neither imports a web framework: the lifespan is an async
-  context manager and the offload is a worker thread, which is what FastAPI's
-  ``lifespan=`` argument and its own threadpool are.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -72,11 +49,6 @@ __all__ = [
     "serving_snippet",
     "the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes",
 ]
-
-
-# --------------------------------------------------------------------------- #
-# Construction: the retention forms, both model forms, and both closes.        #
-# --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,11 +121,6 @@ def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
     return ClosedBothWays(scoped_rows, explicit_rows)
 
 
-# --------------------------------------------------------------------------- #
-# Retention: what a configuration is, and what a handle owns.                  #
-# --------------------------------------------------------------------------- #
-
-
 @dataclass(frozen=True, slots=True)
 class RetentionShape:
     first_rows: int
@@ -190,11 +157,6 @@ def account_balances(db: ScopedDatabase) -> list[Decimal]:
     work that has not happened yet.
     """
     return [account.balance for account in db.find(Account.where(Account.all)).results()]
-
-
-# --------------------------------------------------------------------------- #
-# Pool observation: watching the runtime rather than any operation.            #
-# --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,11 +274,6 @@ def the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
     assert at_rest is not None
     assert while_working is not None
     return PoolReading(at_rest, while_working, watch.detached(), watch.closed)
-
-
-# --------------------------------------------------------------------------- #
-# Application lifetime: the lifespan, and the offload boundary.                #
-# --------------------------------------------------------------------------- #
 
 
 @asynccontextmanager

@@ -4,14 +4,6 @@
 # as the one that accepts it. The value never reaches row derivation, a buffer, a
 # plan, or a statement — the refusal is decided from provenance alone, and is
 # never a translation of a lower-level failure raised further down that path.
-#
-# This is an api-conformance-lane case: its defining observable is a raised
-# application-lifecycle error over a VALUE a client holds, which the
-# single-connection wire harness cannot construct or grade, so the harness
-# schema-validates it and each language's API Conformance Suite returns and
-# verifies the error observation. The step states the value's provenance and not
-# how to obtain one: how an implementation retains which source produced a value
-# is its own affair.
 model: models/account.yaml
 lane: api-conformance
 tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]

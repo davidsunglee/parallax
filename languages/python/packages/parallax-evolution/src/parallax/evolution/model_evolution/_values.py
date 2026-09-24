@@ -1,12 +1,3 @@
-"""The closed Model Evolution vocabulary: operations, field deltas, Behavioral
-Impacts, coordination requirements, and the two evolution results.
-
-Every name ADR 0063 fixes is one frozen slotted record with no behavior, joined
-by ``type`` unions a type checker matches exhaustively. A field delta name has
-exactly one value type wherever it appears, so one class serves every owner that
-carries it and the corpus spells each delta the same way everywhere.
-"""
-
 from __future__ import annotations
 
 import enum
@@ -176,9 +167,6 @@ class Absent:
 ABSENT: Final[Absent] = Absent()
 
 
-# --------------------------------------------------------------------------- #
-# Field deltas. Each name carries one value type wherever it appears.          #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class StorageContainerChanged:
     """The accepted Storage Container of a surviving Entity."""
@@ -428,9 +416,6 @@ AS_OF_AXIS_DELTA_ORDER: Final[tuple[type, ...]] = (StartAttributeChanged, EndAtt
 INDEX_DELTA_ORDER: Final[tuple[type, ...]] = (ComponentsChanged, UniquenessChanged)
 
 
-# --------------------------------------------------------------------------- #
-# Evolution Operations.                                                        #
-# --------------------------------------------------------------------------- #
 class DeclarationCollection(enum.Enum):
     """The local collections whose relative order one operation can describe."""
 
@@ -731,9 +716,6 @@ def canonical_operation_key(operation: EvolutionOperation) -> tuple[int, ModelLo
     return (0, canonical_location_key(_model_location(operation)), 0)
 
 
-# --------------------------------------------------------------------------- #
-# Behavioral Impacts and their endpoint facts.                                 #
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class UniqueTuple:
     """One secondary uniqueness rule as an unordered Attribute set, rendered in
@@ -993,9 +975,6 @@ BEHAVIORAL_IMPACT_ORDER: Final[tuple[type, ...]] = (
 )
 
 
-# --------------------------------------------------------------------------- #
-# Coordination and the two evolution results.                                  #
-# --------------------------------------------------------------------------- #
 class CoordinationReason(enum.Enum):
     """Why unilateral application of one operation is unavailable."""
 

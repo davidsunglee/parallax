@@ -1,64 +1,8 @@
-"""A value's own attribute storage, reached past every binding over it.
+"""Read Pydantic's slot descriptors directly to bypass authored attribute hooks.
 
-Some of what a value carries outside its declared members — a Change Record, a
-relationship view on a value Pydantic backs — lives in the instance storage
-Pydantic's ``__dict__`` descriptor holds. Reaching
-it by name would put a class body between the framework and its own state:
-``getattr``, ``object.__getattribute__``, and ``object.__setattr__`` all resolve
-a name through the type, so an authored ``__getattr__``, ``__getattribute__``,
-or a data descriptor bound under a slot's own name decides what the framework
-reads back and where its writes land. (Reservation shortens that list for the two
-names instance state is presented under without emptying it: the declaration
-engine keeps every class body from binding either one, so no descriptor of a
-class's own stands under them — while ``__getattribute__`` remains authorable and
-answers a read of any name, those two included.) These read and write the storage
-itself, so a class body can neither hide the state a value carries from them,
-nor offer them state it never carried, nor divert what they attach somewhere
-they do not look.
-
-The framework binds under those two names itself, so these reach past its own
-presentation as well: a published value answers ``__dict__`` and
-``__pydantic_fields_set__`` with a mapping and a set derived from its compact
-row, and what these return is the storage underneath that. On a published value
-there is none, and asking is what would CREATE one — permanently, on a read — so
-these are for a caller that means the storage itself. Its declared members and
-its relationship positions are in the row rather than here, and its author-owned
-dynamic state is in a slot beside it, so a framework read of what a value holds
-by name goes through the backing instead (``_instance_state.named_state``),
-which answers a published value out of the row and that slot.
-
-Construction is the one storage write the framework does not make here: Pydantic
-fills a fresh instance by assigning ``__dict__``, which the framework's own
-descriptor for that name answers — so the write lands in the storage below and
-the value ends up ordinary, whatever it was before. What no seam decides is what
-a mapping found in that storage is WORTH, and that stays each reader's question:
-the Change Record's reader accepts only the carrier an edit constructs, so
-provenance cannot be forged by a well-shaped mapping reaching the storage some
-other way.
-
-Reaching past a binding is each caller's own decision, and the framework reads
-that do not are deliberate. ``lifecycle_state_of`` resolves the slot through the
-class because the read it offers is the class's own surface, and
-``BaseModel.__getstate__`` reads ``self.__dict__`` the ordinary way, so what a
-pickle carries is what the value ANSWERS for that name rather than the storage
-underneath it: the storage itself where Pydantic backs the value and a mapping
-derived from the row where it is published — which is what makes a pickle of a
-published value cross as an ordinary one — or, on a class that authors
-``__getattribute__``, whatever that hook hands back in place of either.
-
-The slots beside those two are a different question and not this Module's — the
-lifecycle state a materialized Entity carries is one of them, and the ``Entity``
-root that lays that slot out is what reads and writes it. A
-value's private-attribute state lives in the object layout rather than in the
-storage, so a caller deriving a copy out of semantic state has to carry that
-layout across or reset it. Settling that needs to know which slots of the layout the backing
-already answers for, which is the backing's own fact rather than Pydantic's, so
-the carry lives with it
-(:func:`~parallax.core.entity._instance_state.carry_slots_beside_state`).
-
-Declared member access is deliberately not routed here: that surface is the
-class's own, and validation, descriptors, and refusals belong on it.
-"""
+Do not use these accessors for published member reads: requesting their raw
+Pydantic storage allocates a dictionary permanently. Use the instance-state
+accessors for semantic reads."""
 
 from __future__ import annotations
 

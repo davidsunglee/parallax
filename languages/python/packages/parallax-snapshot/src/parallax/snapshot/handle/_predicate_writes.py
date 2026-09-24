@@ -1,48 +1,3 @@
-"""``parallax.snapshot.handle._predicate_writes`` — the predicate-selected (``_where``) write lane.
-
-The set-based half of the spec §5 write surface, as
-free functions rather than :class:`~parallax.snapshot.handle.Transaction`
-methods: mutation-compatibility, Assignment composition, and Valid-Time-window
-validation into a canonical
-:class:`~parallax.core.unit_work.PredicateWrite`, the readless-vs-materialize
-dispatch, the minimal resolving read, per-row no-op elimination, and
-Materialized Write Group buffering.
-
-Every entry point threads ``(uow, model, conn)`` — the three pieces of
-transaction state this lane actually reads — mirroring
-:func:`~parallax.snapshot.handle._retention.retain_evidence`'s own shape.
-``model`` is the connected model as one value: the accepted Metamodel every
-target resolves against, paired with the exact-model layouts a materializing
-write's resolving read converts its rows through. Family shape comes from the
-Inheritance, Temporal, and Optimistic Lock facets through
-:mod:`parallax.snapshot.handle._family`,
-and the target's Storage Layout view, resolved once here, names the members —
-and which of them are Value Objects — that the per-row column builders
-:func:`_materialize_predicate_write` streams each resolved row into by declared
-name.
-``Transaction`` keeps five thin ``_where`` delegates and the Wire lane keeps its
-own five, both routing the instruction they built here, so this module buffers
-through ``uow.buffer`` directly and never reaches back into ``Transaction``.
-
-Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
-attribute, and the layout member-to-column map),
-:mod:`parallax.snapshot.handle._write_inputs` for the two keyed steps a
-predicate write also runs
-(:func:`~parallax.snapshot.handle._write_inputs.reject_temporal_delete` and
-:func:`~parallax.snapshot.handle._write_inputs.validate_window`),
-and :mod:`parallax.snapshot.handle._read` for both
-:func:`~parallax.snapshot.handle._read.execute_read` and
-:func:`~parallax.snapshot.handle._read.publishable_rows` — the resolving
-read brackets its Database Call through the package's one read-call seam, then
-passes its materialized rows through the shared publication gate before this
-lane derives observations or writes.
-
-Names crossing a module boundary are spelled bare; a helper whose every caller
-lives here keeps its underscore. Privacy is carried by this MODULE's leading
-underscore and by the package's frozen ``__all__``, never by per-name
-underscores.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -155,7 +110,7 @@ def buffer_predicate(
     the INSTRUCTION itself is stated by the prepared-write producers (step 5),
     so the two ingresses classify one instruction identically.
 
-    1. **Mutation compatibility** (`python.md` §5 "A query becomes a write
+    1. **Mutation compatibility** (the Python binding "A query becomes a write
        target only in its mutation-compatible form") — one carrying nothing but
        a target and a predicate; every result-shaping, temporal, narrowing, and
        deep-fetch clause is rejected
@@ -452,7 +407,7 @@ def _materialize_predicate_write(
     takes no lock.
 
     A TEMPORAL target's raw predicate carries no as-of term (a
-    mutation-compatible Object Query carries no temporal clause, python.md §5),
+    mutation-compatible Object Query carries no temporal clause),
     so this internal authoring boundary adds one explicit Latest selection per
     declared dimension before routing the resolve through the SAME
     :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
@@ -667,14 +622,6 @@ def _materialize_predicate_write(
     _claim_selected_states(uow, selected)
 
 
-# --------------------------------------------------------------------------- #
-# The per-row decision `_materialize_predicate_write` makes while streaming:  #
-# a pure function of one resolved row of the write's OWN resolving read —     #
-# never an implicit read of its own, and never a merged per-row dict of its   #
-# own — beside `_normalize_assignment_values`, which decodes the authored     #
-# side once for the whole write so every row's comparison reads the same      #
-# operand.                                                                    #
-# --------------------------------------------------------------------------- #
 def _normalize_assignment_values(
     assignments: Mapping[str, object], shape: MemberShape
 ) -> dict[str, object]:

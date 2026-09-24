@@ -1,12 +1,4 @@
 # exists over a TO-ONE relationship (m-navigate semi-join) — pure existence.
-#
-# Every existing exists/notExists case traverses the to-many `Order.items`; this
-# pins the to-one form over `OrderStatus.orderItem` (a NULLABLE many-to-one). A
-# pure `exists` (no inner op) lowers to a correlated EXISTS with only the
-# correlation predicate. Order-level statuses carry a NULL order_item_id, so they
-# have no related OrderItem and are EXCLUDED; only the item-level statuses
-# (orderItemId set) survive. This discriminates precisely because the FK is
-# nullable.
 model: models/orders.yaml
 tags: [m-navigate, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read

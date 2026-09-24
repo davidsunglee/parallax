@@ -1,25 +1,4 @@
 # Optimistic gate on an audit-only chaining update's close (m-txtime-write + m-opt-lock).
-#
-# An audit-only entity carries no version column, so the observed Transaction-Time start
-# (in_z) is the optimistic-lock version analogue. Under optimistic concurrency the
-# milestone-closing UPDATE that BEGINS a chaining update GATES on that observed in_z
-# (`and in_z = ?`): a concurrent writer that already superseded the milestone leaves
-# a fresh in_z, so the stale gate matches ZERO rows — the updatedRows != 1 conflict
-# signal (m-opt-lock).
-#
-# This case witnesses the GATED CLOSE of the chaining update reusing the temporal
-# inactivation gate shape (m-bitemp-write-004): a conflict case runs only that single
-# gated close, not the replacement INSERT the chaining update would go on to emit —
-# the chain proper is proven end to end by m-txtime-write-002/-004/-005, whose own
-# closes gate the same way under the default preference, and ungated by
-# m-txtime-write-010's declared `locking` preference. Here the gate MATCHES (a
-# fresh observed in_z), so the close affects exactly 1 row.
-#
-# Fixtures are loaded. Id 1 (acct A) has a superseded milestone [2024-01-01,
-# 2024-06-01) value 100.00 and a CURRENT milestone [2024-06-01, infinity) value
-# 150.00. The close observed the current row's in_z (2024-06-01) and closes it at
-# 2024-09-01, gated on `and in_z = 2024-06-01`; it inactivates 1 row. Ids 2 and 3
-# are untouched — conflict granularity is the observed milestone, not the key.
 model: models/balance.yaml
 tags: [m-txtime-write, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict

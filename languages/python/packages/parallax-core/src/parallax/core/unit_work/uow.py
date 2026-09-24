@@ -1,37 +1,3 @@
-"""The unit-of-work shell (m-unit-work).
-
-The transaction scope's stateful machinery around the pure :class:`~parallax.
-core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
-joins the active transaction), the write buffer and the claims its writes have
-taken at the scopes they settle against, the weak index of the observed states
-its reads have seen, call-time reads that force-flush pending writes so a
-dependent read observes them (read-your-own-writes), and abort — which discards
-buffered effects and **withholds** the callback value.
-
-This is deliberately **not** ``db.transact``: there is no public sentinel-backed
-option surface and no bounded-retry loop. The shell exposes the
-primitives ``db.transact`` composes — :func:`run_unit_of_work` decides join vs. a
-new outermost frame, and the outermost frame commits (flushes) or aborts. Because
-lowering a Write Plan to DML needs ``m-sql`` (which the DAG forbids ``m-unit-work``
-from importing), the shell **delegates** the flush to an injected
-:data:`FlushExecutor` supplied by the composition layer that legally sees both;
-here it is a neutral callable, so the shell stays DML-free and testable.
-
-A flush has TWO injection points for that reason and not one. The executor
-receives a plan, so nothing can be told through it about the work that produces
-that plan — and planning is where a flush most often fails. The optional
-:class:`WriteBatchOpening` is the other half: it is entered with the trigger
-before planning begins and left when the flush is over, so a composition layer
-that observes the transaction sees the whole batch — including a flush that
-fails with nothing executed, and one planning reduces to no DML at all. Both are
-plain callables of vocabulary this module already owns, so neither costs
-`m-unit-work` a dependency.
-
-The active transaction is tracked **per thread**; the object is owned by its
-outermost invocation and is not thread-safe. A reference used after its scope ends
-raises :class:`EscapedTransactionError`.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -274,7 +240,6 @@ class UnitOfWork:
         self._transaction_instant = TransactionInstant(clock)
         self._closed = False
 
-    # --- caller surface --------------------------------------------------- #
     @property
     def participation(self) -> ParticipationToken:
         """This scope's participation identity — what its own reads stamp on the
@@ -477,7 +442,6 @@ class UnitOfWork:
                 "cannot join a rollback-only transaction"
             ) from self._rollback_cause
 
-    # --- internals -------------------------------------------------------- #
     def _ensure_open(self) -> None:
         if self._closed:
             raise EscapedTransactionError(

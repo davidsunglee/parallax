@@ -5,12 +5,6 @@
 # accepts it. The complement is the point of the pairing — the SAME value handed
 # to `update` is accepted, and when no author changed it the write buffers
 # nothing rather than refusing (m-unit-work-020).
-#
-# This is an api-conformance-lane case: its defining observable is a raised
-# application-lifecycle error over a VALUE a client holds, which the
-# single-connection wire harness cannot construct or grade, so the harness
-# schema-validates it and each language's API Conformance Suite returns and
-# verifies the error observation.
 model: models/account.yaml
 lane: api-conformance
 tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]

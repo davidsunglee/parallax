@@ -1,18 +1,3 @@
-"""The shared Pydantic metaclass engine behind both class frontends.
-
-One engine parses class headers and member annotations for Entity and Value
-Object declarations alike and builds the frozen declaration payload eagerly, so
-an Entity Class satisfies ``UnresolvedEntityDeclaration`` the moment it exists
-and a Value Object Class carries its reusable shape the moment it exists. No
-descriptor record graph, registry, or registered callback participates.
-
-The engine imports neither frontend. A framework root identifies itself with the
-:data:`FRAMEWORK_MINT` capability token this module owns, and its reserved
-temporal axes travel on a marker read off the MRO, so "which base did this
-declaration extend" is answered by reading attributes rather than by comparing
-class identities the engine would have to import.
-"""
-
 from __future__ import annotations
 
 import datetime as _dt
@@ -729,9 +714,7 @@ def _shadow_inherited_members(bases: tuple[type, ...], ns: dict[str, object]) ->
     return shadowed
 
 
-# --------------------------------------------------------------------------- #
 # Class-body annotations
-# --------------------------------------------------------------------------- #
 
 
 def _class_body_annotations(ns: dict[str, object]) -> dict[str, object]:
@@ -792,9 +775,7 @@ def _resolve(text: str, globalns: dict[str, Any], localns: dict[str, object]) ->
         return None
 
 
-# --------------------------------------------------------------------------- #
 # Annotation shapes
-# --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
@@ -980,9 +961,7 @@ def _unquote(text: str) -> str:
     return body
 
 
-# --------------------------------------------------------------------------- #
 # Scalar members
-# --------------------------------------------------------------------------- #
 
 
 def _scalar_type(base: object, spec: AttrSpec, where: str) -> NeutralType:
@@ -1056,9 +1035,7 @@ def _reject_entity_only_options(spec: AttrSpec, where: str, *, allow_column: boo
         )
 
 
-# --------------------------------------------------------------------------- #
 # Value Object classes
-# --------------------------------------------------------------------------- #
 
 
 def _build_value_object(
@@ -1168,9 +1145,7 @@ def _build_value_object(
     return cls
 
 
-# --------------------------------------------------------------------------- #
 # Entity classes
-# --------------------------------------------------------------------------- #
 
 
 def _build_entity(
@@ -2080,9 +2055,7 @@ def _target_spelling(
     return canonical  # pragma: no cover - every installed descriptor has its declaration
 
 
-# --------------------------------------------------------------------------- #
 # Pydantic field installation
-# --------------------------------------------------------------------------- #
 
 
 def _install_fields(
@@ -2162,7 +2135,7 @@ def _value_object_validator(py_name: str, vo_class: type, multiplicity: Multipli
     """A ``mode="before"`` validator enforcing "a Value Object member is an instance".
 
     Pydantic coerces a plain mapping into a declared nested model even under
-    strict mode, so this explicit check is the enforcement point for spec §2's
+    strict mode, so this explicit check is the enforcement point for the Python binding's
     Value Object input policy.
     """
 

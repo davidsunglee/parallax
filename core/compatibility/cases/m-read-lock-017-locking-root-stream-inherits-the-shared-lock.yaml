@@ -1,15 +1,5 @@
-# A transactional stream inherits its Database Root's locking preference: the
-# group's invocation names no preference at all, and every page still carries
-# PostgreSQL's shared-row authority (m-read-lock / m-unit-work / m-case-format).
-# The choreography is `m-read-lock-016`'s — page 1 asks for three roots and
-# publishes accounts 1 and 2, page 2 seeks from account 2 and returns account 3
-# alone — with the `locking` preference moved from `when.uow` into
-# `given.databaseOptions`, so what produces the `for share of t0` suffix is
-# resolution against the root the transaction was opened through, not a request
-# the call made. The `uow` label is what puts the stream inside a transaction for
-# the root's defaults to govern; a standalone stream under the same root takes no
-# lock (`m-read-lock-019`). MariaDB's one-arm continuation carries the same
-# inherited lock clause.
+# The transaction supplies no preference: its lock must come from the root.
+# A standalone stream under that root has no transaction lock to inherit.
 model: models/account.yaml
 tags: [m-read-lock, m-snapshot-read, m-unit-work, m-sql, m-dialect, stream, streamed-delivery, concurrency, locking-mode, database-options, slice-snapshot-1]
 shape: scenario

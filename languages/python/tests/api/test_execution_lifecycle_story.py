@@ -1,18 +1,6 @@
-"""One installed Provider against real Postgres (m-execution-lifecycle,
-m-api-conformance).
+"""Grade lifecycle events against physical row counts and real round trips.
 
-The Docker-free suites drive the seam over fake ports, where the row counts and
-the durations are whatever the fake said. What only a real database can show is
-that the two facts the events carry about it are its own: the physical row count
-a query returned, and a monotonic duration around a round trip that actually
-happened.
-
-The decline is here for the opposite reason — it must be observable nowhere at
-all. A Provider that answers ``None`` is asked once and told nothing after, and
-the query it declined is the query an unobserved caller would have run.
-
-The joined story is the Usage Guide's own source, executed here so the
-documented spelling of the composition seam cannot drift from a working one.
+A declined Provider must receive no later events while the query still executes.
 """
 
 from __future__ import annotations

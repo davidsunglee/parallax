@@ -1,23 +1,6 @@
 # valueObject to-many filter: a flat predicate through a `many` segment is
 # ANY-ELEMENT (m-value-object to-many, m-predicate, m-dialect array-traversal
 # form), on Postgres AND MariaDB.
-#
-# nestedEq(Customer.address.phones.type, 'home') matches a row iff SOME element of
-# its `phones` array has type = home. Ada (home in element 0) and Linus (home)
-# match; Nils has only a `work` phone. Every not-present state is excluded — the
-# empty/absent-phones rows AND the three NON-ARRAY states (8, 9, 10). The object
-# row (10) is the trap: its content {type:home, number:'555-9999'} contains
-# type=home, so an UNguarded MariaDB `json_contains` would wrongly match it (and
-# Postgres `jsonb_array_elements` would ERROR on it); the array-type guard collapses
-# it to not-present on both dialects.
-#
-# Postgres unnests with `jsonb_array_elements` (behind the `case`/`jsonb_typeof`
-# array guard of case 015) and reads the element's field with
-# `jsonb_extract_path_text(t1.value, ?)`; MariaDB expresses any-element containment
-# with `json_contains(col, candidate, path)`, preceded by the
-# `json_type(json_extract(...)) = 'ARRAY'` guard so a non-array `phones` cannot
-# match. The oracle iterates elements a different way per dialect (Postgres `@>`,
-# MariaDB `json_table`).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

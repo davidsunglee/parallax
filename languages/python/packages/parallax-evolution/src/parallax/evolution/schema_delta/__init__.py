@@ -1,23 +1,3 @@
-"""``parallax.evolution.schema_delta`` enforcement scope (m-schema-delta).
-
-The ordered dialect statements that carry a database from one accepted Metamodel
-to another. :func:`schema_delta` accepts a Unilateral Evolution and nothing else:
-a Coordinated Evolution is a complete description whose application needs
-authoring, data, or rollout coordination, so it is not an input to schema
-generation at all — the type says so rather than a runtime check.
-
-Generation is pure and applies nothing. It makes no provider or database call,
-runs no preflight query, and returns statements the APPLICATION executes; the
-later Model Edition is published only after every one of them succeeds.
-
-``m-schema-delta`` depends on ``m-model-evolution`` for the description it
-lowers, on ``m-metamodel`` for the declarations an operation names, on
-``m-inheritance`` for the position each Table materializes, on
-``m-storage-layout`` for every physical fact, and on ``m-dialect`` for the
-spellings. It branches on no dialect name: a Dialect value determines the whole
-output.
-"""
-
 from __future__ import annotations
 
 from parallax.core.dialect import Dialect, Unsupported

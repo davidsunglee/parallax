@@ -1,15 +1,3 @@
-"""The finalized Planned Write algebra (m-unit-work).
-
-A Planned Write is one finalized semantic execution step: its target, row
-topology, concurrency decision, and expected effect are all settled, so SQL
-lowering answers a purely physical question about it. The algebra is **closed**
-and **semantic** — it carries Attribute and Value Object identities, never a
-physical column, dialect object, driver value, or SQL fragment — and it admits
-no generic disposition field: an Insert Origin exists only on an insert entry
-and a Close Cause only on a close, so a termination cause on an inserted row and
-a lineage-start origin on a close are unrepresentable rather than merely invalid.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

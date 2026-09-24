@@ -1,17 +1,5 @@
 # valueObject nested predicate over a NULL value object — 3VL exclusion
 # (m-predicate), on Postgres AND MariaDB.
-#
-# m-predicate mandates that when the extraction yields NULL — the value-object
-# column is NULL, the path is absent, the selected value is an explicit JSON
-# `null`, or an intermediate is a non-object — the row is EXCLUDED. Customer 4
-# (null column), customer 5 (missing `city` key) and customer 7 (city an explicit
-# JSON `null`) all extract NULL, so a nestedNotEq(city, 'Boston') must NOT return
-# them even though they are intuitively "not Boston" — `not (NULL = 'Boston')` is
-# NULL, not true. The present, non-Boston cities survive: Oslo (1, 2) and Berlin
-# (6); Boston (3) fails the inequality; the not-present rows (4, 5, 7) are excluded
-# by the absence collapse. This is the structured-column parity of the scalar NULL
-# exclusion (m-predicate-029/m-predicate-030), proven identically on both
-# dialects (MariaDB json_value collapses the JSON-`null` leaf like Postgres).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
 shape: read

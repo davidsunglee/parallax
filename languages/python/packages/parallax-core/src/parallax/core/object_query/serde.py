@@ -1,20 +1,3 @@
-"""Object Query serde (m-object-query canonical flat encoding).
-
-``serialize`` emits the canonical document exactly as
-``object-query.schema.json`` fixes it: an omitted optional clause stays omitted,
-an omitted optional Sort Key member (``direction`` / ``nulls``) stays omitted,
-and the Temporal Selection map is emitted in canonical dimension order.
-``deserialize`` reads that form into the frozen
-:class:`~parallax.core.object_query.ObjectQueryNode` and canonicalizes the
-order-insensitive carriers — Subtype Selections and the Include Path set — so a
-document and the query a caller authored have the same canonical identity.
-
-The predicate clause delegates to ``m-predicate``'s own serde unchanged: the
-recursion belongs there, and this module never re-implements it. Metamodel
-binding (attribute→column, narrow resolution, temporal dimension declaration) is
-applied by preflight and lowering, which hold the metamodel.
-"""
-
 from __future__ import annotations
 
 import re

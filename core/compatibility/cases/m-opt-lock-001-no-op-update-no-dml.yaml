@@ -2,42 +2,6 @@
 # whose effective change set is empty emits NO statement — zero round trips —
 # inside the SAME unit of work as its observing find and its dependent verify
 # read (m-unit-work `uow` step grouping).
-#
-# The old always-write rule (removed with case 0707) had a versioned UPDATE bump
-# the version even when no domain field changed. That rule is replaced: the
-# version advances on every UPDATE an implementation ISSUES, but an update whose
-# effective change set is empty issues no DML at all — the PK-only sparse row
-# (`{ id: 2 }`, no attribute keys) is the honest instruction-level encoding of a
-# same-value developer update. A concurrent editor advances the version itself,
-# so a no-domain-change write does not need to bump it — the only effect the old
-# rule had was overhead writes and spurious conflicts.
-#
-# The intent was always single-transaction (the shared lock is "held for the
-# transaction's duration"), but the case predates the `uow` step-grouping
-# vocabulary and was never retrofitted until now. All three steps share ONE
-# `uow` group (`observe-noop-verify`): the observing find, the no-op write, and
-# the dependent verify find run inside the SAME held transaction — the SAME
-# shape `m-unit-work-005` proves for an OBSERVED update, specialized to the
-# no-op case. That grouping is what makes the shared-row-lock claim true, and
-# licenses the write's PK-only elision: with no version bind to derive, the
-# write's compile eligibility derives from the group's own observing find, a
-# QUERY RESULT — `compileEligibility: run-only` (query-result-dependent).
-#   step 0 find  : observe account 2 (Linus, 250.00, version 1), 1 round trip.
-#   step 1 write : a versioned update whose effective change set is empty
-#                  (PK-only row) ⇒ NO DML, 0 round trips, no version advance.
-#   step 2 find  : a REAL dependent read (no query cache exists —
-#                  `m-identity-map` "the identity map is not a query cache") that
-#                  observes the SAME unchanged row (balance 250.00, version 1)
-#                  through the group's own held transaction, 1 round trip. The
-#                  group COMMITS after this, its last step.
-# The unit of work runs under the declared `locking` preference, so both finds carry the
-# m-read-lock shared-row-lock suffix (`for share of t0`) — step 0's shared lock
-# is held for the WHOLE group's duration, which is what makes step 2's read
-# lock-correct. The zero-round-trip repeated-find / query-cache claim this case
-# used to pin belongs to `m-process-cache-001` (deferred module) — a real read
-# here instead directly proves the version-unchanged regression. roundTrips = 2
-# (the observing find + the dependent verify find; the no-op write costs
-# nothing).
 model: models/account.yaml
 tags: [m-opt-lock, m-unit-work, no-op, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

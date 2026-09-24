@@ -1,47 +1,3 @@
-"""``parallax.snapshot.handle._transaction_runner`` — the outermost transaction
-runner and the flush edge.
-
-:class:`TransactionRunner` is what ``ScopedDatabase.transact`` delegates to once
-re-entry has been refused: the validation of every explicit option, the
-resolution of an outer invocation's omitted options against the scope's
-:class:`~parallax.snapshot.handle._options.DatabaseOptions`, the join through
-the originating resource root with authority and option-conflict checks, the
-``m-auto-retry`` bounded retry loop, the per-attempt adoption of the Serving
-Model's current selection, and the flush executor it injects into the unit of
-work. A Database Root builds exactly one at connect, over its runtime, clock,
-installed lifecycle, Serving Model, and read planner; scopes supply their own
-capture and defaults per invocation. The runner retains no adapter: each
-invocation acquires through its scope's captured source. It is an internal seam
-rather than a Protocol.
-
-Each outer attempt adopts one complete selection before the boundary is asked
-to begin and retains it through commit or rollback: the attempt's lifecycle
-activity opens carrying that edition, the :class:`Transaction` it hands the
-callback is built over that selection's two projections, and the unit of work
-plans through that selection's Write Planner. A retry adopts afresh, so one
-invocation may run attempts under two editions; a join inherits the active
-attempt's transaction and selection and adopts nothing. An ordinary failure
-escaping the whole invocation surfaces as
-:class:`~parallax.snapshot.handle._adoption.ExecutionFailure` under the edition
-of the attempt that failed, applied after the retry loop has resolved so the
-classifier saw the underlying error.
-
-The injected executor is where the package's two halves meet: it lowers the
-Write Plan the adopted :class:`~parallax.core.unit_work.WritePlanner` produces
-through :func:`~parallax.snapshot.handle._write_lowering.stream_lowered` and runs
-each statement on the transaction's own connection, so an abort rolls back
-force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
-import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
-classification branch (``_optimistic_conflict_retriable``) is composed here too.
-
-The four public refusals declared here — :class:`TransactionAuthorityError`,
-:class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
-and :class:`TransactionRollbackError` — are the
-runner's own and are re-exported through ``handle/__init__.py``'s frozen
-``__all__``; every other name keeps its leading underscore because nothing
-outside this module reaches it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -122,7 +78,7 @@ class TransactionOptionConflictError(ValueError):
     A joining call may not change the active transaction's settings: an explicit
     option whose value conflicts with the active transaction's resolved
     ``options`` raises; an explicit equal value and an omitted option are
-    accepted (spec §5).
+    accepted.
     """
 
 
@@ -552,7 +508,7 @@ def _resolved(
 def _optimistic_conflict_retriable(exc: BaseException) -> bool:
     """The ``retry_optimistic_conflicts`` opt-in's own retriability verdict
     (`m-opt-lock` "Retry contract"; `m-auto-retry.md` "Which failures are
-    retriable"; ADR 0008 / `python.md` §5) — injected into
+    retriable"; ADR 0008 / the Python binding) — injected into
     :func:`~parallax.core.auto_retry.run_with_retry` as its
     ``extra_retriable`` extension ONLY when the resolved option is set
     (:meth:`TransactionRunner.transact`, above).
@@ -564,7 +520,7 @@ def _optimistic_conflict_retriable(exc: BaseException) -> bool:
     for a transient database failure: the conflict itself, or the rollback-only
     refusal whose ``__cause__`` preserves it (the JOIN case — an inner joined
     scope's own conflict marks the root rollback-only, and the outermost retry
-    loop still applies per the original failure's category, spec §5). The
+    loop still applies per the original failure's category). The
     remaining Write Effect Errors are never named here: a Stale Write, a Missing
     Target, and a Cardinality Corruption stay outside the retriable set
     unconditionally, opt-in or not.

@@ -1,10 +1,5 @@
 # Negative (m-inheritance, m-object-query): result narrowing BROADENS beyond its
 # position.
-#
-# The query is positioned at the inheritance root Animal, whose effective set is
-# {Cat, Dog, WildBoar}. Its `narrowTo` asks for the unrelated standalone Entity
-# Person. The resolved set is non-empty but not a subset of the queried position, so
-# a model-aware validator MUST reject the query pre-SQL as `narrow-outside-position`.
 model: models/animal.yaml
 tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected

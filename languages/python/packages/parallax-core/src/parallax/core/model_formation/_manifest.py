@@ -1,14 +1,3 @@
-"""The Formation Manifest's immutable contract data (m-model-formation).
-
-The manifest is the closed, authoritative statement of what one formation is
-composed of: which module owns which Issue Codes, which compiler each owner
-supplies, and what each compiler depends on. It holds contract data only and
-never a contributor object, so a composition root that forgot to supply an
-implementation — or supplied one nobody declared — is a detectable mismatch
-rather than a silent gap. Manifest entry order is the invocation order of Rule
-Sets and makes drift diagnostics deterministic.
-"""
-
 from __future__ import annotations
 
 from collections import Counter

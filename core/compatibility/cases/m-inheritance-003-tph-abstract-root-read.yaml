@@ -1,12 +1,4 @@
 # Table-per-hierarchy ABSTRACT-ROOT read: the whole Payment family (m-inheritance, m-sql).
-#
-# Targeting the abstract root Payment spans the WHOLE shared table and injects NO tag
-# predicate (its absence is the contract): every concrete row across the family is
-# returned. The projection follows the shared Table Layout: identity `id`, raw
-# discriminator `kind`, then the Domain-tier `amount`, `card_network`, and `tendered`
-# slots. The raw tag lets familyVariant be materialized. familyVariant
-# is derived at materialization from the tag metadata map (card -> CardPayment,
-# cash -> CashPayment), NEVER projected as SQL; non-applicable subtype columns are null.
 model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

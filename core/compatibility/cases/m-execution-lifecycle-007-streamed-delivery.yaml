@@ -1,47 +1,5 @@
 # Streamed delivery (m-execution-lifecycle): a Snapshot Stream is a Root
 # Execution of its own, and each page it reads is a Stream Batch under it.
-#
-# The third root kind reaches this module's oracle, and it is the last of the
-# three. `kind: snapshot-stream` is what separates this case from its six
-# siblings — one opens `read` and five open `transaction-invocation` — and the
-# Started transition is the only one in the algebra carrying a page size, which
-# is what makes its Stream Batch children countable against a result the events
-# never size. Being a root is also why the Started transition carries
-# `edition`: a standalone stream adopts the Model Edition it delivers under when
-# its scope is entered, and states the literal the adapter prepared the case's
-# model under — `orders`, the model descriptor's stem — where a stream under an
-# attempt inherits the attempt's and states none.
-#
-# Two pages over three orders at `batchSize: 2`, with one include level, so the
-# tree has every relation the module states about a stream. Activity 1 is the
-# stream and spans the whole delivery. Activities 2 and 7 are its pages, each
-# bracketing that page's connection lease and two Database Calls: a Stream Batch
-# IS the page-read activity, so no Read activity appears anywhere in this stream
-# even though a page runs the same executor an eager deep fetch runs.
-#
-# Each page leases one connection. Its Acquisition is the batch's first child,
-# its Release is the last, and conversion finishes before release and batch
-# completion. Root publication follows the batch, so no connection is held while
-# the caller consumes a root or between pages. A participating stream would emit
-# neither resource child and would use its attempt's connection instead.
-#
-# What the sequence pins down is the batch BOUNDARY. Page 1's batch finishes
-# (sequence 11) before page 2's opens (sequence 12), so no batch spans another and
-# none of them spans the caller consuming the roots it delivered: a batch
-# completes once the page's converted result is ready rather than once the caller
-# is done with it. Delivering a root to the caller emits no event of its own, so
-# that consumption is nowhere in the sequence — which is exactly why the sequence
-# is proportional to PAGES rather than to roots: three roots and two pages emit
-# the same six stream and batch events three roots and two pages would emit at
-# any result size, plus the two Database Call pairs each page owes.
-#
-# The stream finishes `exhausted` at the moment exhaustion was discovered: each
-# page asks for one root MORE than its batch, so page 2 asked for three and got
-# one, which proves no more exist without a further root statement
-# (m-snapshot-read). Every Database
-# Call names its statement by INDEX into the same flat `then.statements` list a
-# streamed case already authors page by page, so the emission order and the
-# delivery agree here or the case fails.
 model: models/orders.yaml
 tags: [m-execution-lifecycle, m-snapshot-read, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, slice-snapshot-1]
 shape: read

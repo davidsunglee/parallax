@@ -1,35 +1,3 @@
-"""``parallax.snapshot.handle._wire`` — the Wire interface (`m-snapshot-read`).
-
-``db.wire`` and ``tx.wire`` are lightweight VIEWS over the same connected model
-and adapter their Typed peers use, never separate connections or transaction
-modes. A view retains the one
-:class:`~parallax.snapshot.handle._read_scope.ReadScope` its owner already
-composed — read gate, force-flush, locking, evidence retention, activity
-bracket, unit of work, coalescing — so a Wire call and a Typed call differ in
-nothing but the representation their values are stated in, and a view's read half
-decides nothing and holds nothing besides that scope. That is why the interfaces are two
-objects rather than one ``format=`` argument: capability is what a caller holds,
-not a value it passes.
-
-Both views accept the canonical Object Query mapping and, on a class-backed
-model, the Typed authoring value directly. A descriptor-backed caller therefore
-passes the mapping and never imports an Entity Class, an Entity Identity, or an
-Object Query node type; a class-backed caller passes the query it already built
-and needs no public serialization step. All three spellings pass through
-untouched here and lower to the SAME canonical node inside the scope's own Wire
-verb, after that verb has refused re-entry and before the shared read gate runs
-— so neither spelling can reach a different executor, and none of them can reach
-a lowering step ahead of the refusal.
-
-``tx.wire`` additionally carries the complete keyed and predicate WRITE families.
-The verbs here are the developer surface — signatures, defaults, and the
-temporal spellings; every judgement they run lives in
-:mod:`parallax.snapshot.handle._wire_writes`, which shares the evidence resolver,
-the claim algebra, the instruction IR, and the buffer with the Typed verbs. There
-is no ``tx.write(instruction)``, no flat ``wire_*`` method, and no observation
-address in any signature.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -221,8 +189,7 @@ class WireTransactionView(WireDatabaseView):
 
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
-        :meth:`terminate`, which closes the row's history instead (`python.md`
-        §5 "Write verbs and temporal spellings")."""
+        :meth:`terminate`, which closes the row's history instead."""
         wire_keyed_write(self._writes, "delete", observed)
 
     def terminate(self, observed: WireEntity, *, valid_from: dt.datetime | None = None) -> None:

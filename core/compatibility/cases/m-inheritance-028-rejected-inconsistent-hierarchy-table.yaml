@@ -1,7 +1,4 @@
 # Negative (m-inheritance): a TPH descendant repeats a physical table.
-#
-# The root alone owns `animal`. `Cat` incorrectly declares `feline`; a descendant
-# may neither repeat the root table nor declare a different one.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected

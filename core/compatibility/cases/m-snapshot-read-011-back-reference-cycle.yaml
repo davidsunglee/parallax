@@ -1,16 +1,5 @@
 # Back-reference cycle in a snapshot graph (m-snapshot-read): an included
 # back-reference points to the ORIGINAL node, a legal in-memory cycle.
-#
-# Order 1 is materialized with `[items, items.order]`: each OrderItem's `order`
-# back-reference reaches the ROOT order — an ancestor already on the current path, a
-# true cycle. What makes the graph JSON a finite value tree is the requested include
-# tree, not a cycle detector: `items.order` is the LAST level, so the node it reaches
-# is unwound with no level left to follow and renders its own members in full with no
-# relationship at all. The unwind therefore terminates after 1 (root) + 1 (items) = 2
-# round trips and the cycle emits no third query. The rendered back-reference carries
-# the ancestor's whole value rather than a primary-key stub, so the graph states what
-# was reached instead of deferring the claim to a separate reference-identity
-# assertion.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
 shape: read

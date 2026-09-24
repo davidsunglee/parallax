@@ -1,21 +1,6 @@
 # Predicate-selected TERMINATE-UNTIL EXCISES a bounded Valid-Time window, materializing to
 # a Transaction-Time close + two re-inserts with no middle segment (m-bitemp-write +
 # m-opt-lock, ADR 0014 / 0021).
-#
-# The terminate complement of update-until (m-bitemp-write-012). `terminateUntil` removes
-# Valid-Time coverage only across [validFrom, until) = [2024-07-01, 2024-09-01) and
-# preserves the payload on both sides, so the resolved row (pos 1, value 200)
-# materializes to three statements:
-#   1. close the current Transaction-Time row (set out_z = at, addressed by key + the
-#      observed thru_z + the open out_z, then gated on the observed in_z);
-#   2. head: re-insert value 200 for [2024-06-01, 2024-07-01);
-#   3. tail: re-insert value 200 for [2024-09-01, infinity).
-# There is NO [validFrom, until) insert — the window becomes a hole in Valid Time,
-# which is what distinguishes a terminate-until (excise) from an update-until (replace).
-#
-# The trailing find reads as-of valid-time 2024-08-01 (INSIDE the excised window) and
-# expects NO rows, proving no Valid-Time coverage remains there. Total roundTrips 5 =
-# read (1) + three writes (3) + verify read (1).
 model: models/position.yaml
 tags: [m-bitemp-write, m-opt-lock, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, scenario, slice-snapshot-1]
 shape: scenario

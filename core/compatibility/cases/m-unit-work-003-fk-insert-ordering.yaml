@@ -1,15 +1,5 @@
 # Foreign-key insert ordering (m-unit-work): a parent row is inserted BEFORE a child that
 # references it.
-#
-# m-cascade-delete-001 proves the DELETE direction (dependent statuses/items before the root
-# order); this pins the complementary INSERT direction. At the unit-of-work
-# boundary the buffered writes are ordered so the referenced Order is inserted
-# before the OrderItem that points at it — otherwise the child's foreign key would
-# dangle. The harness applies the ordered DML to an empty schema and asserts both
-# rows landed; authoring the child insert first would violate the FK against real
-# data. The child's nullable `shipped_on` is absent from the write input, so the
-# INSERT omits that column (a 4-of-5 column insert) rather than binding an explicit
-# NULL.
 model: models/orders.yaml
 tags: [m-unit-work, m-sql, write-sequence, insert, fk-ordering, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

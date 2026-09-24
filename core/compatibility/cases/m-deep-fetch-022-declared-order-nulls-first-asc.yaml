@@ -1,20 +1,6 @@
 # Deep fetch, DECLARED relationship ordering ASCENDING with `nulls: first` over a
 # NULLABLE key — the placement that is nobody's default, proven on BOTH dialects
 # (m-deep-fetch "Ordered to-many children" + m-dialect NULL ordering).
-#
-# `Order.notesAscNullsFirst` orders notes by the nullable `resolvedOn` ascending but
-# leads with the UNRESOLVED ones, mirroring the canonical Nulls Last default, so the
-# dialect that compensates flips: Postgres treats NULL as largest and must spell an
-# explicit `asc nulls first` suffix, while MariaDB treats it as smallest and already
-# leads with NULLs on `asc`, emitting nothing. Its declaration omits `direction`
-# entirely and carries only `nulls`, which is what makes placement independent of
-# direction observable on the wire. Order 1's bucket therefore starts on the unresolved
-# note 52, which the canonical default would trail (m-deep-fetch-012 over `shippedOn`);
-# order 42's bucket is fully resolved, so it is the no-NULL contrast and sorts the same
-# way under either placement. Both buckets reorder against insertion/id order, so a
-# dropped or mis-placed ORDER BY fails rather than passing by coincidence, and the
-# ordering oracle derives the expectation from the declared key and placement rather
-# than from the authored graph.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, m-dialect, orderBy, ordering, nulls, nullable, relationship, slice-managed-1]
 shape: read

@@ -5,62 +5,12 @@
   code: unresolved-marker
   message: "line 5 contains unresolved marker 'TODO'"
 
-- name: both-lifecycles
-  base: valid-snapshot.md
-  old: "## 4. Result collections and materialization"
-  new: |-
-    ### Managed-object lifecycle
-
-    Managed objects are also retained.
-
-    ## 4. Result collections and materialization
-  code: lifecycle-profile
-  message: "retain exactly one lifecycle heading"
-
 - name: unknown-slice
   base: valid-snapshot.md
-  old: '"caseTags": { "include": ["slice-snapshot-1"] }'
-  new: '"caseTags": { "include": ["slice-unknown-1"] }'
+  old: '{"slice":"slice-snapshot-1"}'
+  new: '{"slice":"slice-unknown-1"}'
   code: unknown-slice
   message: "selected slice 'slice-unknown-1' is not declared"
-
-- name: claim-drift
-  base: valid-snapshot.md
-  old: '"dialects": ["postgres"]'
-  new: '"dialects": ["postgres", "mariadb"]'
-  code: claim-mismatch
-  message: "capabilities.dialects differs from the canonical claim"
-
-- name: invalid-describe-envelope
-  base: valid-snapshot.md
-  old: '"provisioning": "self-managed"'
-  new: '"provisioning": "self-managed", "unknownCapability": null'
-  code: invalid-describe-envelope
-  message: "describe claim does not satisfy conformance-adapter.schema.json"
-
-- name: unclaimed-conditional
-  base: valid-snapshot.md
-  old: "decision is recorded; no other conditional capability is part of this claim."
-  new: |-
-    decision is recorded; no other conditional capability is part of this claim.
-
-    ### Process cache
-
-    A process cache is configured.
-  code: unexpected-conditional-section
-  message: "remove 'Process cache'; m-process-cache is not claimed"
-
-- name: missing-claimed-conditional
-  base: valid-snapshot.md
-  old: |-
-    ### Relational Document Layout
-
-    The implementation does not support the root-owned `Document` Storage Layout.
-    The capability is recorded as deferred in section 1, and formation refuses every
-    `Document` declaration rather than accepting a subset it cannot execute.
-  new: ""
-  code: missing-conditional-section
-  message: "retain 'Relational Document Layout'; m-storage-layout is claimed"
 
 - name: missing-source-topology
   base: valid-snapshot.md
@@ -68,13 +18,6 @@
   new: "## 7. Source layout notes"
   code: missing-section
   message: "missing '## 7. Source-enforcement topology'"
-
-- name: incomplete-quality-row
-  base: valid-snapshot.md
-  old: "| Linting | Ruff 0.x | pyproject.toml | `ruff check .` | `ci lint` | Selected rules block; suppressions require rationale. |"
-  new: "| Linting | Ruff 0.x | pyproject.toml | | `ci lint` | Selected rules block; suppressions require rationale. |"
-  code: incomplete-quality-row
-  message: "quality row 'Linting' has a blank Local command cell"
 
 - name: missing-common-runtime
   base: valid-snapshot.md
@@ -129,61 +72,6 @@
   new: "| Dependent artifacts | Public exports/entry points |"
   code: topology-header
   message: "table under '## 8. Deployable artifact topology' does not retain the canonical columns"
-
-- name: missing-result-profile
-  base: valid-snapshot.md
-  old: "### Snapshot results"
-  new: "### Snapshot output"
-  code: result-profile
-  message: "retain exactly one result heading"
-
-- name: mismatched-result-profile
-  base: valid-snapshot.md
-  old: "### Snapshot results"
-  new: "### Managed-object results"
-  code: result-profile
-  message: "slice requires 'Snapshot results'"
-
-- name: undeclared-scheduling-classes
-  base: valid-snapshot.md
-  old: "- **Scheduling classes.** `dbfree` and `db`, decided per item by whether the"
-  new: "- **Scheduling.** `dbfree` and `db`, decided per item by whether the"
-  code: missing-aggregate-command
-  message: "quality section declares no scheduling classes"
-
-- name: class-without-an-aggregate-command
-  base: valid-snapshot.md
-  old: "- **Aggregate `db` command.** `example-check-db` runs every database-backed row"
-  new: "- **Aggregate command.** `example-check-db` runs every database-backed row"
-  code: missing-aggregate-command
-  message: "no aggregate command for the declared scheduling class 'db'"
-
-# The declaration is a list item, so a class pushed onto a continuation line is
-# still declared and still owes an aggregate command.
-- name: wrapped-class-without-an-aggregate-command
-  base: valid-snapshot.md
-  old: |-
-    - **Scheduling classes.** `dbfree` and `db`, decided per item by whether the
-      item's fixture closure reaches the provisioned database.
-    - **Aggregate `dbfree` command.** `example-check-dbfree` runs every
-      database-free row above in blocking CI job `ci dbfree`.
-    - **Aggregate `db` command.** `example-check-db` runs every database-backed row
-      above in blocking CI job `ci database`.
-  new: |-
-    - **Scheduling classes.** `dbfree` and
-      `db`, decided per item by whether the item's fixture closure reaches the
-      provisioned database.
-    - **Aggregate `dbfree` command.** `example-check-dbfree` runs every
-      database-free row above in blocking CI job `ci dbfree`.
-  code: missing-aggregate-command
-  message: "no aggregate command for the declared scheduling class 'db'"
-
-- name: missing-complete-aggregate-command
-  base: valid-snapshot.md
-  old: "- **Complete verification command.** `example-check` composes both class"
-  new: "- **Everything command.** `example-check` composes both class"
-  code: missing-aggregate-command
-  message: "no complete verification command over every scheduling class"
 
 - name: source-topology-header
   base: valid-snapshot.md

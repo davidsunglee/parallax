@@ -1,14 +1,5 @@
-# Deep fetch, ORDERED to-many by a NULLABLE key — NULLs sort LAST, proven on BOTH
-# dialects (m-deep-fetch + m-dialect). `Order.itemsByShipDate` orders line items by `shippedOn`,
-# a nullable date: shipped items carry a date, unshipped items do not. The
-# canonical rule sorts NULLs last; the dialects reach it differently (Postgres
-# trails NULLs for `asc` by default; MariaDB has no NULLS LAST syntax, so it
-# forces the order with a leading `shipped_on is null` term) yet the observable
-# order is identical. Fetching orders {1, 42}: order 1's bucket proves NULLs-last
-# (item 11 is unshipped -> last), order 42's bucket proves date ascending. Both
-# reorder vs id (insertion) order, so a dropped/wrong ORDER BY fails. The ordering
-# oracle derives the expected order (non-null asc, then NULLs) from the declared
-# key and checks both dialects' returned rows obey it.
+# Both buckets differ from insertion order, so a missing ORDER BY cannot pass
+# accidentally. The nullable bucket also distinguishes null placement.
 model: models/orders.yaml
 tags: [m-deep-fetch, m-object-query, m-op-list, m-dialect, orderBy, ordering, nullable, relationship, slice-managed-1]
 shape: read

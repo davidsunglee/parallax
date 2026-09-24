@@ -1,12 +1,3 @@
-"""Lower resolved flat Entity Queries to canonical SQL (m-sql).
-
-``compile_read`` consumes :class:`ValidatedEntityQuery`: target metadata, predicate
-members and operands, temporal/navigation rewrites, ordering, narrowing, and the
-resolved read projection are already retained. This package chooses physical layout,
-renders dialect expressions, records role-classified binds, and assembles inheritance
-branches; it performs no authored reference or relationship resolution.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -559,9 +550,6 @@ def compile_template(
     return CompiledTemplate(compiled, indexes[0], dialect.name == "postgres")
 
 
-# --------------------------------------------------------------------------- #
-# Projection.                                                                  #
-# --------------------------------------------------------------------------- #
 def _projection(
     entity: EntityMetadata,
     view: _EntityLayoutView,
@@ -652,9 +640,6 @@ def _scalar_read_contracts(
     return tuple(contracts)
 
 
-# --------------------------------------------------------------------------- #
-# compile_read = lower -> normalize.                                          #
-# --------------------------------------------------------------------------- #
 def compile_read(
     query: ValidatedEntityQuery,
     model: Metamodel,
@@ -1005,19 +990,9 @@ def _append_result_shape(
         parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
-# --------------------------------------------------------------------------- #
-# Inheritance-family reads                                                      #
-# (m-sql "Metamodel-extension lowering — inheritance").                         #
-#                                                                               #
-# `_inheritance` resolves the read's queried POSITION and hands back an          #
-# immutable plan; the three assemblers below are its only consumers. Each one   #
-# constructs this statement's own `StatementBuilder` (a table-per-concrete-subtype union    #
 # constructs one PER BRANCH, which is what restarts each branch at `t0`), splices #
-# the plan's projection binds, lowers the plan's un-lowered `inner` predicate,   #
-# and only THEN appends the tag guard's binds — the m-sql "Grouped branch        #
-# predicates" order, stated explicitly at each site rather than left to an       #
-# evaluation-order accident.                                                     #
-# --------------------------------------------------------------------------- #
+
+
 def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: ValidatedPredicate,
@@ -1545,9 +1520,6 @@ def _planned_inner(predicate: ValidatedPredicate, planned: object) -> ValidatedP
     raise SqlGenError("an inheritance plan replaced rather than selected its validated predicate")
 
 
-# --------------------------------------------------------------------------- #
-# Normalization (fixed-point identity check).                                 #
-# --------------------------------------------------------------------------- #
 def _normalize(statement: LoweredStatement) -> LoweredStatement:
     """Assert the emitted SQL is already the m-sql canonical fixed point.
 

@@ -1,71 +1,3 @@
-"""``parallax.conformance.stories`` — executable API-suite write stories.
-
-Each story is ONE executable function over the **public** developer surface
-(`parallax.snapshot.connect` → authority selection → ``db.transact``), mirroring
-one corpus case, and
-is the single source three consumers share (python.md §"API Conformance Suite" /
-IMPLEMENTING.md "Continuous API Conformance Lane"):
-
-- the Usage Guide renders each story's own source (`story_snippet`), so the
-  documented spelling IS the executed spelling and cannot drift;
-- the real-database suite (`tests/api/test_story_run.py`) executes each
-  story through the shipped ``parallax-snapshot`` extension and
-  ``parallax-postgres`` adapter against real Postgres, grading the case's
-  expected rows / table state / abort outcome;
-- the fake-port write no-drift guard (`tests/api/test_write_no_drift.py`)
-  drives the same functions against a recording port as the supplementary
-  wire-golden proof (commit stories emit the golden DML; abort stories emit
-  nothing for the discarded buffer).
-
-The story functions deliberately carry no docstrings: their bodies are the guide
-snippets. They use the full transaction verbs: ``tx.insert(instance)`` (the
-Create Payload), ``tx.update(copy)``
-(an edited copy carrying a Change Record — ``edit(**changes)``),
-``tx.delete(node_or_instance)``, and ``tx.find(statement)`` returning
-``Snapshot[T]``. The `m-opt-lock` observation-gating rule (`python.md` §5)
-requires the edited copy's or
-deleted node's provenance to derive from a `tx.find` this SAME transaction ran
-(the framework never issues an implicit resolving read on a keyed write), so
-every story writing a versioned row fetches it first —
-`keyed_update_observed_in_transaction`, `keyed_delete_observed_in_transaction`,
-`one_flush_combined_mixed_verb_order` (both legs), and
-`aborted_delete_leaves_the_row_standing` (whose force-flushed delete, forced
-onto the wire before the deliberate abort exactly like
-`callback_value_withheld_on_abort`'s own force-flush-then-abort pattern, is
-observation-backed exactly like any other keyed delete) each add that observing
-fetch.
-`m-unit-work-005/006/009/012` author the SAME observing find(s) before their
-versioned keyed write(s), so every story here grades byte-exact against
-its own mirrored case (`test_write_no_drift.py`) as the plain graded idiom —
-no story is guide-only. A keyed verb needs that evidence for EVERY Entity, an
-unversioned one included: the shared row lock its participating read holds is
-the whole of an unversioned row's evidence, so there is nothing a constructed
-instance could offer in its place. Unconditional intent is therefore said
-outright, and `create_then_delete_a_parent_child_pair` tears its pair down
-through `tx.delete_where(...)` rather than through keyed deletes of freshly
-built values.
-
-**Instance-native grading:** a story returning rows returns the typed instances
-a `Snapshot[T]` itself
-already materializes (`.results()`), never a rendered row dict — the row
-rendering (`instance_row`, physical-column-keyed) happens at the GRADING seam
-(`test_story_run.py`), the same convention the read/graph stories already use.
-Rendering at the grading seam keeps canonical attribute names separate from
-physical column names such as `Balance.acctNum`/`acct_num` and
-`Position.validStart`.
-
-**Temporal stories** construct axis-governed attributes without placeholder
-milestone values and drive successive
-distinct Transaction-Time instants via a scripted clock (`clock=`,
-:class:`~parallax.conformance.scripted_clock.ScriptedClock`) — one corpus
-writeSequence entry, one flushing `db.transact` call, one scripted instant,
-in entry order. A "chain-update via a sparse edited copy" story
-(`transaction_time_only_chain_update_via_a_sparse_copy`, the Supplier value-object
-sibling) proves that the edited copy
-touches only the field it changes, and the framework merges the observed
-payload onto it so the chained row still carries every untouched field.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -97,10 +29,6 @@ from parallax.snapshot.handle import ExecutionFailure, ScopedDatabase, Transacti
 
 __all__ = ["WRITE_STORIES", "WriteStory", "story_snippet"]
 
-# How a story concludes, which is also how each consumer grades it: a `commit`
-# story returns its final observation; an `abort` story suppresses its own
-# deliberate failure and returns the follow-up observation proving the discard;
-# a `boundary` story lets the failure propagate (the withheld-value contract).
 StoryKind = Literal["commit", "abort", "boundary"]
 
 
@@ -146,15 +74,12 @@ def story_snippet(story: WriteStory) -> str:
     return inspect.getsource(story.run).rstrip("\n")
 
 
-# --------------------------------------------------------------------------- #
-# m-unit-work: the 10 non-temporal Account/Order(Item) stories.               #
-# --------------------------------------------------------------------------- #
 def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
-    return db.transact(fn)  # the dependent find observes the flushed insert
+    return db.transact(fn)
 
 
 def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
@@ -163,11 +88,10 @@ def aborted_update_is_discarded(db: ScopedDatabase) -> list[Entity]:
 
     def doomed(tx: Transaction) -> None:
         tx.update(edited)
-        raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
+        raise RuntimeError("changed my mind")
 
     with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
-    # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
 
 
@@ -186,22 +110,22 @@ def fk_ordered_inserts(db: ScopedDatabase) -> None:
         )
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
-    db.transact(fn)  # the flush inserts the parent before the child
+    db.transact(fn)
 
 
 def callback_value_withheld_on_abort(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
+        current = tx.find(Account.where(Account.id == 1)).result()
         tx.update(current.edit(balance=Decimal("175.00")))
-        tx.find(Account.where(Account.id == 1))  # forces the flush
-        raise RuntimeError("abort")  # even the force-flushed write is rolled back
+        tx.find(Account.where(Account.id == 1))
+        raise RuntimeError("abort")
 
-    return db.transact(fn)  # raises — no value is returned as though durable
+    return db.transact(fn)
 
 
 def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
+        current = tx.find(Account.where(Account.id == 1)).result()
         tx.update(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
@@ -210,11 +134,11 @@ def keyed_update_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
 
 def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        current = tx.find(Account.where(Account.id == 3)).result()
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
 
-    return db.transact(fn)  # [] — the dependent find observes the deletion
+    return db.transact(fn)
 
 
 def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
@@ -233,7 +157,7 @@ def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     def teardown(tx: Transaction) -> None:
-        tx.delete_where(OrderItem.where(OrderItem.id == 200))  # child first
+        tx.delete_where(OrderItem.where(OrderItem.id == 200))
         tx.delete_where(Order.where(Order.id == 100))
 
     db.transact(create)
@@ -242,14 +166,14 @@ def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
 
 def one_flush_combined_mixed_verb_order(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
-        deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        current = tx.find(Account.where(Account.id == 1)).result()
+        deleted = tx.find(Account.where(Account.id == 3)).result()
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
         tx.update(current.edit(balance=Decimal("20.00")))
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < Decimal("50.00"))).results())
 
-    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
+    return db.transact(fn)
 
 
 def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
@@ -259,26 +183,21 @@ def aborted_insert_never_becomes_durable(db: ScopedDatabase) -> list[Entity]:
 
     with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
-    # The aborted insert was discarded: the find observes NO rows for account 7.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
 
 
 def aborted_delete_leaves_the_row_standing(db: ScopedDatabase) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
-        current = tx.find(Account.where(Account.id == 3)).result()  # observe the version
+        current = tx.find(Account.where(Account.id == 3)).result()
         tx.delete(current)
-        tx.find(Account.where(Account.id == 3))  # forces the flush of the buffered delete
-        raise RuntimeError("abort")  # even the force-flushed delete is rolled back
+        tx.find(Account.where(Account.id == 3))
+        raise RuntimeError("abort")
 
     with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
-    # The aborted delete was discarded: account 3 still stands.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
 
 
-# --------------------------------------------------------------------------- #
-# m-txtime-write: Balance Transaction-Time-Only milestone-chaining stories.    #
-# --------------------------------------------------------------------------- #
 def transaction_time_only_insert_opens_a_current_milestone(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
@@ -291,12 +210,6 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatab
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def close(tx: Transaction) -> None:
-        # Observe the current milestone FIRST (`python.md` §5: temporal
-        # update/terminate follow the same prior-observation rule as versioned
-        # writes — Balance is Transaction-Time temporal, so the default
-        # preference resolves it to the Optimistic strategy and the close binds
-        # that observed milestone's own `in_z` as its gate), then close it keyed
-        # off the primary key alone (close-only, no chained row).
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.terminate(current)
 
@@ -309,9 +222,7 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> 
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        # The edited copy touches only `value`; observed-payload merging keeps
-        # the chained row's untouched `acct_num` value.
+        current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.update(current.edit(value=Decimal("150.00")))
 
     db.transact(insert)
@@ -323,7 +234,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDat
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
 
     def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
+        current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.update(current.edit(acct_num="B", value=Decimal("250.00")))
 
     db.transact(insert)
@@ -331,49 +242,22 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: ScopedDat
 
 
 def transaction_time_only_chain_update_from_existing_history(db: ScopedDatabase) -> None:
-    # m-txtime-write-005: the fixtures are loaded (`given.fixtures: true`) —
-    # id 1 already carries a superseded [2024-01-01, 2024-06-01) milestone
-    # (value 100.00) and a CURRENT [2024-06-01, infinity) milestone (value
-    # 150.00). The close predicate (bal_id AND out_z = infinity) selects
-    # exactly the ONE current row even with a superseded prior on record.
     def update(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the CURRENT milestone
+        current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.update(current.edit(value=Decimal("175.00")))
 
     db.transact(update)
 
 
-# --------------------------------------------------------------------------- #
-# m-opt-lock: Account (versioned, non-temporal) keyed-write stories.          #
-# --------------------------------------------------------------------------- #
 def versioned_update_advances_the_version_ungated_in_locking_mode(db: ScopedDatabase) -> None:
-    # m-opt-lock-002: the `locking` preference is the workflow-level override
-    # that forces every Entity to participate pessimistically. Its
-    # in-transaction read takes a shared row lock, so the keyed update needs no
-    # version check — it advances the version with NO `and version = ?` gate
-    # (contrast the default preference, which resolves a versioned Account to
-    # the Optimistic strategy: m-opt-lock-005/-006). A writeSequence story (the
-    # corpus case's own shape): no trailing find, the committed table state is
-    # the oracle.
     def fn(tx: Transaction) -> None:
-        current = tx.find(Account.where(Account.id == 2)).result()  # observe the version
+        current = tx.find(Account.where(Account.id == 2)).result()
         tx.update(current.edit(balance=Decimal("500.00")))
 
     db.transact(fn, concurrency="locking")
 
 
-# --------------------------------------------------------------------------- #
-# m-batch-write: Wallet (unversioned, non-temporal) predicate-write stories.  #
-# --------------------------------------------------------------------------- #
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
-    # m-batch-write-005: Wallet carries no version and no temporal axis, so a
-    # predicate-selected delete has nothing to gate per row — it lowers
-    # DIRECTLY to one set-shaped `delete ... where balance < ?`, no
-    # materializing read at all (contrast the versioned set delete,
-    # m-opt-lock-015/m-batch-write-004). That same missing version is why the
-    # verifying find DOES take the shared read lock: with no gate to recover
-    # correctness at write time, the default preference resolves Wallet to the
-    # Locking fallback.
     def fn(tx: Transaction) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
         return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
@@ -381,9 +265,6 @@ def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     return db.transact(fn)
 
 
-# --------------------------------------------------------------------------- #
-# m-bitemp-write: Position full-bitemporal stories.                           #
-# --------------------------------------------------------------------------- #
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert_until(
@@ -396,11 +277,6 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> N
 
 
 def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None:
-    # m-bitemp-write-006: a plain (unbounded) bitemporal `tx.update` is the
-    # two-way degenerate of the rectangle split — no middle, no old tail (the
-    # correction runs to infinity): inactivate the original on the Transaction-Time
-    # axis, then chain head (the OLD value, Valid Time [from_z, B)) + a new tail
-    # (the NEW value, Valid Time [B, infinity)).
     def insert(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -408,9 +284,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None
         )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(
-            Position.where(Position.id == 1).as_of(valid_time=LATEST)
-        ).result()  # observe the rectangle
+        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
         tx.update(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
@@ -421,10 +295,6 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None
 
 
 def bitemporal_plain_insert_opens_a_fully_current_rectangle(db: ScopedDatabase) -> None:
-    # m-bitemp-write-009: a plain (unbounded) bitemporal insert is a SINGLE
-    # insert of a fully-current rectangle — Valid Time [B, infinity) at
-    # Transaction Time [txInstant, infinity), current on BOTH axes. No prior row to
-    # close, unlike the plain update/terminate splits.
     def fn(tx: Transaction) -> None:
         tx.insert(
             Position(id=1, acct_num="A", value=Decimal("100.00")),
@@ -442,9 +312,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(
-            Position.where(Position.id == 1).as_of(valid_time=LATEST)
-        ).result()  # observe the rectangle
+        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
         tx.update_until(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -456,22 +324,17 @@ def bitemporal_update_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
 
 
 def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDatabase) -> None:
-    # m-unit-work-015: Position id 1 holds TWO rectangles current on Transaction
-    # Time, so reading it twice at different Valid-Time coordinates leaves two
-    # pieces of evidence about ONE primary key. The correction is written against
-    # the value the FIRST read handed back, and closes THAT rectangle — the
-    # second read observed another milestone and took nothing away from the first.
     def fn(tx: Transaction) -> None:
         head = tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             )
-        ).result()  # the rectangle-split head, valid [2024-01-01, 2024-06-01)
+        ).result()
         tx.find(
             Position.where(Position.id == 1).as_of(
                 valid_time=dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
             )
-        ).result()  # the corrected tail, also current — a DIFFERENT milestone
+        ).result()
         tx.update(
             head.edit(value=Decimal("150.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -480,11 +343,6 @@ def a_close_settles_against_the_milestone_its_own_find_observed(db: ScopedDataba
     db.transact(fn, concurrency="optimistic")
 
 
-# --------------------------------------------------------------------------- #
-# Supplier (Transaction-Time-Only) and Branch (Bitemporal) stories carry     #
-# Value Object documents through milestone chaining/splitting like scalar    #
-# columns.                                                                    #
-# --------------------------------------------------------------------------- #
 def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedDatabase) -> None:
     def insert(tx: Transaction) -> None:
         tx.insert(
@@ -501,9 +359,7 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: ScopedD
         )
 
     def update(tx: Transaction) -> None:
-        current = tx.find(Supplier.where(Supplier.id == 1)).result()  # observe the milestone
-        # The edited copy touches only `address`; observed-payload merging
-        # keeps the chained row's untouched `name` value.
+        current = tx.find(Supplier.where(Supplier.id == 1)).result()
         tx.update(
             current.edit(
                 address=Address(
@@ -560,12 +416,6 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: ScopedDatabase) -
     db.transact(split)
 
 
-# --------------------------------------------------------------------------- #
-# m-value-object: Customer non-temporal value-object-owner write stories.     #
-# The recursive `address` composite (`CustomerGeo`                            #
-# declares OPTIONAL `elevation`/`point`, unlike Supplier/Branch's own `Geo`),  #
-# so these exercise `encode_value_object`'s omission of unset optional inner members.#
-# --------------------------------------------------------------------------- #
 def customer_insert_carries_the_whole_address_document(db: ScopedDatabase) -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(
@@ -603,10 +453,7 @@ def customer_update_replaces_the_whole_address_document(db: ScopedDatabase) -> N
         )
 
     def replace(tx: Transaction) -> None:
-        current = tx.find(Customer.where(Customer.id == 200)).result()  # observe the row
-        # The new document drops `geo` and shrinks `phones` to one element —
-        # a WHOLE-document replace, never a path-level merge with the prior
-        # value (`m-value-object-026`'s own note).
+        current = tx.find(Customer.where(Customer.id == 200)).result()
         tx.update(
             current.edit(
                 address=CustomerAddress(
@@ -634,18 +481,13 @@ def customer_update_nulls_the_address_document_out(db: ScopedDatabase) -> None:
         )
 
     def null_out(tx: Transaction) -> None:
-        current = tx.find(Customer.where(Customer.id == 300)).result()  # observe the row
+        current = tx.find(Customer.where(Customer.id == 300)).result()
         tx.update(current.edit(address=None))
 
     db.transact(insert)
     db.transact(null_out)
 
 
-# --------------------------------------------------------------------------- #
-# Per-story scripted clocks provide one instant per `db.transact` call,       #
-# call above, in entry order, matching each mirrored case's own authored     #
-# `at`/`until` instants.                                                     #
-# --------------------------------------------------------------------------- #
 def _txtime_write_001_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 

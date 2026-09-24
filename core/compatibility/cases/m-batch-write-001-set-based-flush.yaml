@@ -1,21 +1,4 @@
 # Batched-write case (m-batch-write): buffered writes flush as set-based SQL.
-#
-# At the unit-of-work boundary the buffered writes are combined and flushed as
-# SET-BASED SQL, not one statement per row:
-#   step 1 insert : THREE buffered inserts of Wallet collapse into a SINGLE
-#                   multi-row INSERT (one statement, three value tuples).
-#   step 2 update : a batched UPDATE sets the same column (balance) over two keys
-#                   in one statement via an `id in (?, ?)` predicate.
-#
-# This reuses the write-sequence machinery (apply the ordered golden DML to an
-# empty table, then assert the resulting table state) for the NON-temporal batched
-# case. The subject is the NON-VERSIONED Wallet (models/wallet.yaml): the readless
-# batched forms are honest only for a non-versioned entity — a versioned entity's
-# set-based update MUST materialize into per-object version-advancing updates
-# (m-opt-lock / ADR 0014), so the batched forms cannot apply to it.
-#
-# Resulting state: wallets 10/11/12 inserted; 10 and 11 then re-balanced to 500.00
-# by the batched update; 12 unchanged at 30.00.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

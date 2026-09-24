@@ -2,13 +2,6 @@
 # objects are pinned at different as-of coordinates, the deferred load emits one
 # child statement PER coordinate group, each carrying that group's propagated
 # as-of binds.
-#
-# Invoice 100 is held at two pins in one unit of work: step 0 at Transaction-Time-latest
-# (out_z = infinity) and step 1 at the finite instant 2024-02-01 (a DISTINCT pinned
-# view, m-identity-map). The `load` of `lines` over both views (on: [0, 1]) cannot
-# collapse into one query — each group propagates its own coordinate — so it emits
-# two child statements: the latest group (lines 75/25) and the instant group (the
-# superseded 50/25). Two round trips, binds grouped per lowered coordinate.
 model: models/invoice.yaml
 tags: [m-deep-fetch, m-temporal-read, m-navigate, temporal, propagation, audit-only, deferred-load, relationship, slice-managed-1]
 shape: scenario

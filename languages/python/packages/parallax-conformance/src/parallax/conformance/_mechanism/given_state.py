@@ -1,14 +1,3 @@
-"""The stored state a case declares before its action runs: ``given.corrupt``,
-the fixture rows a Temporal Shadow is seeded from, and ``given.apply``.
-
-Three seeders rather than one, because the lanes do work between them: every
-compile path seeds the shadow alone, the read lanes corrupt stored state alone,
-and the run lanes that apply out-of-band statements seed the shadow first and
-apply after work of their own. Each seeder is applied where its lane already
-stands — after provisioning, before the action — so a case states its stored
-state once and every lane observes the same storage.
-"""
-
 from __future__ import annotations
 
 import json

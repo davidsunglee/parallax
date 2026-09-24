@@ -1,24 +1,3 @@
-"""``parallax.core.diagnostics`` enforcement scope — detached exception projection.
-
-The one import home for turning an arbitrary exception into a bounded, deeply
-immutable value something else may retain: a lifecycle event a Handler receives,
-a resource cleanup issue a caller reads back, a pool sample that could not be
-taken. Every consumer of that projection names this module; there is no second
-copy and no compatibility re-export from the scope this was extracted out of.
-
-Every field is read AND rendered behind its own guard, so a hostile ``code``
-property costs that one field rather than collapsing the whole diagnostic, and
-observing a failure can never replace the failure the caller needs to see.
-Rendering is eager because detachment demands it: the diagnostic retains no
-exception, traceback, cause graph, or frame, so there is nothing left to format
-later — and every projected string is an exact ``str`` copy, because a ``str``
-subclass is a reference back into the failure wearing a string's shape.
-
-The scope depends on the standard library alone. That is what lets the database
-port, the execution lifecycle, and the resource contracts between them share one
-projection without any of them inheriting the others' edges.
-"""
-
 from __future__ import annotations
 
 import traceback

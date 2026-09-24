@@ -1,35 +1,3 @@
-"""``parallax.snapshot.handle._connection_lifecycle`` — the two ends of one
-operation's connection, written once.
-
-Three owner kinds bracket a connection: an eager read around its whole execution,
-a transaction attempt around its boundary, and each standalone stream page around
-its batch. What each of them does at the two ends is identical, and
-getting either end subtly wrong in one of the three is exactly the bug that
-leaks a connection under one operation shape and not the others. So the ends
-live here as two plain functions, and each owner keeps its own bracket — the
-shape of a read, an attempt, and a page are genuinely different and no
-shared context manager could hold all three.
-
-Neither function raises for a resource problem of its own. Acquisition failure
-is the caller's to propagate, because it is the operation failing; release
-problems are diagnostic and must never replace what the operation already
-established, so they are reported and dropped. That asymmetry is the whole
-contract: an operation that could not START is a failure, and an operation that
-could not fully let go afterwards is a successful operation with something worth
-saying about the resource.
-
-Both ends are also where the operation's resource observation happens, because
-the observed activity and the resource call are the same two moments. Each end
-opens its own scope under the owning activity, so an Acquisition and a Release
-are siblings of the execution work between them rather than a lease enclosing
-it. Each also tells its scope where the resource call came back, so what these
-functions then read off the resource — the cleanup fact the call left behind —
-falls outside the interval the scope reports and outside the hold that interval
-bounds. Observation never changes what the resource does: cleanup that has to
-happen happens whether or not the scope around it could be delivered, and a
-cleanup fact no Handler received falls back to the restricted resource log.
-"""
-
 from __future__ import annotations
 
 from parallax.core.db_port import ConnectionContext, DatabaseConnection, report_resource_issues

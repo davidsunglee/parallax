@@ -1,33 +1,3 @@
-"""``parallax.conformance._postgres_control`` — the native side of the controls.
-
-Every psycopg-shaped fact the harness's own sessions need lives here: opening a
-dedicated connection, ending another session through the server, and the
-escalation that destroys a session whose own thread is parked in driver I/O. The
-protocols these implement carry none of it
-(:mod:`parallax.conformance._database_control`), so the engine consumes declared
-capabilities and this module is the only place a control knows it is Postgres.
-
-It reaches one private module of the shipped adapter,
-``parallax.postgres._connection``, for exactly two names:
-:func:`~parallax.postgres._connection.initialize_connection`, the setup every
-physical connection gets, and :class:`~parallax.postgres._connection.PostgresConnection`,
-the scoped execution over one. That reach is deliberate and recorded in the
-Python specification's source grants. The alternative is a second
-implementation of the codecs, the error translation, and the transaction
-outcomes inside the harness — which is a harness that proves its own behavior
-rather than the adapter's.
-
-What this module does NOT reuse is the runtime: the shipped runtime owns a pool,
-and a session the harness may have to cancel, close, or tear down at the socket
-must be one connection nothing else can be handed. So the controlled adapter
-below is its own, and it exists only for choreography that needs those actions.
-Ordinary conformance work composes its Database from the shipped
-:class:`~parallax.postgres.PostgresAdapter`.
-
-Nothing else may import this module eagerly: naming a control must not load the
-driver, so the provisioner reaches this module inside the call that opens one.
-"""
-
 from __future__ import annotations
 
 import contextlib

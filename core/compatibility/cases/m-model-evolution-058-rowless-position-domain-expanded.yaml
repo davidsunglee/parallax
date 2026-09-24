@@ -1,12 +1,6 @@
 # Expanding a domain on a position that denotes no stored shape
 # (m-model-evolution): Overlap-Visible to nobody, and the mirror of
 # m-model-evolution-057.
-#
-# `Provisional.memo` becoming nullable is the unilateral expansion
-# m-model-evolution-007 reports, and `clerk` becoming editable only adds an input.
-# The narrower fact is the empty one: overlap visibility is a claim that a later
-# writer may place a value in a shape an earlier reader holds, and this position
-# denotes no shape either edition stores, so the expansion has nowhere to be seen.
 tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

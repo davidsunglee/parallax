@@ -1,24 +1,3 @@
-"""``parallax.conformance._decoration`` — decorating what a Database executes on.
-
-Two conformance lanes need every statement a ``Database`` runs to pass through a
-decorator of theirs: the boundary lane arms a fault at a chosen seam, and a
-scenario step marked ``rollback: true`` aborts the transaction after its body.
-Both decorate EXECUTION — the four verbs — and neither has anything to say about
-a connection's lifetime.
-
-Since a ``Database`` is now connected from configuration, a decorator can no
-longer be handed to it directly. So the decoration moves to where the connection
-is acquired: this adapter opens the real runtime underneath, and wraps each
-connection an acquisition yields as it is handed over. What the lane wrote stays
-an execution decorator, and the resource lifetime underneath stays the shipped
-one, including its single-use contexts and its cleanup results.
-
-A decorator is applied per acquisition, so a retry decorates its own fresh
-connection. State the lane wants to survive that — a fault that fires once
-across a whole invocation — belongs to the lane's own value, which its factory
-closes over, rather than to a connection that is deliberately not reused.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

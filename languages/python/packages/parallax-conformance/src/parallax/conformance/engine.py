@@ -1,24 +1,3 @@
-"""The conformance compile/run engine — binding the corpus to the spine.
-
-The adapter path compiles and runs a compatibility case against the class-free
-production spine (no dynamic class synthesis): the case's model YAML is ingested
-through the ``m-descriptor`` deserializer and its ``when.objectQuery`` through the
-``m-object-query`` deserializer. ``compile`` lowers that query through ``m-sql``;
-``run`` routes it through the production read seams — the public Wire read for a
-graph, the values lane for rows — which own planning, compilation, execution,
-conversion, classification, and row materialization before the adapter builds the
-observation envelope around what they published. Compile eligibility
-(``m-case-format`` ``compileEligibility``) is read from the case; the run-only
-minority is never compiled.
-
-This module is the façade the adapter and the CLI consume: every entry point
-is defined in a lane under :mod:`~parallax.conformance._lanes` over the
-mechanism under :mod:`~parallax.conformance._mechanism`, and re-exported here
-under its unchanged name. The one decision the façade makes itself is which
-scenario lane a case belongs to: a scenario carrying an action step is the
-snapshot lane's, and every other scenario is the keyed unit-of-work lane's.
-"""
-
 from __future__ import annotations
 
 from parallax.conformance import case_format

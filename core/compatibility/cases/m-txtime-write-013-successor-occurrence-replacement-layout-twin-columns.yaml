@@ -1,21 +1,6 @@
 # Columns half of the temporal successor proof: a Transaction-Time close chains a
 # successor in which the ASSIGNED occurrence is replaced whole, at depth. Its twin
 # authors the same write and the same round trips under Relational Document Layout.
-#
-# `given.fixtures` loads log 5's single open milestone, whose `spec` carries `title`
-# and a nested `one` `origin`. A temporal step's neutral write input states the whole
-# successor row, so the entry restates `label` and `marks` unchanged and assigns
-# `spec` naming `title` alone. The chained successor therefore holds `spec` with no
-# `origin` at all: the occurrence the author stated is the whole of what is stored
-# there, on the milestone-chaining path exactly as on the in-place one.
-#
-# The semantic distinction this pair pins down is that a successor is not an escape
-# from replacement. An implementation that built the successor by merging the
-# assignment into the milestone it closes would chain a row still carrying `origin`
-# — which would describe a place the new `spec` never named. `when.uow.concurrency`
-# is `locking`, so the close is addressed by the key and the open bound with no
-# observed-milestone gate, and `then.roundTrips` counts the entry's own resolving
-# read beside the two statements.
 model: models/write-transparency-layout-twin-columns.yaml
 tags: [m-txtime-write, m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-sql, write-sequence, update, temporal, audit-only, json, nested, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

@@ -1,11 +1,5 @@
 # Contracting a value domain (m-model-evolution): coordinated, and never
 # Overlap-Visible.
-#
-# This is m-model-evolution-007 read backwards. Rows the earlier edition stored
-# may hold the NULL the later model refuses, so the transition needs
-# `DatabaseMigrationRequired`. A Coordinated Evolution names no Overlap-Visible
-# Operation at all — it is not applied through the unilateral path — while it
-# still carries the same `ValueAdmissibilityChanged` the expansion did.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:

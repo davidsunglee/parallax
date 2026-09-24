@@ -1,17 +1,5 @@
 # A required member and the shape that carried it leaving one position together
 # (m-model-evolution): each reason reported where its subject is.
-#
-# `Lot` is reparented from the abstract `Holding` onto the root, and
-# `Holding.custodian` is removed in the same edition. The stored shape a boundary
-# speaks about at a position is the one BOTH editions denote there, and `Holding`
-# denotes none afterwards: `AttributeRemoved` therefore stops at the authoring
-# surface a read of the position still occupies. The rows themselves stay where
-# they are — an abstract position stores nothing of its own — so losing a
-# required member off them is reported at `Lot`'s own inheritance alteration,
-# which carries BOTH reasons: the narrowing through the departed branch stops
-# resolving, and the object enforcing `custodian` still rejects a later write
-# that omits it. One surviving position changes what it denotes, so the
-# alteration causes one `QueryResultMembershipChanged`.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

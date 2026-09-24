@@ -1,15 +1,3 @@
-"""The values and errors a Schema Delta crosses the wheel's boundary as.
-
-Statements leave as plain strings with no wrapper and no per-statement causal
-metadata: the physical-operation algebra stays private, and an application
-applying a delta already holds the Evolution and observes the statement that
-failed. Created-Index provenance is the sole exception, because only a physical
-name lets a host correlate a later violation with the rollout that created it.
-
-Both errors are aggregated values raised once with the complete finding set, and
-neither returns a partial delta.
-"""
-
 from __future__ import annotations
 
 import enum

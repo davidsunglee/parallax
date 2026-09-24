@@ -1,13 +1,3 @@
-"""``parallax.conformance.case_format`` enforcement scope (m-case-format).
-
-Loads compatibility cases from ``core/compatibility/cases/**``, parses the
-eleven-shape model plus each case's tags / shape / module tags, and hosts the §1
-case-selection expression (including the ``--parallax-tags`` milestone
-intersection). Filename prefixes are never used for *selection* — membership is
-tag-driven — but the filename does carry a case's identity (its ``<module>-NNN``
-ID), per the m-case-format contract.
-"""
-
 from __future__ import annotations
 
 import dataclasses
@@ -540,7 +530,7 @@ def load_cases(directory: Path | None = None) -> list[Case]:
 
 @dataclass(frozen=True, slots=True)
 class SelectionFilter:
-    """The claim projection the §1 case-selection expression evaluates against."""
+    """The claim projection the case-selection expression evaluates against."""
 
     modules: frozenset[str]
     case_shapes: frozenset[str]
@@ -555,7 +545,7 @@ def is_selected(
     milestone_tags: Iterable[str] | None = None,
     implemented_modules: frozenset[str] | None = None,
 ) -> bool:
-    """Evaluate the §1 case-selection expression for one case.
+    """Evaluate the case-selection expression for one case.
 
     Base membership is ``shape ∈ claimed caseShapes`` ∧ ``module-tags ⊆ claimed
     modules`` ∧ the ``caseTags`` include/exclude filters. ``milestone_tags``

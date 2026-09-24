@@ -1,329 +1,85 @@
-# Parallax Python — testing map
+# Python testing map
 
-Where Python tests live, what each surface proves, which fixtures reach a live
-database, and which command owns which selection.
+The [root testing guide](../../TESTING.md) owns the verification workflow.
+[pyproject.toml](pyproject.toml) owns tool settings and thresholds; the
+[root justfile](../../justfile) owns commands. This map explains placement and
+fixtures without duplicating those inventories.
 
-The structural rules and the reasoning behind them belong to
-`core/spec/language-testing.md`. Quality policy — thresholds, matrices,
-exclusions, and required proof — belongs to `spec/python.md` §10. Neither is
-restated here.
+## Placement
 
-## Test root
-
-`tests/` is closed. Every entry is a semantic surface directory, `_support/`, or
-one of the two files the root itself requires.
-
-| Surface | Directory | Proves |
+| Surface | Directory | Subject |
 |---|---|---|
-| Internal behavior | `tests/unit/` | Internal seams, diagnostics, and failure modes, plus the `tools/` gate scripts' own canaries |
-| Portable specification behavior | `tests/compatibility/` | The compatibility corpus: the Docker-free compile sweep, the authored-rejection sweep, and the real-database run sweep |
-| Idiomatic public API | `tests/api/` | The API Conformance Suite — idiomatic public-API code against real Postgres, its coverage partition, its no-drift guards, and the Usage Guide — plus the griffe public-API snapshot |
-| Core `m-dialect` contract | `tests/dialect/` | The pure dialect strategy: SQL spelling, quoting, and the SQLSTATE-to-category mapping |
-| Provider integration contract | `tests/provider_contract/` | The provider/matrix contract and the real psycopg adapter smoke checks |
-| Shipped and installed output | `tests/distribution/` | Built-wheel content and public-export health, and the clean-venv production install topologies |
+| Internal | `tests/unit/` | Internal seams, diagnostics, and tool checks |
+| Compatibility | `tests/compatibility/` | Portable corpus compilation and execution |
+| API | `tests/api/` | Idiomatic public behavior, coverage partition, generated guide, API snapshot |
+| Dialect | `tests/dialect/` | Pure dialect strategy |
+| Provider | `tests/provider_contract/` | Database provider contract and shipped adapter |
+| Distribution | `tests/distribution/` | Built wheels and clean installation |
 
-`tests/__init__.py` makes the tree one package, so every module under it is
-imported by its dotted name from `languages/python`, the directory pytest puts on
-the path when it collects any module of the package. `tests/conftest.py` is the
-other root file: it holds the fixtures below, the database-skip ledger, and the
-terminal-summary hook. Everything else it used to hold is in `_support/`.
+The test root holds those surfaces, `_support/`, `__init__.py`, and
+`conftest.py`. The unit surface mirrors the source path:
+`parallax/<pkg>/<sub>/<module>.py` maps to
+`tests/unit/<pkg>/<sub>/test_<module>*.py`. Tool tests live under
+`tests/unit/tools/`; whole-tree unit tests live at `tests/unit/`.
+The other surfaces are organized by behavior.
 
-## `tests/unit/`
+Put a helper beside its consumers when one subtree contains them all.
+Cross-surface support belongs in `tests/_support/`; shared unit-only support
+belongs at the narrowest common unit-test directory. Import helpers by their
+`tests.*` names, never from another test module. Do not maintain a prose list
+of helper modules.
 
-The unit surface mirrors the source tree. The test of
-`parallax/<pkg>/<sub>/<module>.py` lives at
-`tests/unit/<pkg>/<sub>/test_<module>*.py`, where `<pkg>` is one of `core`,
-`descriptor`, `evolution`, `snapshot`, `postgres`, `aws`, `conformance`, with a suffix
-when several files serve one module; a test of a subpackage's own `__init__.py`
-sits in that subpackage's directory. Two more placements cover the rest: a test
-of `tools/<script>.py` goes to `tests/unit/tools/test_<script>.py`, and a
-whole-tree test — one grading the repository, the distributions, the scheduling
-classes, or every module at once — stays at the `tests/unit/` root. A test
-directory without a source counterpart, or the reverse, is a smell you can see in
-a listing.
+## Fixtures and resources
 
-The five behavioral surfaces carry an `__init__.py` for identity alone and keep
-their story-organised flat layout.
+[conftest.py](tests/conftest.py) defines the fixtures and scheduling classifier.
 
-## `_support/`
-
-Cross-surface helpers, models, and probes. It is not a semantic surface and has
-no test command of its own.
-
-| Module | Holds |
+| Fixture | Resource |
 |---|---|
-| `_support/repo.py` | `PY_ROOT`, `REPO_ROOT`, and the canonical core artifacts read from them — `adapter_schema()`, `canonical_snapshot_claim()` |
-| `_support/cost_durations.py` | What each cost item last cost: the contract `cost_durations.json` is read under, and the store a measuring run writes back through |
-| `_support/corpus.py` | A case's document and fixtures, and the grading comparators the run sweep and the API-suite story lane share |
-| `_support/db_port.py` | The shared `m-db-port` doubles, each an ADAPTER owning the runtime, acquisition contexts and revocable connections beneath it — `ScriptedAdapter` and its script entries, `RefusingAdapter`, `ConnectsAsItself` for a double that is its own runtime, `DetachableMetrics` for the pool source a scripted runtime gives up at its close, the `PortCall` recording — and the transaction outcome a fake with no boundary of its own reports |
-| `_support/sweep_goldens.py` | The corpus cases the compile and run sweeps grade against authored goldens, and the golden readers both use |
-| `_support/distributions.py` | The distribution name tuples and the `Wheelhouse` the `wheelhouse` fixture builds |
-| `_support/fake_metamodel.py` | An alternate accepted-Metamodel implementation and the parity model it pins |
-| `_support/adoption.py` | `raises_contextualized`, the assertion every suite makes about an ordinary failure escaping an adopted execution — `db.transact`, a standalone `db.find` / `db.wire.find` / `db.read_rows`, or the delivery of an entered standalone stream: an `ExecutionFailure` whose `cause` is the error the block graded, answered as `value` so the assertion reads as it would against a bare raise |
-| `_support/model_capabilities.py` | The three model-bound collaborators — cataloged model, row codec, graph construction — built directly over a Domain Model, exactly as `prepare_model` builds them, for a suite grading one of them alone |
-| `_support/frontend_probes.py`, `_support/frontend_probes_stringized.py` | Declaration probes on the live-annotation and stringized-annotation paths |
-| `_support/inheritance_models.py`, `_support/mirrored_models.py`, `_support/snapshot_models.py`, `_support/value_object_models.py` | Idiomatic Entity and Value Object classes mirroring the corpus models |
-| `_support/write_values.py` | The invalid-Customer read shared by the API and unit keyed-write provenance lanes |
-| `_support/root_ownership.py` | The Database Root owner used by execution helpers: `own_root` retains roots explicitly and the autouse finalizer closes them after each test; standalone reading tools own roots lexically so repeated measurement seams cannot accumulate them |
+| `profile` | Matrix declaration only; does not open a database |
+| `profile_run` | The live Testcontainers Postgres run |
+| `wheelhouse` | Built distribution wheels |
+| `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
 
-A symbol reads `from tests._support.corpus import case_document` and a model
-module reads `from tests._support import mirrored_models as mm`, regardless of
-which surface pytest collects first. Nothing but `tools` is added to the import
-path (`pythonpath = ["tools"]` in `pyproject.toml`, the one entry of
-`pyrightconfig.json`'s `extraPaths`), so a module under `tests/` resolves under
-its dotted name and no other. A test module imports from `_support` or from a
-helper module, never from another test module.
+Database-backed tests acquire their database only through `profile_run`.
+Tests owning a Database Root should close it explicitly or register it through
+`tests._support.root_ownership.own_root`. The cleanup fixture is a backstop.
 
-Support code only one surface uses stays inside that surface, and follows its
-consumers within it. A helper every consumer of which sits under one directory
-of `tests/unit/` sits in that directory — `conformance/_lanes/_scripted_port.py`,
-`conformance/_recording_ports.py`, `conformance/_wire_value_support.py`,
-`core/entity/_compact_support.py`,
-`core/entity/value_object_bad_models.py`,
-`core/execution_lifecycle/_lifecycle_cost_support.py`,
-`snapshot/_layout_twin_columns.py`, `snapshot/_layout_twin_document.py`,
-`snapshot/_snapshot_page_support.py`,
-`snapshot/handle/_keyed_write_drivers.py`,
-`snapshot/handle/_mixed_strategy_model.py`,
-`snapshot/handle/observation_models.py`,
-`tools/_cost_report_support.py`. A helper whose consumers span
-directories none of them contains, or that a `tools/` script imports, stays at
-the `tests/unit/` root —
-`_authored_storage_support.py`, `_contention_support.py`,
-`_corpus_identity_support.py`, `_corpus_model_support.py`,
-`_delivery_control_support.py`, `_document_layout_support.py`,
-`_gc_reachability.py`,
-`_inheritance_family_support.py`,
-`_instance_state_support.py`, `_memory_gate_support.py`, `_metamodel_support.py`,
-`_pool_source_support.py`, `_predicate_acquisition_support.py`,
-`_second_dialect.py`, `_snapshot_materialization_support.py`,
-`_source_inventory_support.py`, `_stream_page_support.py`,
-`_structural_geometry_support.py`, `_transact_support.py`,
-`_write_lowering_support.py`, and `memory_instruments.py`.
+The database-access checker confines connection acquisition to the fixture.
+A line-local `# database-access: <reason>` exemption requires a meaningful
+reason, such as a mocked acquisition. When a provider is unavailable the fixture
+records the skip; `PARALLAX_REQUIRE_DB=1` makes it fail.
 
-`_gc_reachability.py` provides the identity-safe object-graph walk shared by
-retained-object proofs across Snapshot test directories.
+## Scheduling and selection
 
-Eight of those serve the cost suites and split by subject:
-`memory_instruments.py` is what every cost suite measures WITH,
-`_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
-with, and `_instance_state_support.py` and
-`_snapshot_materialization_support.py` are the two a `report` also drives: the
-baseline or scaling regression and `just python-report-instance-state` or the
-Snapshot member of `just python-report-cost` measure one workload through one
-set of functions. `_write_lowering_support.py` is the keyed-write workload the
-isolated write-lowering reading child drives through row serialization,
-preparation, settlement, SQL lowering, and the driver's own bind serialization;
-`_predicate_acquisition_support.py` is the predicate-acquisition companion that
-same child drives to a buffered Materialized Write Group; and
-`_structural_geometry_support.py` declares the geometry levels both the
-write-lowering child inserts, the Snapshot reading child reads and, on a cold
-read plan cache, plans, and the
-Transaction-Time-Only twins its changed-ancestor successors write;
-`_delivery_control_support.py` spells the Snapshot member's before/after
-control matrix — the Typed twins of the two provider-free catalog workloads,
-the guarded include workload under three group widths with its provider-free
-port, and the small and larger models an eager Typed result is held over —
-which the Snapshot report expands and the Snapshot reading child parses back.
-The `report` tools under `tools/` reach them as `tests.unit.memory_instruments`,
-`tests.unit._instance_state_support`,
-`tests.unit._snapshot_materialization_support`,
-`tests.unit._structural_geometry_support`, and
-`tests.unit._delivery_control_support`, and the write-lowering child reaches
-`tests.unit._write_lowering_support` and
-`tests.unit._predicate_acquisition_support`, by putting the workspace root on
-`sys.path` themselves. Each refuses any module that did not resolve to the file
-it named.
+The collection hook derives exactly one class from each item's resource needs:
+`db` from the live fixture closure, `cost` from the child-interpreter boundary,
+otherwise `dbfree`. Do not author those markers onto tests. Requiring both
+isolated resources is an error. The database and instrument access checkers
+enforce the resource boundaries.
 
-The memory gates over those same windows — `spec/memory-gates.yaml`, loaded
-through `parallax.conformance.budget.MemoryGates` — are graded by two cost
-suites beside the reading children's own: `tools/test_write_lowering_reading_gates.py`
-reads every keyed-write, predicate-acquisition, and model-preparation case
-through `write_lowering_reading.measure`, and
-`tools/test_snapshot_delivery_reading_gates.py` reads every geometry read and
-cold plan compilation through `snapshot_delivery_reading`'s readings; each
-also seeds the regressions its gates are proved to detect and pins the one
-they cannot. `_memory_gate_support.py` names which item owns which gate, and
-`test_scheduling_partition.py` grades that table against the class as a
-session collects it. Timing is asserted by neither suite.
+Use `just python-test-<surface>` for focused iteration, or select a module from
+this directory with `uv run pytest tests/<surface>/<path>`.
+The focused selectors are intentionally outside aggregates. Inspect actual
+execution ownership with `just show-gates <command>`.
 
-## Fixtures
+`just python-test-pydantic-floor` tests the declared minimum Pydantic version;
+the normal environment uses the lock. CI owns supported-version and shard
+matrices in [ci.yml](../../.github/workflows/ci.yml).
 
-All four are defined in `tests/conftest.py`; the first three are session-scoped
-and requested by name, and the last is function-scoped and autouse.
+## Expected failures and executable documentation
 
-| Fixture | Live database? | Yields |
-|---|---|---|
-| `profile` | no | The declared matrix profile the database-backed lane runs (`pg-full`) |
-| `profile_run` | **yes** | That profile's own run: a self-managed Testcontainers Postgres, paired with the name the run reports under |
-| `wheelhouse` | no | A directory of freshly built wheels plus a package-name-to-wheel map |
-| `release_case_runtimes` | no | Nothing. After each test it closes every runtime a `Database` composed in that test left open |
+An `xfail` test asserts correct behavior for a reproduced defect and names
+that defect. Strict mode in tool configuration makes an unexpected pass fail;
+remove the marker when fixed. Environment gaps belong to explicit skips.
 
-`profile` resolves a declaration and opens nothing, so it classifies no item; it
-is what `profile_run` is opened by, and what a database-backed test names
-when it needs the dialect its run executed in. Requesting it alone leaves an item
-`dbfree`.
+Public API examples remain executable conformance tests whether or not the
+usage guide publishes them. Curate the guide for teaching, regenerate it from
+source, and retain the complete coverage partition and behavioral assertions.
 
-`release_case_runtimes` first closes every Database Root explicitly registered
-through `own_root`, then closes any profile runtime left open as a backstop. It
-classifies no item, and that is why it reads
-`request.fixturenames` instead of requesting `profile_run`: requesting it would
-put the live database in every item's fixture closure and reclassify the whole
-suite as database-backed. A connected handle owns a pool, so a handle a test
-composed and never closed would hold connections and maintenance threads for the
-rest of the session; each handle that closes itself leaves this backstop nothing
-to do.
+## Memory evidence
 
-`profile_run` is what the profile provisions for itself, so a test never names a
-port: it resets through the run, executes through `run.port`, and hands the run
-itself to `adapter.run_case`, which reports the profile that opened the database it
-executed against. It is the only route to a live database, and
-`tools/check_database_access.py` is what keeps it so: it fails when any module
-under `tests/` calls a seam that starts a container or opens a connection
-anywhere but inside that fixture. It reads an acquisition on a value as well as
-on a class, so `adapter.open()` is caught as surely as `PostgresAdapter.open`,
-and it follows either through the bindings and containers a test might pass it
-along. One call may be waived on its own line with a
-`# database-access: <why>` marker; a marker carrying no reason is not honored,
-so every waiver is a diff line with its justification on it — the same bargain
-`# noqa` and `# pyright: ignore` are reviewed under. There is one in the tree,
-on the unit test that proves what `open` delegates to with the delegate
-stubbed. When Docker or the provider cannot be brought
-up the fixture records the reason and skips, and the terminal summary prints
-every recorded reason; `PARALLAX_REQUIRE_DB=1` turns any such skip into a
-failure. Docker setup — including the one-time `~/.testcontainers.properties` fix
-for runtimes other than Docker Desktop — is in the root `README.md`.
-
-## Scheduling labels
-
-Three classes, and every collected item carries exactly one.
-
-| Class | Marker | Means | Owning command |
-|---|---|---|---|
-| Database-free | `dbfree` | The item requires neither resource below | `just python-test-dbfree` |
-| Database-backed | `db` | Its fixture closure reaches a live database, so Docker is required | `just python-test-db` |
-| Cost | `cost` | It reads the whole interpreter, so it needs one no other test shares | `just python-test-cost` |
-
-No marker is ever written beside a test. `tests/conftest.py`'s collection hook
-adds one to every item, chosen by what that item requires — `profile_run` in its
-resolved fixture closure for `db`, the `in_a_child_interpreter` boundary on its
-function for `cost` — so the label covers indirect requests, is decided per item
-rather than per file, and can be neither missing nor doubled. Requiring both is a
-contradiction the hook fails on rather than an order of precedence. Deleting
-`profile_run` from a test's signature, or the boundary from its definition,
-reclassifies that test.
-
-`tools/check_database_access.py` and `tools/check_instrument_access.py` are what
-keep the labels honest: each confines its class's resource to the one entry point
-the classifier reads, so a test acquiring it another way is a finding rather than
-a silent misclassification.
-
-Scheduling class is orthogonal to the semantic surface. `compatibility/` and
-`api/` hold both database classes; `dialect/` and `distribution/` are entirely
-`dbfree`; `provider_contract/` is entirely `db`; `unit/` holds `dbfree` and the
-whole of `cost`. A surface is therefore never a substitute for a class, in either
-direction.
-
-Two further markers exist and classify nothing — `compile_sweep` and
-`adapter_smoke` are focused selectors for iteration, authored where they apply.
-They are the whole catalog beside the three classes.
-
-## Expected failures
-
-`xfail` is for one shape only: a defect reproduced ahead of its fix. The test
-asserts the **correct** behavior and carries `@pytest.mark.xfail(reason=...)`
-naming the defect, so the tree stays green while the reproduction stands on its
-own as the specification of what the fix must produce. Any other use — a flaky
-test, an unfinished feature, an environment gap — belongs to `skip` or to not
-being committed.
-
-`xfail_strict = true` (`pyproject.toml`) makes every expected failure strict, so
-a reproduction that starts passing reports `XPASS(strict)` and fails the run.
-Removing the marker is therefore part of the fix, in the same change, not a
-follow-up. Read the `-ra` summary to see each expected failure and its reason.
-
-## Commands
-
-Run from the repository root through `just`, or from `languages/python` through
-`uv`.
-
-| Purpose | Command |
-|---|---|
-| Every database-free gate | `just python-check-dbfree` |
-| Every database-backed gate (Docker) | `just python-check-db` |
-| Every cost gate | `just python-check-cost` |
-| All three | `just python-check` |
-| Iterate on one surface | `just python-test-<surface>` |
-| Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py`, or `tests/unit/<pkg>/<sub>/test_<module>.py` for a unit test |
-| The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
-| A diagnostic subset of the cost reports, never evidence | `cd languages/python && uv run python tools/cost_report.py --diagnostic --member <subject> --select <pattern> --runtime <minor>` |
-
-The six `python-test-<surface>` recipes are for iteration and are deliberately no
-aggregate's dependency: a surface cuts across both scheduling classes, so a gate
-composing one would run part of it twice.
-
-`python-test-pydantic-floor` is outside every aggregate for a different reason.
-It selects one module — `tests/unit/core/entity/test_pydantic_parity.py`, which
-`python-test-dbfree` already grades on the locked Pydantic — and overlays the
-oldest release `parallax-core` declares onto the workspace resolution for that
-one run, so what it adds is the other end of the supported range rather than
-another selection. The `ci` / `python-test-pydantic-floor` job below is what owns
-that verdict; no local aggregate reaches it.
-
-## Continuous integration
-
-| Workflow and job | Matrix | Runs |
-|---|---|---|
-| `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14 runs `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main`; 3.13 runs `just python-test-dbfree` with coverage disabled to prove runtime compatibility without repeating the coverage verdict on the slower C tracer |
-| `ci` / `python-check-db` | — | `just python-check-db` on CPython 3.14 against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
-| `ci` / `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6` on CPython 3.14, one cell per shard of the class `just check` omits so the local gate stays fast; `test_scheduling_partition.py` proves the matrix expands to those six cells alone, that each runs ungated, and that their selections partition the class |
-| `ci` / `python-verify-cost` | — | Required verification on CPython 3.14: `tools/cost_report.py --verify` over the committed `recovered/portfolio.json` against the head lock and, on pull requests, `--freshness-only` against the event-merge lock; it fails only for evidence that is not evidence, so a change to an input a workload digest covers blocks until the capture is retaken, and nothing here measures |
-| `ci` / `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` on CPython 3.14, resolving the parity corpus against the minimum Pydantic release `parallax-core` declares instead of the locked one, so the seam a published value's serialization is built over is graded at both ends of the supported range |
-| `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the five jobs above still gate; the lock it moves is an advisory of `python-verify-cost` rather than a failure |
-
-Fresh cost captures are the `cost-report` workflow's, not `ci`'s; the root
-[`TESTING.md`](../../TESTING.md) maps its jobs. It drives three modes of
-`tools/cost_report.py` — `--plan`, `--shard`, and `--assemble` — through
-`tools/cost_report_adapter.py`, which pins the request from the event and
-obtains a nightly's predecessor. `tests/unit/test_cost_report_workflow.py` and
-`tests/unit/test_cost_report_ci.py` pin the two workflows' shapes, and
-`tests/unit/tools/test_cost_report_adapter.py` proves the adapter against
-temporary repositories and a fake `gh`; no test dispatches a run.
-
-`tools/cost_report_evidence.py` is the offline companion: it puts a retained
-legacy portfolio and the GitHub run and job metadata of the job that captured
-it beside a `--assemble` directory and its run's metadata, and renders the
-execution-cost table — coverage as the multiset of reading addresses and their
-sample counts, elapsed, measurement critical path, runner minutes, queue, and
-setup — with every unknown left unknown. It starts nothing and calls nothing;
-`tests/unit/tools/test_cost_report_evidence.py` drives it with fixtures of
-both formats, missing historical fields, and mismatched work.
-
-The cost cells are balanced by what each cost item last cost, read from
-`tests/_support/cost_durations.json`: `--shard I/N` sorts the class's items
-heaviest first and places each onto the lightest shard so far, so the N shards
-partition the class however the file is populated, and an item the file does not
-know weighs the mean of the ones it does. Only the balance depends on the file's
-currency, never the partition. The file is a required input to a sharded session
-all the same: unreadable for any reason, holding no durations at all, holding
-anything but non-negative numbers of seconds a float holds finitely, or holding
-durations that together total more than a float holds — no mean for an unknown
-item to weigh — it is that session's usage error naming the file, because
-weighing every item the same is a shard mechanism doing nothing while every
-partition check stays green.
-
-Refresh it after the class changes shape with the recipe-less step
-[`AGENTS.md`](AGENTS.md) names, then commit the result.
-
-A store replaces the file only when the session both collected the whole cost
-class and ran it to completion: no shard, no path argument or ignored path — the
-narrowing that leaves an item uncollected and so unobservable — then a call
-report for every cost item it did collect, and a successful exit status. Whatever
-expression selected the class is not read: `-m cost` and any wider expression
-collect it whole, and one that cuts into it leaves items collected without a call
-report. Then what the session measured is the file, and an item deleted or
-renamed since the last refresh leaves no entry behind to weigh a shard that will
-never run it. Every other session — one cell's `--shard I/N`, a narrower
-selection, a run that failed, was interrupted, or never reached part of what it
-collected — stores what it measured and keeps every other entry, because those
-entries are the only record of the items it did not run.
+[Memory gates](spec/memory-gates.yaml) and
+[the budget contract](spec/budget-contract.yaml) own measurement thresholds.
+Use the [root cost workflow](../../TESTING.md#ci-and-cost-evidence) for capture
+and freshness checks. Shared memory instruments and their test workloads remain
+code; changes to them do not require updating an inventory here.

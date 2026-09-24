@@ -72,14 +72,14 @@ tooling. Start with the document that matches what you want to learn:
   — how connections are pooled, held and released, and what a deployment has to
   decide because of it: retention, timeouts, process and application-server
   lifetime, connection budgeting, and pool observation.
-- [Completed Python language spec](languages/python/spec/python.md) — exact API,
-  lifecycle, packaging, database, and quality-toolchain decisions.
+- [Python binding](languages/python/spec/python.md) — Python-specific public
+  decisions and the independently checked dependency and artifact contracts.
 - [Python testing map](languages/python/TESTING.md) — where each test surface
   lives, which fixtures reach a database, and which command owns which gate.
 
 ## How The Contract Fits Together
 
-Parallax has three layers of authority:
+The contract has complementary owners:
 
 1. **The core specification** defines language-neutral behavioral modules,
    their legal dependency graph, and the deployable seams implementations must
@@ -87,9 +87,13 @@ Parallax has three layers of authority:
 2. **Schemas and the compatibility corpus** encode canonical descriptors,
    fixtures, queries, writes, optimized SQL, independent reference SQL, and
    expected observations.
-3. **A completed language spec** chooses the idiomatic public API, lifecycle,
-   source layout, artifacts, database integration, and quality toolchain for
-   one exact slice.
+3. **Language binding documents** record additional public language choices and
+   select a canonical slice. Signatures and types live in code; commands and
+   quality thresholds live in executable configuration. Source and artifact
+   topology declarations retain their independent implementation checks.
+
+Glossaries navigate these owners. ADRs and research preserve historical
+rationale; they do not add contracts to reconcile on every code change.
 
 Each implementation proves its claim in two complementary ways:
 
@@ -113,7 +117,7 @@ the spec, schemas, corpus, and conformance-adapter contract.
 | [`languages/python/`](languages/python/) | Primary worked implementation: the Postgres Snapshot slice |
 | [`reference-harness/`](reference-harness/) | Non-normative oracle that validates and executes the core corpus |
 | [`docs/adr/`](docs/adr/) | Cross-cutting architecture decisions |
-| [`IMPLEMENTING.md`](IMPLEMENTING.md) | End-to-end playbook for specifying and building a language target |
+| [`IMPLEMENTING.md`](IMPLEMENTING.md) | Finding contract owners and implementing a target |
 | [`TESTING.md`](TESTING.md) | Operational map of the verification commands and how to run them |
 | [`justfile`](justfile) | Root orchestration for validation and implementation checks |
 
@@ -178,27 +182,27 @@ just core-check-slice-profiles
 Follow [`IMPLEMENTING.md`](IMPLEMENTING.md) rather than copying an existing
 runtime. In outline:
 
-1. Read the core overview, module catalog, slice catalog, conformance-adapter
-   contract, and language-spec template in their prescribed order.
-2. Select one canonical slice and complete a language spec with no unresolved
-   decisions before writing runtime code.
+1. Select a canonical slice and use the core overview, module catalog, and
+   conformance-adapter contract to identify the required behavior.
+2. Start a language binding from the template. Settle public decisions before
+   implementing the affected surface; do not describe private implementation
+   structure in the binding.
 3. Implement in module-dependency order, keeping the required runtime,
    lifecycle, and database-adapter seams.
 4. Prove the claim through both the conformance adapter and the idiomatic API
    Conformance Suite against a real database.
 
-Validate a completed language spec with:
+Validate its claim and topology declarations with:
 
 ```bash
-just core-show-language-spec languages/<target>/spec/<spec>.md
+just core-show-language-spec languages/<target>/spec/<target>.md
 ```
 
-### Add Or Change Core Behavior
+### Adding Or Changing Behavior
 
-Treat the spec, schemas, fixtures, and cases as one contract. A behavioral
-change normally requires a consistent update across the relevant module spec,
-serialized schemas, canonical descriptors or fixtures, and compatibility
-cases. Cases should carry every module tag they exercise and should include
+Update the owning core rule when portable behavior changes, and the schemas,
+fixtures, and cases only where their contracts change. An internal refactor
+normally needs none of those edits. Cases should carry every module tag they exercise and include
 canonical statements, binds, expected observations, and independent reference
 SQL where the behavior is non-trivial.
 

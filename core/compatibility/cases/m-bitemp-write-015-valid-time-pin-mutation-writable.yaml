@@ -6,16 +6,6 @@
 # m-bitemp-write-006 and m-identity-map-011; this case pins the verb-time
 # ACCEPTANCE itself. (Contrast the finite Transaction-Time pin, which is
 # read-only — m-bitemp-write-016.)
-#
-# This is an api-conformance-lane case: its defining observable is the ABSENCE of
-# a raised application-lifecycle error at the mutate verb, which the
-# single-connection wire harness cannot grade, so the harness schema-validates it
-# and each language's conformance run lane executes the step, reporting an empty
-# error observation. Step 0 pins Position id 1 at the finite Valid-Time instant
-# 2024-03-01 with Transaction Time explicitly selected as Latest — the rectangle-split HEAD value
-# 100.00, a WRITABLE Valid-Time-past view. Step 1 mutates it (`set` value 250.00):
-# the verb accepts the finite Valid-Time pin (no expectError) and the change stays
-# in memory in this closed-world lane — roundTrips 0, no DML.
 model: models/position.yaml
 lane: api-conformance
 tags: [m-bitemp-write, m-edit, m-temporal-read, bitemporal, temporal, as-of, retroactive, scenario, slice-snapshot-1]

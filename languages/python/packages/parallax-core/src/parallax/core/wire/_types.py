@@ -1,5 +1,3 @@
-"""Public structural types for the Neutral Wire Codec."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

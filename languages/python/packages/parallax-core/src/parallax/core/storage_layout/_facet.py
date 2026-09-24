@@ -1,5 +1,3 @@
-"""Immutable Storage Layout values, views, indexes, and typed retrieval."""
-
 from __future__ import annotations
 
 import enum
@@ -87,14 +85,6 @@ class RelationalDocument:
 type ColumnContributor = (
     AttributeIdentity | ValueObjectIdentity | InheritanceDiscriminator | RelationalDocument
 )
-"""The closed identity-bearing provenance algebra for physical Columns.
-
-An Attribute contributes its ``AttributeIdentity``, a top-level document
-contributes its ``ValueObjectIdentity``, a TPH tag contributes an
-``InheritanceDiscriminator`` carrying the family root identity, and a Relational
-Document Layout's shared Structured Column contributes a ``RelationalDocument``
-carrying its layout owner.
-"""
 
 type PositionColumnContributor = AttributeIdentity | ValueObjectIdentity | RelationalDocument
 """The contributor forms legal in a discriminator-free Position Layout."""
@@ -146,12 +136,6 @@ class DocumentPath:
 
 
 type MemberPlacement = DirectColumn | DocumentPath
-"""Where one logical member of one Table lives.
-
-``DirectColumn`` names a Column the member's own contributor owns;
-``DocumentPath`` names a document slot plus the path locating the member inside
-it. The union is closed and carries no provisional or deferred arm.
-"""
 
 
 @dataclass(frozen=True, slots=True)

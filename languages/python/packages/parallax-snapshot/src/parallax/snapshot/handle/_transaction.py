@@ -1,63 +1,3 @@
-"""``parallax.snapshot.handle._transaction`` — the developer transaction surface (spec §5).
-
-:class:`Transaction` is what a ``db.transact`` closure receives: a facade over
-the active unit of work and the transaction's own connection. It owns the
-keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
-temporal-window family) and the participating :meth:`Transaction.find`.
-
-What a keyed verb here OWNS is one adapter and one call. The order every keyed
-write runs — over a source, re-entry, source, pin, window, preparation,
-effective changes, the buffered-insert exemption, evidence, claim, and buffer;
-through the insert's own door, re-entry, pin, provenance, window, preparation,
-the buffered-insert REFUSAL, and buffer — belongs to
-:mod:`parallax.snapshot.handle._keyed_writes`, and what this module supplies is
-the Typed Keyed Write Source and Keyed Insert Source: what an Entity value, its
-Change Record, and its lifecycle answer that order, and nothing about the order
-itself. ``tx.wire``'s verbs state those same facts off a published row and a
-Read Origin instead, and every representation's keyed write ends in the one
-buffer and the one buffered-insert ledger this transaction holds.
-
-It also carries the row-form read (:meth:`Transaction.read_rows`), which the
-conformance harness reaches and no developer surface does. It is not a second
-lifecycle: the read enters the same force-flush and lock derivation ``find``
-does, and opens its own Read under this transaction's attempt exactly as every
-participating read here does.
-
-The read COMPOSITION is not owned here either. :meth:`Transaction.find`,
-:meth:`Transaction.stream`, and :meth:`Transaction.read_rows` delegate to the one
-participating :class:`~parallax.snapshot.handle._read_scope.ReadScope` this
-transaction constructs, which runs the same ladder a ``Database``'s standalone
-reads run, under a participating execution policy rather than a standalone one.
-The ``tx.wire`` view retains that same scope rather than anything cut from this
-class, and so does every stream this transaction opens — which is why each page
-force-flushes and opens its Stream Batch through the same policy an eager read
-here runs under.
-
-The predicate-selected ``_where`` family is NOT owned here: those five public
-verbs are thin delegates that thread ``(uow, meta, conn)`` into
-:mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
-``uow.buffer`` and never reaches back into this class.
-
-Depends on :mod:`parallax.snapshot.handle._read_scope` (the read composition the
-eager read verbs here delegate to),
-:mod:`parallax.snapshot.handle._read` (the publication factories and the result
-surface), :mod:`parallax.snapshot.handle._keyed_writes` (the keyed write ingress,
-whose per-call context this transaction builds once and hands to its own keyed
-verbs, to ``tx.wire``'s, and to the conformance bridge alike),
-:mod:`parallax.snapshot.handle._write_inputs` (the steps the Typed sources
-themselves run — instance resolution, the source pin and identity row a value
-states, and the object a written row addresses), and
-:mod:`parallax.snapshot.handle._predicate_writes`, and
-:mod:`parallax.snapshot.handle._options` (the resolved
-:class:`~parallax.snapshot.handle._options.DatabaseOptions` a transaction is
-handed at construction and answers as :attr:`Transaction.options`). The
-composition root and the transaction runner — ``Database``,
-``TransactionRunner``, and ``TransactionOptionConflictError`` — live in
-:mod:`parallax.snapshot.handle._database` and
-:mod:`parallax.snapshot.handle._transaction_runner`, which import this module,
-never the reverse.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -316,7 +256,7 @@ class TypedKeyedInsertSource:
 
 
 class Transaction:
-    """The developer transaction handed to a ``db.transact`` closure (spec §5).
+    """The developer transaction handed to a ``db.transact`` closure.
 
     A facade over the active unit of work and the transaction's own connection.
     The keyed verbs take entity instances: :meth:`insert` a full
@@ -327,7 +267,7 @@ class Transaction:
     ``Snapshot[T]``: force-flush + the lock suffix each materialized level's own
     target Entity calls for, otherwise identical to
     :meth:`ScopedDatabase.find`. The predicate-selected
-    ``_where`` verb family (`python.md` §5) —
+    ``_where`` verb family —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
     keyed surface over a mutation-compatible Object Query: readless for an
@@ -403,7 +343,7 @@ class Transaction:
         # (`m-execution-lifecycle`).
         self._lifecycle = lifecycle
         # The one Read Scope this transaction's eager reads run through — its
-        # own Typed verbs and the Wire view it answers alike (spec §5 "Private
+        # own Typed verbs and the Wire view it answers alike (the Python binding "Private
         # read composition").
         self._reads = participating_read_scope(
             lifecycle=lifecycle,
@@ -451,7 +391,7 @@ class Transaction:
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
-        spec §5): every member the instance actually SET. A framework-owned
+        the Python binding): every member the instance actually SET. A framework-owned
         member is never among them: the interval bounds (``in_z``/``out_z``,
         bitemporal ``from_z``/``thru_z``) are stamped at flush from the Clock
         Strategy and the version is derived, so the Entity constructor refuses a
@@ -488,12 +428,12 @@ class Transaction:
         ``update_until``'s own required ``valid_from`` / ``until``). A window
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_window`, `python.md` §5 "all validated at build"), and
+        (:func:`validate_window` "all validated at build"), and
         so does a repeated insert of an object this transaction already buffered
         an insert of, exactly as :meth:`insert` refuses one.
         The window bounds come from THESE verb arguments, never from instance
         fields: an As-Of Axis endpoint is framework-owned and the temporal write
-        path derives every interval bound itself (`python.md` §2), which is why
+        path derives every interval bound itself, which is why
         the Entity constructor refuses an authored one outright."""
         keyed_insert(
             self._keyed,
@@ -506,7 +446,7 @@ class Transaction:
     def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
         set of an edited copy (touched fields whose current value differs from
-        the recorded original, spec §3/§5). An EMPTY effective change set
+        the recorded original). An EMPTY effective change set
         issues no DML at all (zero round trips, the net-zero-chain no-op rule
         — the no-op-first ordering `m-opt-lock` fixes: dropped before any
         observation or locking concern), and a node this transaction's own read
@@ -542,30 +482,21 @@ class Transaction:
     def delete(self, node_or_instance: EntityBase) -> None:
         """Buffer a keyed ``delete``, keyed off ``node_or_instance``'s primary
         key (a frozen ``Snapshot`` node, a fresh instance, or an edited copy —
-        all carry valid primary-key values, spec §5). A source view pinned at a
+        all carry valid primary-key values). A source view pinned at a
         finite Transaction-Time instant is read-only and raises
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does.
 
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
-        :meth:`terminate`, which closes the row's history instead (`python.md`
-        §5 "Write verbs and temporal spellings")."""
+        :meth:`terminate`, which closes the row's history instead."""
         keyed_write(self._keyed, TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
 
-    # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
-    # kind below is already a valid                                          #
-    # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
-    # ``txtime_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
-    # missing: a typed ``Transaction`` method that builds the SAME           #
-    # instruction through the SAME ingress `insert`/`update`/`delete`        #
-    # already enter, so a hand-written program and the engine's corpus       #
-    # replay can never diverge in behavior.                                 #
     def terminate(
         self, node_or_instance: EntityBase, *, valid_from: dt.datetime | None = None
     ) -> None:
         """Buffer a keyed ``terminate``: close ``node_or_instance``'s current
-        milestone (the temporal delete-equivalent, `python.md` §5) — keyed off
+        milestone (the temporal delete-equivalent) — keyed off
         its primary key alone, no chained row (close-only, `m-txtime-write` /
         `m-bitemp-write`). Transaction-Time-Only takes no ``valid_from``;
         Bitemporal requires it (the mutation's own Valid-Time
@@ -588,7 +519,7 @@ class Transaction:
         ``update_until_where``'s own required ``valid_from`` / ``until``). A
         window that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_window`, `python.md` §5 "all validated at build") —
+        (:func:`validate_window` "all validated at build") —
         checked BEFORE the empty-effective-change-set no-op return below:
         window validation runs first for every window verb, never after;
         equal bounds reject even when the
@@ -612,8 +543,7 @@ class Transaction:
         alone (`m-bitemp-write`) — bitemporal-only (mirrors
         ``terminate_until_where``). A window that does not satisfy
         ``valid_from < until`` (equal or reversed bounds) raises at THIS
-        call, before any buffering (:func:`validate_window`, `python.md`
-        §5)."""
+        call, before any buffering (:func:`validate_window`)."""
         keyed_write(
             self._keyed,
             TypedKeyedWriteSource(node_or_instance, self._codec),
@@ -655,7 +585,7 @@ class Transaction:
 
     @property
     def wire(self) -> WireTransactionView:
-        """This transaction's Wire read and write interface (spec §3, §5).
+        """This transaction's Wire read and write interface.
 
         A lightweight view over the SAME unit of work, evidence retention,
         locking, and coalescing the Typed verbs use, so Typed and
@@ -712,14 +642,13 @@ class Transaction:
         """
         return self._reads.read_rows(query)
 
-    # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
         self,
         query: ObjectQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime | None = None,
     ) -> None:
-        """A predicate-selected ``update`` (`python.md` §5): ``query`` MUST be
+        """A predicate-selected ``update``: ``query`` MUST be
         mutation-compatible (nothing but a target and a predicate);
         ``assignments`` are ``Attr.set(value)`` calls, non-empty, no duplicate
         field, each addressing the query's exact target. Readless
@@ -741,11 +670,11 @@ class Transaction:
 
     def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
-        (`python.md` §5): readless for an unversioned target; a versioned one
-        MATERIALIZES to one observation-backed per-row delete per resolved row
-        — in both modes, since each row's write requires that row's own prior
-        observation — with no no-op elimination, because a delete changes a
-        row's existence, never a value (`m-opt-lock`)."""
+        : readless for an unversioned target; a versioned one
+         MATERIALIZES to one observation-backed per-row delete per resolved row
+         — in both modes, since each row's write requires that row's own prior
+         observation — with no no-op elimination, because a delete changes a
+         row's existence, never a value (`m-opt-lock`)."""
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
@@ -762,9 +691,9 @@ class Transaction:
         self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime | None = None
     ) -> None:
         """A predicate-selected ``terminate`` over a TEMPORAL target
-        (`python.md` §5): Transaction-Time-Only takes no ``valid_from``;
-        Bitemporal requires it. Always materializes — a temporal predicate
-        write has no readless template."""
+        : Transaction-Time-Only takes no ``valid_from``;
+         Bitemporal requires it. Always materializes — a temporal predicate
+         write has no readless template."""
         refuse_reentry(self._lifecycle)
         buffer_predicate(
             self._uow,
@@ -785,7 +714,7 @@ class Transaction:
         until: dt.datetime,
     ) -> None:
         """A predicate-selected, Valid-Time-bounded ``updateUntil`` over a
-        Bitemporal target (`python.md` §5; `m-bitemp-write` "The rectangle
+        Bitemporal target (the Python binding; `m-bitemp-write` "The rectangle
         split"): always materializes to a close plus head/middle/tail."""
         refuse_reentry(self._lifecycle)
         buffer_predicate(
@@ -804,7 +733,7 @@ class Transaction:
         self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
         """A predicate-selected, Valid-Time-bounded ``terminateUntil`` over
-        a Bitemporal target (`python.md` §5): always materializes to a close
+        a Bitemporal target: always materializes to a close
         plus head/tail (no middle — the window becomes a hole in Valid
         time)."""
         refuse_reentry(self._lifecycle)

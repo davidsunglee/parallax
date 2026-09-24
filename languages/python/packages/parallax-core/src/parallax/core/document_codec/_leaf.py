@@ -1,17 +1,3 @@
-"""The document leaf seam over the canonical Wire Value table (m-document-codec,
-"Portable leaf encodings").
-
-A document leaf's spelling IS the value's canonical Wire Value, so the table lives
-in :mod:`parallax.core.wire` and this module states none of its own. What it adds
-is the document POSITION: a failure here names the failing member, so the caller
-resolves it by name at each containment step.
-
-The string spellings are comparison-significant, not house style. SQL compares the
-six text-compared types by comparing the extracted text directly, so changing one
-changes predicate and ordering results and MUST move `m-dialect`'s corresponding
-decision with it rather than travel alone.
-"""
-
 from __future__ import annotations
 
 from typing import cast

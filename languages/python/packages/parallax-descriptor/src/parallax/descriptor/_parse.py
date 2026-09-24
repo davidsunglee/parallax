@@ -1,17 +1,3 @@
-"""Descriptor document parsing (m-descriptor).
-
-Hand-rolled, snake-to-camel-aware reading of the canonical
-``metamodel.schema.json`` document shape into the frozen metamodel records.
-Python record fields are snake_case; canonical descriptor keys are camelCase.
-
-``parse_document`` reads a descriptor document (JSON- or YAML-derived) into
-records and stops there: cross-entity references keep their authored spelling,
-because resolving them belongs to the foundational resolver behind the
-``m-metamodel`` Unresolved seam. The canonical minimal document an accepted
-model emits back is ``_export``'s answer, over the accepted Metamodel rather
-than over these records.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -58,9 +44,6 @@ _ROLES: frozenset[str] = frozenset({"root", "abstract-subtype", "concrete-subtyp
 _STRATEGIES: frozenset[str] = frozenset({"table-per-hierarchy", "table-per-concrete-subtype"})
 
 
-# --------------------------------------------------------------------------- #
-# Typed extraction helpers (the descriptor document carries `object` values).  #
-# --------------------------------------------------------------------------- #
 def _mapping(value: object, where: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise DescriptorError(f"{where}: expected a mapping, got {type(value).__name__}")
@@ -118,9 +101,6 @@ def _closed(m: Mapping[str, object], allowed: frozenset[str], where: str) -> Non
         raise DescriptorError(f"{where}: unknown properties: {rendered}")
 
 
-# --------------------------------------------------------------------------- #
-# Parse (document shape to records).                                           #
-# --------------------------------------------------------------------------- #
 def _pk_from(value: object, where: str) -> PkGenerator:
     if isinstance(value, str):
         wire_strategy = _enum(value, _PK_STRATEGIES, "pkGeneration", where)

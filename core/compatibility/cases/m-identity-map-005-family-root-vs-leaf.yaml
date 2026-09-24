@@ -2,18 +2,6 @@
 # family ROOT finder and through its concrete-subtype (LEAF) finder interns to the
 # SAME managed object. Identity is a property of the row's family position, never
 # of the query's declared type.
-#
-# Animal is a table-per-hierarchy family (models/animal.yaml); row id 1 (Rex) is a
-# Dog. Step 0 finds it through the abstract root Animal — the read projects the
-# whole concrete superset plus the raw `kind` tag, and what it MATERIALIZES is a
-# Dog: the superset row, its sibling branches null, carrying the derived
-# `familyVariant` rather than the tag column no leaf publishes. Step 1 finds the
-# SAME row through the concrete leaf Dog — the read injects the tag guard
-# `kind = ?` and projects Dog's own superset, carrying no variant because the
-# caller already named it. The two finds carry DIFFERENT projections but resolve
-# one physical row, so the identity map interns them to one logical object
-# (`sameObjectAs` on the shared primary key). The object-reference identity is
-# asserted per-language by the API Conformance Suite.
 model: models/animal.yaml
 tags: [m-identity-map, m-inheritance, identity, table-per-hierarchy, scenario, slice-managed-1]
 shape: scenario

@@ -1,13 +1,5 @@
 # Gaining and losing an explicit optimistic version (m-model-evolution): one
 # evolution, both directions of the ownership boundary.
-#
-# `Balance.version` becomes the family's explicit version, which turns a
-# caller-authored member into a framework-owned one and so needs
-# `AuthoringSurfaceChangeRequired`; `Register.revision` stops being one, which
-# returns an input to the caller and is unilateral. Each Entity's behavior under
-# the `optimistic` Concurrency Preference moves between `LockingFallback` and
-# `VersionGated`, and each member's input capability moves between
-# `CallerInsertAndUpdate` and `FrameworkOwned`.
 tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
 shape: evolution
 when:

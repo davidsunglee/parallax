@@ -3,20 +3,6 @@
 # element's does" (m-predicate any-element, m-sql). Postgres golden only — a
 # non-equality element predicate is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
-#
-# nestedNotLike(Customer.address.phones.number, '555-9999') matches Ada (1), whose first
-# element is 555-1234, and Nils (7), whose only element is 555-0000. Linus (2) is the
-# discriminating row: his single element IS 555-9999, so he satisfies the any-element
-# reading nowhere and falls out — while the no-element reading (spelled
-# nestedNotExists(phones, where: nestedLike(number, '555-9999'))) would ADMIT every row
-# with no elements at all, which is a different question. The negation renders INFIX
-# (`not like`), the normalizer's fixed point for this operator, unlike the leading `not`
-# membership and presence tests normalize to.
-#
-# Omar (9) is the trap: his non-array scalar "555-0000" does not match the pattern, so
-# an unguarded traversal would wrongly admit him; the array-type guard gives him zero
-# elements, together with the JSON null (8), the object (10), the empty array (3), the
-# null column (4), and the missing keys (5, 6).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, notLike, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

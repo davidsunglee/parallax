@@ -1,16 +1,3 @@
-"""Idiomatic Entity Classes the API-suite graph stories build statements over.
-
-A mirror of ``models/policy.yaml`` (``Policy`` / ``Coverage`` / ``Claim``,
-bitemporal entities that also relate), composed into the Domain Model named for
-that model. Owned by ``parallax.conformance`` for the same reason
-``story_models`` is: ``graph_stories.py`` is a real dev-only package module (its
-snippets render into the Usage Guide via ``gen-usage-guide``, which runs outside
-pytest entirely), so it needs classes resolvable at ordinary import time.
-
-This module deliberately avoids ``from __future__ import annotations`` so the
-engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
-"""
-
 from decimal import Decimal
 
 from parallax.core import (

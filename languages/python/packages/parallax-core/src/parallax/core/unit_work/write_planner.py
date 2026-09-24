@@ -1,51 +1,3 @@
-"""The Write Planner: the single finalization authority (m-unit-work).
-
-:class:`WritePlanner` turns one flush's boundary-captured Actor Identity,
-lazy Transaction Instant, concurrency mode, and buffered writes into a
-:class:`~parallax.core.unit_work.write_settlement.WritePlanningResult`. A write
-that settles against existing state arrives carrying the claim its verb took for
-it — the observation it settles against, or the object an unversioned
-Non-Temporal write claims — so the planner resolves no evidence of its own; a
-write addressing several rows claims at neither grain and arrives bare. It is
-model-scoped, constructed once per accepted Metamodel with its batching,
-concurrency, temporal, and audit strategies already wired, and it exposes
-exactly one planning operation: :meth:`WritePlanner.finalize`, which answers the
-plan together with the retained claims its surviving writes settled against. A
-caller with no evidence to spend reads that result's plan alone.
-
-**It emits no SQL.** The module DAG pins ``m-unit-work -> m-predicate``,
-``m-unit-work -> m-db-port``, and ``m-unit-work -> m-temporal-read`` (the Edge a
-Write Observation is filed under) — there is deliberately **no** edge to
-``m-sql``, ``m-dialect``, or any optional policy module (``m-batch-write``,
-``m-opt-lock``, ``m-txtime-write``, ``m-bitemp-write``, ``m-read-lock``). This
-module reaches those policies only through the strategy ports
-:mod:`~parallax.core.unit_work.strategy` declares, injected once by the
-composition layer that legally sees both (``parallax.snapshot.handle``).
-
-What this module holds is the four stages that REWRITE the buffered sequence —
-coalescing, known no-op elimination, batching, and dependency ordering — and the
-one call that hands the result across. Everything from there down, which is
-where the sequence stops changing shape and only Planned Writes come out, is
-:mod:`~parallax.core.unit_work.write_settlement`'s.
-
-Stage grouping. ``core/spec/m-unit-work.md`` describes the pipeline as nine
-named stages; this is an ordering CONTRACT, not a mandate for nine methods.
-Four orderings are normative and this implementation preserves each: coalescing
-and known no-op elimination precede batching, ordering, and the lazy instant
-resolution settlement makes — a known net-zero edit is never merged into a
-batch, never dependency-ordered, and never the reason a timestamp is captured;
-a required observation is validated before the gate decision that consumes it;
-a surviving temporal mutation stays one indivisible unit through batching and
-ordering and expands only after :meth:`_order` has fixed its position; and
-provenance decoration runs after every step's topology is settled and before
-the Write Plan freezes. :meth:`finalize` therefore runs coalesce, eliminate
-no-ops, form batches, order, settle, in that order — eliminating a no-op ahead
-of batching is what lets two writes a no-op separates in the buffer still merge
-into one batch, and combining writes of one claim scope ahead of that
-elimination is what lets a restored member cancel an assignment an earlier verb
-buffered at the same scope.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -191,13 +143,6 @@ class WritePlanner:
             transaction_instant=request.transaction_instant,
         )
 
-    # ----------------------------------------------------------------- #
-    # Stage 1: resolve identities and coalesce buffered intent.          #
-    # A same-transaction keyed insert-then-update of one object folds     #
-    # into a single final-value write; insert-then-delete cancels; and    #
-    # several writes claiming ONE scope combine by the claim algebra      #
-    # their verbs already admitted them under.                            #
-    # ----------------------------------------------------------------- #
     def _coalesce(self, buffer: BufferedWrites, families: FamilyFacts) -> list[OrderedWrite]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
@@ -246,14 +191,6 @@ class WritePlanner:
             if surviving is not None
         ]
 
-    # ----------------------------------------------------------------- #
-    # Stage 3: form compatible batches. Same-entity, same-mutation,       #
-    # ADJACENT single-row keyed writes merge when the injected batching   #
-    # strategy says the run collapses. A preformed multi-row update is    #
-    # split into its rows first (`_decomposed_updates`), so no addressed  #
-    # update reaches settlement sharing a step the strategy never         #
-    # admitted.                                                           #
-    # ----------------------------------------------------------------- #
     def _form_batches(
         self, buffer: Sequence[OrderedWrite], families: FamilyFacts
     ) -> list[OrderedWrite]:
@@ -313,11 +250,6 @@ class WritePlanner:
         flush_run()
         return result
 
-    # ----------------------------------------------------------------- #
-    # Stage 4: dependency-order within barrier regions. A readless        #
-    # predicate write is a hard ordering barrier partitioning the         #
-    # sequence into independently reorderable regions.                    #
-    # ----------------------------------------------------------------- #
     def _order(self, items: Sequence[OrderedWrite], families: FamilyFacts) -> list[OrderedWrite]:
         ranks = _fk_ranks(families.model)
 

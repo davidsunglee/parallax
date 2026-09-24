@@ -1,11 +1,4 @@
 # startsWith + wildcard escape — affix escaping (m-predicate §Wildcard/escape rule).
-#
-# m-predicate-015 escapes only the `contains` form; the affix forms wrap the escaped literal
-# differently. `startsWith 'C_'` appends a trailing `%` but MUST first escape the
-# literal `_` (a single-char wildcard) so it matches a real underscore:
-# `like 'C\_%' escape '\'`. A fat-fingered escape would let `_` match any char
-# and over-match; the independent `left(sku, 2)` oracle catches that. Only
-# `C_50%` starts with a literal `C_`.
 model: models/orders.yaml
 tags: [m-predicate, startsWith, string, escape, slice-snapshot-1, slice-managed-1]
 shape: read

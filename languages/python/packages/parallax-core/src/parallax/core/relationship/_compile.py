@@ -1,14 +1,3 @@
-"""The Relationship Facet's Model Compiler (m-relationship).
-
-Compilation runs only after the Rule Set accepted the candidate, so it decides
-no validity and emits no issue: it pairs each defining declaration with the
-reverse that names it, derives the reverse direction by exchanging the join
-sides and inverting the cardinality, and indexes the result. The accepted local
-declarations are read, never copied or replaced — a direction is a derived view
-of them. Reaching a state validation ruled out raises, so the formation runner
-reports a compiler contract failure rather than publishing a facet.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

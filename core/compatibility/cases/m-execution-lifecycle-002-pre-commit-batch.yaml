@@ -1,46 +1,5 @@
 # Pre-commit batch (m-execution-lifecycle): the boundary's own flush is ONE
 # Write Batch activity carrying the `pre-commit` trigger.
-#
-# Both writes are buffered in ONE unit of work (the shared `uow` label) and
-# neither is read back, so nothing forces an early flush: the unit of work
-# reaches its boundary with a full buffer and flushes it in one pass. The stream
-# therefore holds exactly ONE `writeBatchStarted`, and its trigger is
-# `pre-commit` — the distinction this case pins down against its sibling
-# m-execution-lifecycle-003, where an identical buffered insert is forced out
-# early by a dependent read and the batch carries `read-dependency` instead.
-#
-# Two statements inside one batch is the point: a batch is a FLUSH, not a
-# statement, so activity 4 opens once and holds two Database Calls (activities 5
-# and 6) rather than appearing twice. Both name activity 4 as their `parent`,
-# and both finish before it does — a batch spans planning, lowering, every call
-# it issues, and affected-row enforcement, so nothing it caused outlives it.
-#
-# One connection serves the whole attempt. The attempt acquires (activity 3)
-# before its boundary is asked to begin and releases (activity 7) after the
-# batch has finished and before the attempt does, and the two writes run on that
-# one connection without either of them acquiring anything: a Write Batch and
-# its calls INHERIT the attempt's connection, so no resource activity appears
-# beneath them.
-#
-# The steps must share one unit of work for that to be observable at all: an
-# ordered write SEQUENCE is a sequence of independent units of work, and two
-# independent boundaries would produce two Transaction Invocation roots with one
-# call each, which is a different claim entirely. The FK ordering is the ordinary
-# m-unit-work rule (the parent Order before the child OrderItem that references
-# it), reused here so the two calls have a deterministic order to assert. Each
-# call is a `write` whose `writeCompleted` reports the single row it affected,
-# and `then.roundTrips` counts those two calls — begin and commit are not
-# Database Calls and appear nowhere in the stream, which is why a transaction
-# that reached the database three times reports two.
-#
-# The case declares no `when.uow`, so the invocation states the Database Root's
-# resolved DEFAULTS: the `optimistic` Concurrency Preference (m-unit-work
-# strategy selection), the retry policy, and the concrete Read Committed level
-# every attempt requested — an omitted level resolves to the root's default
-# rather than to no request. What it states for concurrency is that
-# PREFERENCE, not a claim that every Entity took one strategy: Order and
-# OrderItem are unversioned, so each resolves to the mandatory Locking
-# fallback, and neither insert needs an observation or a gate either way.
 model: models/orders.yaml
 tags: [m-execution-lifecycle, m-unit-work, slice-snapshot-1, write-batch, pre-commit]
 shape: scenario

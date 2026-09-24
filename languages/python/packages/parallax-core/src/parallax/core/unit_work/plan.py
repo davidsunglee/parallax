@@ -1,20 +1,3 @@
-"""The Write Plan a flush's finalization produces (m-unit-work).
-
-A Write Plan is the immutable, execution-ordered result of one planning call.
-It retains no Transaction Instant, raw Write Observation, concurrency mode,
-Actor Identity, strategy object, barrier marker, or private group — every
-derived value is materialized into the steps themselves.
-
-Planned Steps is a logical ``Sequence[PlannedWrite]``; its physical backing is
-a tuple of private :class:`StepSegment`\\ s, each packing one homogeneous run.
-An ordinary (non-materialized) run is backed by already-settled steps; a
-materialized run is backed by the compact columns its
-:class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` retained
-and rebuilds each Planned Write from those columns only when a consumer asks
-for it. Every exposed view is immutable; equal views carry no object-identity
-promise, so repeated indexing may return equal but distinct objects.
-"""
-
 from __future__ import annotations
 
 import bisect

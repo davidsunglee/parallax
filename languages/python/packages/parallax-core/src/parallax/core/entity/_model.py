@@ -1,26 +1,3 @@
-"""The Domain Model: one explicit, sealed model over a fixed source.
-
-``DomainModel(*classes)`` returns a fully sealed model or raises. There is no
-``seal()`` operation and no unsealed, sealing, or rejected state, so every model
-a caller can name is authoritative and no model-dependent operation performs a
-lifecycle check.
-
-Construction runs one fixed sequence: left-to-right argument validation, whole-
-model formation, and — for a class-backed model — the Python realization phase,
-which checks relationship annotation agreement. A Domain Model binds nothing and
-owns no identity, so an Entity Class participates in as many models as compose
-it and construction has no synchronization point. What a class-backed model
-holds is an index of the classes it composed, which exists so a materializing
-runtime can decide which class a returned row instantiates. The same class may
-legitimately mean different things in two models: partial inheritance families
-compose, so an Entity's effective concrete-subtype set is a per-model fact.
-
-A model holds nothing derived from itself. The layouts, row codec, and graph
-construction a runtime needs are pure functions of the accepted Metamodel and
-the class index, so the runtime that composes them derives them once, whole,
-from the two accessors below, and retains its own products.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -146,7 +123,6 @@ class DomainModel:
 
     @property
     def entities(self) -> Sequence[EntityMetadata]:
-        """Every Entity's accepted local metadata, in canonical Entity order."""
         return self._model.entities
 
     def meta(self, key: type | str | EntityIdentity) -> EntityMetadata:

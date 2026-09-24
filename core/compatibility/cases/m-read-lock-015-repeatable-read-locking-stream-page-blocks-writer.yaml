@@ -6,17 +6,6 @@
 # physical identity back to account, and locks that outer base alias. Round 2:
 # transaction B updates account 3, a root reached only by that continuing page,
 # blocks on its shared lock, and raises lockWaitTimeout.
-#
-# A page is where a stream and a lock could most plausibly come apart: the delivery
-# is per-page while the transaction outlives it, so a lock that ended with the page
-# would leave a transaction that had read rows it no longer protects, and one that
-# was never taken would make a locking stream a locking read in name only. The
-# second PostgreSQL page is also where a lock on either UNION input would be
-# syntactically invalid and a silently omitted lock would lose write authority.
-#
-# The third of three cases varying only the READ that holds the lock
-# (m-read-lock-013 a plain object find, m-read-lock-014 a deep fetch's child level).
-# Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
 model: models/account.yaml
 tags: [m-read-lock, m-snapshot-read, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, stream, lockWaitTimeout, slice-snapshot-1]
 shape: error

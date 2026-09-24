@@ -1,5 +1,3 @@
-"""Portable member-storage naming (m-metamodel)."""
-
 from __future__ import annotations
 
 __all__ = ["default_column_name"]

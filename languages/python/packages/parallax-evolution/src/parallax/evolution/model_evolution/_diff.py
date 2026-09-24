@@ -1,19 +1,3 @@
-"""Evolution Operations from one :class:`~._matching.Matching`, in inspection order.
-
-A parent addition or removal suppresses every operation for the declarations it
-contains, so an Entity present in one endpoint alone is one entity-level
-operation and nothing else — which is also what makes the fresh-provisioning
-evolution, whose every Entity is an addition, the same code path rather than a
-second differ. A Value Object occurrence suppresses its nested members the same
-way, at every depth.
-
-The generic Entity variants exclude concrete-subtype add and remove, and each
-Entity's role is read from the endpoint that declares it: the later model for an
-addition, the earlier one for a removal. An alteration reports the accepted
-declarations that differ; whether the difference needs coordination is the
-classifier's question, asked of the effective facts.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
@@ -111,10 +95,6 @@ def diff(matching: Matching) -> tuple[EvolutionOperation, ...]:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Suppression: a contained declaration is described by its container's own      #
-# addition or removal, never a second time.                                     #
-# --------------------------------------------------------------------------- #
 def _entity_covers(matching: Matching, entity: EntityIdentity, *, added: bool) -> bool:
     return entity in (matching.entities.added if added else matching.entities.removed)
 
@@ -146,9 +126,6 @@ def _suppressed_member(matching: Matching, occurrence: ValueObjectIdentity, *, a
     )
 
 
-# --------------------------------------------------------------------------- #
-# One generator per declaration kind.                                          #
-# --------------------------------------------------------------------------- #
 def _entity_operations(matching: Matching) -> Iterator[EvolutionOperation]:
     for facts in matching.entities.added.values():
         yield _added(facts.declaration)
@@ -255,9 +232,6 @@ def _declaration_order_operations(matching: Matching) -> Iterator[EvolutionOpera
             )
 
 
-# --------------------------------------------------------------------------- #
-# Field deltas, each in the fixed field order its alteration fixes.            #
-# --------------------------------------------------------------------------- #
 def _added(entity: EntityMetadata) -> EvolutionOperation:
     """The one entity-level addition for ``entity``'s role in the later endpoint."""
     if isinstance(entity.inheritance, ConcreteSubtype):

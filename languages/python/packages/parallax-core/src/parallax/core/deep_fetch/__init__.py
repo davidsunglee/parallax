@@ -1,15 +1,3 @@
-"""Resolved deep-fetch planning (m-deep-fetch).
-
-The planner consumes a :class:`ValidatedObjectQuery` plus a caller-owned
-:class:`ReadProjectionRequest`. It injects terms from resolved temporal selections,
-canonicalizes validated navigation, resolves the requested projection, and produces
-one flat :class:`ValidatedEntityQuery` for the root plus dependency-ordered child
-levels. Predicate-write materialization enters through :func:`plan_mutation_read`,
-which owns construction of its flat read from a :class:`PreparedPredicateWrite`.
-
-This module compiles and executes nothing. SQL sees only the resolved flat products.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -326,9 +314,6 @@ def plan_mutation_read(
     )
 
 
-# --------------------------------------------------------------------------- #
-# The trie builder (shared-prefix dedup, back-reference detection).           #
-# --------------------------------------------------------------------------- #
 _ROOT_ID = -1
 
 
@@ -572,13 +557,6 @@ def _is_inverse_edge(arrival: RelationshipMetadata | None, direction: Relationsh
     )
 
 
-# --------------------------------------------------------------------------- #
-# Pure resolution helpers (mirror m-navigate / m-sql's own mechanical rules).  #
-#                                                                              #
-# Each facet read below is total for an accepted model, so its absence branch  #
-# names a state formation cannot produce rather than a model defect a plan     #
-# could carry.                                                                 #
-# --------------------------------------------------------------------------- #
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
     if entity is None:  # pragma: no cover - a resolved reference names a declared Entity

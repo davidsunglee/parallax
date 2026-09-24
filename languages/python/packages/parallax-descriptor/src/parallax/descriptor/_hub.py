@@ -1,18 +1,3 @@
-"""The descriptor doors onto the Metamodel Hub (``parallax.descriptor._hub``).
-
-The six public functions of ``parallax.descriptor``: three that create a
-descriptor-backed hub and three that export any sealed hub back to canonical
-form. This module alone reaches the Python-specific Hub-construction seam
-``DomainModel._from_unresolved`` — the private, versioned first-party seam that
-seals a fixed-source hub with no Entity Class binding. It is not a supported
-third-party frontend extension point, and there is no registration, discovery,
-or lazy-import mechanism behind it.
-
-There is no format sniffing (JSON is a YAML subset, so sniffing is unsound) and
-no filesystem or stream I/O: acquiring descriptor text and persisting exported
-text belong to the caller.
-"""
-
 from __future__ import annotations
 
 import json

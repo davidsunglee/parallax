@@ -1,26 +1,3 @@
-"""The lifetime half of ``m-db-port``: configuration, runtime, and one scoped
-connection at a time.
-
-The execution half (:class:`~parallax.core.db_port.DatabaseConnection` and the
-transaction outcomes) says what SQL a caller may run. This half says how long
-that caller may run it for, and what is known about the connection afterwards.
-The two are separate on purpose: query code receives execution alone and can
-neither acquire nor release, while composition receives the lifetime Interface
-and never executes.
-
-Four values, three lifetimes. A :class:`DatabaseAdapter` is immutable
-configuration that owns nothing — constructing one opens no connection, pool, or
-worker. A :class:`DatabaseRuntime` is the running resource one ``Database``
-owns from composition until close. A :class:`ConnectionContextSource` is one
-resource-free authorization binding and creates fresh contexts without I/O. A
-:class:`ConnectionContext` is one acquisition: single-use, entered once, and reporting a
-:data:`CleanupResult` afterwards that says whether the connection was handed
-back, disposed of deliberately, or its release could not be confirmed.
-
-Nothing here names a driver, a pool library, a cursor, or a native connection.
-A cleanup result carries detached strings and nothing live.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

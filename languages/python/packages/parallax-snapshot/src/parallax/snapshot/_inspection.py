@@ -1,27 +1,3 @@
-"""The Snapshot lifecycle's own node-inspection surface (spec §3).
-
-``is_view_loaded`` / ``view`` / ``pin_of`` / ``edge_of`` answer questions about a
-node **this lifecycle produced**, which is why they live here rather than on the
-package owning the lifecycle-neutral :class:`~parallax.core.temporal_read.Pin`
-and :class:`~parallax.core.temporal_read.Edge` values. Every one of them first
-requires the private :class:`SnapshotNodeState` the materializer's state factory
-attached: a plain instance, or one a different lifecycle produced, is refused as
-``snapshot-node-required`` before any path, relationship, or temporal validation,
-so a wrong-lifecycle argument never answers ``False`` and never surfaces as an
-unrelated failure. An Edited Copy of such a node answers here exactly as the node
-does, because an edit preserves the state this module reads; provenance, not
-editedness, is what these operations turn on.
-
-The two relationship operations take only a class-derived Relationship Path. A
-bare name string is not accepted: the path is what carries the starting owner the
-node must satisfy and the per-segment narrowing that selects a distinct view, and
-neither survives a string.
-
-``SnapshotNodeState`` is the whole of what the Snapshot slice attaches to a node,
-and Entity never interprets it — it occupies the one opaque lifecycle slot that
-:func:`~parallax.core.entity.lifecycle_state_of` reads back.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -130,7 +106,7 @@ def snapshot_state_of(node: object) -> SnapshotNodeState | None:
 
 
 def pin_of(node: object) -> Pin:
-    """The as-of coordinates ``node`` was read at (spec §3).
+    """The as-of coordinates ``node`` was read at.
 
     Every node of one ``find`` shares the whole-graph pin; a milestone-set read's
     roots each carry their own milestone-derived pin instead.
@@ -148,7 +124,7 @@ def pin_of(node: object) -> Pin:
 
 def edge_of(node: object) -> Edge:
     """``node``'s own milestone :class:`~parallax.core.temporal_read.Edge` — the
-    finite from-instant on every axis its family declares (spec §3)."""
+    finite from-instant on every axis its family declares."""
     state = _required_state(node, "edge_of")
     if state.edge is None:
         raise SnapshotInspectionError(
@@ -162,7 +138,7 @@ def edge_of(node: object) -> Edge:
 
 def is_view_loaded(node: object, path: RelationshipPath[Any, Any]) -> bool:
     """Whether every relationship view ``path`` traverses, on every branch it
-    reaches, was loaded by the read that produced ``node`` (spec §3).
+    reaches, was loaded by the read that produced ``node``.
 
     Never issues SQL and never raises for an unloaded view — that is the whole
     question it answers. The uninstantiated suffix of a null or empty branch is
@@ -178,7 +154,7 @@ def is_view_loaded(node: object, path: RelationshipPath[Any, Any]) -> bool:
 
 
 def view(node: object, path: RelationshipPath[Any, Any]) -> object:
-    """The value ``path`` reaches from ``node``, using only loaded state (spec §3).
+    """The value ``path`` reaches from ``node``, using only loaded state.
 
     A path whose every traversed segment is to-one answers the terminal Entity or
     ``None``. A path traversing any to-many segment fans out and answers one flat
@@ -197,11 +173,6 @@ def view(node: object, path: RelationshipPath[Any, Any]) -> object:
     if fanned:
         return tuple(terminals)
     return terminals[0] if terminals else None
-
-
-# --------------------------------------------------------------------------- #
-# Traversal                                                                    #
-# --------------------------------------------------------------------------- #
 
 
 class _UnloadedMarker:

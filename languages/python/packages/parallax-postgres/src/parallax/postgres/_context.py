@@ -1,22 +1,3 @@
-"""One acquisition: checkout, admission, revocation, and the single cleanup path.
-
-Everything a connection's exclusive-use lifetime needs is here and nowhere else,
-because every way an acquisition can end has to reach the same release.
-A statement that failed, a conversion that failed, a transaction that could not
-be rolled back, a stream a caller abandoned, an observer that raised, a
-``KeyboardInterrupt`` — all of them leave through :meth:`PostgresConnectionContext.__exit__`,
-and it is the one place that decides between offering a connection for reuse and
-disposing of it.
-
-The decision is deliberately pessimistic and deliberately unrepairing. Reuse is
-offered only for a connection that is idle and that the execution did not
-declare suspect. Anything else is disposed of FIRST and then handed back for
-accounting, so capacity is never leaked and a connection nothing can vouch for
-is never offered to the next caller. Nothing here tries to repair a state in
-order to reuse it, and nothing inspects a connection after handing it off:
-after a handoff the connection may already belong to somebody else.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable

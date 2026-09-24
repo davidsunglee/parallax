@@ -1,12 +1,5 @@
 # Snapshot graph, nullable to-one (m-snapshot-read): a materialized snapshot graph
 # attaches an included nullable to-one as absent/null, in 1 + L statements.
-#
-# The snapshot twin of the m-deep-fetch nullable-to-one shape, now framed as a
-# plain-value snapshot read rather than a managed deep fetch (so it carries no
-# m-op-list tag). Every OrderStatus materializes with its optional OrderItem:
-# order-level statuses (order_item_id NULL) attach `orderItem: null`; item-level
-# statuses gather the distinct non-null item ids {11, 12, 421} and fetch those
-# parents in ONE child statement. 1 (root) + 1 (orderItem) = 2 round trips.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
 shape: read

@@ -2,23 +2,6 @@
 # edits of ONE occurrence, each replacing it whole against the state the previous one
 # left. Only the physical mutation differs — one flat assignment at the occurrence's
 # path inside the shared `payload` document instead of one bind at its own Column.
-#
-# The first edit adds a stop, so it restates `title`, `note`, `origin`, and both
-# elements of `stops`; the intervening find proves that restated value is what item 2
-# now holds. The second edit names `title` and one stop and nothing else, so what it
-# destroys is what the FIRST edit stored rather than what the fixture did — `note`
-# and `origin` were rewritten a moment earlier and are gone all the same, and the
-# closing find publishes an occurrence without those keys rather than with their
-# nulls.
-#
-# The semantic distinction this pair pins down is that a chain composes over stored
-# state, one replacement per edit, with no accumulation across the chain. Under this
-# layout each edit's assignment lands on the document the previous one produced, so
-# an implementation that patched `payload.spec` member by member would end with
-# `note` and `origin` still standing and both stops still listed. Each edit is its
-# own unit of work, so each takes its own resolving read — `WriteTwinItem` declares
-# no version and no As-Of Axis, so its Effective Concurrency Strategy is Locking and
-# every read here takes the shared row lock.
 model: models/write-transparency-layout-twin-document.yaml
 tags: [m-storage-layout, m-value-object, m-document-codec, m-unit-work, m-opt-lock, m-read-lock, m-sql, scenario, update, json, nested, to-many, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

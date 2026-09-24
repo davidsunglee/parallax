@@ -1,15 +1,4 @@
 # Table-per-hierarchy abstract-root read whose predicate matches NO row (m-inheritance, m-sql).
-#
-# Targeting the abstract root Animal spans the whole `animal` table with NO tag
-# predicate; the user predicate `name = 'Ghost'` matches no fixture row, so the read
-# returns the EMPTY set. The projection is still the full concrete superset in Table
-# Layout order — identity `id`, discriminator `kind`, then Domain slots from the root,
-# Pet, and the concrete subtypes (Cat's indoor, Dog's bark_volume, WildBoar's
-# tusk_length), exactly as a non-empty abstract read. `name` is an INHERITED
-# attribute (declared on the abstract root), so it is in
-# scope at the root position with no narrowing. This zero-row case is the corpus witness
-# that the abstract-read projection-shape oracle is row-count-INDEPENDENT: the harness
-# asserts the golden projects the full superset + tag from the SQL text, not a sample row.
 model: models/animal.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read

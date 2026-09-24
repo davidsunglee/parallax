@@ -1,30 +1,5 @@
 # Read-your-own-writes for DELETE (m-unit-work): a dependent find observes a
 # committed in-transaction DELETE (the row is GONE).
-#
-# m-unit-work-001 proves read-your-own-writes for INSERT and m-unit-work-005 for
-# UPDATE; this pins the DELETE variant. A keyed DELETE of a versioned row requires a
-# PRIOR observation exactly like a keyed UPDATE (`m-opt-lock`) — the unit of work
-# first OBSERVES account 3 (Grace, balance 10.00, version 1), then commits a DELETE
-# of that SAME observed row, then issues a find that depends on it — the find MUST
-# observe the ABSENCE of the row (zero rows), not the stale fixture. The observation
-# LICENSES the delete under either strategy, but whether it is GATED follows the
-# target's Effective Concurrency Strategy alone, exactly as a keyed UPDATE's
-# version gate does (`m-opt-lock`): Account declares a version, so the default
-# `optimistic` preference makes the golden DELETE gate on the observed version.
-# All three steps share ONE `uow` group (`observed-delete`): the observing find, the
-# versioned delete, and the dependent find run inside the SAME unit of work, which
-# is what makes the delete's required observation this group's OWN
-# transaction-scoped one (`m-opt-lock`) rather than an oracle value the compile lane
-# could not otherwise derive — the case is therefore `compileEligibility: run-only`
-# (query-result-dependent). The scenario:
-#   step 0 find  : observe account 3 (Grace, 10.00, version 1), 1 round trip.
-#   step 1 write : a DELETE of the observed account 3, gated on its observed version.
-#   step 2 find  : query account 3 — it MUST observe NO rows (the delete is
-#                  visible). The group COMMITS after this, its last step.
-# Every find is a cache MISS (the write step's forced flush precedes step 2) and
-# carries no shared-row-lock suffix; asserting an empty result proves
-# read-your-own-writes for a deletion against real committed data.
-# roundTrips = 3 (the observing find + the committed delete + the dependent find).
 model: models/account.yaml
 tags: [m-unit-work, read-your-own-writes, flush, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

@@ -3,9 +3,9 @@
 This is the **language-neutral core specification** for a bitemporal
 object-relational mapping framework. It locks down the common feature set every
 language implementation must satisfy, while deliberately leaving the
-developer-facing surface (API shape, configuration ergonomics, codegen vs.
-metaprogramming) to a separate **per-language spec** authored before each
-implementation.
+developer-facing surface to **per-language binding documents**. Bindings inherit
+core behavior and record additional public language choices. Types and signatures
+belong to code; private implementation structure needs no prose specification.
 
 The spec is paired with a **compatibility suite** (`core/compatibility/`) — the
 primary behavioral surface. Handed the core spec, a language spec, and this

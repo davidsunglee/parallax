@@ -1,40 +1,3 @@
-"""Value-object-bearing Entity Classes, one Domain Model per corpus model.
-
-``models/supplier.yaml`` (Transaction-Time-Only, the first production-reachable
-temporal x value-object combination), ``models/branch.yaml`` (bitemporal, the
-SAME recursive ``address`` composite over both axes), ``models/contact.yaml``
-(non-temporal, REQUIRED nested members at every depth — the write-validation
-exemplar), ``models/shipment.yaml`` (a non-nullable TOP-LEVEL value object), and
-``models/customer.yaml`` (a non-temporal parent with two VO-bearing to-many
-children).
-
-Owned by ``parallax.conformance`` for the same package-boundary reason
-``read_models``/``story_models``/``graph_models`` are (spec §7/§8): a dev-only
-package module resolvable at ordinary import time, so ``read_stories.py`` and the
-write-validation build-time proofs can run against real Postgres / the shared
-model-aware validator without a ``tests/``-only mirror. This module deliberately
-avoids ``from __future__ import annotations`` so the engine reads the live
-``Attr[T]`` objects directly.
-
-``Supplier``/``Branch`` share the identical ``Address``/``Geo``/``Phone``
-composite (street/city, a nested ``geo{country}``, a nested many
-``phones{type,number}``, every member nullable) — the SAME shape
-``value_object_models.Customer`` uses for its own recursive composite, minus
-Customer's ``elevation``/``point`` refinement. ``Contact``'s own composite is a
-DIFFERENT, deliberately mostly-REQUIRED shape (the write-validation exemplar), so
-it gets its own ``ContactAddress``/``ContactGeo``/``ContactPoint``/
-``ContactPhone`` classes rather than reusing ``Address``/``Geo``/``Phone``.
-A Value Object class is never a Domain Model candidate and is reached only through the
-occurrences that contain it, so the identical simple names (``Geo``, ``Phone``,
-``Point``) recur freely across modules.
-
-``Location`` reuses ``Customer``'s own recursive ``address`` composite verbatim,
-while ``Depot`` declares a DIFFERENT, flat composite (``{line, postcode}``) in the
-SAME ``address`` column — a deliberate descriptor divergence the corpus's own
-cases pin, since decoding a Depot row with Customer's recursive descriptor would
-yield observably wrong keys.
-"""
-
 import datetime as dt
 
 from parallax.core import (
@@ -82,10 +45,9 @@ __all__ = [
 ]
 
 
-# --------------------------------------------------------------------------- #
 # Supplier / Branch: the shared address composite (street/city, geo{country}, #
-# phones{type,number} -- every member nullable).                              #
-# --------------------------------------------------------------------------- #
+
+
 class Geo(ValueObject):
     country: Attr[str | None]
 
@@ -135,10 +97,9 @@ class Branch(
 BRANCH_MODEL = DomainModel(Branch)
 
 
-# --------------------------------------------------------------------------- #
 # Contact: REQUIRED nested members at every depth (models/contact.yaml) — the #
-# write-validation exemplar (m-value-object-039..043).                        #
-# --------------------------------------------------------------------------- #
+
+
 class ContactPoint(ValueObject):
     lat: Attr[float]
     lon: Attr[float]
@@ -180,9 +141,6 @@ class Contact(
 CONTACT_MODEL = DomainModel(Contact)
 
 
-# --------------------------------------------------------------------------- #
-# Shipment: a non-nullable TOP-LEVEL value object (models/shipment.yaml).     #
-# --------------------------------------------------------------------------- #
 class Destination(ValueObject):
     street: Attr[str]
     city: Attr[str]
@@ -204,9 +162,6 @@ class Shipment(
 SHIPMENT_MODEL = DomainModel(Shipment)
 
 
-# --------------------------------------------------------------------------- #
-# Customer / Location / Depot (models/customer.yaml).                         #
-# --------------------------------------------------------------------------- #
 class CustomerPoint(ValueObject):
     lat: Attr[float | None]
     lon: Attr[float | None]

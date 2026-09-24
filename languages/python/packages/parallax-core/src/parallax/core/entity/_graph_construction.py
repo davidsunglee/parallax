@@ -1,82 +1,8 @@
-"""Entity Graph Construction — the advanced first-party graph-building collaboration.
+"""Allocate all shells before populating any, then attach lifecycle state atomically.
 
-Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
-``parallax.core``: it is the seam a lifecycle package builds a graph of frozen
-Entity instances through, not developer surface.
-
-A node crosses its door as two positional rows: its full-width member row, laid
-out against its exact Entity's member layout
-(:mod:`parallax.core.entity._layout`), and a full-width broad-relationship row
-in that layout's canonical order. The sentinels those rows spell absence and
-unloadedness with, and the handle a relationship position names a node by, live
-in the sibling :mod:`parallax.core.entity._construction_input` scope, so a
-lifecycle package materializing Entities can be granted the vocabulary without
-being granted this collaboration.
-
-The collaboration owns everything about turning those rows into Entity and Value
-Object instances — concrete class selection, canonical-to-Python member mapping,
-the correspondence between the model's member layout and the class's own,
-recursive Value Object construction over already-judged member state, broad
-relationship-slot filling, the one opaque
-lifecycle-state slot, and all-or-none lifecycle-state attachment. What it does
-NOT own is how a value physically holds any of that: it hands the instance-state
-Module semantic inputs and the Module attaches one row, so nothing here knows the
-tuple or the bitmap. It owns nothing about any lifecycle either: it registers no
-callback, interprets no state value, and imports no lifecycle package. A caller
-passes one build function and one optional state factory per call, so two
-lifecycles coexist without either knowing the other.
-
-Three non-overlapping phases, and the order is the contract rather than an
-implementation detail:
-
-1. **Allocate.** Every node's shell is allocated, in the caller's own
-   ``allocate`` call order, which *is* the deterministic zero-based allocation
-   index. Nothing recomputes that index; every node-indexed rejection reads it
-   back from the writer.
-2. **Populate.** The first ``populate`` closes allocation permanently. Each node
-   is populated exactly once with its scalars, Value Objects, and broad
-   relationship views. Allocating before populating is what lets a cycle close:
-   a relationship arm names an already-allocated handle whose instance exists
-   but is not yet filled.
-3. **Lifecycle state.** Only after the build callback returns, every node is
-   populated, and the roots validate, do the per-node state factories run — in
-   allocation order, each with a fresh single-use resolution view. A factory
-   therefore sees every final instance fully wired, including cycles, and sees no
-   attached state and no published root. What a factory returns is written
-   through the lifecycle slot's own descriptor rather than assigned by name, so
-   whatever the node's class binds, it lands where the two consumers that reach
-   the slot directly find it: the pickle refusal (spec §3) and an edit's
-   carry-forward of the state a node carries. ``lifecycle_state_of`` is not one
-   of them — it resolves the slot through the class, so a class answering for
-   that name blinds its own lifecycle's readers without moving what those two
-   see.
-
-Failure precedence follows the same fixed order. Writer-operation failures are
-eager. A build-callback exception propagates unchanged and suppresses completion,
-root, and factory work. After a successful callback the lowest unpopulated
-allocation index fails first; only then are roots validated left to right; only
-then do factories run, the first factory exception propagating unchanged and
-stopping later ones. State attachment and root delivery happen last and together,
-so a failure anywhere attaches no lifecycle state to any node and returns no
-root.
-
-What that guarantee covers, stated precisely because the obvious summary of it is
-false. The call withholds every root and every lifecycle state; it does not take
-back what it already handed a callback. A state factory is given the final
-instance by :class:`ResolutionView`, so a factory that keeps one and then raises
-still holds it — fully populated, lifecycle-state-free, and no less reachable for
-the failure. Nothing here can prevent that: handing the factory the real instance
-is the phase barrier's own contract, and an object a caller retains cannot be
-made unreachable. What the failure guarantees about that instance is that no
-lifecycle state was attached to it and that it was never delivered as a root.
-
-Attaching a node's row is a separate atomicity, and an earlier one. Each node's
-row is assembled in local state and attached in one write as that node is
-populated, so no half-written row exists and a node whose population is refused
-is left exactly as allocation left it. It is not deferred to the end: a node
-populated before a later failure keeps the row it was populated with, and so does
-a Value Object record built during the walk. Rows are never rolled back.
-"""
+Factories run only after population and root validation. Failure withholds roots
+and lifecycle state, but cannot revoke populated instances retained by a factory;
+already-populated rows are not rolled back."""
 
 from __future__ import annotations
 
@@ -122,11 +48,6 @@ __all__ = [
     "lifecycle_state_of",
     "relationship_value_of",
 ]
-
-
-# --------------------------------------------------------------------------- #
-# Per-Domain-Model derived facts                                               #
-# --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,11 +310,6 @@ def _correspondence_refusal(
         ),
         identity=concrete if identity is None else identity,
     )
-
-
-# --------------------------------------------------------------------------- #
-# Scopes and the writer                                                        #
-# --------------------------------------------------------------------------- #
 
 
 class _CallScope:
@@ -674,11 +590,6 @@ def lifecycle_state_of(instance: object) -> object | None:
     the value's meaning belongs entirely to the lifecycle that produced it.
     """
     return getattr(instance, LIFECYCLE_STATE_SLOT, None)
-
-
-# --------------------------------------------------------------------------- #
-# Phase implementations                                                        #
-# --------------------------------------------------------------------------- #
 
 
 def _shell(facts: _EntityFacts) -> object:

@@ -1,67 +1,3 @@
-"""``parallax.snapshot.handle._write_inputs`` — the keyed verb-input step library.
-
-Everything a keyed write needs from the moment a verb is called to the moment
-the buffer holds it, including the write evidence it resolves off the source
-value it was handed, and nothing a read needs. There is one composition of it:
-the keyed write ingress (:mod:`parallax.snapshot.handle._keyed_writes`) runs the
-whole of it in one order. What else reaches in reaches for a step rather than a
-sequence — a Keyed Write Source for the readings it answers with, and the
-predicate-selected lane for the steps its own order shares with that one.
-Owning those steps here rather than in any one caller is what puts one judgement
-of a given question, and one buffer, behind every representation:
-
-* the bound-less destructive verb's applicability
-  (:func:`reject_temporal_delete`) and build-time window validation
-  (:func:`validate_window`), both shared with the ``_where`` family; the
-  finite-Transaction-Time-pin refusal every keyed verb runs on its source
-  instance (:class:`TransactionTimePinReadOnlyError`,
-  :func:`validate_source_pin`, :func:`source_pin`); and the provenance refusal
-  the value-taking keyed verbs run before any row is derived
-  (:class:`KeyedWriteValueError`, :data:`KEYED_WRITE_VALUE_CODES`,
-  :data:`Provenance`, :func:`validate_provenance`);
-* instance -> accepted-Metadata resolution (:func:`metadata_of_instance`), the
-  object a written value addresses (:func:`written_object_key`), and the
-  codec-free reading of the identity row a value names
-  (:func:`source_identity_row`) that a decision taken BEFORE any row derivation
-  has to use;
-* the resolution a keyed verb runs over the write evidence its source value
-  carries (:func:`read_origin_of`, :func:`resolve_write_evidence`,
-  :class:`WriteEvidenceError`, :data:`WRITE_EVIDENCE_CODES`), and the claim that
-  verb then takes at the scope it settles against (:func:`admit_write_claim`,
-  :class:`ClaimLedger`);
-* the keyed seam itself, in the order the ingress runs it: the canonical
-  single-row instruction a verb holding a value builds
-  (:func:`keyed_instruction`), the claim-then-buffer step that ends it
-  (:func:`admit_and_buffer`, :func:`instruction_identity`), the question a
-  wholly restoring edit asks before it decides whether it cancels anything
-  (:func:`cancels_a_pending_assignment`), and the read-your-own-writes ledger
-  every ingress records into and both of its rules read — the exemption an
-  update earns and the refusal a repeated insert earns
-  (:class:`BufferedInserts`, :func:`written_object_of_row`,
-  :func:`refuse_repeated_insert`).
-
-Family facts come from the accepted Metamodel and its facets, reached through
-:mod:`parallax.snapshot.handle._family` as two SEMANTIC answers and no others:
-the family-effective primary key a written object is addressed by
-(:func:`~parallax.snapshot.handle._family.family_primary_key`) and whether the
-family declares as-of axes at all
-(:func:`~parallax.snapshot.handle._family.is_temporal`). No step here composes a
-physical column sequence or reads a Storage Layout view — a ``row`` crossing this
-seam is a canonical identity row keyed by ATTRIBUTE name, as the Entity Row Codec
-or a Wire ingress derived it. The participating unit of work reaches this module
-as one structural protocol — :class:`ClaimLedger`, the three answers a keyed
-write needs — rather than as the whole scope.
-
-Names crossing a module boundary are spelled bare; a helper whose every caller
-lives here keeps its underscore. Privacy is carried by this MODULE's leading
-underscore and by the package's frozen ``__all__``, never by per-name
-underscores. What that ``__all__`` carries onward from here it carries for one of
-two reasons: a developer catches the keyed write-value and write-evidence
-refusals from ``parallax.snapshot`` itself, and the conformance engine's scenario
-grading runs the exact finite-Transaction-Time-pin validator the developer verbs
-run. The package's re-export list is which names those are.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -762,14 +698,6 @@ def _refuse_consumed(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Build-time validation, run off what the caller supplied and before any row  #
-# is derived from it: the source-pin and value-provenance refusals every      #
-# keyed verb runs on the instance it was handed, and the two steps the         #
-# predicate-selected lane also runs — the bound-less destructive verb's        #
-# applicability (`reject_temporal_delete`) and the Valid-Time window            #
-# `validate_window` judges for every temporal verb of either surface.          #
-# --------------------------------------------------------------------------- #
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
     or ``None`` for anything else — a plainly constructed instance, or an edit
@@ -1116,7 +1044,7 @@ def _require_stated_window(
 def _validate_valid_from(
     declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object
 ) -> dt.datetime | None:
-    """Validate and normalize a write verb's ``valid_from`` (`python.md` §5):
+    """Validate and normalize a write verb's ``valid_from``:
     a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
     non-temporal or Transaction-Time-Only target takes none.
@@ -1154,7 +1082,7 @@ def _validate_until(
     valid_from: object,
     until: object,
 ) -> dt.datetime:
-    """Validate + normalize a ``*Until`` verb's window bound (`python.md` §5:
+    """Validate + normalize a ``*Until`` verb's window bound (the Python binding:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
     `*_until` trio additionally requires `until`, with `valid_from <
     until` ... all validated at build"): reject an equal or reversed window

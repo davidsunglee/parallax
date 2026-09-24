@@ -3,14 +3,6 @@
 # navigation filter lowers to a correlated EXISTS semi-join, so a to-many
 # traversal never multiplies the order rows. Only order 1 has an item with sku
 # A-100 (item 11), so the result is the single order {1}.
-#
-# Non-trivial (join) case ⇒ referenceSql is REQUIRED: the naive
-# `id in (select order_id from order_item where sku = ...)` subquery is the
-# independent oracle.
-#
-# Cross-dialect: the correlated EXISTS semi-join is identical SQL on
-# Postgres and MariaDB, so this case proves the navigation/join contract across
-# both dialects in the matrix.
 model: models/orders.yaml
 tags: [m-navigate, m-relationship, m-metamodel, m-model-formation, navigate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read

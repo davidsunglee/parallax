@@ -1,28 +1,3 @@
-"""The concrete Postgres database adapter (psycopg) — a leaf production artifact.
-
-``PostgresAdapter`` is CONFIGURATION. Constructing one opens no connection, no
-pool, and no thread; it parses the connection string, validates the credential
-declaration and the retention policy, and stores them. That is what makes it
-safe to build at import time, hold as a module constant, share between threads,
-and — importantly for a forking web server — build before a fork and open after
-one. Resolving the credential is not part of that: it happens each time the
-driver establishes a physical connection, which is why a source may reach a
-network and configuration never does.
-
-Opening is a separate act with a separate owner. ``Database.connect`` calls
-:meth:`PostgresAdapter.open` and owns the runtime it gets back until it closes.
-Each ``open`` produces an INDEPENDENT runtime, so reusing one configuration for
-two handles gives two pools that know nothing about each other, and closing
-either leaves the other working.
-
-The implementation is split by responsibility behind this one public value:
-``_options`` validates the retention policy, ``_runtime`` opens and closes the
-native pool, ``_context`` owns one acquisition's lifetime, and ``_connection``
-owns scoped execution, the codecs every physical connection gets, and the
-authoritative transaction outcomes. None of those names is exported; an
-application configures this value and executes through the handle it composes.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

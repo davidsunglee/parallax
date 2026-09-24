@@ -1,11 +1,5 @@
 # Negative (m-inheritance, resolved Q3/Q4): two concrete subtypes in one
 # table-per-hierarchy family share a `tagValue`.
-#
-# `Dog` and `Hound` both declare `tagValue: dog`. Under table-per-hierarchy every
-# concrete subtype's rows share one table discriminated by the tag, so `tagValue`
-# values MUST be unique across the WHOLE family (not just siblings) — otherwise two
-# subtypes are indistinguishable in the shared table. A model-aware validator MUST
-# reject the duplicate.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
