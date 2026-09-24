@@ -103,9 +103,7 @@ def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
     return publish
 
 
-def test_read_page_and_roots_expose_only_aggregate_delivery_cadence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     observer = _RecordingObserver()
     materializer = Materializer(observer)
 
@@ -122,10 +120,6 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence(
 
     stage = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
 
-    def second_decode(*_args: object, **_kwargs: object) -> object:
-        pytest.fail("flat row publication decoded the provider row twice")
-
-    monkeypatch.setattr(type(compiled), "decode_payload", second_decode)
     assert len(_published_rows(stage, meta)) == 2
     assert observer.events == [
         ("prepared", 1),

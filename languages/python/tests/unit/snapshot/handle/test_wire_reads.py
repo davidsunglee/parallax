@@ -78,6 +78,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._page import ABSENT
+from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
@@ -1195,25 +1196,19 @@ _VARIANT_MODEL = form_metamodel(
 
 
 def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both() -> None:
-    compiled = compile_read(All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL))
+    compiled = compile_read(
+        All(), _VARIANT_MODEL, POSTGRES, _root_of(_VARIANT_MODEL), result_form="instance"
+    )
     stored = {
         "id": 1,
         "kind": "archive-shared",
         "familyVariant": PresentDocument({"label": "mail"}),
         "archive_profile": PresentDocument({"label": "archive"}),
     }
-    resolved, _variant, _unknown, _document = compiled.row_identity(stored)
-    values, _findings, _classified = compiled.decode_payload(stored)
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_row(
-        values,
-        LevelContext(
-            layout_of(_VARIANT_MODEL, resolved),
-            compiled.documents,
-        ),
-        builder,
-        source=ROOT_LEVEL,
-    )
+    ref, resolved, _document, _variant = bind(
+        CatalogedModel(_VARIANT_MODEL), compiled
+    ).convert_driver(stored, builder, source=ROOT_LEVEL)
     (root,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         _VARIANT_MODEL,

@@ -31,6 +31,7 @@ from parallax.core.sql_gen._inheritance import (
 )
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
+from tests.unit.core.sql_gen._classified_member_support import classified_member
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
@@ -344,7 +345,7 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
     )
 
 
-def test_tph_document_payload_decode_uses_only_the_tagged_variant_shape() -> None:
+def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> None:
     compiled = compile_read(
         oa.All(),
         DOCUMENT_LAYOUT,
@@ -359,17 +360,20 @@ def test_tph_document_payload_decode_uses_only_the_tagged_variant_shape() -> Non
         "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
     }
     resolved, variant, _unknown, _document = compiled.row_identity(card)
-    values, _findings, _classified = compiled.decode_payload(card)
     assert resolved == target(DOCUMENT_LAYOUT, "CardPayment").identity
     assert variant == "CardPayment"
-    assert values == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
+    assert compiled.publication_keys(resolved, variant) == ("id",)
+    assert compiled.classified_members(resolved) == {"detail", "authorization_code"}
+    assert classified_member(compiled, card, "detail") == ("visa-4242", ())
+    assert classified_member(compiled, card, "authorization_code") == ("AUTH-7", ())
 
     cash = {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
     resolved, variant, _unknown, _document = compiled.row_identity(cash)
-    values, _findings, _classified = compiled.decode_payload(cash)
     assert resolved == target(DOCUMENT_LAYOUT, "CashPayment").identity
     assert variant == "CashPayment"
-    assert values == {"id": 2, "detail": Decimal("12.50")}
+    assert compiled.publication_keys(resolved, variant) == ("id",)
+    assert compiled.classified_members(resolved) == {"detail"}
+    assert classified_member(compiled, cash, "detail") == (Decimal("12.50"), ())
     _resolved, _variant, unknown, _document = compiled.row_identity(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
@@ -381,13 +385,15 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
     )
 
-    values, _findings, _classified = compiled.decode_payload(
-        {
-            "id": 1,
-            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
-        }
-    )
-    assert values == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
+    row = {
+        "id": 1,
+        "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
+    }
+    card = target(DOCUMENT_LAYOUT, "CardPayment").identity
+    assert compiled.publication_keys(card, None) == ("id",)
+    assert compiled.classified_members(card) == {"detail", "authorization_code"}
+    assert classified_member(compiled, row, "detail") == ("visa-4242", ())
+    assert classified_member(compiled, row, "authorization_code") == ("AUTH-7", ())
 
 
 def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
@@ -916,9 +922,10 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
         "meta": PresentDocument({"note": "tagged"}),
     }
     resolved, variant, unknown, _document = compiled.row_identity(tagged)
-    values, _findings, _classified = compiled.decode_payload(tagged)
     assert (resolved, variant, unknown) == (target(meta, "Leaf").identity, "Leaf", None)
-    assert values == {"id": 1, "x": 7, "meta": {"note": "tagged"}}
+    assert compiled.publication_keys(resolved, variant) == ("id", "x", "meta")
+    assert compiled.raw_member_of(tagged, resolved, "x") == 7
+    assert classified_member(compiled, tagged, "meta") == ({"note": "tagged"}, ())
     resolved, _variant, unknown, _document = compiled.row_identity(
         {
             "id": 2,
@@ -977,9 +984,10 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
         "family_variant": "First",
     }
     resolved, variant, unknown, _document = compiled.row_identity(row)
-    values, _findings, _classified = compiled.decode_payload(row)
     assert (resolved, variant, unknown) == (target(meta, "First").identity, "First", None)
-    assert values == {"id": 1, "payload_hex": "00ff", "meta": {"note": "literal"}}
+    assert compiled.publication_keys(resolved, variant) == ("id", "payload_hex", "meta")
+    assert compiled.raw_member_of(row, resolved, "payload_hex") == "00ff"
+    assert classified_member(compiled, row, "meta") == ({"note": "literal"}, ())
 
 
 def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
@@ -1132,22 +1140,12 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     deck = PresentDocument({"area": "9"})
     row = {"id": 1, "kind": "tug", "berth": PresentDocument({"code": "A1"}), "deck": deck}
     resolved, _variant, _unknown, _document = compiled.row_identity(row)
-    values, _findings, classified = compiled.decode_payload(row)
     assert resolved == target(meta, "Tug").identity
-    assert classified == frozenset({"berth"})
-    assert values["berth"] == {"code": "A1"}
-    assert values["deck"] is deck
-
-
-def test_an_occurrence_column_absent_from_a_row_is_not_classified() -> None:
-    # The classified keys are compiled from the projection, and a row that does
-    # not carry one of those Columns was judged for nothing: the provenance names
-    # only what this row actually held, so conversion still judges the rest.
-    meta = _own_column_occurrences()
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Tug"), result_form="instance")
-    values, _findings, classified = compiled.decode_payload({"id": 2})
-    assert classified == frozenset()
-    assert values == {"id": 2}
+    assert compiled.classified_members(resolved) == frozenset({"berth"})
+    assert classified_member(compiled, row, "berth") == ({"code": "A1"}, ())
+    assert compiled.raw_member_of(row, resolved, "deck") is deck
+    with pytest.raises(KeyError, match="deck"):
+        compiled.raw_member_classifier(resolved, "deck")
 
 
 def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
@@ -1170,28 +1168,37 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
     )
     assert compiled.structured_column == "payload"
     for variant, member in (("Book", "pages"), ("Film", "minutes")):
-        values, _findings, _classified = compiled.decode_payload(
-            {
-                "id": 1,
-                "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
-                "family_variant": variant,
-            }
-        )
-        assert "payload" not in values
-        assert values[member] == 320
+        row = {
+            "id": 1,
+            "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
+            "family_variant": variant,
+        }
+        resolved = compiled.row_identity(row)[0]
+        assert "payload" not in compiled.publication_keys(resolved, variant)
+        assert classified_member(compiled, row, member) == (320, ())
 
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     row = {"id": 1, "title": "A", "family_variant": "Invoice"}
     resolved, variant, unknown, _document = compiled.row_identity(row)
-    values, _findings, _classified = compiled.decode_payload(row)
     assert (resolved, variant, unknown) == (
         target(DOCUMENT, "Invoice").identity,
         "Invoice",
         None,
     )
-    assert values == {"id": 1, "title": "A"}
+    # The literal leaves the row, and a row-form read keeps its siblings' null
+    # padding under the unrenamed alias.
+    assert compiled.publication_keys(resolved, variant) == (
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+        "body",
+        "paid_amount",
+    )
+    assert compiled.raw_member_of(row, resolved, "title") == "A"
 
 
 def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
@@ -1237,10 +1244,10 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
         "family_variant": "archive.SharedVariant",
     }
     resolved, variant, _unknown, _document = compiled.row_identity(row)
-    values, _findings, _classified = compiled.decode_payload(row)
     assert resolved == EntityIdentity("archive", "SharedVariant")
     assert variant == "archive.SharedVariant"
-    assert values == {"id": 1, "shared_label": "archived"}
+    assert compiled.publication_keys(resolved, variant) == ("id", "shared_label")
+    assert compiled.raw_member_of(row, resolved, "shared_label") == "archived"
 
 
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
