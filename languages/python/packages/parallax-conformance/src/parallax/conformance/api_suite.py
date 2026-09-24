@@ -175,8 +175,8 @@ EXAMPLES: Final[list[Example]] = [
     # Rejected-case build/buffer-time proof: the write-side counterpart of the
     # read-side proofs above —
     # `tx.insert` refuses the SAME invalid write the corpus's own rejected
-    # lane grades, through the SAME model-aware `validate_write`
-    # (`Transaction._buffer`), naming the SAME classified rule — proven by
+    # lane grades, through the SAME model-aware write preparation
+    # (`unit_work.instructions`), naming the SAME classified rule — proven by
     # `test_idiomatic_write_build_rejects_the_corpus_rule`
     # (`tests/api/test_write_no_drift.py`).
     Example(

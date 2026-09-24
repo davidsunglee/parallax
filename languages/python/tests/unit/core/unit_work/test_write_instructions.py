@@ -1452,7 +1452,7 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
 
 
 # --------------------------------------------------------------------------- #
-# The model-aware `validate_write` rejection matrix, stated over the KEYED      #
+# The model-aware keyed-write rejection matrix, stated over the KEYED           #
 # rows the corpus's own `when.write` cases carry (m-value-object-039..044 /     #
 # m-inheritance-086..089). Every one of them is authored straight at this       #
 # producer rather than through a keyed verb, because no keyed verb can reach    #
@@ -1464,9 +1464,9 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
 # producer beside this one.                                                     #
 # --------------------------------------------------------------------------- #
 def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
-    # An otherwise-COMPLETE row isolates this defect from `validate_write`,
-    # which runs first and only ever walks Account's OWN declared members — it
-    # never itself notices a stray extra key.
+    # An otherwise-COMPLETE row keeps the stray key the only defect, so the
+    # refusal is the member-name gate's rather than `validate_write`'s, which
+    # walks only Account's declared members and never notices a stray key.
     keyed = wi.deserialize(
         {
             "mutation": "insert",
