@@ -10,10 +10,12 @@ What runs here is the driver's own sequence, database aside: the layout's own
 instance-form projection (`compile_read`), the prepared read bound from it, the
 fan-out that lands each document-resident member under the result key a direct
 Column would have carried (`m-sql`), and per-row conversion into one compact
-projection row. The one property
-under test is that the layout is not observable at that seam — a document row and
-its member-for-member `Columns` twin convert to the same member row, including the
-not-present states a document can spell and a Column cannot.
+projection row. The central property under test is that the layout is not
+observable at that seam — a document row and its member-for-member `Columns` twin
+convert to the same member row, including the not-present states a document can
+spell and a Column cannot. Beside it, what conversion classifies in a stored
+document — a wrong container, an undecodable or absent required leaf, an SQL null,
+or a carrier the port never folded — is graded on the row that carries it.
 
 The twins are two different models, so their layouts are two different objects and
 comparing rows POSITIONALLY would compare two coordinate systems. The comparison is
@@ -32,10 +34,11 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as oa
-from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
+from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView, StoredDataIssueInput
 from parallax.snapshot.materialize._page import page_rows
@@ -203,3 +206,68 @@ def test_an_entity_with_no_document_resident_member_converts_off_its_columns_alo
     assert documents_of(_TWIN_DOCUMENT, identity) == ()
     node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": PresentDocument({})})
     assert _members(node) == {"id": 5}
+
+
+_COLUMNS_ROW: Mapping[str, object] = {
+    "id": 1,
+    "display_name": "Ada",
+    "score": 7,
+    "joined_on": dt.date(2026, 1, 15),
+    "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+    "tags": PresentDocument([{"label": "founder"}]),
+}
+
+
+def _findings(node: _Converted) -> list[tuple[str, tuple[object, ...]]]:
+    return [(issue.code, issue.path) for issue in node.issues]
+
+
+def test_a_many_occurrence_column_stored_as_an_object_converts_empty_and_classified() -> None:
+    node = _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "tags": PresentDocument({})})
+    assert _members(node)["tags"] == ()
+    assert _findings(node) == [("stored-data-many-wrong-kind", ("tags",))]
+
+
+def test_an_occurrence_column_classifies_a_nested_undecodable_leaf() -> None:
+    node = _converted(
+        _TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": PresentDocument({"city": []})}
+    )
+    assert _findings(node) == [("stored-data-leaf-undecodable", ("address", "city"))]
+
+
+def test_an_occurrence_column_classifies_an_absent_required_member() -> None:
+    from parallax.descriptor._records import (
+        Attribute,
+        Entity,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+    from parallax.descriptor._records import Metamodel as MetamodelRecord
+    from tests.unit._corpus_model_support import formed
+
+    required = Entity(
+        name="Required",
+        table="required",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="address",
+                attributes=(ValueObjectAttribute(name="city", type="string"),),
+            ),
+        ),
+    )
+    model = formed(MetamodelRecord(entities=(required,)))
+    node = _converted(model, "Required", {"id": 1, "address": PresentDocument({})})
+    assert _findings(node) == [("stored-data-required-member-absent", ("address", "city"))]
+
+
+def test_an_occurrence_column_requires_a_folded_document_read() -> None:
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+
+
+def test_an_sql_null_entity_document_converts_each_member_to_null() -> None:
+    node = _converted(_TWIN_DOCUMENT, "Person", {"id": 1, "payload": SQL_NULL})
+    members = _members(node)
+    assert (members["displayName"], members["score"], members["joinedOn"]) == (None, None, None)
+    assert node.issues == ()
