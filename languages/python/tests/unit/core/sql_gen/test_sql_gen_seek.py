@@ -498,6 +498,23 @@ def test_an_encoded_physical_identity_joins_in_its_lossless_result_form() -> Non
     assert statement.binds == ("hex", key, key, 2, "hex", 2, "hex", 2)
 
 
+def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            _planned(ORDERS, "Order").first(limit=2), ORDERS, projection=_PROJECTION
+        ).root,
+        ORDERS,
+        POSTGRES,
+    )
+    width = len(compiled.result_keys)
+    assert compiled.row_coordinates((tuple(range(width)),)) == (
+        ContinuationCoordinate((width - 1,)),
+    )
+    for row in (tuple(range(width - 1)), tuple(range(width + 1))):
+        with pytest.raises(ValueError, match="does not match row arity"):
+            compiled.row_coordinates((row,))
+
+
 def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:
     # A document-resident member claims no Column, so no projected Column
     # reserves its spelling. An alias colliding with it would make one result key
