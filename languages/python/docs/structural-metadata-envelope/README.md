@@ -469,7 +469,7 @@ worth less than the headroom is invisible to its gate.
 ### Ownership
 
 `tests/unit/_memory_gate_support.py` names the cost item owning each gate;
-`tests/unit/test_scheduling_partition.py` grades that every named item is
+`tests/unit/test_memory_gate_ownership.py` grades that every named item is
 collected in the cost class and that the owners partition the 162 gates, so a
 gate is never owned by a report member's registration. The prepared-model owner
 claims both preparation cases, `model.prepared` and `model.prepared.family`; the
