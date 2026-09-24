@@ -438,11 +438,9 @@ position, and that reading was an artifact of the instrument rather than of what
 the delivery holds. The mark collected once, and the collector untracks a tuple
 only when every item in it is already untracked, so a read-plan key built from
 the query's own dataclasses stayed listed for as many collections as it is deep;
-which pass a sample landed after followed the process's allocation history. The
-mark now collects until the listing stops moving, which makes the arms exactly
-equal over a heap whose held bytes never differed. No threshold was weakened and
-the captured readings above are unaffected: the whole-heap mark serves the cost
-proofs alone and no reported figure is taken through it.
+which pass a sample landed after followed the process's allocation history. No
+reported figure was taken through that mark, so the captured readings above are
+unaffected by it.
 
 ## COR-172 profile and recovery
 
