@@ -17,10 +17,8 @@ beside them and excludes from every aggregate.
   measured, up to and including the reading taken immediately before the flip;
   the flip deleted the path, and with it the comparison.
 - :data:`ORDINARY` is neither: it is what any caller gets from the validating
-  constructor. It enters no aggregate. It exists because ``spec/python.md`` §2
-  states what a published instance retains against an ORDINARY one, which is a
-  different comparison from the representation change the aggregates measure,
-  and a claim nothing measured until this arm did.
+  constructor. It enters no aggregate and provides the published-versus-ordinary
+  comparison, distinct from the representation change the aggregates measure.
 
 **Every arm is measured on one tree, which is what makes their differences the
 representation's.** Every framework slot a declared class carries is carried by
@@ -519,13 +517,12 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
     recorded none and a published node records what its row carried. Its
     occurrences are ordinary Value Objects for the same reason.
 
-    It is not publication and stands for none: it is the comparand
-    ``spec/python.md`` §2's Interface statement is made against, which is a
+    It is not publication and stands for none: it is the comparand for a
     different question from the before-and-after the aggregates divide.
 
-    It carries no lifecycle state and refuses one, because ``spec/python.md`` §3
-    says a plainly constructed instance has none to carry. Attaching one anyway
-    would put 136 bytes into the denominator of the §2 figure that no caller's
+    It carries no lifecycle state and refuses one because a plainly constructed
+    instance has none to carry. Attaching one anyway would put 136 bytes into the
+    denominator of the published-versus-ordinary figure that no caller's
     instance holds, which flatters the published side by about four points.
     """
     if state is not None:
@@ -753,8 +750,8 @@ class Arm:
 
     A published node does under either backing, so the reading takes it twice —
     once carrying state and once without — and the pair is what the primary and
-    secondary aggregates divide. An ordinary node never does
-    (`spec/python.md` §3), so the reading must not attach one: an arm asked for
+    secondary aggregates divide. An ordinary node never does, so the reading
+    must not attach one: an arm asked for
     a comparand a caller cannot hold answers about no instance that exists.
     """
     common_work_ns: Callable[[Scenario, int], float] | None = None

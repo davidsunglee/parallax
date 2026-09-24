@@ -22,7 +22,7 @@ def test_the_optimistic_strategy_selects_the_optimistic_lock_mode() -> None:
     # lock" half of the Optimistic strategy's own contract is enforced at the
     # `m-sql` APPEND SITE (`sql_gen._compile._append_result_shape`'s own
     # `lock == "locking"` check — this module renders no SQL and owns no append
-    # site, see the module docstring), proven end to end by the compile sweep
+    # site), proven end to end by the compile sweep
     # (`m-read-lock-005`).
     assert read_lock.mode_for("optimistic") == "optimistic"
 

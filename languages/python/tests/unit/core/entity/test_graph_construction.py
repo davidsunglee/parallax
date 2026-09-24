@@ -841,9 +841,8 @@ def test_an_entity_the_model_does_not_declare_is_refused_at_lookup() -> None:
 # --------------------------------------------------------------------------- #
 
 
-# The ten codes Python spec §3 declares under "Entity Graph Construction
-# surface". Restated here rather than imported so a code added, renamed, or
-# dropped on either side fails instead of agreeing with itself.
+# The ten closed codes are restated here rather than imported so a code added,
+# renamed, or dropped on either side fails instead of agreeing with itself.
 _SPEC_CODES = frozenset(
     {
         "entity-graph-invalid-entity",

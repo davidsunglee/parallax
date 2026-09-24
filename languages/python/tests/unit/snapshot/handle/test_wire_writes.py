@@ -1,4 +1,4 @@
-"""The Wire write interface (`python.md` §5, `m-unit-work`).
+"""The Wire write interface (`m-unit-work`).
 
 ``tx.wire``'s keyed and predicate verb families, driven through the real handles
 over a recording port. Two questions are asked here and nowhere else: what each

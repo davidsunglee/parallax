@@ -37,7 +37,7 @@ alias is caught by neither module.
 The `Database` lane is graded on identity as well as provenance. One planner
 serves the whole transaction, so a Typed verb and ``tx.wire`` verb are held to
 feeding the SAME object rather than two equivalently wired ones — the direct
-statement of spec §5's shared Unit of Work. The conformance engine builds a
+statement of `m-unit-work`'s shared Unit of Work. The conformance engine builds a
 planner per lowering and holds none, so its drives claim provenance rather than
 identity.
 

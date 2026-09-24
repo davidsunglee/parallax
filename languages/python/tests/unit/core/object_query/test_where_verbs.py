@@ -1,5 +1,5 @@
 """Unit pins for the ``_where`` verb family's own build-time surface
-(python.md §5): the ``.set(...)`` assignment DSL
+(`execution.md`): the ``.set(...)`` assignment DSL
 (``entity/_expressions.py``) and the mutation-compatibility guard
 (``object_query/_fluent.py``). The materializing/readless DISPATCH and the
 rendered SQL are pinned in ``test_transaction_predicate_writes.py`` /
@@ -173,8 +173,8 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 # reaches for a case-authored predicate-write assignment, and `edit(...)`       #
 # reaches for an edited copy. Only the resolution in front of it differs        #
 # (`test_write_instructions.py` and `test_model_free_authoring.py` are the      #
-# other callers). The rejection is spelled `EditError` because §5's assignment  #
-# rules are one family with `edit(**changes)`'s own rules (§3), and one call    #
+# other callers). The rejection is spelled `EditError` because assignment      #
+# rules are one family with `edit(**changes)`'s own rules, and one call         #
 # names one target, so it always carries exactly one violation.                 #
 # --------------------------------------------------------------------------- #
 def test_set_on_a_primary_key_attribute_raises() -> None:
@@ -276,7 +276,7 @@ def test_set_on_a_nullable_scalar_with_none_is_accepted() -> None:
 
 # --------------------------------------------------------------------------- #
 # `mutation_selection(query)` — the single write-target guard every `_where`   #
-# verb shares (python.md §5). Each clause is tested independently, so the      #
+# verb shares. Each clause is tested independently, so the                     #
 # guard cannot be satisfied by an accidental combination, and the accepted     #
 # case proves the seam answers the target and predicate a write is built from. #
 # --------------------------------------------------------------------------- #

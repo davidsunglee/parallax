@@ -81,9 +81,8 @@ def _workers(value: object) -> int:
 class _SharedRetention:
     """Every setting both retention policies carry, declared and checked once.
 
-    The module docstring says what each one controls. What matters here is that
-    there is one declaration of each: a default or a range check kept in both
-    records is one that can drift between them.
+    The PostgreSQL lifecycle guide owns their operational meanings. One shared
+    declaration keeps defaults and range checks from drifting between policies.
     """
 
     max_size: int = 10

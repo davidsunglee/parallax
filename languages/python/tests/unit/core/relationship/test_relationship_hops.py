@@ -1,4 +1,4 @@
-"""How a Relationship Path continues past its first hop (python.md §2).
+"""How a Relationship Path continues past its first hop (`queries-and-results.md`).
 
 The first hop is the relationship descriptor's own and carries the declaration's
 exact facts — its canonical member name and its target's namespaced spelling.
@@ -232,8 +232,8 @@ def test_a_hop_narrow_to_no_subtype_is_refused_rather_than_erased() -> None:
     # would disappear and the deep fetch would mark the broad relationship
     # loaded. The sibling narrowing forms lower to a `narrow` node the model
     # refuses as `narrow-empty-effective-set`; this one lowers to no node, so the
-    # arity is its own rule (`python.md` "Every Python narrowing form requires at
-    # least one subtype alternative").
+    # arity is its own rule: every Python narrowing form requires at least one
+    # subtype alternative.
     with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
         Root.branches.narrow()
     assert caught.value.code == "query-path-invalid"

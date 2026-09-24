@@ -1,5 +1,5 @@
 """Two editions serving one connection, A then B, against real Postgres
-(spec §3 *Transactions adopt per attempt*, m-api-conformance).
+(`spec/execution.md` "Transactions and failure boundaries", m-api-conformance).
 
 The Docker-free demarcation suite grades adoption over fake ports. What only a
 real boundary shows is that the retained selection survives an actual

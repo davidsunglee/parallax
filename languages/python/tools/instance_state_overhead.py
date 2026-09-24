@@ -14,8 +14,7 @@ the representation's.
 aggregates are legacy against compact: the representation change, which is the
 before and after the measurement contract states its target over. The ordinary
 arm enters neither, and answers the other question a caller asks — what a
-published instance costs against one they built themselves — which is the
-comparison ``spec/python.md`` §2 states every Interface figure over.
+published instance costs against one they built themselves.
 
 It is a `report`, so it DECIDES nothing about what it measures. It computes the
 two comparisons the measurement contract names — the aggregate reduction beside
@@ -50,7 +49,7 @@ innermost point while one node of that arm is held that were not reachable befor
 the window opened — read twice, once with the node's lifecycle state attached
 where its arm has one to attach and once without, so the aggregate that includes
 unchanged lifecycle state and the one that isolates publication state are both
-available. An ordinary node has none to attach (``spec/python.md`` §3), so its
+available. An ordinary node has none to attach, so its
 two readings are the same reading rather than a pair. Beside them: what one
 MORE node of that arm costs to construct, what one call costs besides its nodes,
 how much of that per-node cost is left once the work the legacy fixture also does
@@ -229,9 +228,7 @@ never what the report exits with."""
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
 
 SUPPORTED_MINORS: Final = 2
-"""How many CPython minors are supported at once — `spec/python.md` §10's policy
-is "the latest minor + one prior minor", which makes the declared
-``requires-python`` floor the prior one and fixes the range's width above it."""
+"""How many CPython minors the report reads, starting at ``requires-python``."""
 
 SUBJECT: Final = "instance-state"
 
@@ -371,8 +368,7 @@ class Reading(NamedTuple):
     @property
     def ordinary_reduction(self) -> float:
         """This scenario's percentage against the ORDINARY arm — a different
-        comparison from :attr:`reduction`, and the one §2's Interface statement
-        is made over. It enters no aggregate.
+        comparison from :attr:`reduction`. It enters no aggregate.
 
         What each side holds rather than a matched pair: the published node
         carries its lifecycle state and the ordinary one has none to carry."""
@@ -449,10 +445,8 @@ OPERATIONS: Final = (
 def supported_minors() -> tuple[str, ...]:
     """Every CPython minor the workspace declares support for, oldest first.
 
-    Derived from ``requires-python`` and from the support policy
-    (`spec/python.md` §10, "the latest minor + one prior minor"), and from
-    nothing about the interpreter taking the reading. The declared floor is the
-    prior minor, so :data:`SUPPORTED_MINORS` closes the range above it.
+    Derived from ``requires-python`` and :data:`SUPPORTED_MINORS`, and from
+    nothing about the interpreter taking the reading.
 
     Closing it at ``sys.version_info`` instead is the one thing this must not do:
     run on any minor but the latest, the range would silently lose its top row —
@@ -689,14 +683,13 @@ def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
     A DIFFERENT comparison from :func:`aggregates` and deliberately not one of
     them: the measurement contract's 33% target is stated over the representation
     change, so folding a third arm into that comparison would state the result
-    over a pair the target was never set against. This is the figure
-    ``spec/python.md`` §2 states instead, and it is reported beside the aggregates
-    rather than inside them.
+    over a pair the target was never set against. This figure is reported beside
+    the aggregates rather than inside them.
 
     Lifecycle state is included on the compact side and absent from the ordinary
     one because that is what each holds: a published node carries state under
-    either backing and a plainly constructed instance has none to carry
-    (``spec/python.md`` §3). :attr:`Reading.ordinary_bare_reduction` is the same
+    either backing and a plainly constructed instance has none to carry.
+    :attr:`Reading.ordinary_bare_reduction` is the same
     comparison with the compact side's state removed as well.
     """
     return Aggregate(
@@ -791,8 +784,7 @@ def ordinary_ratio(readings: Sequence[Reading], operation: Operation) -> float:
     A DIFFERENT comparison from :func:`mix_ratio` for the same reason
     :func:`against_ordinary` is a different one from :func:`aggregates`: this is
     what a caller pays against what they would have paid building the value
-    themselves, which is the comparison ``spec/python.md`` §2 states every
-    Interface cost over, and it is not a regression from anything.
+    themselves, and it is not a regression from anything.
 
     Over the same quantity on both sides, which for construction is the marginal
     cost of one additional node rather than a whole call: the compact side's
@@ -994,8 +986,7 @@ def _scope() -> list[str]:
         "  The aggregates and the regression rule divide LEGACY into compact: that pair is",
         "  the representation change this measurement was taken for. The ordinary arm is in",
         "  neither, and answers the other question — what a published node costs against one",
-        "  a caller built — which is the comparison spec/python.md §2 states every figure",
-        "  over, so its bytes and its three ratios are printed beside the aggregates.",
+        "  a caller built — so its bytes and its three ratios are printed beside the aggregates.",
         "",
         "  `node us` is what one MORE node of that arm costs, measured by timing a 1-node",
         "  build against an 11-node one, and `call us` is what one call costs besides its",

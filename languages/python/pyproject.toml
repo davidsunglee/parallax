@@ -3,7 +3,7 @@
 # This is a virtual project (no `[build-system]`, `tool.uv.package = false`): it
 # is never itself built or published. It exists to group the seven workspace
 # distributions under `packages/*`, own the shared dev toolchain and tool
-# configuration (§10 of `spec/python.md`), and host the generated import-linter
+# configuration, and host the generated import-linter
 # forbidden-edge complement (`tools/check_dag_sync.py`, §7).
 [project]
 name = "parallax-python"
@@ -62,7 +62,7 @@ dev = [
 ]
 
 # ---------------------------------------------------------------------------
-# pytest — §6 markers and collection.
+# pytest — markers and collection.
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -90,7 +90,7 @@ markers = [
 
 # ---------------------------------------------------------------------------
 # Coverage — branch mode; targets the shipped `parallax.*` distributions
-# (product code plus the dev-only conformance CLI, per §10). Build/CI tooling
+# (product code plus the dev-only conformance CLI). Build/CI tooling
 # under `tools/` is exercised by the Phase 1 canary unit tests but is not
 # product code, so it is not part of the product-coverage gate.
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ exclude_also = [
 ]
 
 # ---------------------------------------------------------------------------
-# Ruff — lint + deterministic formatter (§10).
+# Ruff — lint + deterministic formatter.
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
@@ -127,7 +127,7 @@ known-first-party = ["parallax", "tests"]
 # ---------------------------------------------------------------------------
 # Vulture — dead-code scan. `main` is the packaging-metadata console-script
 # entry point (referenced by `[project.scripts]`, not by in-repo code); the
-# compensating public-surface check is the api_surface griffe snapshot (§10).
+# compensating public-surface check is the api_surface griffe snapshot.
 # The four capitalized names are botocore's own parameter spelling for the RDS
 # presign, which `parallax.aws` both declares in a Protocol and passes by
 # keyword; vulture reads a keyword argument as a definition rather than a use,

@@ -3,7 +3,7 @@
 
 Two vocabularies describe the same distinctions: the `Literal` members a Handler
 receives and the built-in Logger writes, which are Python's own and spelled the
-way `python.md` §2 spells such a value; and the tokens the core spec authors,
+way `execution.md` spells such a value; and the tokens the core spec authors,
 which the compatibility corpus is graded against. Neither is derived from the
 other, so what is graded here is that BOTH are enumerated — the member sets
 below, and a projection driven off those same sets rather than off a hand-written

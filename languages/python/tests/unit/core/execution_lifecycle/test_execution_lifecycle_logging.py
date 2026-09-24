@@ -824,7 +824,7 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The level rule graded over every shape that can be worth more than DEBUG,
-    # rather than asserted in a docstring: `python.md` reserves INFO and ERROR
+    # rather than asserted in a docstring: `execution.md` reserves INFO and ERROR
     # for a ROOT activity's own Finished and WARNING and ERROR for a Transaction
     # Attempt's, and gives DEBUG to every Started and every other Finished. An
     # operator filtering above DEBUG sees exactly those two shapes and no others.

@@ -202,9 +202,9 @@ just core-show-language-spec languages/<target>/spec/<target>.md
 
 Update the owning core rule when portable behavior changes, and the schemas,
 fixtures, and cases only where their contracts change. An internal refactor
-normally needs none of those edits. Cases should carry every module tag they exercise and include
-canonical statements, binds, expected observations, and independent reference
-SQL where the behavior is non-trivial.
+normally needs none of those edits. Follow the owning
+[case-format contract](core/spec/m-case-format.md) for the fields each supported
+case shape carries.
 
 Use the [module catalog](core/spec/modules.md),
 [case-format specification](core/spec/m-case-format.md), and existing corpus

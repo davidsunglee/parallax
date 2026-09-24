@@ -497,7 +497,7 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
 
 def test_versioned_delete_without_an_observation_requires_observation() -> None:
     # A keyed DELETE settled with no observed version raises in EITHER mode,
-    # exactly as a keyed UPDATE does (m-opt-lock; python.md §5): the framework
+    # exactly as a keyed UPDATE does (`m-opt-lock`): the framework
     # never issues an implicit resolving read on behalf of a keyed write, so a
     # write that reached settlement without the version its source observed has
     # nothing to advance from.
@@ -769,7 +769,7 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
 def test_inheritance_family_predicate_write_is_rejected_before_sql(
     predicate: oa.PredicateNode,
 ) -> None:
-    # `python.md` §5: "a set-based write whose target entity belongs to an
+    # `m-inheritance`: a set-based write whose target entity belongs to an
     # inheritance family is REJECTED BEFORE SQL with the corpus's
     # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
     #

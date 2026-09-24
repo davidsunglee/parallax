@@ -512,7 +512,7 @@ def test_the_temporal_readers_are_unaffected_by_result_narrowing() -> None:
 
 
 def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
-    # A scan is not a pin (spec §3): `asOfRange` / `history` never set a
+    # A scan is not a pin: `asOfRange` / `history` never set a
     # coordinate, even though `query_pin` still reads them (called
     # unconditionally ahead of the milestone-set/pinned-read branch decision).
     ranged = _query(POSITION, {"transaction-time": oq.AsOfRange(start=_P, end="infinity")})

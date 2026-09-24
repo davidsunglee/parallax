@@ -7,7 +7,7 @@ where the case format says so, wire space) compared against the golden; its
 emitted SQL and binds equal the golden keyed by the profile's own dialect, root
 and every deep-fetch child level alike. This is the tracer path proven end to end — compile (where
 eligible) to canonical SQL/binds, then run against a reset database. Docker-
-gated; a skip is reported, never silent (spec §6).
+gated; a skip is reported, never silent.
 """
 
 from __future__ import annotations

@@ -484,7 +484,7 @@ def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state
 
 
 def test_that_named_state_carries_author_owned_state_the_way_ordinary_backing_does() -> None:
-    # An edit preserves everything it neither replaces nor invalidates (§3), and
+    # An edit preserves everything it neither replaces nor invalidates, and
     # a published value keeps author-owned state in a slot of its own rather than
     # beside its declared members. A reader that stopped at the row would drop
     # exactly what the same edit of an ordinary value carries forward. The

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from parallax.conformance.profile import Profile
 
 # Database-backed checks skipped because Docker/Postgres was unavailable — printed
-# in a final summary so a skip is never silent (spec §6); CI fails on any skip.
+# in a final summary so a skip is never silent; CI fails on any skip.
 _DB_SKIPS: list[str] = []
 
 # The designated entry points to a live database. A test reaching one by any other
@@ -215,7 +215,7 @@ def record_db_skip(reason: str) -> None:
 
 @pytest.fixture(scope="session")
 def profile() -> Profile:
-    """The declared matrix profile the database-backed lane runs (spec §6).
+    """The declared matrix profile the database-backed lane runs.
 
     Resolving it opens nothing, so this fixture classifies no item: what needs a
     container is a run of this profile, not the declaration.
@@ -228,7 +228,7 @@ def profile() -> Profile:
 @pytest.fixture(scope="session")
 def profile_run(profile: Profile) -> Iterator[Any]:
     """A session-scoped run of the declared profile over a self-managed
-    Testcontainers Postgres (spec §6).
+    Testcontainers Postgres.
 
     The profile provisions it and pairs its own reporting name with the port it
     opened, so the database-backed lane runs the declaration itself rather than a
@@ -274,7 +274,7 @@ def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 def pytest_terminal_summary(terminalreporter: Any) -> None:
-    """Print the database-backed skip summary (silent skips are forbidden, §6)."""
+    """Print the database-backed skip summary; silent skips are forbidden."""
     if not _DB_SKIPS:
         return
     terminalreporter.write_sep("=", "database-backed checks skipped")

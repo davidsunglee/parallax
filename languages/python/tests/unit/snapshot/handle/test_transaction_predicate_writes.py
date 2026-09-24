@@ -1,6 +1,6 @@
 """Predicate-selected (`*_where`) write unit tests for `parallax.snapshot.handle`.
 
-The set-based verb family (`python.md` §5) covers the
+The set-based verb family covers the
 mutation-compatibility guard, Assignment composition, inheritance rejection,
 Valid-Time-bound validation, readless
 dispatch for an unversioned non-temporal target, and materialization — the
@@ -305,7 +305,7 @@ _NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-selected `_where` verb family (`python.md` §5): the mutation-      #
+# Predicate-selected `_where` verb family: the mutation-                       #
 # compatibility guard, Assignment composition, inheritance rejection, Valid-   #
 # Time-                                                                        #
 # bound validation, readless dispatch, and materialization (resolve + per-row #
@@ -1708,7 +1708,7 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
 # The behavioral mutation-compatibility rejection is covered end to end.        #
 # `mutation_selection` refusing a clause-bearing query in `test_where_verbs.py` #
 # is necessary but an actual `tx.update_where` or `tx.delete_where` call handed #
-# one must itself raise the rejection (python.md §5), never merely be provable  #
+# one must itself raise the rejection, never merely be provable                 #
 # through the seam alone. A port that raises on any I/O proves the guard runs   #
 # BEFORE the connection is ever touched.                                        #
 # --------------------------------------------------------------------------- #

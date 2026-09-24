@@ -1,4 +1,4 @@
-"""Object Query frontend spellings (python.md §2):
+"""Object Query frontend spellings (`queries-and-results.md`):
 ``.include(*paths)`` (deep-fetch, chained ``Rel[T]`` class access, hop-level
 ``.narrow()``), relationship ``.exists()`` / ``.not_exists()`` quantifiers, the
 ``Entity.narrow(...)`` constructor, and the query-level ``.narrow(...)``

@@ -1,4 +1,4 @@
-"""Participating-read unit tests for `parallax.snapshot.handle` (spec §5, Docker-free fake ports).
+"""Participating-read unit tests for `parallax.snapshot.handle` (Docker-free fake ports).
 
 `Transaction.find` and `ScopedDatabase.find`: force-flush before a read
 (read-your-own-writes), the lock suffix each materialized level's own Effective
@@ -6,7 +6,7 @@ Concurrency Strategy calls for, statement and
 milestone pin derivation, history statements, which of the two entry points
 stamps its participation on the values it publishes, and the evidence a read
 leaves on those values — proven through the writes they license or refuse. Also
-the spec §3 stale-web-edit recipe's Docker-free halves.
+the stale-web-edit recipe's Docker-free halves.
 """
 
 from __future__ import annotations
@@ -666,7 +666,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
 
 
 # --------------------------------------------------------------------------- #
-# The spec §3 stale-web-edit recipe module (`parallax.conformance.            #
+# The stale-web-edit recipe module (`parallax.conformance.                    #
 # stale_web_edit`) — the Docker-free halves of the api-conformance stories:   #
 # render captures the transported edge; submit reads the CURRENT milestone    #
 # and compares its edge against the transported one.                         #

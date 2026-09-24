@@ -426,7 +426,7 @@ def test_classified_decoding_separates_two_members_that_spell_one_dotted_path() 
     # render the same dotted path, so no reading of a `.`-joined spelling can tell
     # them apart. The codec reports its member as a sequence of declared names and
     # the refusal resolves it step by step, which is what makes the applicable
-    # identity (`python.md` §3) the one whose stored value actually failed.
+    # identity the one whose stored value actually failed.
     entity = Entity(
         name="Twin",
         table="twin",

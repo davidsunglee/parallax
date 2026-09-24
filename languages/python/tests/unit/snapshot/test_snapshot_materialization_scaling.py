@@ -1,13 +1,9 @@
 """What a prepared read keeps, and what it refuses to keep per row, per Page,
 and per execution.
 
-`spec/python.md`'s *Exact-model member layouts* fixes which members a resolved
-concrete Entity carries by the accepted Metamodel alone, requires them derived per
-exact Entity and shared — "never rebuilt per row, per Page, or per execution" —
-and states that retained layout count and size are independent of the number of
-Pages materialized. Beside it, *execution-owned view slots* draws the other line:
-a query shape belongs to one execution and MUST NOT be cached for the lifetime of
-a model. This is the SIZE half of those two requirements measured over the
+Prepared exact-Entity layouts are shared rather than rebuilt per row, Page, or
+execution, while a query shape belongs to one execution and is not cached for a
+model's lifetime. This is the SIZE half of those constraints measured over the
 production materialization path, from ``prepare_model`` through ``compile_read``
 and ``bind`` to ``PreparedRead.convert_driver`` and conversion: what is retained
 must not grow with rows, with Pages, or with executions.

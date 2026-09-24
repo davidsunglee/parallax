@@ -1120,7 +1120,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 # camelCase `orderedOn` spelling `then.rows` never uses) plus `then.roundTrips`#
 # when the case declares it. `familyVariant` is reported only for a case whose #
 # own oracle rows declare it (an abstract-root inheritance read) — the        #
-# API-suite's own polymorphism observation (`python.md` §4: "observable as    #
+# API-suite's own polymorphism observation (`queries-and-results.md`:         #
 # `type(node)`"), not a field the developer surface itself exposes.           #
 #                                                                              #
 # `story.concurrency` (the `m-read-lock` matrix) opts a story into the         #

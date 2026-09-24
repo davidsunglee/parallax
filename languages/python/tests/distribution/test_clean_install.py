@@ -1,4 +1,4 @@
-"""Clean-install production topology proofs (§8 / §10 `clean_install` marker).
+"""Clean-install production topology proofs (§8 / `clean_install` marker).
 
 Each of the seven §8 selective topologies is installed into a fresh uv venv
 from the locally built wheels, and the installed distribution list + import

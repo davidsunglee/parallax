@@ -325,7 +325,7 @@ class _StrippingPickler(pickle.Pickler):
     entry-point guard does,
     so what lands in the buffer is a historical pickle rather than an
     approximation of one. Supplying the reducer is what makes that reachable — a
-    caller who answers for the entry point never enters the refusal (spec §3) —
+    caller who answers for the entry point never enters the refusal —
     so this is the writer of the historical bytes and never a way to obtain them
     from the refusal.
     """

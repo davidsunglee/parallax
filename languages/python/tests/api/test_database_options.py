@@ -1,4 +1,4 @@
-"""`DatabaseOptions` through the shipped public surface (spec §5): the connect
+"""`DatabaseOptions` through the shipped public surface (`spec/execution.md`): the connect
 and constructor keywords a root is configured with, the transaction keywords
 that override them, `Transaction.options`, the usage guide's own root-options
 story, and — against a real Postgres — that the level a root resolves is the

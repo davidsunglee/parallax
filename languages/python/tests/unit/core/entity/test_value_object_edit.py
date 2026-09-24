@@ -1,4 +1,4 @@
-"""``ValueObject.edit(**changes)`` and the copy doors it seals (spec §3).
+"""``ValueObject.edit(**changes)`` and the copy doors it seals.
 
 The Entity half of the one edit contract is pinned in ``test_edit.py``; what this
 suite proves is what the Value Object half answers differently. Three things do:
@@ -274,7 +274,7 @@ def test_a_refused_edit_builds_nothing_and_retains_no_cause() -> None:
 def test_a_value_that_passes_judgement_still_faces_the_constructor() -> None:
     # The judgement checks the declared Neutral Type and Pydantic checks the
     # Python annotation, so a Value Object member assigned a raw mapping — a
-    # document the judgement accepts — is still refused where §2 refuses it.
+    # document the judgement accepts — is still refused by the declarations binding.
     with pytest.raises(TypeError, match="never a raw mapping"):
         _address().edit(geo={"country": "NO"})
 

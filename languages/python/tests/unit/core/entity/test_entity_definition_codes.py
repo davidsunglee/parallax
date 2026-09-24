@@ -1,7 +1,7 @@
 """The closed ``EntityDefinitionError`` code set.
 
-Two things are pinned here: that the vocabulary is exactly the eleven codes
-Python spec §2 declares, and that every rejection the frontend probes trigger
+Two things are pinned here: that the vocabulary is exactly the eleven codes,
+and that every rejection the frontend probes trigger
 draws its code from that set. Adding a rejection without declaring its code, or
 declaring a code no rule raises, fails one of the two.
 """

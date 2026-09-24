@@ -49,8 +49,10 @@ def validate_write(
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
 
-    Raises :class:`WriteRejectedError` naming the violated rule. See the module
-    docstring for the check order and the mutation-aware required-ness rule.
+    Raises :class:`WriteRejectedError` naming the violated rule. Inheritance
+    payload shape and target validity are checked before family-effective member
+    validation. Inserts require a full document; other mutations admit sparse
+    top-level rows, while every present Value Object remains a whole document.
 
     The required-attribute / required-value-object / value-type walk runs over
     ``entity``'s FAMILY-EFFECTIVE member set (`m-inheritance` "Inherited
