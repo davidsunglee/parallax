@@ -31,6 +31,7 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -64,7 +65,6 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
 from parallax.core.execution_lifecycle import _fanout as fanout_module
-from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ExecutionFailure, ScopedDatabase, Transaction

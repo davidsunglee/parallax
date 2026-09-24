@@ -103,7 +103,6 @@ class InheritanceEntityView(Protocol):
     @property
     def superset_value_objects(self) -> Sequence[ValueObjectMetadata]: ...
     def applicable_attribute(self, name: str) -> AttributeMetadata | None: ...
-    def applicable_relationship(self, name: str) -> RelationshipDeclaration | None: ...
     def applicable_value_object(self, name: str) -> ValueObjectMetadata | None: ...
 
 
@@ -316,18 +315,6 @@ class _InheritanceEntityView:
     applicable_relationships: tuple[RelationshipDeclaration, ...]
     superset_attributes: tuple[AttributeMetadata, ...]
     superset_value_objects: tuple[ValueObjectMetadata, ...]
-    _relationship_index: Mapping[str, RelationshipDeclaration] = field(
-        init=False, repr=False, compare=False
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "_relationship_index",
-            MappingProxyType(
-                {member.identity.name: member for member in self.applicable_relationships}
-            ),
-        )
 
     @property
     def applicable_attributes(self) -> Sequence[AttributeMetadata]:
@@ -347,9 +334,6 @@ class _InheritanceEntityView:
         if position is None or not isinstance(self.member_selection.shape.members[position], Leaf):
             return None
         return cast("AttributeMetadata", binding)
-
-    def applicable_relationship(self, name: str) -> RelationshipDeclaration | None:
-        return self._relationship_index.get(name)
 
     def applicable_value_object(self, name: str) -> ValueObjectMetadata | None:
         binding = self.member_selection.binding(name)

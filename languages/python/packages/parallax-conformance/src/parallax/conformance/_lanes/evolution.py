@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from parallax.conformance import case_format, models
+from parallax.conformance._mechanism.dialects import DIALECT_CATALOG, dialect_for
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._mechanism.model_facts import model_path
 from parallax.conformance.evolution_wire import (
@@ -11,7 +12,6 @@ from parallax.conformance.evolution_wire import (
     schema_cell,
     unsupported_cell,
 )
-from parallax.core.dialect import DIALECT_CATALOG, dialect_for
 from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 

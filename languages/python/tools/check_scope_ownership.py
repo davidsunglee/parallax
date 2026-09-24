@@ -233,8 +233,8 @@ def first_party_reaches(source: str, package: str) -> frozenset[tuple[str, ...]]
     first. ``from <package> import <name>`` is how Python imports a SUBMODULE as
     well as how it reads an attribute, and nothing in the syntax says which, so
     that form reaches ``<package>.<name>`` or ``<package>`` and carries both:
-    ``from parallax.core.execution_lifecycle import testing`` binds the child
-    package as surely as spelling its dotted path does, and import-linter's own
+    ``from parallax.aws import postgres`` binds the child module as surely as
+    spelling its dotted path does, and import-linter's own
     graph records that edge. Keeping the two candidates together as one reach is
     what lets a caller judge the import at whichever candidate it meant, instead
     of judging a package-form spelling as though it had named the package alone.

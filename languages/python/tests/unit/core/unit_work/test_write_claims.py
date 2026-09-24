@@ -479,39 +479,6 @@ def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
     )
 
 
-def test_a_caller_supplied_observation_is_what_an_instruction_settles_against() -> None:
-    # The one licensed way a keyed write settles against a row no read of this
-    # unit of work materialized: the value is answered untouched, so a target
-    # entitled to none refuses it later rather than having it dropped here.
-    observation = VersionObservation(observed_version=4)
-    assert (
-        opt_lock.instruction_evidence(
-            _PERSON_META, _prepared_person_delete(1), supplied=observation
-        )
-        is observation
-    )
-
-
-def test_an_instruction_holding_no_evidence_reaches_its_targets_own_arm() -> None:
-    # What the ingress rule answers a caller who supplied none: the same arm the
-    # typed verb for this write reads off its source value's hint.
-    assert opt_lock.instruction_evidence(
-        _PERSON_META, _prepared_person_delete(1), supplied=None
-    ) == ObjectKey(_PERSON, (("id", 1),))
-
-
-def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
-    # A claim addresses one object and an observation is evidence about one row,
-    # so a plural instruction — the one shape no keyed verb can author, and which
-    # therefore reaches no runtime ingress at all — reaches neither grain and
-    # buffers bare. Evidence supplied WITH one is refused by the single-row
-    # carrier (`test_uow_shell`), never dropped for this answer.
-    assert (
-        opt_lock.instruction_evidence(_PERSON_META, _prepared_person_delete(1, 2), supplied=None)
-        is None
-    )
-
-
 def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
     # Absence is never an input to the derivation: an unresolved target is a
     # caller that skipped resolving it, not a family without a version source.

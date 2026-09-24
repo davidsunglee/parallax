@@ -22,6 +22,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.conformance._mechanism import case_document, envelope
+from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import (
     Emission,
     EngineError,
@@ -67,7 +68,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     MappingRow,
 )
-from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -102,6 +103,7 @@ from parallax.core.unit_work import (
     PlanningRequest,
     PredicateWrite,
     RetainedObservation,
+    SettledEvidence,
     StaleWriteError,
     SubjectActor,
     TemporalObservation,
@@ -1050,30 +1052,48 @@ def _resolve_entries(
     return resolved
 
 
+def instruction_evidence(
+    model: AcceptedMetamodel,
+    instruction: PreparedKeyedWrite,
+    *,
+    supplied: WriteObservation | RetainedObservation | None,
+) -> SettledEvidence | None:
+    """What a keyed write settles against, for an oracle holding the INSTRUCTION
+    rather than the value it was derived from.
+
+    Evidence the case supplied is what the write settles against, used as given:
+    it is the one licensed way a keyed write settles against a row no read of the
+    writing unit of work materialized, so a write that can hold none REFUSES it
+    at its carrier rather than having it dropped here. An entry that supplied
+    none reaches :func:`~parallax.core.opt_lock.settled_evidence` over the
+    instruction's own target and mutation, exactly what a typed verb reads off a
+    source value's hint, so this readless oracle settles each write as the verb
+    the same write goes through would.
+    """
+    if supplied is not None:
+        return supplied
+    return opt_lock.settled_evidence(
+        opt_lock.optimistic_key(model, instruction.target.identity),
+        instruction.mutation,
+        object_key=object_key(instruction, model),
+        observation=None,
+    )
+
+
 def _buffered(
     instruction: PreparedWrite, observation: WriteObservation | None, model: AcceptedMetamodel
 ) -> PreparedWrite | ClaimedKeyedWrite:
-    """One resolved entry as the buffer item a unit of work would hold for it.
-
-    What the entry settles against is the rule
-    :func:`~parallax.core.opt_lock.instruction_evidence` states for every caller
-    holding an instruction, which is the rule production's own write verbs read
-    off a source value's hint: an entry whose case document (or this
-    group's own prior find) supplied an observation settles against it as given,
-    and an entry that supplied none reaches the claim-scope derivation over the
-    same two declared facts a developer verb reads. Sharing the rule rather than
-    restating it is what keeps this PURE re-lowering oracle answering the plan
-    the real flush produces, coalescing included; the shared resolver reads
-    nothing but the model, so the oracle stays readless. Whether an observation
-    may exist at all is decided BEFORE this point, by :func:`_durable_row` — the
-    one seam every producer's rows pass through — and by the carriers' own
-    structural refusals; this function only forwards what they left.
+    """One resolved entry as the buffer item a unit of work would hold for it,
+    settled against :func:`instruction_evidence`. Whether an observation may
+    exist at all is decided BEFORE this point, by :func:`_durable_row` — the one
+    seam every producer's rows pass through — and by the carriers' own structural
+    refusals; this function only forwards what they left.
     """
     assert isinstance(
         instruction, PreparedKeyedWrite
     )  # every producer of this seam resolves keyed writes
     return buffered_write(
-        instruction, opt_lock.instruction_evidence(model, instruction, supplied=observation)
+        instruction, instruction_evidence(model, instruction, supplied=observation)
     )
 
 

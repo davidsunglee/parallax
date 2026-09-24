@@ -5,6 +5,7 @@ from collections.abc import Collection, Generator, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
+from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.case_format import serialized_isolation
 from parallax.core.db_port import (
     AcquisitionReason,
@@ -69,7 +70,6 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import WriteBatchTrigger
 

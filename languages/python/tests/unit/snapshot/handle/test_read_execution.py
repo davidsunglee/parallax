@@ -29,6 +29,10 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import (
+    RecordedRoot,
+    RecordingLifecycleProvider,
+)
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -40,10 +44,6 @@ from parallax.core.execution_lifecycle._activity import (
     SnapshotStreamActivity,
     installed_lifecycle,
     open_transaction_root,
-)
-from parallax.core.execution_lifecycle.testing import (
-    RecordedRoot,
-    RecordingLifecycleProvider,
 )
 from parallax.core.unit_work import (
     Concurrency,

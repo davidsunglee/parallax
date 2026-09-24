@@ -27,6 +27,7 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
@@ -50,7 +51,6 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import QueryTargetError, ScopedDatabase, Transaction

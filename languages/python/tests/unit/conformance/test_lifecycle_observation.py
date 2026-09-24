@@ -26,6 +26,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
     lifecycle_run,
 )
+from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.core.db_port import (
     AcquisitionReason,
     CleanupCode,
@@ -87,7 +88,6 @@ from parallax.core.execution_lifecycle import (
     WriteBatchStarted,
 )
 from parallax.core.execution_lifecycle._diagnostics import DatabaseFailureDiagnostic
-from parallax.core.execution_lifecycle.testing import RecordedRoot
 from parallax.core.sql_gen import LoweredStatement
 
 _EXECUTION = uuid4()

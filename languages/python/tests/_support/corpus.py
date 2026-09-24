@@ -322,7 +322,15 @@ class _Node:
         """The node level one relationship view key reaches, broad or narrowed."""
         from parallax.core.relationship import view as relationship_view
 
-        declared = self.view.applicable_relationship(name.split("[", 1)[0])
+        local = name.split("[", 1)[0]
+        declared = next(
+            (
+                member
+                for member in self.view.applicable_relationships
+                if member.identity.name == local
+            ),
+            None,
+        )
         if declared is None:
             return None
         direction = relationship_view(self.model).relationship(declared.identity)

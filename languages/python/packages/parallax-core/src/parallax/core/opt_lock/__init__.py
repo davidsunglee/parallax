@@ -36,9 +36,7 @@ from parallax.core.unit_work import (
     SettledEvidence,
     VersionObservation,
     WriteObservation,
-    object_key,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite
 
 __all__ = [
     "FACET_KEY",
@@ -62,7 +60,6 @@ __all__ = [
     "advance",
     "compile_facet",
     "effective_strategy",
-    "instruction_evidence",
     "optimistic_key",
     "reject_caller_authored_version",
     "require_observed",
@@ -237,47 +234,6 @@ def settled_evidence(
             return object_key
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(key)
-
-
-def instruction_evidence(
-    model: Metamodel,
-    instruction: PreparedKeyedWrite,
-    *,
-    supplied: WriteObservation | RetainedObservation | None,
-) -> SettledEvidence | None:
-    """What a keyed write settles against, for a caller holding the INSTRUCTION
-    rather than the value it was derived from.
-
-    Evidence the caller supplied is what the write settles against, used as
-    given: it is the one licensed way a keyed write settles against a row no read
-    of the writing unit of work materialized, so a write that can hold none
-    REFUSES it — an insert or an instruction naming several rows at its carrier,
-    an unversioned Non-Temporal row where the write is settled — rather than
-    having it dropped for a claim the call never stated. A caller who supplied
-    none reaches :func:`settled_evidence` over the instruction's own target and
-    mutation, which is everything that derivation needs and exactly what a typed
-    verb reads off a source value's hint — and that derivation is where an
-    instruction naming several rows answers nothing and stays bare, rather than
-    the evidence such a caller did supply being dropped for it.
-
-    The rule is stated here, once, because every caller that holds an instruction
-    must decide identically to the verbs that hold values: a conformance oracle
-    re-lowers an instruction purely, and an oracle settling a write differently
-    from the verb the same write goes through would grade a coalescing no program
-    gets. Nothing here reads a database, so the pure caller keeps that property.
-
-    The prepared instruction already carries exact target Metadata, so this
-    derivation reads no authored Entity spelling and performs no second target
-    resolution after the preparation seam.
-    """
-    if supplied is not None:
-        return supplied
-    return settled_evidence(
-        optimistic_key(model, instruction.target.identity),
-        instruction.mutation,
-        object_key=object_key(instruction, model),
-        observation=None,
-    )
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

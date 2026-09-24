@@ -8,13 +8,15 @@ check the key against them, so the shortcut cannot silently stop being valid.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from parallax.core.base import INT32, STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import Attribute, Entity, Index, Inheritance, Metamodel
 from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEvolution, evolve
-from parallax.evolution.schema_delta._order import dependency_violations, order, order_key
+from parallax.evolution.schema_delta._order import order, order_key
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
@@ -31,6 +33,59 @@ from tests.unit._corpus_model_support import corpus, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _MODELS = corpus()
+
+
+def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ...]:
+    """Every dependency rule ``ordered`` breaks, empty when it is executable.
+
+    The invariant ``order_key`` rests on, stated over the three rules
+    themselves so the key can never silently stop being a linear extension of
+    them. A rule is silent about a prerequisite the plan does not contain: an
+    operation on a Table this delta does not create acts on one the earlier
+    edition already had.
+
+    Every prerequisite is keyed by the physical Table beside the member, because
+    one logical definition can have a physical projection per Table: a
+    root-declared Index altered under table-per-concrete-subtype is one
+    create/drop pair on each concrete Table, and each drop's prerequisite is its
+    OWN Table's create rather than whichever Table happened to be walked last.
+    """
+    tables = {
+        table_of(operation).name: position
+        for position, operation in enumerate(ordered)
+        if isinstance(operation, CreateTable)
+    }
+    columns = {
+        (table_of(operation).name, operation.column.column.name): position
+        for position, operation in enumerate(ordered)
+        if isinstance(operation, AddColumn)
+    }
+    indices = {
+        (table_of(operation).name, operation.definition.index): position
+        for position, operation in enumerate(ordered)
+        if isinstance(operation, CreateIndex)
+    }
+    violations: list[str] = []
+    for position, operation in enumerate(ordered):
+        table = table_of(operation).name
+        if tables.get(table, position) > position:
+            violations.append(f"{position}: {table} is acted on before it is created")
+        if isinstance(operation, CreateIndex):
+            violations.extend(
+                f"{position}: {operation.name.value} indexes {table}.{column.column.name} "
+                "before that Column is added"
+                for column in operation.definition.columns
+                if columns.get((table, column.column.name), position) > position
+            )
+        if isinstance(operation, DropIndex) and (
+            indices.get((table, operation.definition.index), position) > position
+        ):
+            violations.append(
+                f"{position}: {operation.name.value} drops an altered Index before its "
+                "target definition is created"
+            )
+    return tuple(violations)
+
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
 _TABLE = Table(name="widget")
@@ -101,22 +156,22 @@ def test_two_operations_of_one_kind_sort_by_the_member_they_address() -> None:
 
 def test_an_executable_order_breaks_no_rule() -> None:
     ordered = order([_drop_index("d"), _create_index("d"), _add_column(_CODE), _create_table()])
-    assert dependency_violations(ordered) == ()
+    assert _dependency_violations(ordered) == ()
 
 
 def test_a_table_acted_on_before_it_exists_is_a_violation() -> None:
-    violations = dependency_violations([_create_index("c"), _create_table()])
+    violations = _dependency_violations([_create_index("c"), _create_table()])
     assert violations == ("0: widget is acted on before it is created",)
 
 
 def test_an_index_over_a_column_the_plan_has_not_added_yet_is_a_violation() -> None:
     plan_out_of_order: list[PhysicalOperation] = [_create_index("c"), _add_column(_CODE)]
-    (violation,) = dependency_violations(plan_out_of_order)
+    (violation,) = _dependency_violations(plan_out_of_order)
     assert violation == "0: pxi_c indexes widget.code before that Column is added"
 
 
 def test_dropping_an_altered_index_before_creating_its_target_is_a_violation() -> None:
-    (violation,) = dependency_violations([_drop_index("d"), _create_index("d")])
+    (violation,) = _dependency_violations([_drop_index("d"), _create_index("d")])
     assert violation == (
         "0: pxi_d_old drops an altered Index before its target definition is created"
     )
@@ -125,7 +180,7 @@ def test_dropping_an_altered_index_before_creating_its_target_is_a_violation() -
 def test_a_prerequisite_the_plan_does_not_contain_is_no_violation() -> None:
     # An operation on a Table this delta does not create acts on one the earlier
     # edition already had, and a drop with no matching create replaces nothing.
-    assert dependency_violations([_create_index("c"), _drop_index("gone")]) == ()
+    assert _dependency_violations([_create_index("c"), _drop_index("gone")]) == ()
 
 
 def _tpcs_family_altering_a_root_declared_index(*, unique: bool) -> AcceptedMetamodel:
@@ -181,7 +236,7 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule() -> 
         ("CreateIndex", "zeta"),
         ("DropIndex", "zeta"),
     ]
-    assert dependency_violations(ordered) == ()
+    assert _dependency_violations(ordered) == ()
 
 
 def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
@@ -194,7 +249,7 @@ def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         entity_with_two_indices_over_one_column(),
     ):
         ordered = order(plan(evolve(ABSENT, model), POSTGRES).operations)
-        assert dependency_violations(ordered) == ()
+        assert _dependency_violations(ordered) == ()
 
 
 def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
@@ -213,4 +268,4 @@ def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         evolution = evolve(earlier, later)
         if not isinstance(evolution, UnilateralEvolution):
             continue
-        assert dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()
+        assert _dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()

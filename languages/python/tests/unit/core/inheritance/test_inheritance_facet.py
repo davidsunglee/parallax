@@ -300,9 +300,9 @@ def test_applicable_lookups_resolve_across_the_chain_and_return_absence_on_a_mis
     dog = _view(facet, "Dog")
     assert dog.applicable_attribute("licenseId") is not None
     assert dog.applicable_attribute("indoor") is None
-    assert dog.applicable_relationship("animals") is None
+    assert "animals" not in {member.identity.name for member in dog.applicable_relationships}
     person = _view(facet, "Person")
-    assert person.applicable_relationship("pets") is not None
+    assert "pets" in {member.identity.name for member in person.applicable_relationships}
     assert person.applicable_value_object("nothing") is None
 
 

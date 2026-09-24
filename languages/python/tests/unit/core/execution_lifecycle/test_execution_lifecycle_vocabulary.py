@@ -17,6 +17,7 @@ from typing import Any, Final, cast, get_args
 from uuid import uuid4
 
 from parallax.conformance._lifecycle_observation import execution_lifecycle_observation
+from parallax.conformance._lifecycle_recording import RecordedRoot
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AttemptFailure,
@@ -33,7 +34,6 @@ from parallax.core.execution_lifecycle import (
     RootExecutionKind,
     TransactionAttemptFinished,
 )
-from parallax.core.execution_lifecycle.testing import RecordedRoot
 from parallax.core.sql_gen import LoweredStatement
 
 _RUNTIME_SPELLING: Final = re.compile(r"[a-z]+(?:_[a-z]+)*\Z")

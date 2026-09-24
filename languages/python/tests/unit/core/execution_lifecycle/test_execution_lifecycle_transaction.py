@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -69,7 +70,6 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
     FixedClock,

@@ -14,7 +14,7 @@ from parallax.evolution.schema_delta._physical import (
     table_of,
 )
 
-__all__ = ["dependency_violations", "order", "order_key"]
+__all__ = ["order", "order_key"]
 
 KIND_RANK: Final[Mapping[type, int]] = {
     CreateTable: 0,
@@ -38,55 +38,3 @@ def order_key(operation: PhysicalOperation) -> tuple[str, int, str]:
 def order(plan: Sequence[PhysicalOperation]) -> tuple[PhysicalOperation, ...]:
     """``plan`` in executable order."""
     return tuple(sorted(plan, key=order_key))
-
-
-def dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ...]:
-    """Every dependency rule ``ordered`` breaks, empty when it is executable.
-
-    The invariant :func:`order_key` rests on, stated over the three rules
-    themselves so the key can never silently stop being a linear extension of
-    them. A rule is silent about a prerequisite the plan does not contain: an
-    operation on a Table this delta does not create acts on one the earlier
-    edition already had.
-
-    Every prerequisite is keyed by the physical Table beside the member, because
-    one logical definition can have a physical projection per Table: a
-    root-declared Index altered under table-per-concrete-subtype is one
-    create/drop pair on each concrete Table, and each drop's prerequisite is its
-    OWN Table's create rather than whichever Table happened to be walked last.
-    """
-    tables = {
-        table_of(operation).name: position
-        for position, operation in enumerate(ordered)
-        if isinstance(operation, CreateTable)
-    }
-    columns = {
-        (table_of(operation).name, operation.column.column.name): position
-        for position, operation in enumerate(ordered)
-        if isinstance(operation, AddColumn)
-    }
-    indices = {
-        (table_of(operation).name, operation.definition.index): position
-        for position, operation in enumerate(ordered)
-        if isinstance(operation, CreateIndex)
-    }
-    violations: list[str] = []
-    for position, operation in enumerate(ordered):
-        table = table_of(operation).name
-        if tables.get(table, position) > position:
-            violations.append(f"{position}: {table} is acted on before it is created")
-        if isinstance(operation, CreateIndex):
-            violations.extend(
-                f"{position}: {operation.name.value} indexes {table}.{column.column.name} "
-                "before that Column is added"
-                for column in operation.definition.columns
-                if columns.get((table, column.column.name), position) > position
-            )
-        if isinstance(operation, DropIndex) and (
-            indices.get((table, operation.definition.index), position) > position
-        ):
-            violations.append(
-                f"{position}: {operation.name.value} drops an altered Index before its "
-                "target definition is created"
-            )
-    return tuple(violations)
