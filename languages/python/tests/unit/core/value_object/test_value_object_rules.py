@@ -30,11 +30,8 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.model_formation import (
-    MODEL_FORMATION_MODULE,
-    MetamodelValidationError,
-    RequiredRuleSet,
-)
+from parallax.core.model_formation import MODEL_FORMATION_MODULE, MetamodelValidationError
+from parallax.core.model_formation._manifest import RequiredRuleSet
 from parallax.core.value_object import ISSUE_CODES, RULE_SET, VALUE_OBJECT_MODULE
 from parallax.core.value_object._rules import CONTAINMENT_CYCLE, EMPTY, MANY_NULLABLE
 from parallax.descriptor._adapter import unresolved_metamodel

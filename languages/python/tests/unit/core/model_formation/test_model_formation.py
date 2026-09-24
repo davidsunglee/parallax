@@ -34,6 +34,20 @@ from parallax.core.metamodel import _resolve as resolver
 from parallax.core.metamodel._resolve import PRIMARY_KEY_MISSING, PRIMARY_KEY_MULTIPLE
 from parallax.core.model_formation import (
     FIXED_RESOLVER,
+    METADATA_COMPILER_REQUIRED,
+    REQUIRED_RULE_SET,
+    FormationManifest,
+    FormationManifestEntry,
+    MetadataCompiler,
+    MetamodelValidationError,
+    ModelCompiler,
+    ModelCompilerRequirement,
+    ModelRuleSet,
+    ModuleIdentity,
+    form,
+)
+from parallax.core.model_formation import _runner as runner
+from parallax.core.model_formation._errors import (
     FORMATION_COMPILER_FAILED,
     FORMATION_CONTRACT_CODES,
     FORMATION_FACET_DUPLICATE,
@@ -46,22 +60,9 @@ from parallax.core.model_formation import (
     FORMATION_RESOLVER_RESULT_INVALID,
     FORMATION_RULE_SET_FAILED,
     FORMATION_RULE_SET_RESULT_INVALID,
-    METADATA_COMPILER_REQUIRED,
-    REQUIRED_RULE_SET,
     FormationContractError,
-    FormationManifest,
-    FormationManifestEntry,
-    MetadataCompiler,
-    MetamodelValidationError,
-    ModelCompiler,
-    ModelCompilerRequirement,
-    ModelRuleSet,
-    ModuleIdentity,
-    RequiredRuleSet,
-    form,
 )
-from parallax.core.model_formation import _runner as runner
-from parallax.core.model_formation._manifest import CompilerRequirement
+from parallax.core.model_formation._manifest import CompilerRequirement, RequiredRuleSet
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _ORDER = identity("Order")

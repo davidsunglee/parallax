@@ -42,27 +42,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.unit_work import (
-    ANY_COUNT,
-    MAX_PLUS_ONE,
-    UNGATED,
-    UNVERSIONED,
-    ActorIdentity,
     BufferItem,
     ChunkedColumnBuilder,
     Concurrency,
-    ExactCount,
     KeyedWrite,
-    KeyTarget,
     MaterializedWriteGroup,
-    ObjectClaimedWrite,
     ObjectKey,
-    ObservedKeyedWrite,
     PlannedClose,
-    PlannedDelete,
     PlannedInsert,
-    PlannedRow,
-    PlannedUpdate,
-    PlannedWrite,
     PlanningRequest,
     PredecessorColumns,
     PredecessorRow,
@@ -75,8 +62,6 @@ from parallax.core.unit_work import (
     TemporalObservation,
     TransactionInstant,
     VersionColumns,
-    Versioned,
-    VersionGate,
     VersionObservation,
     WriteAssignment,
     WriteObservation,
@@ -94,13 +79,27 @@ from parallax.core.unit_work.instructions import (
     WriteInstructionError,
     prepare_typed_write,
 )
+from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.planned import (
+    ANY_COUNT,
+    MAX_PLUS_ONE,
     MISSING_TARGET,
     OPTIMISTIC_CONFLICT,
     STALE_WRITE,
+    UNGATED,
+    UNVERSIONED,
+    ExactCount,
+    KeyTarget,
+    PlannedDelete,
+    PlannedRow,
+    PlannedUpdate,
+    PlannedWrite,
     ValidatedMutationSelection,
+    Versioned,
+    VersionGate,
 )
 from parallax.core.unit_work.planner import VersionedStateKey
+from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner

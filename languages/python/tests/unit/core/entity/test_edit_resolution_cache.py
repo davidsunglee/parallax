@@ -22,7 +22,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.entity import shape_of
+from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._edit import Resolution
 
 

@@ -21,12 +21,8 @@ from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
-from parallax.core.object_query import (
-    IncludePath,
-    IncludeSegment,
-    ObjectQueryNode,
-    validate_object_query,
-)
+from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
+from parallax.core.object_query._nodes import IncludePath
 from parallax.core.predicate import All, ModelRejectedError, Narrow, validate_predicate
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records

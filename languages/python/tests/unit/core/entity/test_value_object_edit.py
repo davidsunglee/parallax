@@ -31,8 +31,9 @@ import pytest
 from pydantic import PrivateAttr
 
 from parallax.core import Attr, Rel, ValueObject, attr
-from parallax.core.entity import EDIT_CODES, EditError, EntityDefinitionError
+from parallax.core.entity import EditError, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._errors import EDIT_CODES
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,

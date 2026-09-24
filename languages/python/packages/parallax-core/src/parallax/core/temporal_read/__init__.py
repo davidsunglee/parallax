@@ -31,7 +31,6 @@ from parallax.core.predicate._validated import (
 from parallax.core.temporal_read._compile import MODEL_COMPILER
 from parallax.core.temporal_read._facet import (
     FACET_KEY,
-    NON_TEMPORAL,
     TEMPORAL_READ_MODULE,
     Bitemporal,
     NonTemporal,
@@ -44,7 +43,6 @@ from parallax.core.temporal_read._facet import (
 __all__ = [
     "FACET_KEY",
     "MODEL_COMPILER",
-    "NON_TEMPORAL",
     "TEMPORAL_READ_MODULE",
     "Bitemporal",
     "Edge",

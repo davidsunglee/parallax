@@ -23,13 +23,8 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
-from parallax.snapshot.materialize import (
-    Page,
-    PageBuilder,
-    RootClassifications,
-    RootView,
-    classify_roots,
-)
+from parallax.snapshot.materialize import Page, PageBuilder, RootView, classify_roots
+from parallax.snapshot.materialize._classify import RootClassifications
 from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit.snapshot._snapshot_page_support import (

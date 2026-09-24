@@ -34,9 +34,11 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import RelationshipPath, RelationshipRef
+from parallax.core.entity import RelationshipPath
+from parallax.core.entity._expressions import RelationshipRef
 from parallax.core.entity._model import model_of
-from parallax.core.object_query import IncludePath, IncludeSegment, validate_object_query
+from parallax.core.object_query import IncludeSegment, validate_object_query
+from parallax.core.object_query._nodes import IncludePath
 from tests._support.query_probes import canonical_query
 
 

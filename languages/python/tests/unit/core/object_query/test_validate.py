@@ -6,8 +6,9 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core.object_query import IncludePath, IncludeSegment
+from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import validate as query_validation
+from parallax.core.object_query._nodes import IncludePath
 from parallax.core.predicate import root_position
 from tests.unit._corpus_model_support import formed, records
 

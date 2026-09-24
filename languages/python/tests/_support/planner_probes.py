@@ -10,13 +10,10 @@ from typing import Final
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
-    ActorIdentity,
     BufferItem,
     KeyedWrite,
     MaterializedWriteGroup,
-    ObjectClaimedWrite,
     ObjectKey,
-    ObservedKeyedWrite,
     PredicateWrite,
     SubjectActor,
     WriteObservation,
@@ -28,6 +25,8 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
+from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
+from parallax.core.unit_work.strategy import ActorIdentity
 
 __all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer"]
 

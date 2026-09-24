@@ -80,7 +80,7 @@ def test_public_api_matches_committed_snapshot() -> None:
             ),
         ),
         (
-            "parallax.core.storage_layout",
+            "parallax.core.storage_layout._facet",
             "parallax.core.storage_layout._facet",
             "MemberPlacement",
             ("DirectColumn", "DocumentPath"),

@@ -70,19 +70,18 @@ from parallax.snapshot import (
     handle,
     prepare_model,
 )
+from parallax.snapshot._read_result import FindResult, HistoryFindResult
 from parallax.snapshot.handle import _read, _read_scope
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     ClassifiedRoot,
-    InvalidRootInput,
     Page,
-    PageRows,
     RootView,
     _convert,
     classify_roots,
     page_edges,
 )
-from parallax.snapshot.materialize._page import ABSENT, page_rows
+from parallax.snapshot.materialize._page import ABSENT, InvalidRootInput, PageRows, page_rows
 from parallax.snapshot.materialize._views import ChildSlot
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -166,7 +165,7 @@ def _rows(page: Page) -> PageRows:
     return page_rows(page)
 
 
-def _root(result: handle.FindResult) -> int:
+def _root(result: FindResult) -> int:
     return _valid_root(_rows(result.page))
 
 
@@ -211,14 +210,14 @@ def _cataloged(model: Metamodel) -> CatalogedModel:
     return CatalogedModel(model)
 
 
-def _find(query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection) -> handle.FindResult:
+def _find(query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection) -> FindResult:
     return handle.find(preflight(query, model=model, form="graph"), _cataloged(model), port)
 
 
 def _find_history(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
-) -> handle.HistoryFindResult:
-    return handle.find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
+) -> HistoryFindResult:
+    return _read.find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
 
 
 class QueuePort(ConnectsAsItself):

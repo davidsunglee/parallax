@@ -10,7 +10,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    ActorIdentity,
     BufferItem,
     Concurrency,
     DatabaseLoginActor,
@@ -28,6 +27,7 @@ from parallax.core.unit_work import (
     WritePlan,
     object_key,
 )
+from parallax.core.unit_work.strategy import ActorIdentity
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import observed_buffer

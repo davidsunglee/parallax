@@ -24,9 +24,9 @@ from pydantic import TypeAdapter
 
 from parallax.conformance import read_models as rm
 from parallax.core import Attr, Entity, ValueObject, attr
-from parallax.core.entity import DomainModel, EntityDefinitionError, EntityRowCodec, EntityRowError
+from parallax.core.entity import DomainModel, EntityDefinitionError, EntityRowCodec
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
-from parallax.core.entity._errors import ENTITY_ROW_CODES
+from parallax.core.entity._errors import ENTITY_ROW_CODES, EntityRowError
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import UnresolvedEntityDeclaration

@@ -31,7 +31,8 @@ from parallax.core import LATEST, Attr, DomainModel, attr
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import EntityRowCodec, EntityRowError
+from parallax.core.entity import EntityRowCodec
+from parallax.core.entity._errors import EntityRowError
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey
 from parallax.core.unit_work.instructions import PreparedTemporalBounds

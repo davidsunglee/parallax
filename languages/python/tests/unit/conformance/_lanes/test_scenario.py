@@ -60,7 +60,6 @@ from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
-    KeyTarget,
     MissingTargetError,
     ObjectKey,
     OptimisticLockConflictError,
@@ -74,6 +73,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
+from parallax.core.unit_work.planned import KeyTarget
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError

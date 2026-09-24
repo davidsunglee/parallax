@@ -23,6 +23,7 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, TemporalDimension
 from parallax.core.object_query import LATEST
+from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
 from parallax.core.object_query._validated import (
     ValidatedAsOfSelection,
     ValidatedLatestSelection,
@@ -66,7 +67,7 @@ def _instant(value: str) -> dt.datetime:
 
 def _query(
     entity: EntityMetadata,
-    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
     **clauses: object,
 ) -> oq.ObjectQueryNode:
@@ -80,7 +81,7 @@ def _query(
 
 def _validated(
     entity: EntityMetadata,
-    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
     **clauses: object,
 ) -> ValidatedObjectQuery:
@@ -93,7 +94,7 @@ def _validated(
 
 def _where(
     entity: EntityMetadata,
-    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None = None,
     predicate: oa.PredicateNode | None = None,
 ) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
@@ -288,8 +289,8 @@ def test_as_of_composes_after_a_user_predicate() -> None:
 # --------------------------------------------------------------------------- #
 def _bitemporal(
     valid_time: str | None, tx_time: str | None
-) -> dict[oq.TemporalDimension, oq.TemporalSelection]:
-    selections: dict[oq.TemporalDimension, oq.TemporalSelection] = {}
+) -> dict[QueryTemporalDimension, oq.TemporalSelection]:
+    selections: dict[QueryTemporalDimension, oq.TemporalSelection] = {}
     if tx_time is not None:
         selections["transaction-time"] = oq.AsOf(tx_time)
     if valid_time is not None:
@@ -375,7 +376,9 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
         operands=(predicate, oa.Comparison(op="eq", attr="Balance.acctNum", value="A"))
     )
     disjunction = oa.Or(operands=(predicate, oa.Comparison(op="eq", attr="Balance.id", value=2)))
-    pin: dict[oq.TemporalDimension, oq.TemporalSelection] = {"transaction-time": oq.AsOf("latest")}
+    pin: dict[QueryTemporalDimension, oq.TemporalSelection] = {
+        "transaction-time": oq.AsOf("latest")
+    }
     as_of = oa.Comparison(op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity")
 
     def injected(authored: oa.PredicateNode) -> oa.PredicateNode:

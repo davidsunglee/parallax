@@ -18,6 +18,7 @@ import pytest
 
 from parallax.core import opt_lock
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
+from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.unit_work import (
     PredecessorRow,
     TemporalObservation,
@@ -49,7 +50,7 @@ def test_advance_is_runtime_computed_from_the_observed_value() -> None:
 
 class TestEffectiveStrategy:
     def test_the_locking_preference_forces_locking_on_every_key(self) -> None:
-        assert opt_lock.effective_strategy("locking", opt_lock.UNVERSIONED) == "locking"
+        assert opt_lock.effective_strategy("locking", UNVERSIONED) == "locking"
         assert (
             opt_lock.effective_strategy("locking", opt_lock.ExplicitVersion(_VERSION)) == "locking"
         )
@@ -71,7 +72,7 @@ class TestEffectiveStrategy:
     def test_an_unversioned_family_falls_back_to_locking_under_the_optimistic_preference(
         self,
     ) -> None:
-        assert opt_lock.effective_strategy("optimistic", opt_lock.UNVERSIONED) == "locking"
+        assert opt_lock.effective_strategy("optimistic", UNVERSIONED) == "locking"
 
     def test_an_entity_the_facet_does_not_name_takes_the_same_locking_fallback(self) -> None:
         assert opt_lock.effective_strategy("optimistic", None) == "locking"

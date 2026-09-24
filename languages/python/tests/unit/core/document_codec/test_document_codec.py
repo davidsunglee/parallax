@@ -44,7 +44,6 @@ from parallax.core.document_codec import (
     DecodedMember,
     DocumentFinding,
     Leaf,
-    LeafEncodingError,
     MemberShape,
     Occurrence,
     OccurrenceCarrier,
@@ -65,6 +64,7 @@ from parallax.core.document_codec import (
     shape_of_declaration,
 )
 from parallax.core.document_codec._document import encode_managed_document, encode_managed_many
+from parallax.core.document_codec._leaf import LeafEncodingError
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.metamodel import (
     Multiplicity,

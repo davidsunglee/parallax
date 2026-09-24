@@ -11,11 +11,11 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query import (
     OrderKey,
-    TemporalDimension,
     TemporalSelection,
     object_query,
     validate_object_query,
 )
+from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.predicate import PredicateNode, validate_predicate
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead

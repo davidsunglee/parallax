@@ -68,14 +68,9 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from parallax.snapshot.materialize import (
-    MISSING_STORED_VALUE,
-    PageBuilder,
-    RootView,
-    StoredDataIssueInput,
-)
+from parallax.snapshot.materialize import MISSING_STORED_VALUE, PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
-from parallax.snapshot.materialize._page import ABSENT, LogicalKey, page_rows
+from parallax.snapshot.materialize._page import ABSENT, LogicalKey, StoredDataIssueInput, page_rows
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for

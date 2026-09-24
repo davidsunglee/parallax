@@ -16,6 +16,8 @@ import pytest
 from parallax.conformance import case_format
 from parallax.core import object_query as oq
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.object_query._nodes import IncludePath
+from parallax.core.object_query.serde import serialize
 from parallax.core.predicate import All, CanonicalDocumentError, QueryDefinitionError
 from tests._support.corpus import case_document
 
@@ -48,11 +50,11 @@ _AUTHORED = _authored_queries()
 
 @pytest.mark.parametrize("case_id, doc", _AUTHORED, ids=[c for c, _ in _AUTHORED])
 def test_an_authored_query_round_trips_as_a_fixed_point(case_id: str, doc: dict[str, Any]) -> None:
-    assert oq.serialize(oq.deserialize(doc)) == doc
+    assert serialize(oq.deserialize(doc)) == doc
 
 
 def _round_trips(doc: dict[str, Any]) -> None:
-    assert oq.serialize(oq.deserialize(doc)) == doc
+    assert serialize(oq.deserialize(doc)) == doc
 
 
 @pytest.mark.parametrize(
@@ -144,7 +146,7 @@ def test_an_omitted_clause_round_trips_omitted() -> None:
     assert node.order_by == ()
     assert node.limit is None
     assert node.includes == ()
-    assert oq.serialize(node) == {"target": _ORDER, "predicate": {"all": {}}}
+    assert serialize(node) == {"target": _ORDER, "predicate": {"all": {}}}
 
 
 def test_a_sort_keys_optional_members_stay_distinct_from_their_defaults() -> None:
@@ -183,7 +185,7 @@ def test_the_temporal_map_serializes_in_canonical_dimension_order() -> None:
         "predicate": {"all": {}},
         "temporal": {"valid-time": {"history": {}}, "transaction-time": {"asOf": "latest"}},
     }
-    assert list(oq.serialize(oq.deserialize(authored))["temporal"]) == [  # pyright: ignore[reportArgumentType]
+    assert list(serialize(oq.deserialize(authored))["temporal"]) == [  # pyright: ignore[reportArgumentType]
         "transaction-time",
         "valid-time",
     ]
@@ -217,7 +219,7 @@ def test_deserialize_canonicalizes_the_include_set_before_serialization() -> Non
         "predicate": {"all": {}},
         "includes": [statuses, short, maximal, maximal],
     }
-    assert oq.serialize(oq.deserialize(doc)) == {
+    assert serialize(oq.deserialize(doc)) == {
         "target": "Order",
         "predicate": {"all": {}},
         "includes": [maximal, statuses],
@@ -225,20 +227,20 @@ def test_deserialize_canonicalizes_the_include_set_before_serialization() -> Non
 
 
 def test_serialize_canonicalizes_a_directly_constructed_include_set() -> None:
-    short = oq.IncludePath(segments=(oq.IncludeSegment(rel="Order.items"),))
-    maximal = oq.IncludePath(
+    short = IncludePath(segments=(oq.IncludeSegment(rel="Order.items"),))
+    maximal = IncludePath(
         segments=(
             oq.IncludeSegment(rel="Order.items"),
             oq.IncludeSegment(rel="OrderItem.statuses"),
         )
     )
-    statuses = oq.IncludePath(segments=(oq.IncludeSegment(rel="Order.statuses"),))
+    statuses = IncludePath(segments=(oq.IncludeSegment(rel="Order.statuses"),))
     node = oq.ObjectQueryNode(
         target=EntityIdentity(None, "Order"),
         predicate=All(),
         includes=(statuses, short, maximal, maximal),
     )
-    assert oq.serialize(node)["includes"] == [
+    assert serialize(node)["includes"] == [
         {"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]},
         {"segments": [{"rel": "Order.statuses"}]},
     ]

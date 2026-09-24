@@ -40,8 +40,8 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import PageBuilder, RootView, StoredDataIssueInput
-from parallax.snapshot.materialize._page import page_rows
+from parallax.snapshot.materialize import PageBuilder, RootView
+from parallax.snapshot.materialize._page import StoredDataIssueInput, page_rows
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read

@@ -16,19 +16,16 @@ from parallax.core.document_codec._document import (
     prepared_raw_member_classifier,
     reduce_declared_members,
 )
-from parallax.core.document_codec._leaf import LeafEncodingError, encode_leaf, is_text_compared
+from parallax.core.document_codec._leaf import encode_leaf, is_text_compared
 from parallax.core.document_codec._managed import classify_effective_change
 from parallax.core.document_codec._occurrence import OccurrenceCarrier, encode_occurrence
 from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
-    DocumentMember,
-    ExplicitNull,
     Leaf,
     MemberShape,
     Missing,
     Occurrence,
-    Presence,
     Present,
     entity_shape,
     occurrence_shape,
@@ -42,17 +39,13 @@ __all__ = [
     "DecodedMember",
     "DocumentFinding",
     "DocumentFindingCode",
-    "DocumentMember",
     "DocumentPatch",
     "DocumentPathSegment",
-    "ExplicitNull",
     "Leaf",
-    "LeafEncodingError",
     "MemberShape",
     "Missing",
     "Occurrence",
     "OccurrenceCarrier",
-    "Presence",
     "Present",
     "SetLeaf",
     "SetValue",

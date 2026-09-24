@@ -35,7 +35,8 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
 )
-from parallax.core.object_query import TemporalDimension, TemporalSelection
+from parallax.core.object_query import TemporalSelection
+from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.predicate._validated import (
     ValidatedOperands,
     ValidatedPredicate,

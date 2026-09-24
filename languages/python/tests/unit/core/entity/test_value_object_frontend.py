@@ -21,12 +21,9 @@ from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.base import Float64, NeutralType, String
 from parallax.core.document_codec import shape_of_declaration
-from parallax.core.entity import (
-    ElementAttributeExpr,
-    EntityDefinitionError,
-    Predicate,
-)
+from parallax.core.entity import EntityDefinitionError, Predicate
 from parallax.core.entity._declaration import shape_of
+from parallax.core.entity._expressions import ElementAttributeExpr
 from parallax.core.metamodel import (
     Column,
     Multiplicity,

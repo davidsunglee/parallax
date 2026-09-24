@@ -50,11 +50,11 @@ from parallax.core.object_query import (
     History,
     ObjectQueryNode,
     OrderKey,
-    TemporalDimension,
     TemporalSelection,
     object_query,
     validate_object_query,
 )
+from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.object_query._validated import (
     ContinuationCoordinate,
     ValidatedObjectQuery,

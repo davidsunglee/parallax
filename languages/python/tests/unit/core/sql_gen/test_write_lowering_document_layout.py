@@ -28,7 +28,8 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
+from parallax.core.unit_work import KeyedWrite, PredecessorRow
+from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
     CarriedFrom,
