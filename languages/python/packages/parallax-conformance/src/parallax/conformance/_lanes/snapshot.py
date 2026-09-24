@@ -28,6 +28,7 @@ from parallax.conformance._lanes.scenario import (
 )
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance._mechanism import case_document, envelope
+from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import (
     READ_ERRORS,
     Emission,
@@ -52,7 +53,6 @@ from parallax.core import (
     inheritance,
     relationship,
 )
-from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
@@ -546,7 +546,14 @@ def _relationship_declaration(
     (:func:`_edited_copy`) reach the same answer.
     """
     position = inheritance.view(model).entity(identity)
-    declared = None if position is None else position.applicable_relationship(name)
+    declared = next(
+        (
+            member
+            for member in (() if position is None else position.applicable_relationships)
+            if member.identity.name == name
+        ),
+        None,
+    )
     return None if declared is None else relationship.view(model).relationship(declared.identity)
 
 

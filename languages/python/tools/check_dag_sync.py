@@ -498,12 +498,6 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # sits beside it undeclared. What keeps the two consumers legal is their own
     # rows — a dependency added here would break the row of whichever consumer
     # is not already granted it.
-    # The complete recorder is testing-only: it retains every event of every
-    # root by design, which is exactly what a production observability path may
-    # not do. No production scope is granted it, so the grant table itself is
-    # what states "not a production path" — and this row bounds what the
-    # recorder may reach in return.
-    "parallax.core.execution_lifecycle.testing": frozenset({"parallax.core.execution_lifecycle"}),
     "parallax.snapshot.handle._errors": frozenset(),
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
@@ -675,13 +669,6 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     "parallax.core.entity._layout": ChildScope(parent="parallax.core.entity", policy="sealed"),
     "parallax.core.entity._pydantic_storage": ChildScope(
         parent="parallax.core.entity", policy="sealed"
-    ),
-    # The complete recorder is testing-only: it retains every event of every
-    # root by design, which is exactly what a production observability path may
-    # not do. No production scope is granted it, and isolation is what keeps the
-    # grant every production scope holds on its parent from carrying it in.
-    "parallax.core.execution_lifecycle.testing": ChildScope(
-        parent="parallax.core.execution_lifecycle", policy="isolated"
     ),
     "parallax.core.object_query._fluent": ChildScope(
         parent="parallax.core.object_query", policy="ordinary"

@@ -29,7 +29,6 @@ from parallax.core.base import (
 )
 
 __all__ = [
-    "DIALECT_CATALOG",
     "POSTGRES",
     "ColumnDdl",
     "Dialect",
@@ -40,18 +39,8 @@ __all__ = [
     "LockMode",
     "PhysicalIndexName",
     "Unsupported",
-    "dialect_for",
     "projection_result_key",
 ]
-
-DIALECT_CATALOG: Final[tuple[str, ...]] = ("postgres", "mariadb")
-"""Every Dialect Identity the specification supports, in canonical order.
-
-The catalog is the SPEC's, not this implementation's: a name is listed here
-whether or not :func:`dialect_for` can answer with a strategy for it, so a
-consumer enumerating the supported Dialects reports a missing one as an explicit
-gap rather than silently narrowing the matrix to what it happens to ship.
-"""
 
 LockMode = Literal["locking", "optimistic"]
 
@@ -594,10 +583,3 @@ POSTGRES: Final[Dialect] = Dialect(
     },
     max_identifier_bytes=63,
 )
-
-
-def dialect_for(name: str) -> Dialect:
-    """The pure dialect strategy for ``name`` (postgres is the only concrete one)."""
-    if name == "postgres":
-        return POSTGRES
-    raise ValueError(f"unsupported dialect {name!r}")

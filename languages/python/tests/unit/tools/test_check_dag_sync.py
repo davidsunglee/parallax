@@ -22,9 +22,7 @@ importer exemption), and the four §7 relations:
   a second canary proving the one asymmetric child grant — the descriptor
   package's Hub-construction seam — is admitted for that child alone and stays
   forbidden to every other module its parent's row governs;
-* an isolated child scope, which a grant on its parent does NOT carry, with a
-  canary importing the testing-only lifecycle recorder into a production scope
-  the parent package is granted to;
+* an isolated child scope, which a grant on its parent does NOT carry;
 * the child topology §7 declares as one table — each child's parent and its
   ``ordinary``, ``sealed``, or ``isolated`` import policy — the table grammar,
   and parity with ``CHILD_SCOPES``, with a drift canary per side and per column;
@@ -1058,20 +1056,19 @@ def test_a_child_scope_is_a_forbidden_target_only_where_it_overlaps_nothing() ->
 
 
 def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
-    # The whole point of declaring one: `parallax.snapshot.handle` and
-    # `parallax.snapshot._read_result` are both granted
-    # `parallax.core.execution_lifecycle`, so the recorder inside it would ride
-    # in on that package grant if the row did not name it.
+    # The whole point of declaring one: a scope granted `parallax.aws` would
+    # carry the engine slice inside it in on that package grant if the row did
+    # not name it. No production scope holds that grant, so this states one.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    forbidden = dag.compute_forbidden(adjacency)
-    recorder = "parallax.core.execution_lifecycle.testing"
-    for granted in ("parallax.snapshot.handle", "parallax.snapshot._read_result"):
-        assert "parallax.core.execution_lifecycle" in dag.transitive_closure(adjacency, granted)
-        assert recorder in forbidden[granted], granted
-    # Its own package is the one place a row cannot reach: naming the recorder
-    # in its parent's row would overlap that contract's source package. That edge
+    granted = "parallax.snapshot.handle"
+    forbidden = dag.compute_forbidden({**adjacency, granted: adjacency[granted] | {"parallax.aws"}})
+    engine_slice = "parallax.aws.postgres"
+    assert "parallax.aws" not in forbidden[granted]
+    assert engine_slice in forbidden[granted]
+    # Its own package is the one place a row cannot reach: naming the slice in
+    # its parent's row would overlap that contract's source package. That edge
     # is enforced over the files instead, by `tools/check_scope_ownership.py`.
-    assert recorder not in forbidden["parallax.core.execution_lifecycle"]
+    assert engine_slice not in forbidden["parallax.aws"]
 
 
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
@@ -1227,10 +1224,7 @@ def test_execution_authority_is_a_sealed_behavioral_child_with_core_only_grants(
 
 
 _RETENTION_ROW = "| `parallax.snapshot.handle._retention` | `parallax.snapshot.handle` | sealed |"
-_RECORDER_ROW = (
-    "| `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle` "
-    "| isolated |"
-)
+_ENGINE_SLICE_ROW = "| `parallax.aws.postgres` | `parallax.aws` | isolated |"
 
 
 def test_a_seal_dropped_by_the_tool_alone_fails_generation(
@@ -1263,11 +1257,10 @@ def test_a_seal_dropped_by_the_tool_alone_fails_generation(
 def test_a_policy_changed_by_the_spec_alone_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _spec_with(tmp_path, monkeypatch, _RECORDER_ROW, _RECORDER_ROW.replace("isolated", "ordinary"))
-    with pytest.raises(
-        ValueError,
-        match=r"'parallax\.core\.execution_lifecycle\.testing' has drifted between the spec",
-    ):
+    _spec_with(
+        tmp_path, monkeypatch, _ENGINE_SLICE_ROW, _ENGINE_SLICE_ROW.replace("isolated", "ordinary")
+    )
+    with pytest.raises(ValueError, match=r"'parallax\.aws\.postgres' has drifted between the spec"):
         dag.generate()
 
 
@@ -1682,28 +1675,6 @@ def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports(linted_copy: Pa
         in reported
     )
     assert "parallax.snapshot.handle._errors -> parallax.snapshot.handle._preflight" in reported
-
-
-# --------------------------------------------------------------------------
-# Canary 9: an isolated child is not carried by a grant on its parent package.
-# --------------------------------------------------------------------------
-def test_importing_the_lifecycle_recorder_from_production_fails_lint_imports(
-    linted_copy: Path,
-) -> None:
-    # The Snapshot handle is granted `parallax.core.execution_lifecycle` and
-    # imports its private activity seam legally, so nothing about the package
-    # grant stops the recorder inside it — only the isolated-child entry does.
-    reported = broken_by(
-        linted_copy,
-        "parallax.snapshot.handle._database",
-        "import parallax.core.execution_lifecycle.testing  # deliberate violation",
-    )
-
-    assert "parallax.snapshot.handle may import only its permitted dependencies BROKEN" in reported
-    assert (
-        "parallax.snapshot.handle._database -> parallax.core.execution_lifecycle.testing"
-        in reported
-    )
 
 
 # --------------------------------------------------------------------------

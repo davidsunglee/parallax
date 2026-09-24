@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from parallax.conformance import case_format, engine, execution_lifecycle_stories
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import Returned
@@ -28,7 +29,6 @@ from parallax.core.execution_lifecycle import (
     ReleaseStarted,
     RootExecution,
 )
-from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.snapshot import connect
 from tests._support.corpus import case_fixtures
 from tests._support.root_ownership import own_root

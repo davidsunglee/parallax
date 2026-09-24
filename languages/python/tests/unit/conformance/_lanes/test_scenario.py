@@ -44,6 +44,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     MappingRow,
 )
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -58,6 +59,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     Concurrency,
+    KeyedWrite,
     KeyTarget,
     MissingTargetError,
     ObjectKey,
@@ -73,9 +75,11 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.snapshot import DatabaseOptions
 from parallax.snapshot.handle import WriteEvidenceError
 from tests.unit._metamodel_support import Declaration, attribute, source
+from tests.unit._transact_support import PERSON
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -4238,3 +4242,53 @@ def test_a_conflict_case_whose_root_opt_in_is_bounded_at_zero_runs_its_attempt()
     scenario.run_conflict_case(case, port)
     assert port.levels == ["serializable"]
     assert len(port.writes) == 1
+
+
+_PERSON_META = model_of(PERSON)
+
+
+def _prepared_person_delete(*ids: int) -> PreparedKeyedWrite:
+    instruction = instructions.deserialize(
+        {
+            "mutation": "delete",
+            "entity": "parallax.compatibility.Person",
+            "rows": [{"id": value} for value in ids],
+        }
+    )
+    assert isinstance(instruction, KeyedWrite)
+    prepared = instructions.prepare_wire_write(instruction, _PERSON_META)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
+def test_a_caller_supplied_observation_is_what_an_instruction_settles_against() -> None:
+    # The one licensed way a keyed write settles against a row no read of this
+    # unit of work materialized: the value is answered untouched, so a target
+    # entitled to none refuses it later rather than having it dropped here.
+    observation = VersionObservation(observed_version=4)
+    assert (
+        scenario.instruction_evidence(
+            _PERSON_META, _prepared_person_delete(1), supplied=observation
+        )
+        is observation
+    )
+
+
+def test_an_instruction_holding_no_evidence_reaches_its_targets_own_arm() -> None:
+    # What the oracle answers an entry that supplied none: the same arm the
+    # typed verb for this write reads off its source value's hint.
+    assert scenario.instruction_evidence(
+        _PERSON_META, _prepared_person_delete(1), supplied=None
+    ) == ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
+
+
+def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
+    # A claim addresses one object and an observation is evidence about one row,
+    # so a plural instruction — the one shape no keyed verb can author, and which
+    # therefore reaches no runtime ingress at all — reaches neither grain and
+    # buffers bare. Evidence supplied WITH one is refused by the single-row
+    # carrier (`test_uow_shell`), never dropped for this answer.
+    assert (
+        scenario.instruction_evidence(_PERSON_META, _prepared_person_delete(1, 2), supplied=None)
+        is None
+    )

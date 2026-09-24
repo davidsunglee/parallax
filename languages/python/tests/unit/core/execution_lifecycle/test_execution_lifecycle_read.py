@@ -22,6 +22,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance import read_models
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -53,7 +54,6 @@ from parallax.core.execution_lifecycle._activity import (
     ReadActivity,
     open_read_root,
 )
-from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read

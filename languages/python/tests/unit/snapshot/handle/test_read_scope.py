@@ -34,6 +34,7 @@ from typing import Any, Final
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
@@ -48,7 +49,6 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
     installed_lifecycle,
 )
-from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.object_query import ObjectQueryError, ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node

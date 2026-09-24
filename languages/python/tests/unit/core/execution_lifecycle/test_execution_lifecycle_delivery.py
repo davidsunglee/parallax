@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import pytest
 
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
@@ -42,7 +43,6 @@ from parallax.core.execution_lifecycle._activity import (
     open_read_root,
 )
 from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
-from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock

@@ -36,7 +36,6 @@ from parallax.core.base import (
     PresentDocument,
 )
 from parallax.core.dialect import (
-    DIALECT_CATALOG,
     POSTGRES,
     ColumnDdl,
     Dialect,
@@ -45,7 +44,6 @@ from parallax.core.dialect import (
     IndexColumnDdl,
     PhysicalIndexName,
     Unsupported,
-    dialect_for,
 )
 
 DIALECTS: list[Dialect] = [POSTGRES]
@@ -335,12 +333,6 @@ def test_error_classification(dialect: Dialect) -> None:
     assert dialect.classify("00000") is None
 
 
-def test_dialect_lookup() -> None:
-    assert dialect_for("postgres") is POSTGRES
-    with pytest.raises(ValueError, match="unsupported dialect"):
-        dialect_for("mariadb")
-
-
 # --- DDL primitives -----------------------------------------------------------
 
 
@@ -453,12 +445,3 @@ def test_a_physical_index_name_is_a_nonempty_identifier() -> None:
     assert PhysicalIndexName("widget_pkey").value == "widget_pkey"
     with pytest.raises(ValueError, match="nonempty identifier"):
         PhysicalIndexName("")
-
-
-def test_the_supported_dialect_catalog_is_the_specification_s() -> None:
-    # The catalog names every Dialect the specification supports, whether or not
-    # this implementation ships a strategy for it, so a consumer enumerating it
-    # reports the gap rather than narrowing the matrix to what it happens to have.
-    assert DIALECT_CATALOG == ("postgres", "mariadb")
-    with pytest.raises(ValueError, match="unsupported dialect"):
-        dialect_for("mariadb")

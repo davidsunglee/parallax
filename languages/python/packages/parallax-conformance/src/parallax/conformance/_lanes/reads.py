@@ -13,6 +13,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.conformance._mechanism import case_document, envelope
+from parallax.conformance._mechanism.dialects import dialect_for
 from parallax.conformance._mechanism.envelope import READ_ERRORS, Emission, EngineError
 from parallax.conformance._mechanism.given_state import apply_given_corrupt
 from parallax.conformance._mechanism.model_facts import (
@@ -27,7 +28,6 @@ from parallax.conformance._mechanism.transaction_control import transact, underl
 from parallax.core.base import normalize_instant
 from parallax.core.continuation import ContinuationError
 from parallax.core.db_port import MappingRow
-from parallax.core.dialect import dialect_for
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
     AttributeIdentity,

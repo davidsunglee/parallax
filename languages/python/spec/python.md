@@ -362,7 +362,6 @@ come from `core/spec/modules.md`.
 | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` |
 | `parallax.core.entity._pydantic_storage` | (none) |
 | `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` |
-| `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` |
 | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` |
 | `parallax.descriptor._hub` | `parallax.core.entity` |
 | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
@@ -470,7 +469,6 @@ for the scopes each policy governs.
 | `parallax.core.entity._instance_state` | `parallax.core.entity` | sealed |
 | `parallax.core.entity._layout` | `parallax.core.entity` | sealed |
 | `parallax.core.entity._pydantic_storage` | `parallax.core.entity` | sealed |
-| `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle` | isolated |
 | `parallax.core.object_query._fluent` | `parallax.core.object_query` | ordinary |
 | `parallax.descriptor._hub` | `parallax.descriptor` | ordinary |
 | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle` | ordinary |
