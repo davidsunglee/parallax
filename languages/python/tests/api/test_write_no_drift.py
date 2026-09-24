@@ -494,9 +494,9 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 # write-side counterpart of                                                   #
 # `test_object_query_no_drift.test_idiomatic_statement_build_rejects_the_corpus_rule` #
 # — `tx.insert` refuses the SAME invalid write the corpus's own rejected      #
-# lane grades (`engine.run_rejected_case`), through the SAME model-aware      #
-# write preparation (`unit_work.instructions`), naming the SAME classified    #
-# rule.                                                                       #
+# lane grades (`engine.run_rejected_case`), through the SAME concrete-subtype #
+# write rule (`inheritance.validate_subtype_write`), naming the SAME          #
+# classified rule.                                                            #
 # No golden DML: a rejected write never reaches the port (`api_suite.EXAMPLES`'#
 # own entries are these exact snippets).                                      #
 # --------------------------------------------------------------------------- #

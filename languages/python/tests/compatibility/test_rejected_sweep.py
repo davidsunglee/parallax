@@ -5,8 +5,7 @@ A rejected case executes no SQL and touches no database (m-case-format "Rejected
 cases"): grading its `run` envelope needs no provisioning, so — unlike
 `test_run_sweep.py`, whose every test function threads the Testcontainers
 `profile_run` fixture — this sweep runs entirely in-process. `when.objectQuery` /
-`when.model` / `when.write` inputs are all exercised end-to-end (the
-`when.write` half via the model-aware write preparation): the classified
+`when.model` / `when.write` inputs are all exercised end-to-end: the classified
 `rejectedRule` observation is compared against the case's own
 `then.rejectedRule`, and a :class:`_RefusingPort` proves the "no database"
 contract structurally, the same way the compile lane's refusing port proves
