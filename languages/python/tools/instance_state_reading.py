@@ -42,6 +42,7 @@ from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot.materialize import PageBuilder, RootView, wire_roots
+from parallax.snapshot.materialize._page import LogicalKey
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import shared_wire_encoder
 
@@ -271,8 +272,22 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         includes,
         model,
     )
+    layout = scenario.layout
+    values = scenario.values
     builder = PageBuilder(ViewSchema.of())
-    root = builder.add(ROOT_LEVEL, scenario.layout, scenario.values)
+    root = builder.add_claim(
+        ROOT_LEVEL,
+        layout,
+        LogicalKey(
+            layout.family,
+            values[layout.primary_key[0]],
+            tuple(values[position] for position in layout.temporal_starts),
+        ),
+        values,
+        values,
+        (),
+        values,
+    )
     page = builder.finish((root,), Pin())
 
     def project() -> None:

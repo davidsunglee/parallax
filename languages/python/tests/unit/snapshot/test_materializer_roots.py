@@ -78,7 +78,7 @@ def test_equal_witnesses_decode_once_and_share_one_page_state(
     second = RootView(cast("Any", page), 1)
 
     assert calls == 1
-    assert len(cast("Any", page).judged_states) == 1
+    assert len(page_rows(page).judged_states.group(0)) == 1
     assert first.member_values(0) is second.member_values(0)
 
 
@@ -90,7 +90,7 @@ def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> Non
 
     assert first.member_values(0)[1] == "Ada"
     assert second.member_values(0)[1] == "Grace"
-    assert len(cast("Any", page).judged_states.values().__iter__().__next__()) == 2
+    assert len(page_rows(page).judged_states.group(0)) == 2
 
 
 def test_keyless_occurrences_are_judged_only_when_their_root_is_requested(

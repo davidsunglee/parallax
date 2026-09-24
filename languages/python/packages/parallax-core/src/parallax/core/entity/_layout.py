@@ -90,18 +90,6 @@ class EntityLayout:
     def value_objects(self) -> Sequence[ValueObjectMetadata]:
         return self.member_selection.value_objects
 
-    def key_of(self, row: tuple[object, ...]) -> object:
-        """``row``'s logical key: the raw scalar for a single-column primary key,
-        a tuple of them in declared order for a composite one.
-
-        The whole-graph pin the identity triple also names is deliberately
-        omitted, because every row of one materialization stands at the same pin
-        and so it can distinguish nothing.
-        """
-        if len(self.primary_key) == 1:
-            return row[self.primary_key[0]]
-        return tuple(row[position] for position in self.primary_key)
-
     def ordered[V: NarrowableView](self, views: Iterable[V]) -> tuple[V, ...]:
         """``views`` in canonical slot order: each relationship's own declaration
         position with a direction this concrete does not navigate last, the

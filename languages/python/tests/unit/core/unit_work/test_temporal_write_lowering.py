@@ -79,7 +79,6 @@ from parallax.snapshot.handle import (
     build_write_planner,
     plan_temporal_close,
 )
-from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import (
     Read,
@@ -91,6 +90,7 @@ from tests._support.db_port import (
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit._transact_support import (
     INFINITY_INSTANT,
     WHERE_POSITION_META,
@@ -1047,9 +1047,8 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     ]
 
 
-# One materialized SpotQuote row as the read executor hands it to a collector:
-# physical-column keyed, complete (instance-form projects every applicable
-# Column), and carrying no node of its own. Interval values are driver-native —
+# One materialized SpotQuote row, physical-column keyed and complete
+# (instance-form projects every applicable Column). Interval values are driver-native —
 # an aware `datetime` for a finite bound, the neutral open-bound sentinel for an
 # open one — which is what the port returns and what the observation retains
 # unchanged.
@@ -1069,17 +1068,17 @@ _SPOT_QUOTE_EDGE: Final[Edge] = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.U
 
 def _retained(
     model: AcceptedMetamodel,
-    observations: ObservedRows,
     uow: UnitOfWork,
     entity: EntityIdentity,
+    document: object | None = None,
 ) -> WriteObservation | None:
-    """The evidence ``observations`` retained for the SpotQuote milestone.
+    """The evidence a read of the SpotQuote row retained for its milestone.
 
     Read off the read origin the retention answered, and cross-checked against
     the unit of work's own index: the two are one object, because the index is a
     weak view of what the sources hold rather than a second copy.
     """
-    hint = retain_evidence(model, observations, ledger=uow)[0]
+    hint = judged_evidence(model, entity, _SPOT_QUOTE_COLUMNS, document=document, ledger=uow)[0]
     assert hint.observation is not None
     state = TemporalStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
     assert hint.observation.key == state
@@ -1095,11 +1094,9 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # narrowed to the declaring root's members would silently NULL `symbol` on the
     # next milestone instead of carrying it forward.
     model, entity = _accepted("SpotQuote", QUOTE)
-    observations = ObservedRows()
-    observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        return _retained(model, observations, uow, entity.identity)
+        return _retained(model, uow, entity.identity)
 
     observation = run_unit_of_work(
         observe,
@@ -1136,11 +1133,9 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     # (`m-unit-work`).
     model, entity = _accepted("SpotQuote", QUOTE)
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
-    observations = ObservedRows()
-    observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        return _retained(model, observations, uow, entity.identity)
+        return _retained(model, uow, entity.identity, stored)
 
     observation = run_unit_of_work(
         observe,

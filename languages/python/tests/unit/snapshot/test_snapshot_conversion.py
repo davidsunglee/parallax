@@ -75,7 +75,7 @@ from parallax.snapshot.materialize import (
     StoredDataIssueInput,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_deferred, convert_row
-from parallax.snapshot.materialize._page import ABSENT, page_rows
+from parallax.snapshot.materialize._page import ABSENT, LogicalKey, page_rows
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
@@ -104,7 +104,8 @@ type _Record = Mapping[str, object]
 
 @dataclass(frozen=True, slots=True)
 class _Projection:
-    """One converted projection: its layout, its member row, and its issues.
+    """One converted projection: its layout, its member row, its issues, and the
+    Page identity it claimed.
 
     Every read below goes through the layout, because that is the whole of how a
     row is read — a position means what the layout says it means and nothing on
@@ -114,6 +115,7 @@ class _Projection:
     layout: EntityLayout
     values: tuple[object, ...]
     issues: tuple[StoredDataIssueInput, ...]
+    key: LogicalKey | None
 
     @property
     def concrete_entity(self) -> EntityIdentity:
@@ -142,8 +144,9 @@ class _Projection:
         return ABSENT if position is None else self.values[position]
 
     def logical_key(self) -> tuple[EntityIdentity, object]:
-        """This row's Page identity claim, exactly as the builder derives one."""
-        return self.layout.family, self.layout.key_of(self.values)
+        """This row's Page identity claim, as family and primary key."""
+        assert self.key is not None
+        return self.key.family, self.key.primary_key
 
 
 def _context(model: Metamodel, entity: str) -> LevelContext:
@@ -184,6 +187,7 @@ def _converted(
         rows.layouts[index],
         rows.member_rows[index] if root.roots == (None,) else root.member_values(0),
         root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0),
+        rows.keys[index],
     )
 
 
@@ -194,7 +198,7 @@ def _projection(context: LevelContext, row: dict[str, object]) -> _Projection:
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
-    return _Projection(rows.layouts[index], root.member_values(0), root.issues(0))
+    return _Projection(rows.layouts[index], root.member_values(0), root.issues(0), rows.keys[index])
 
 
 def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> EntityStateRow:

@@ -66,9 +66,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._page import (
     ABSENT,
-    EntityState,
-    JudgedStates,
-    LogicalKey,
+    Page,
     PageBuilder,
     exact_stored_equal,
     page_rows,
@@ -402,7 +400,7 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode(
         page = fixture.page(order)
         with pytest.raises(SnapshotConsistencyError) as raised:
             RootView(page)
-        assert page.judged_states == {}
+        assert _judged_state_count(page) == 0
         return raised.value
 
     forward = conflict(items, by_ship_date)
@@ -563,7 +561,7 @@ def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
     root = RootView(page)
     item = _sole_node(root, "OrderItem")
     assert [issue.code for issue in root.issues(item)] == ["stored-data-leaf-undecodable"]
-    assert len(page.judged_states) == 2
+    assert _judged_state_count(page) == 2
 
 
 def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> None:
@@ -932,7 +930,7 @@ def test_temporal_starts_distinguish_page_logical_identity() -> None:
     first_key, second_key = rows.keys[first], rows.keys[second]
     assert first_key is not None and second_key is not None
     assert [first_key.coordinates, second_key.coordinates] == [(first_start,), (second_start,)]
-    assert len(page.judged_states) == 2
+    assert _judged_state_count(page) == 2
 
 
 # A table-per-concrete-subtype family whose bitemporal axes are declared on the
@@ -1233,20 +1231,6 @@ def test_no_published_value_is_the_absent_sentinel() -> None:
     assert all(value is not ABSENT for value in vars(root).values())
 
 
-def test_judged_states_exposes_singletons_through_its_mapping_view() -> None:
-    key = LogicalKey(_soOrder.identity, 1)
-    missing = LogicalKey(_soOrder.identity, 2)
-    judged = JudgedStates((key,), (7,))
-
-    assert judged.get(key) is None
-    assert judged.get(missing) is None
-    assert judged != object()
-
-    state = EntityState((1,), ())
-    judged.set_singleton(0, state)
-    assert judged[key] == [(7, state)]
-
-
 def test_exact_stored_equality_descends_into_nested_tuple_carriers() -> None:
     assert not exact_stored_equal(({"value": True},), ({"value": 1},))
 
@@ -1285,3 +1269,15 @@ def _customer_row(phone_type: str) -> dict[str, object]:
 def _sole_node(root_view: Any, name: str) -> int:
     (index,) = [index for index, entity in enumerate(root_view.order) if entity.name == name]
     return index
+
+
+def _judged_state_count(page: Page) -> int:
+    """How many Entity States ``page`` holds judged, over every logical node."""
+    rows = page_rows(page)
+    judged = rows.judged_states
+    return sum(
+        judged.singleton(logical) is not None
+        if isinstance(claim, int)
+        else len(judged.group(logical))
+        for logical, claim in enumerate(rows.claims)
+    )

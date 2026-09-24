@@ -57,6 +57,8 @@ from parallax.core.metamodel import (
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import PageBuilder, RootView
+from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
+from parallax.snapshot.materialize._page import page_rows
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
@@ -399,23 +401,20 @@ def test_the_catalog_derives_each_participants_variant_once_and_a_lookup_derives
     assert derived == []
 
 
-def test_a_single_column_key_reads_the_raw_scalar_out_of_its_own_position() -> None:
+def test_a_single_column_key_is_its_own_attributes_position() -> None:
     layout = LayoutCatalog(corpus_model("orders")).entity(_identity("Order"))
-    row = tuple(range(100, 100 + len(layout.members)))
     identity = _key_attribute(layout)
-    assert layout.key_of(row) == row[layout.index_of[identity]]
+    assert layout.primary_key == (layout.index_of[identity],)
 
 
-def test_an_inherited_key_reads_the_position_the_family_root_declared() -> None:
+def test_an_inherited_key_is_the_position_the_family_root_declared() -> None:
     # The family root owns the key, and a descendant's row carries it under the
     # root's own Attribute Identity, so a Cat and an Animal key alike.
     catalog = LayoutCatalog(corpus_model("animal"))
     cat = catalog.entity(_identity("Cat"))
     animal = catalog.entity(_identity("Animal"))
     key = _key_attribute(animal)
-    assert cat.index_of[key] == animal.index_of[key]
-    row = tuple(range(len(cat.members)))
-    assert cat.key_of(row) == row[cat.index_of[key]]
+    assert cat.primary_key == animal.primary_key == (cat.index_of[key],)
 
 
 def _with_composite_key(model: Metamodel, identity: EntityIdentity) -> Metamodel:
@@ -440,16 +439,16 @@ def _with_composite_key(model: Metamodel, identity: EntityIdentity) -> Metamodel
     return cast("Metamodel", _DoctoredModel(model, entities={identity: composite}))
 
 
-def test_a_composite_key_reads_a_tuple_in_the_order_the_family_declared_it() -> None:
+def test_a_composite_key_is_its_positions_in_the_order_the_family_declared_it() -> None:
     identity = _identity("Order")
     layout = LayoutCatalog(_with_composite_key(corpus_model("orders"), identity)).entity(identity)
-    row = tuple(range(200, 200 + len(layout.members)))
-    positions = [
+    positions = tuple(
         layout.index_of[attribute.identity]
         for attribute in layout.attributes
         if attribute.identity.name in _COMPOSITE_KEY
-    ]
-    assert layout.key_of(row) == tuple(row[position] for position in positions)
+    )
+    assert len(positions) == len(_COMPOSITE_KEY)
+    assert layout.primary_key == positions
 
 
 class _DoctoredEntity:
@@ -573,7 +572,7 @@ def _merged(layout: EntityLayout, row: tuple[object, ...], views: tuple[Relation
     """One projection of ``layout``'s Entity carrying ``row`` and ``views``,
     merged — the state every consumer of these two rules reads them through."""
     builder = PageBuilder(ViewSchema.of(*views))
-    projection = builder.add(ROOT_LEVEL, layout, row)
+    projection = _claimed(builder, layout, row)
     for view in views:
         builder.write_view(projection, view, None)
     return RootView(builder.finish((projection,), Pin()))
@@ -587,52 +586,36 @@ def _merged_view_order(
     return _merged(layout, row, views).view_layout(0).slots
 
 
+def _claimed(builder: PageBuilder, layout: EntityLayout, row: tuple[object, ...]) -> int:
+    """``row`` registered as a provider row of ``layout``'s Entity is."""
+    return convert_deferred(
+        row,
+        LevelContext(layout),
+        builder,
+        source=ROOT_LEVEL,
+        classifiable=(1 << len(row)) - 1,
+    )
+
+
 def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule() -> None:
     # Two projections of one row share a logical node exactly where the layout
     # says their keys agree, which is the merge-side statement of `family` and
-    # `key_of` together — the builder derives identity through no other rule.
+    # `primary_key` together.
     for stem, model, identity, layout in _corpus_layouts():
         del model
         where = (stem, identity.canonical)
         row = tuple(range(100, 100 + len(layout.members)))
         other = tuple(value + 1 for value in row)
         builder = PageBuilder(ViewSchema.of())
-        first = builder.add(ROOT_LEVEL, layout, row)
-        again = builder.add(ROOT_LEVEL, layout, row)
-        apart = builder.add(ROOT_LEVEL, layout, other)
-        merge = RootView(builder.finish((first, again, apart), Pin()))
-        assert merge.roots == (0, 0, 1), where
-        assert builder_key_of(layout, row) != builder_key_of(layout, other), where
-
-
-def builder_key_of(layout: EntityLayout, row: tuple[object, ...]) -> tuple[EntityIdentity, object]:
-    """The graph-local identity the builder assigns ``row``, spelled as one value."""
-    return layout.family, layout.key_of(row)
-
-
-def test_a_composite_key_agrees_with_the_merge_identity_rule_as_a_whole_tuple() -> None:
-    identity = _identity("Order")
-    doctored = _with_composite_key(corpus_model("orders"), identity)
-    layout = LayoutCatalog(doctored).entity(identity)
-    row = tuple(range(200, 200 + len(layout.members)))
-    key = layout.key_of(row)
-    assert isinstance(key, tuple)
-    assert len(cast("tuple[object, ...]", key)) == len(_COMPOSITE_KEY)
-    # One column of the composite differing is a different logical node, which a
-    # single-column key spelling could not distinguish.
-    first_column = min(
-        layout.index_of[attribute.identity]
-        for attribute in layout.attributes
-        if attribute.identity.name in _COMPOSITE_KEY
-    )
-    varied = tuple(
-        value + 1 if position == first_column else value for position, value in enumerate(row)
-    )
-    builder = PageBuilder(ViewSchema.of())
-    first = builder.add(ROOT_LEVEL, layout, row)
-    apart = builder.add(ROOT_LEVEL, layout, varied)
-    merge = RootView(builder.finish((first, apart), Pin()))
-    assert merge.roots == (0, 1)
+        first = _claimed(builder, layout, row)
+        again = _claimed(builder, layout, row)
+        apart = _claimed(builder, layout, other)
+        rows = page_rows(builder.finish((first, again, apart), Pin()))
+        assert list(rows.logical_ids) == [0, 0, 1], where
+        first_key, apart_key = rows.keys[first], rows.keys[apart]
+        assert first_key is not None and apart_key is not None, where
+        assert first_key.family == apart_key.family == layout.family, where
+        assert first_key.primary_key != apart_key.primary_key, where
 
 
 def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> None:

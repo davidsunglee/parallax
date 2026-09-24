@@ -241,21 +241,3 @@ def test_both_layout_twins_expose_one_positional_row_identically() -> None:
     assert _plain(dict(EntityStateRow.over_members(_COLUMNS_LAYOUT, _VALUES, absent=ABSENT))) == (
         _plain(dict(_physical()))
     )
-
-
-def test_a_remapped_physical_mapping_reads_by_declared_name_and_omits_missing_columns() -> None:
-    columns = {"id": 7, "display_name": "Ada", "address": {"city": "Bergen"}}
-    members = {
-        "id": ("id", False),
-        "displayName": ("display_name", False),
-        "score": ("score", False),
-        "address": ("address", True),
-    }
-    row = EntityStateRow.remap(members, columns)
-
-    assert row["displayName"] == "Ada"
-    assert list(row) == ["id", "displayName", "address"]
-    assert "score" not in row
-    with pytest.raises(KeyError):
-        row["score"]
-    assert dict(row) == {"id": 7, "displayName": "Ada", "address": {"city": "Bergen"}}
