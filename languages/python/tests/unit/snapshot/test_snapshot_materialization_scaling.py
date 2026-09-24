@@ -16,14 +16,6 @@ before the next begins — with only the prepared selection held: nothing
 model-fixed may grow with Pages or with executions, which is what forbids a
 query shape retained PER EXECUTION.
 
-Both axes grade a SIZE, so what they reach is bounded by what varies across the
-thing they vary. A holder whose entry count is fixed by the model — one banked
-query shape every execution after the first then shares — grows with neither
-Pages nor executions nor rows, and is therefore not something a size separates
-from state the model legitimately owns. That such a shape is not banked at all is
-a structural property of the code that owns it, asserted where that code is, and
-outside what any measurement of size can say.
-
 **Preparation is entered whole.** Every arm derives its cataloged model from
 ``prepare_model``, and the closure is taken over the selection that answers rather
 than over the catalog inside it, so the read and write projections, the Entity
@@ -45,11 +37,7 @@ by what a row holds stops growing once the same rows come back, so a byte readin
 repeated over one root would read it already full. Each run the reading takes
 instead converts a root whose fixture-generated keys and authored names and
 labels no earlier run reached, built inside that run, so an entry taken for
-those rows keeps bytes of that run alive at the sample point. The fixture
-intentionally omits its other declared scalar and nested members; the reading
-therefore claims no coverage of holders keyed by values the workload does not
-author. A holder bounded by any fixed value domain grows with neither rows,
-Pages, nor executions once full and is outside this size claim.
+those rows keeps bytes of that run alive at the sample point.
 
 Each byte reading is graded against a control that generates a root's rows the
 same way and converts none of them, so what is compared is the conversion alone.
