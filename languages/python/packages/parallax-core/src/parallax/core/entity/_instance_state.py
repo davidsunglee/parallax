@@ -12,12 +12,12 @@ import functools
 import operator
 from dataclasses import dataclass
 from types import MappingProxyType, MemberDescriptorType
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, NoReturn, cast
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
-from parallax.core.entity._construction_input import UNLOADED
+from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.entity._pydantic_storage import (
     MODEL_PRESENCE,
     MODEL_STORAGE,
@@ -35,6 +35,7 @@ __all__ = [
     "COMPACT_STATE_SLOT",
     "BackedModel",
     "PublicationPlan",
+    "RowShapeError",
     "allocate",
     "carry_presence",
     "carry_slots_beside_state",
@@ -45,7 +46,7 @@ __all__ = [
     "named_state",
     "named_state_value",
     "plan_of",
-    "publish",
+    "publish_positional",
     "relationship",
     "restated",
 ]
@@ -719,7 +720,7 @@ def allocate(cls: type[Any]) -> Any:
 
     Neither the ordinary constructor nor ``model_construct`` is entered: a shell
     exists so a relationship can name it before it holds anything, and it holds
-    nothing until :func:`publish` attaches its row. What it is given here is only
+    nothing until :func:`publish_positional` attaches its row. What it is given here is only
     the Pydantic storage a shell cannot be missing — the extra slot every read of
     the value consults, and the private state an author's own ``PrivateAttr``
     declares, initialized to its declared defaults exactly as validation-free
@@ -1016,52 +1017,88 @@ def relationship(value: BaseModel, py_name: str) -> object:
     return row[plan_of(type(value)).relationships[py_name]]
 
 
-def publish(
-    instance: BaseModel,
-    values: Mapping[str, object],
-    relationships: Mapping[str, object] = MappingProxyType({}),
-    *,
-    shared_bitmaps: dict[int, int] | None = None,
-) -> None:
-    """Assemble ``instance``'s complete compact row and attach it, once.
+class RowShapeError(ValueError):
+    """A member or relationship row that is not an exact built-in tuple of the
+    plan's own width.
 
-    Attachment is the atomic act of populating the value: the row is built in
-    local state and every refusal happens before anything is written, so no
-    partially published value exists at any point. A member ``values`` does not
-    name keeps whatever :attr:`PublicationPlan.template` holds at its position
-    and leaves its presence bit clear.
-
-    ``shared_bitmaps`` is one caller's own memo of the presence masks it has
-    already assembled, and its life is that caller's. CPython interns small
-    integers, so a mask through ``0b11111111`` is a shared singleton already and
-    a wider one allocates; every node of one class in one materialization comes
-    from one projection and so repeats one pattern, which the memo turns into one
-    shared integer per distinct pattern. Nothing process-wide holds it, so no
-    mask outlives the graph whose publication assembled it.
+    Raised before any resolver runs and before anything is attached, so the
+    caller that knows what the row was for attributes the refusal.
     """
-    plan = plan_of(type(instance))
+
+    def __init__(self, *, tail: bool, width: int) -> None:
+        super().__init__(
+            f"a {'relationship' if tail else 'member'} row is an exact tuple of {width} positions"
+        )
+        self.tail = tail
+        self.width = width
+
+
+def _unresolved_relationship(
+    _context: object, _node: object, position: int, _arm: object
+) -> NoReturn:
+    raise ValueError(f"relationship position {position} is loaded and no resolver was given")
+
+
+def publish_positional[C, N](
+    plan: PublicationPlan,
+    instance: BaseModel,
+    members: tuple[object, ...],
+    relationships: tuple[object, ...],
+    *,
+    context: C,
+    node: N,
+    occurrence: Callable[[C, N, int, object], object],
+    relationship: Callable[[C, N, int, object], object] = _unresolved_relationship,
+    bitmaps: dict[int, int],
+) -> None:
+    """Fill one copy of ``plan.template`` from positional rows and attach it, once.
+
+    ``members`` is aligned to :attr:`PublicationPlan.py_names` and
+    ``relationships`` to the relationship tail. An ``ABSENT`` member keeps the
+    template's default with its presence bit clear. ``occurrence`` converts each
+    present Value Object position and ``relationship`` each loaded tail position;
+    both receive ``context`` and ``node`` unchanged, then the position and its
+    value. An unloaded position keeps the template's sentinel without a resolver
+    call, so a class laying out no tail needs no relationship resolver.
+
+    Attachment is the atomic act of populating the value: every refusal — a row
+    of the wrong kind or width, an already-published value, or a resolver's own —
+    happens before anything is written, so no partially published value exists
+    at any point.
+
+    ``bitmaps`` is one caller's own memo of the presence masks it has already
+    assembled, and its life is that caller's. CPython interns small integers, so
+    a mask through ``0b11111111`` is a shared singleton already and a wider one
+    allocates; every node of one class in one materialization comes from one
+    projection and so repeats one pattern, which the memo turns into one shared
+    integer per distinct pattern. Nothing process-wide holds it, so no mask
+    outlives the graph whose publication assembled it.
+    """
+    width = len(plan.py_names)
+    if type(members) is not tuple or len(members) != width:
+        raise RowShapeError(tail=False, width=width)
+    tail = len(plan.relationships)
+    if type(relationships) is not tuple or len(relationships) != tail:
+        raise RowShapeError(tail=True, width=tail)
     if _compact(instance) is not None:
         raise ValueError(
             f"{type(instance).__name__} is already published, and a published value's "
             "state is attached exactly once"
         )
-    indexes = plan.indexes
-    bits = plan.bits
+    attributes = width - len(plan.occurrences)
     row = list(plan.template)
     bitmap = 0
-    for py_name, member in values.items():
-        index = indexes.get(py_name)
-        if index is None:
-            raise ValueError(f"{type(instance).__name__} declares no member {py_name!r}")
-        row[index] = member
-        bitmap |= 1 << bits[py_name]
-    tail = plan.relationships
-    for py_name, related in relationships.items():
-        index = tail.get(py_name)
-        if index is None:
-            raise ValueError(f"{type(instance).__name__} declares no relationship {py_name!r}")
-        row[index] = related
-    row[0] = bitmap if shared_bitmaps is None else shared_bitmaps.setdefault(bitmap, bitmap)
+    for position, member in enumerate(members):
+        if member is ABSENT:
+            continue
+        row[position + 1] = (
+            member if position < attributes else occurrence(context, node, position, member)
+        )
+        bitmap |= 1 << position
+    for position, arm in enumerate(relationships):
+        if arm is not UNLOADED:
+            row[width + 1 + position] = relationship(context, node, position, arm)
+    row[0] = bitmaps.setdefault(bitmap, bitmap)
     _CompactState.__set__(instance, tuple(row))
 
 

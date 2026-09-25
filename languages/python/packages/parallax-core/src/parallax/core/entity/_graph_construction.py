@@ -9,14 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from pydantic import BaseModel
 
-from parallax.core.entity._construction_input import ABSENT, UNLOADED, NodeHandle
+from parallax.core.entity._construction_input import NodeHandle
 from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
-    ValueObjectShape,
     WireNames,
     shape_of,
     wire_names_of,
@@ -25,9 +24,10 @@ from parallax.core.entity._entity import attach_lifecycle_state
 from parallax.core.entity._errors import GraphConstructionError
 from parallax.core.entity._instance_state import (
     PublicationPlan,
+    RowShapeError,
     allocate,
     plan_of,
-    publish,
+    publish_positional,
 )
 from parallax.core.entity._instance_state import relationship as relationship_state
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -51,6 +51,22 @@ __all__ = [
 ]
 
 
+class _OccurrenceFacts(NamedTuple):
+    """One Value Object occurrence path, proven against the class bound at it.
+
+    Correspondence settles the class and its publication plan once per path, so
+    a record publishes against them without resolving either again. ``nested``
+    is aligned to the occurrence's own nested occurrences, which its row lays out
+    after its leaves.
+    """
+
+    declared: ValueObjectMetadata | NestedValueObjectMetadata
+    cls: type
+    plan: PublicationPlan
+    many: bool
+    nested: tuple[_OccurrenceFacts, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class _EntityFacts:
     """Everything one Entity's construction needs: the exact-model member layout
@@ -62,23 +78,19 @@ class _EntityFacts:
     Object boundary, the metadata each position takes, and the canonical
     broad-relationship order — and ``plan`` fixes where each of those positions
     lands on an instance. The correspondence check is what binds the two: once
-    it passes, ``plan.py_names[i]`` is the Python name of ``layout.members[i]``
-    and ``plan.occurrences[i + 1]`` the Value Object Class an occurrence position
-    takes, so a position is read off both without a per-member record pairing
-    them.
+    it passes, layout position ``i`` is plan position ``i``, so a row publishes
+    positionally without a per-member record pairing them.
 
-    The two tuples are per-position answers resolved once here rather than per
-    stored value, each aligned to the run it is stated over: the Python name a
-    navigable direction's slot is installed under and whether a direction is
-    to-many. The latter reads the layout's own identity-keyed facts into the
-    positional order the rows arrive in; the former is held by neither value.
+    The two tuples are answers resolved once here rather than per stored value:
+    whether each direction in the layout's relationship order is to-many, and
+    each top-level occurrence's proven facts in the layout's occurrence order.
     """
 
     layout: EntityLayout
     cls: type
     plan: PublicationPlan
-    relationship_py: tuple[str, ...]
     many: tuple[bool, ...]
+    occurrences: tuple[_OccurrenceFacts, ...]
 
 
 def _entity_facts(
@@ -94,17 +106,13 @@ def _entity_facts(
             identity=identity,
         )
     layout = cataloged.layouts.entity(identity)
-    names = wire_names_of(cls)
     plan = plan_of(cls)
-    require_correspondence(layout, names, plan)
     return _EntityFacts(
         layout=layout,
         cls=cls,
         plan=plan,
-        relationship_py=tuple(
-            names.relationship_py[direction.name] for direction in layout.relationships
-        ),
         many=tuple(direction in layout.to_many for direction in layout.relationships),
+        occurrences=_proven_occurrences(layout, wire_names_of(cls), plan),
     )
 
 
@@ -136,10 +144,18 @@ def require_correspondence(layout: EntityLayout, names: WireNames, plan: Publica
     actual pair a process publishes rather than on whichever pair a fixture
     named, and no field read ever pays for the question.
     """
+    _proven_occurrences(layout, names, plan)
+
+
+def _proven_occurrences(
+    layout: EntityLayout, names: WireNames, plan: PublicationPlan
+) -> tuple[_OccurrenceFacts, ...]:
+    """Every correspondence check, answering the occurrence facts the
+    occurrence check proves on the way."""
     _require_member_correspondence(layout, names, plan)
     _require_relationship_correspondence(layout, names, plan)
-    for position, occurrence in enumerate(layout.value_objects, start=layout.attribute_count):
-        _require_occurrence_correspondence(
+    occurrences = [
+        _proven_occurrence(
             layout.concrete,
             occurrence,
             # Not `None`: the check above refuses an occurrence position the class
@@ -147,7 +163,10 @@ def require_correspondence(layout: EntityLayout, names: WireNames, plan: Publica
             cast("type", plan.occurrences.get(position + 1)),
             path=f"{layout.concrete.canonical}.{'.'.join(occurrence.identity.path)}",
         )
+        for position, occurrence in enumerate(layout.value_objects, start=layout.attribute_count)
+    ]
     _require_declared_member_correspondence(layout, names, plan)
+    return tuple(occurrences)
 
 
 def _require_member_correspondence(
@@ -180,13 +199,11 @@ def _require_member_correspondence(
             f"the model lays out members {row} and the class is laid out as {plan.py_names}",
         )
     for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
-        py_name = plan.py_names[position]
-        bound = plan.occurrences.get(position + 1)
-        if bound is None or bound is not names.vo_classes.get(py_name):
+        if plan.occurrences.get(position + 1) is None:
             raise _correspondence_refusal(
                 layout.concrete,
-                f"the model calls member {position} ({py_name!r}) a Value Object "
-                f"occurrence, and the class holds {bound} at that position",
+                f"the model calls member {position} ({plan.py_names[position]!r}) a Value "
+                "Object occurrence, and the class holds None at that position",
                 identity=occurrence.identity,
             )
 
@@ -258,42 +275,46 @@ def _require_relationship_correspondence(
             )
 
 
-def _require_occurrence_correspondence(
+def _proven_occurrence(
     concrete: EntityIdentity,
     declared: ValueObjectMetadata | NestedValueObjectMetadata,
     vo_class: type,
     *,
     path: str,
-) -> None:
+) -> _OccurrenceFacts:
     """Refuse unless one occurrence's own path layout is its Value Object class's
-    own laid-out order, at every containment depth.
+    own laid-out order, at every containment depth, and answer its facts.
 
     Accepted contextual bindings are keyed to a containment path and a
     publication plan to a class, so the two are checked against each other here:
     one class bound at two paths is laid out once and must correspond at both.
     """
     plan = plan_of(vo_class)
-    shape = shape_of(vo_class)
-    row = tuple(shape.name_to_py.get(member.name) for member in declared.document_shape.members)
+    name_to_py = shape_of(vo_class).name_to_py
+    row = tuple(name_to_py.get(member.name) for member in declared.document_shape.members)
     if row != plan.py_names:
         raise _correspondence_refusal(
             concrete,
             f"{path} lays out members {row} and {vo_class.__name__} is laid out as {plan.py_names}",
             identity=declared.identity,
         )
-    leaf_count = len(declared.attributes)
-    for position, nested in enumerate(declared.value_objects, start=leaf_count):
+    nested: list[_OccurrenceFacts] = []
+    for position, occurrence in enumerate(declared.value_objects, start=len(declared.attributes)):
         py_name = cast("str", row[position])
-        nested_class = shape.nested_classes.get(py_name)
-        if plan.occurrences.get(position + 1) is not nested_class or nested_class is None:
+        nested_class = plan.occurrences.get(position + 1)
+        if nested_class is None:
             raise _correspondence_refusal(
                 concrete,
-                f"{path} calls member {position} ({py_name!r}) a nested occurrence of "
-                f"{nested_class}, and {vo_class.__name__} holds "
-                f"{plan.occurrences.get(position + 1)} there",
-                identity=nested.identity,
+                f"{path} calls member {position} ({py_name!r}) a nested occurrence, and "
+                f"{vo_class.__name__} holds None there",
+                identity=occurrence.identity,
             )
-        _require_occurrence_correspondence(concrete, nested, nested_class, path=f"{path}.{py_name}")
+        nested.append(
+            _proven_occurrence(concrete, occurrence, nested_class, path=f"{path}.{py_name}")
+        )
+    return _OccurrenceFacts(
+        declared, vo_class, plan, declared.multiplicity is Multiplicity.MANY, tuple(nested)
+    )
 
 
 def _correspondence_refusal(
@@ -327,9 +348,20 @@ class _CallScope:
     materialization comes from one projection and so repeats one pattern, which
     the memo turns into one shared integer per distinct pattern rather than one
     per node; nothing process-wide holds it, so no mask outlives the graph.
+
+    ``populating`` is the allocation index of the node being populated, which a
+    refusal at any Value Object depth names.
     """
 
-    __slots__ = ("_indices", "bitmaps", "facts", "handles", "instances", "populated")
+    __slots__ = (
+        "_indices",
+        "bitmaps",
+        "facts",
+        "handles",
+        "instances",
+        "populated",
+        "populating",
+    )
 
     def __init__(self) -> None:
         self.facts: list[_EntityFacts] = []
@@ -337,6 +369,7 @@ class _CallScope:
         self.instances: list[object] = []
         self.populated: list[bool] = []
         self.bitmaps: dict[int, int] = {}
+        self.populating = -1
         self._indices: dict[int, int] = {}
 
     def issue(self) -> NodeHandle:
@@ -486,12 +519,12 @@ class EntityGraphConstruction:
 
     Per model rather than per read: it is the home of the per-Entity facts
     derived once from accepted metadata and the class composed under each
-    identity — the concrete class, the identity-to-member-name mapping, and the
-    declaration-ordered navigable relationships — and models are few and
-    long-lived where reads are many. Every Entity's facts are derived when the
-    collaboration is constructed, so construction is the one fallible point and
-    a lookup afterwards can fail only by naming an Entity the model does not
-    declare. Bound to one model at construction, ``construct(...)`` takes no
+    identity — the concrete class, its publication plan, each Value Object
+    occurrence path's proven class, and the relationship cardinalities — and
+    models are few and long-lived where reads are many. Every Entity's facts are
+    derived when the collaboration is constructed, so construction is the one
+    fallible point and a lookup afterwards can fail only by naming an Entity the
+    model does not declare. Bound to one model at construction, ``construct(...)`` takes no
     model argument and cannot be handed a mismatched one.
 
     It takes its collaborators rather than reaching for them: the cataloged
@@ -680,68 +713,41 @@ def _populate(
     members: tuple[object, ...],
     relationships: tuple[object, ...],
 ) -> None:
-    """Read both rows, then attach one node's whole state in a single write.
+    """Resolve both rows, then attach one node's whole state in a single write.
 
-    Every refusal happens while the two mappings are still local, so a row this
-    collaboration rejects leaves its shell exactly as allocation left it: no
-    partially populated node exists at any point, and a node whose relationship
-    row fails carries none of the members the same call already read.
+    Every refusal happens before attachment, so a row this collaboration rejects
+    leaves its shell exactly as allocation left it: no partially populated node
+    exists at any point, and a node whose relationship row fails carries none of
+    the members the same call already read.
     """
     facts = scope.facts[index]
-    layout = facts.layout
-    instance = cast("BaseModel", scope.instances[index])
-    _require_row(
-        members,
-        width=len(layout.members),
-        index=index,
-        identity=layout.concrete,
-        kind="member",
-    )
-    _require_row(
-        relationships,
-        width=len(layout.relationships),
-        index=index,
-        identity=layout.concrete,
-        kind="broad-relationship",
-    )
-
-    values: dict[str, object] = {}
-    for position, _declared in enumerate(layout.attributes):
-        value = members[position]
-        if value is ABSENT:
-            continue
-        values[facts.plan.py_names[position]] = value
-
-    for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
-        value = members[position]
-        if value is ABSENT:
-            continue
-        values[facts.plan.py_names[position]] = _build_occurrence(
-            value,
-            declared=occurrence,
-            vo_class=facts.plan.occurrences[position + 1],
-            index=index,
-            entity=layout.concrete,
+    scope.populating = index
+    try:
+        publish_positional(
+            facts.plan,
+            cast("BaseModel", scope.instances[index]),
+            members,
+            relationships,
+            context=scope,
+            node=index,
+            occurrence=_entity_occurrence,
+            relationship=_entity_relationship,
             bitmaps=scope.bitmaps,
         )
-
-    related: dict[str, object] = {}
-    for position, direction in enumerate(layout.relationships):
-        related[facts.relationship_py[position]] = _relationship_value(
-            relationships[position],
-            scope=scope,
-            many=facts.many[position],
+    except RowShapeError as refusal:
+        raise _row_refusal(
+            refusal,
+            relationships if refusal.tail else members,
             index=index,
-            identity=direction,
-        )
-
-    publish(instance, values, related, shared_bitmaps=scope.bitmaps)
+            identity=facts.layout.concrete,
+        ) from None
 
 
-def _require_row(
-    row: object, *, width: int, index: int, identity: EntityIdentity, kind: str
-) -> None:
-    """Refuse anything but an exact built-in tuple of the model-fixed width.
+def _row_refusal(
+    refusal: RowShapeError, row: object, *, index: int, identity: EntityIdentity
+) -> GraphConstructionError:
+    """The refusal a node's row earns for being anything but an exact built-in
+    tuple of the model-fixed width.
 
     Width is the whole membership check a positional row needs. Every declared
     member has a position and a position names nothing else, so a row of the
@@ -751,52 +757,41 @@ def _require_row(
     twice has one position to occupy. What is left is a row that is not the
     model's membership at all: too many positions, or too few.
     """
+    kind = "broad-relationship" if refusal.tail else "member"
     if type(row) is not tuple:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-member",
-            message=f"a {kind} row arrives as an exact tuple, not {type(row).__name__}",
-            index=index,
-            identity=identity,
+        message = f"a {kind} row arrives as an exact tuple, not {type(row).__name__}"
+    else:
+        message = (
+            f"{identity.canonical} lays out {refusal.width} {kind} positions, "
+            f"and this row carries {len(cast('tuple[object, ...]', row))}"
         )
-    if len(cast("tuple[object, ...]", row)) != width:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-member",
-            message=(
-                f"{identity.canonical} lays out {width} {kind} positions, "
-                f"and this row carries {len(cast('tuple[object, ...]', row))}"
-            ),
-            index=index,
-            identity=identity,
-        )
+    return GraphConstructionError(
+        code="entity-graph-invalid-member", message=message, index=index, identity=identity
+    )
 
 
-def _relationship_value(
-    arm: object,
-    *,
-    scope: _CallScope,
-    many: bool,
-    index: int,
-    identity: RelationshipIdentity,
-) -> object:
-    """One relationship slot's installed value: the unloaded sentinel, ``None``,
-    a related instance, or an exact tuple of them.
+def _entity_relationship(scope: _CallScope, index: int, position: int, arm: object) -> object:
+    """One loaded relationship position's installed value: ``None``, a related
+    instance, or an exact tuple of them.
 
-    The position's own value names its arm — the sentinel is unloaded, ``None``
-    is loaded-null, an exact tuple is loaded-many with ``()`` its empty case, and
-    a handle is loaded-one — so the declared cardinality is the only thing that
-    decides whether that arm is admissible. Anything else at the position is no
-    arm at all, which is what a caller-defined tuple subtype and a mutable
-    sequence both are.
+    The position's own value names its arm — ``None`` is loaded-null, an exact
+    tuple is loaded-many with ``()`` its empty case, and a handle is loaded-one —
+    so the declared cardinality is the only thing that decides whether that arm
+    is admissible. Anything else at the position is no arm at all, which is what
+    a caller-defined tuple subtype and a mutable sequence both are.
     """
-    if arm is UNLOADED:
-        return UNLOADED
+    facts = scope.facts[index]
+    many = facts.many[position]
     if type(arm) is tuple:
         if not many:
             raise GraphConstructionError(
                 code="entity-graph-invalid-value",
-                message=f"{identity.name} is a to-one direction and takes no loaded-many arm",
+                message=(
+                    f"{facts.layout.relationships[position].name} is a to-one direction "
+                    "and takes no loaded-many arm"
+                ),
                 index=index,
-                identity=identity,
+                identity=facts.layout.relationships[position],
             )
         return tuple(
             scope.instances[_index_of(scope, node, operation="populate")]
@@ -805,9 +800,12 @@ def _relationship_value(
     if many:
         raise GraphConstructionError(
             code="entity-graph-invalid-value",
-            message=f"{identity.name} is a to-many direction and takes only a loaded-many arm",
+            message=(
+                f"{facts.layout.relationships[position].name} is a to-many direction "
+                "and takes only a loaded-many arm"
+            ),
             index=index,
-            identity=identity,
+            identity=facts.layout.relationships[position],
         )
     if arm is None:
         return None
@@ -815,21 +813,31 @@ def _relationship_value(
         return scope.instances[_index_of(scope, arm, operation="populate")]
     raise GraphConstructionError(
         code="entity-graph-invalid-value",
-        message=f"{identity.name} received {type(arm).__name__}, which is no relationship arm",
+        message=(
+            f"{facts.layout.relationships[position].name} received {type(arm).__name__}, "
+            "which is no relationship arm"
+        ),
         index=index,
-        identity=identity,
+        identity=facts.layout.relationships[position],
     )
 
 
-def _build_occurrence(
-    value: object,
-    *,
-    declared: ValueObjectMetadata | NestedValueObjectMetadata,
-    vo_class: type,
-    index: int,
-    entity: EntityIdentity,
-    bitmaps: dict[int, int],
+def _entity_occurrence(scope: _CallScope, index: int, position: int, value: object) -> object:
+    facts = scope.facts[index]
+    return _build_occurrence(
+        value, facts.occurrences[position - facts.layout.attribute_count], scope
+    )
+
+
+def _record_occurrence(
+    scope: _CallScope, occurrence: _OccurrenceFacts, position: int, value: object
 ) -> object:
+    return _build_occurrence(
+        value, occurrence.nested[position - len(occurrence.declared.attributes)], scope
+    )
+
+
+def _build_occurrence(value: object, occurrence: _OccurrenceFacts, scope: _CallScope) -> object:
     """One Value Object occurrence as frozen instances, checked for container
     shape first.
 
@@ -838,26 +846,13 @@ def _build_occurrence(
     the declaration distinguishes them. A Many occurrence has no absent state at
     all: it takes an exact tuple, empty for its zero-element value.
     """
-    identity = declared.identity
-    label = f"{entity.canonical}.{'.'.join(identity.path)}"
-    if declared.multiplicity is Multiplicity.MANY:
+    if occurrence.many:
         if type(value) is not tuple:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-value",
-                message=f"{label} is a Many occurrence and takes an exact tuple of member rows",
-                index=index,
-                identity=identity,
+            raise _value_refusal(
+                scope, occurrence, "is a Many occurrence and takes an exact tuple of member rows"
             )
         return tuple(
-            _build_record(
-                row,
-                declared=declared,
-                vo_class=vo_class,
-                index=index,
-                entity=entity,
-                bitmaps=bitmaps,
-            )
-            for row in cast("tuple[object, ...]", value)
+            _build_record(row, occurrence, scope) for row in cast("tuple[object, ...]", value)
         )
     if value is None:
         # A One occurrence absent from the document, stored as JSON null, or
@@ -866,20 +861,10 @@ def _build_occurrence(
         # composite being not present rather than a nullability verdict to
         # re-derive against a collapse that already happened.
         return None
-    return _build_record(
-        value, declared=declared, vo_class=vo_class, index=index, entity=entity, bitmaps=bitmaps
-    )
+    return _build_record(value, occurrence, scope)
 
 
-def _build_record(
-    row: object,
-    *,
-    declared: ValueObjectMetadata | NestedValueObjectMetadata,
-    vo_class: type,
-    index: int,
-    entity: EntityIdentity,
-    bitmaps: dict[int, int],
-) -> object:
+def _build_record(row: object, occurrence: _OccurrenceFacts, scope: _CallScope) -> object:
     """One positional member row as a frozen Value Object instance, at every depth.
 
     The row is that occurrence's own leaves in declaration order, then its nested
@@ -890,58 +875,39 @@ def _build_record(
     keeps canonical document serialization able to omit the former and emit the
     latter as an explicit null.
     """
-    identity = declared.identity
-    label = f"{entity.canonical}.{'.'.join(identity.path)}"
-    leaf_count = len(declared.attributes)
-    if type(row) is not tuple:
-        raise GraphConstructionError(
-            code="entity-graph-invalid-value",
-            message=f"{label} takes a member row as an exact tuple, not {type(row).__name__}",
-            index=index,
-            identity=identity,
+    record = allocate(cast("type[Any]", occurrence.cls))
+    try:
+        publish_positional(
+            occurrence.plan,
+            record,
+            cast("tuple[object, ...]", row),
+            (),
+            context=scope,
+            node=occurrence,
+            occurrence=_record_occurrence,
+            bitmaps=scope.bitmaps,
         )
-    cells = cast("tuple[object, ...]", row)
-    if len(cells) != leaf_count + len(declared.value_objects):
-        raise GraphConstructionError(
-            code="entity-graph-invalid-value",
-            message=(
-                f"{label} lays out {leaf_count + len(declared.value_objects)} member positions, "
-                f"and this row carries {len(cells)}"
-            ),
-            index=index,
-            identity=identity,
-        )
-    shape = shape_of(vo_class)
-    values: dict[str, object] = {}
-    for position, leaf in enumerate(declared.attributes):
-        py_name = _member_py(shape, leaf.identity.name)
-        value = cells[position]
-        if value is ABSENT:
-            continue
-        values[py_name] = value
-    for position, occurrence in enumerate(declared.value_objects, start=leaf_count):
-        py_name = _member_py(shape, occurrence.identity.path[-1])
-        value = cells[position]
-        if value is ABSENT:
-            continue
-        values[py_name] = _build_occurrence(
-            value,
-            declared=occurrence,
-            vo_class=shape.nested_classes[py_name],
-            index=index,
-            entity=entity,
-            bitmaps=bitmaps,
-        )
-    record = allocate(cast("type[Any]", vo_class))
-    publish(record, values, shared_bitmaps=bitmaps)
+    except RowShapeError as refusal:
+        if type(row) is not tuple:
+            detail = f"takes a member row as an exact tuple, not {type(row).__name__}"
+        else:
+            detail = (
+                f"lays out {refusal.width} member positions, "
+                f"and this row carries {len(cast('tuple[object, ...]', row))}"
+            )
+        raise _value_refusal(scope, occurrence, detail) from None
     return record
 
 
-def _member_py(shape: ValueObjectShape, canonical: str) -> str:
-    py_name = shape.name_to_py.get(canonical)
-    if py_name is None:  # pragma: no cover - a composed class carries every declared member
-        raise GraphConstructionError(
-            code="entity-graph-invalid-member",
-            message=f"the bound Value Object Class declares no member {canonical!r}",
-        )
-    return py_name
+def _value_refusal(
+    scope: _CallScope, occurrence: _OccurrenceFacts, detail: str
+) -> GraphConstructionError:
+    """The refusal one Value Object value earns, labelled by its containment path."""
+    identity = occurrence.declared.identity
+    entity = scope.facts[scope.populating].layout.concrete
+    return GraphConstructionError(
+        code="entity-graph-invalid-value",
+        message=f"{entity.canonical}.{'.'.join(identity.path)} {detail}",
+        index=scope.populating,
+        identity=identity,
+    )

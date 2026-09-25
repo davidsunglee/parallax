@@ -9,7 +9,7 @@ canonical document.
 
 The two arms are twins by construction. ``model_construct(**members)`` populates
 exactly the named members and fills every other declared field with its declared
-default, which is what ``publish`` does with a bitmap and a template row — so the
+default, which is what publication does with a bitmap and a template row — so the
 arms differ in representation and in nothing else. Neither arm validates, which
 is also what publication does not do. That premise has one bound, graded at the
 end: a required member carried no value has no declared default to be filled
