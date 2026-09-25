@@ -3,11 +3,11 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import Callable, Generator, Sequence
-from typing import cast
+from typing import Any, cast
 
 import psycopg
 from psycopg.abc import AdaptContext, Buffer
-from psycopg.rows import TupleRow, tuple_row
+from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
 from psycopg.types.datetime import TimestamptzLoader
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
@@ -33,7 +33,6 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.wire import loads
 from parallax.core.wire._json import prepared_loads
 from parallax.postgres._isolation import isolation_spelling
 
@@ -53,39 +52,13 @@ _REVOKED = (
 _CREDENTIAL_REFUSAL = "the credential source could not produce a password"
 
 
-class _PresentJsonNull:
-    __slots__ = ()
-
-
-_PRESENT_JSON_NULL = _PresentJsonNull()
-_UNDECODED = object()
-
-
-def _load_json_preserving_null(
-    data: str | bytes,
-    *,
-    decoded: object = _UNDECODED,
-) -> object:
-    """Decode a stored document, retaining what a plain parse would discard.
-
-    A present JSON null keeps a distinct sentinel, so absence and a stored null stay
-    two states. Strict Wire loading retains number tokens privately until the
-    document codec resolves each leaf's declared type.
-    """
-    value = loads(data) if decoded is _UNDECODED else decoded
-    return _PRESENT_JSON_NULL if value is None else value
-
-
 class _DocumentJsonbLoader(JsonbLoader):
     def __init__(self, oid: int, context: AdaptContext | None = None) -> None:
         super().__init__(oid, context)
         self._decode = prepared_loads()
 
     def load(self, data: Buffer) -> object:
-        if not isinstance(data, bytes):
-            data = bytes(data)
-        value = self._decode(data)
-        return value if value is not None else _load_json_preserving_null(data, decoded=value)
+        return self._decode(data if isinstance(data, bytes) else bytes(data))
 
 
 class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
@@ -97,12 +70,7 @@ class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
         if data and data[0] != 1:
             return super().load(data)
         value = data[1:]
-        if not isinstance(value, bytes):
-            value = bytes(value)
-        decoded = self._decode(value)
-        return (
-            decoded if decoded is not None else _load_json_preserving_null(value, decoded=decoded)
-        )
+        return self._decode(value if isinstance(value, bytes) else bytes(value))
 
 
 class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
@@ -214,61 +182,100 @@ def adapt_binds(binds: Sequence[object]) -> list[object]:
     ]
 
 
-def fold_document_reads(
-    dialect: Dialect,
-    names: Sequence[str],
-    rows: Sequence[Sequence[object]],
-    document_reads: Sequence[DocumentReadOrdinals],
-) -> list[Row]:
-    """Fold raw adjacent document cells into provider-neutral managed rows."""
-    pairs = tuple(document_reads)
+type _Parse = Callable[[object, object], object]
+
+
+class _DocumentReadRows:
+    """The row factory of one cursor reading adjacent ``(presence, document)`` pairs.
+
+    Psycopg calls it once per result the cursor receives, and it judges the pair
+    metadata against that result's width then. A refusal is recorded rather
+    than raised, because at pipeline sync psycopg abandons the remaining results
+    of a factory that raises anything but a driver error, leaving the
+    connection unusable; :func:`_fetch` raises it instead. The row maker builds
+    each final provider-neutral row directly from the loaded cells, dropping
+    every presence cell and folding its document through the dialect.
+    """
+
+    __slots__ = ("_pairs", "_parse", "refusal")
+
+    def __init__(self, dialect: Dialect, document_reads: Sequence[DocumentReadOrdinals]) -> None:
+        self._parse: _Parse = dialect.parse_owned_document_read
+        self._pairs = tuple(document_reads)
+        self.refusal: str | None = None
+
+    def __call__(self, cursor: psycopg.Cursor[Any]) -> RowMaker[Row]:
+        description = cursor.description
+        width = 0 if description is None else len(description)
+        self.refusal = None if description is None else _pair_refusal(self._pairs, width)
+        if description is None or self.refusal is not None:
+            return tuple
+        if len(self._pairs) == 1:
+            ((presence, _document),) = self._pairs
+            return _single_pair_rows(self._parse, width, presence)
+        presences = {document: presence for presence, document in self._pairs}
+        omitted = frozenset(presences.values())
+        schedule = tuple(
+            (ordinal, presences.get(ordinal)) for ordinal in range(width) if ordinal not in omitted
+        )
+        return _scheduled_rows(self._parse, width, schedule)
+
+
+def _pair_refusal(pairs: tuple[DocumentReadOrdinals, ...], width: int) -> str | None:
     occupied: set[int] = set()
     for presence, document in pairs:
-        if document != presence + 1 or presence < 0 or document >= len(names):
-            raise ValueError(
-                "document-read ordinals must be adjacent, zero-based, and within the projection"
-            )
+        if document != presence + 1 or presence < 0 or document >= width:
+            return "document-read ordinals must be adjacent, zero-based, and within the projection"
         if presence in occupied or document in occupied:
-            raise ValueError("document-read ordinal pairs must not overlap")
+            return "document-read ordinal pairs must not overlap"
         occupied.update((presence, document))
+    return None
 
-    if len(pairs) == 1:
-        presence, document = pairs[0]
-        parse = dialect.parse_owned_document_read
-        managed: list[Row] = []
-        for raw in rows:
-            if len(raw) != len(names):
-                raise ValueError("a database row does not match its result description")
-            value = raw[document]
-            managed.append(
-                (
-                    *raw[:presence],
-                    parse(raw[presence], None if value is _PRESENT_JSON_NULL else value),
-                    *raw[document + 1 :],
-                )
-            )
-        return managed
 
-    by_document = {document: presence for presence, document in pairs}
-    omitted = {presence for presence, _document in pairs}
-    managed: list[Row] = []
-    for raw in rows:
-        if len(raw) != len(names):
+def _single_pair_rows(parse: _Parse, width: int, presence: int) -> RowMaker[Row]:
+    document = presence + 1
+    rest = document + 1
+
+    def row(values: Sequence[Any]) -> Row:
+        if len(values) != width:
             raise ValueError("a database row does not match its result description")
-        row: list[object] = []
-        for ordinal, value in enumerate(raw):
-            if ordinal in omitted:
-                continue
-            presence = by_document.get(ordinal)
-            if value is _PRESENT_JSON_NULL:
-                value = None
-            row.append(
-                dialect.parse_owned_document_read(raw[presence], value)
-                if presence is not None
-                else value
-            )
-        managed.append(tuple(row))
-    return managed
+        return (*values[:presence], parse(values[presence], values[document]), *values[rest:])
+
+    return row
+
+
+def _scheduled_rows(
+    parse: _Parse, width: int, schedule: tuple[tuple[int, int | None], ...]
+) -> RowMaker[Row]:
+    def row(values: Sequence[Any]) -> Row:
+        if len(values) != width:
+            raise ValueError("a database row does not match its result description")
+        return tuple(
+            values[ordinal] if presence is None else parse(values[presence], values[ordinal])
+            for ordinal, presence in schedule
+        )
+
+    return row
+
+
+def _cursor(
+    connection: psycopg.Connection[TupleRow], rows: _DocumentReadRows | None
+) -> psycopg.Cursor[Row]:
+    return connection.cursor() if rows is None else connection.cursor(row_factory=rows)
+
+
+def _fetch(cursor: psycopg.Cursor[Row], rows: _DocumentReadRows | None) -> list[Row]:
+    if cursor.description is None:
+        return []
+    if rows is not None and rows.refusal is not None:
+        raise ValueError(rows.refusal)
+    return cursor.fetchall()
+
+
+def _document_read_rows(
+    dialect: Dialect, document_reads: Sequence[DocumentReadOrdinals]
+) -> _DocumentReadRows | None:
+    return _DocumentReadRows(dialect, document_reads) if document_reads else None
 
 
 CONNECT_KWARGS: dict[str, object] = {"autocommit": True, "row_factory": tuple_row}
@@ -277,8 +284,9 @@ CONNECT_KWARGS: dict[str, object] = {"autocommit": True, "row_factory": tuple_ro
 ``autocommit`` leaves the session outside a transaction between statements, so a
 standalone read or a stream page gains no implicit whole-operation transaction
 and an explicit boundary is the only thing that opens one. ``row_factory``
-fixes the shape rows arrive in, so nothing downstream depends on a per-cursor
-override to get it right.
+fixes the shape rows arrive in, so a result read without document pairs is
+returned exactly as the driver built it; only a cursor reading document pairs
+overrides it, with the row factory that folds them.
 
 ``close_returns`` is deliberately absent, which leaves the driver's own default:
 closing a connection closes it. The opposite would make the disposal step of
@@ -480,45 +488,22 @@ class PostgresConnection:
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         connection = self._native()
-        with translating_driver_errors(self.dialect), connection.cursor() as cursor:
+        rows = _document_read_rows(self.dialect, document_reads)
+        with translating_driver_errors(self.dialect), _cursor(connection, rows) as cursor:
             cursor.execute(sql.encode(), adapt_binds(binds))
-            if cursor.description is None:
-                return []
-            names = [column.name for column in cursor.description]
-            if document_reads:
-                return fold_document_reads(self.dialect, names, cursor.fetchall(), document_reads)
-            return [
-                tuple(None if value is _PRESENT_JSON_NULL else value for value in raw)
-                for raw in cursor.fetchall()
-            ]
+            return _fetch(cursor, rows)
 
     def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
         connection = self._native()
         with translating_driver_errors(self.dialect), contextlib.ExitStack() as cursors:
-            pending: list[tuple[psycopg.Cursor[TupleRow], tuple[DocumentReadOrdinals, ...]]] = []
+            pending: list[tuple[psycopg.Cursor[Row], _DocumentReadRows | None]] = []
             with connection.pipeline():
                 for statement in statements:
-                    cursor = cursors.enter_context(connection.cursor())
-                    pending.append((cursor, statement.document_reads))
+                    rows = _document_read_rows(self.dialect, statement.document_reads)
+                    cursor = cursors.enter_context(_cursor(connection, rows))
+                    pending.append((cursor, rows))
                     cursor.execute(statement.sql.encode(), adapt_binds(statement.binds))
-
-            results: list[list[Row]] = []
-            for cursor, document_reads in pending:
-                if cursor.description is None:
-                    results.append([])
-                    continue
-                names = [column.name for column in cursor.description]
-                raw = cursor.fetchall()
-                if document_reads:
-                    results.append(fold_document_reads(self.dialect, names, raw, document_reads))
-                else:
-                    results.append(
-                        [
-                            tuple(None if value is _PRESENT_JSON_NULL else value for value in row)
-                            for row in raw
-                        ]
-                    )
-            return results
+            return [_fetch(cursor, rows) for cursor, rows in pending]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         connection = self._native()

@@ -13,6 +13,7 @@ lifetimes in ``test_postgres_pool.py``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,7 +24,7 @@ from psycopg import errors, postgres
 from psycopg.adapt import PyFormat, Transformer
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
-from psycopg.types.json import Jsonb
+from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres
 import parallax.postgres._connection as connection_module
@@ -42,13 +43,13 @@ from parallax.core.db_port import (
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
+from parallax.core.wire._json import authored_token
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres._connection import (
     ConnectionEstablishment,
     IncompatibleSessionError,
     PostgresConnection,
     adapt_binds,
-    fold_document_reads,
     initialize_connection,
     translate_driver_error,
     translating_driver_errors,
@@ -370,34 +371,26 @@ def test_adapter_registers_boundary_value_loaders() -> None:
     ]
 
 
-def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> None:
-    rows = fold_document_reads(
-        _DIALECT,
-        ("id", "doc_present", "doc"),
-        (
-            (1, False, None),
-            (2, True, connection_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage] - the module-private sentinel is the raw value this fold is graded on
-        ),
-        ((1, 2),),
-    )
-    assert rows == [(1, SQL_NULL), (2, PresentDocument(None))]
+@pytest.mark.parametrize(
+    ("loader", "prefix"),
+    [
+        (connection_module._DocumentJsonbLoader, b""),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
+        (connection_module._DocumentJsonbBinaryLoader, b"\x01"),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
+    ],
+)
+def test_jsonb_loaders_decode_strictly_and_return_json_null_as_none(
+    loader: type[JsonbLoader], prefix: bytes
+) -> None:
+    load = loader(3802).load
 
-
-def test_fold_document_reads_handles_multiple_document_projections() -> None:
-    rows = fold_document_reads(
-        _DIALECT,
-        ("id", "left_present", "left", "label", "right_present", "right"),
-        ((7, True, {"value": 1}, "kept", False, None),),
-        ((1, 2), (4, 5)),
-    )
-
-    assert rows == [(7, PresentDocument({"value": 1}), "kept", SQL_NULL)]
-
-
-def test_json_loader_preserves_only_present_json_null() -> None:
-    load = connection_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage] - the module-private loader is this test's subject
-    assert load("null") is connection_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage] - identity with the module-private sentinel is the distinction being proved
-    assert load(b'{"answer": 42}') == {"answer": 42}
+    assert load(prefix + b"null") is None
+    document = cast("dict[str, object]", load(prefix + b'{"inexact": 0.1, "wide": 1e999}'))
+    assert authored_token(cast("float", document["inexact"])) == "0.1"
+    assert authored_token(cast("float", document["wide"])) == "1e999"
+    with pytest.raises(json.JSONDecodeError, match="duplicate object member name 'x'"):
+        load(prefix + b'{"x": 1, "x": 2}')
+    with pytest.raises(json.JSONDecodeError, match="invalid JSON numeric constant 'NaN'"):
+        load(prefix + b'{"x": NaN}')
 
 
 def test_jsonb_loaders_accept_driver_buffers_without_retaining_member_names() -> None:
@@ -419,84 +412,233 @@ def test_jsonb_loaders_accept_driver_buffers_without_retaining_member_names() ->
         binary.load(b"\x02{}")
 
 
-def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width() -> None:
-    with pytest.raises(ValueError, match="adjacent, zero-based"):
-        fold_document_reads(_DIALECT, ("presence", "gap", "document"), (), ((0, 2),))
-    with pytest.raises(ValueError, match="must not overlap"):
-        fold_document_reads(_DIALECT, ("first", "shared", "second"), (), ((0, 1), (1, 2)))
-    with pytest.raises(ValueError, match="does not match"):
-        fold_document_reads(_DIALECT, ("id", "presence", "document"), ((1, True),), ((1, 2),))
+class _Result:
+    """One statement's result as the driver holds it: its width and loaded records."""
+
+    def __init__(self, width: int, records: list[tuple[object, ...]]) -> None:
+        self.width = width
+        self.records = records
 
 
-class _JsonNullCursor(_FakeCursor):
-    def __init__(self) -> None:
-        super().__init__(None, [])
-        self.description = (SimpleNamespace(name="id"), SimpleNamespace(name="doc"))
+class _ResultCursor(_FakeCursor):
+    """A cursor honoring psycopg's row-factory protocol.
 
-    def fetchall(self) -> list[tuple[object, ...]]:
-        return [(1, connection_module._PRESENT_JSON_NULL)]  # pyright: ignore[reportPrivateUsage] - the fake answers the module-private sentinel a real driver row would carry
+    The row factory is asked for a row maker when a result attaches — inside
+    ``execute``, or at pipeline sync — and ``fetchall`` builds every row through
+    that maker. A cursor left on the connection's ``tuple_row`` answers the
+    driver's own record list.
+    """
 
-
-class _JsonNullConnection(_FakeConnection):
-    def cursor(self, **_: object) -> _JsonNullCursor:
-        return _JsonNullCursor()
-
-
-def test_ordinary_execute_normalizes_present_json_null_to_none() -> None:
-    assert _adapter(_JsonNullConnection()).execute("select 1", []) == [(1, None)]
-
-
-class _PipelineResultCursor(_FakeCursor):
     def __init__(
         self,
-        ordinal: int,
-        rows: list[tuple[object, ...]] | None,
-        events: list[str],
+        connection: _ResultConnection,
+        result: _Result | None,
+        row_factory: Callable[[object], Callable[[tuple[object, ...]], object]] | None,
     ) -> None:
         super().__init__(None, [])
-        self._ordinal = ordinal
-        self._rows = [] if rows is None else rows
-        self._events = events
-        if rows is None:
-            self.description = None
-        else:
-            width = len(rows[0]) if rows else 1
-            self.description = tuple(SimpleNamespace(name=f"c{index}") for index in range(width))
+        self._connection = connection
+        self._ordinal = len(connection.result_cursors)
+        self._result = result
+        self._row_factory = row_factory
+        self._make_row: Callable[[tuple[object, ...]], object] | None = None
+        self.row_factory_kind = "folding" if row_factory is not None else "default"
 
-    def __enter__(self) -> _PipelineResultCursor:
-        self._events.append(f"cursor-{self._ordinal}-enter")
+    def _event(self, name: str) -> None:
+        self._connection.pipeline_events.append(f"cursor-{self._ordinal}-{name}")
+
+    def __enter__(self) -> _ResultCursor:
+        self._event("enter")
         return self
 
     def __exit__(self, *_: object) -> bool:
-        self._events.append(f"cursor-{self._ordinal}-exit")
+        self._event("exit")
         return False
 
     def execute(self, sql: bytes | Composable, binds: object = None) -> None:
-        self._events.append(f"cursor-{self._ordinal}-execute:{sql!r}:{binds!r}")
+        self._event(f"execute:{sql!r}:{binds!r}")
+        if self._connection.in_pipeline:
+            self._connection.unsynced.append(self)
+        else:
+            self.attach()
+
+    def attach(self) -> None:
+        result = self._result
+        self.description = (
+            None
+            if result is None
+            else tuple(SimpleNamespace(name=f"c{index}") for index in range(result.width))
+        )
+        self._event("attach")
+        if self._row_factory is not None:
+            self._make_row = self._row_factory(self)
 
     def fetchall(self) -> list[tuple[object, ...]]:
-        self._events.append(f"cursor-{self._ordinal}-fetch")
-        return self._rows
+        self._event("fetch")
+        records = [] if self._result is None else self._result.records
+        make_row = self._make_row
+        if make_row is None:
+            return records
+        return [cast("tuple[object, ...]", make_row(record)) for record in records]
 
 
-class _PipelineResultConnection(_FakeConnection):
-    def __init__(self, *responses: list[tuple[object, ...]] | None) -> None:
+class _SyncingPipeline(_FakePipeline):
+    def __init__(self, connection: _ResultConnection) -> None:
+        super().__init__(connection.pipeline_events)
+        self._connection = connection
+
+    def __enter__(self) -> _SyncingPipeline:
+        super().__enter__()
+        self._connection.in_pipeline = True
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        self._connection.in_pipeline = False
+        for cursor in self._connection.unsynced:
+            cursor.attach()
+        self._connection.unsynced.clear()
+        return super().__exit__()
+
+
+class _ResultConnection(_FakeConnection):
+    def __init__(self, *results: _Result | None) -> None:
         super().__init__()
-        self._responses = list(responses)
-        self.pipeline_cursors: list[_PipelineResultCursor] = []
+        self._results = list(results)
+        self.result_cursors: list[_ResultCursor] = []
+        self.unsynced: list[_ResultCursor] = []
+        self.in_pipeline = False
 
-    def cursor(self, **_: object) -> _PipelineResultCursor:
-        ordinal = len(self.pipeline_cursors)
-        cursor = _PipelineResultCursor(ordinal, self._responses.pop(0), self.pipeline_events)
-        self.pipeline_cursors.append(cursor)
+    def cursor(self, **options: object) -> _ResultCursor:
+        row_factory = cast(
+            "Callable[[object], Callable[[tuple[object, ...]], object]] | None",
+            options.get("row_factory"),
+        )
+        cursor = _ResultCursor(self, self._results.pop(0), row_factory)
+        self.result_cursors.append(cursor)
         return cursor
+
+    def pipeline(self) -> _SyncingPipeline:
+        return _SyncingPipeline(self)
+
+
+def test_an_unpaired_result_is_the_drivers_own_row_list() -> None:
+    records: list[tuple[object, ...]] = [(1, None), (2, {"kept": True})]
+    connection = _ResultConnection(_Result(2, records))
+
+    rows = _adapter(connection).execute("select id, document", [])
+
+    assert rows is records
+    assert connection.result_cursors[0].row_factory_kind == "default"
+
+
+def test_a_paired_result_folds_sql_null_and_present_json_null_by_presence() -> None:
+    connection = _ResultConnection(
+        _Result(3, [(1, False, None), (2, True, None), (3, True, {"value": 1})])
+    )
+
+    rows = _adapter(connection).execute("select id, present, document", [], ((1, 2),))
+
+    assert rows == [(1, SQL_NULL), (2, PresentDocument(None)), (3, PresentDocument({"value": 1}))]
+    assert connection.result_cursors[0].row_factory_kind == "folding"
+
+
+@pytest.mark.parametrize(
+    ("document_reads", "record", "expected"),
+    [
+        ((), (7, None), (7, None)),
+        (((0, 1),), (True, {"a": 1}, "tail"), (PresentDocument({"a": 1}), "tail")),
+        (((2, 3),), ("head", 7, False, None), ("head", 7, SQL_NULL)),
+        (
+            ((1, 2), (4, 5)),
+            (7, True, {"value": 1}, "kept", False, None),
+            (7, PresentDocument({"value": 1}), "kept", SQL_NULL),
+        ),
+        (
+            ((4, 5), (1, 2)),
+            (7, True, {"value": 1}, "kept", True, None),
+            (7, PresentDocument({"value": 1}), "kept", PresentDocument(None)),
+        ),
+    ],
+    ids=["no-pairs", "leading-pair", "trailing-pair", "two-pairs", "unordered-pairs"],
+)
+def test_paired_rows_are_built_directly_in_their_final_shape(
+    document_reads: tuple[tuple[int, int], ...],
+    record: tuple[object, ...],
+    expected: tuple[object, ...],
+) -> None:
+    connection = _ResultConnection(_Result(len(record), [record]))
+    assert _adapter(connection).execute("select", [], document_reads) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("width", "document_reads", "message"),
+    [
+        (3, ((0, 2),), "adjacent, zero-based"),
+        (3, ((-1, 0),), "adjacent, zero-based"),
+        (3, ((1, 3),), "adjacent, zero-based"),
+        (3, ((0, 1), (1, 2)), "must not overlap"),
+    ],
+    ids=["non-adjacent", "negative", "outside-the-projection", "overlapping"],
+)
+def test_malformed_pair_metadata_is_judged_at_attachment_and_refused_at_fetch(
+    width: int, document_reads: tuple[tuple[int, int], ...], message: str
+) -> None:
+    connection = _ResultConnection(_Result(width, [(True,) * width]))
+
+    with pytest.raises(ValueError, match=message):
+        _adapter(connection).execute("select", [], document_reads)
+
+    assert connection.pipeline_events == [
+        "cursor-0-enter",
+        "cursor-0-execute:b'select':[]",
+        "cursor-0-attach",
+        "cursor-0-exit",
+    ]
+
+
+def test_malformed_pair_metadata_in_a_pipeline_is_refused_after_every_result_syncs() -> None:
+    connection = _ResultConnection(_Result(3, []), _Result(1, [(1,)]))
+
+    with pytest.raises(ValueError, match="adjacent, zero-based"):
+        _adapter(connection).execute_pipeline(
+            (
+                PipelineStatement("select malformed", document_reads=((0, 2),)),
+                PipelineStatement("select 1"),
+            )
+        )
+
+    assert connection.pipeline_events == [
+        "pipeline-enter",
+        "cursor-0-enter",
+        "cursor-0-execute:b'select malformed':[]",
+        "cursor-1-enter",
+        "cursor-1-execute:b'select 1':[]",
+        "cursor-0-attach",
+        "cursor-1-attach",
+        "pipeline-exit",
+        "cursor-1-exit",
+        "cursor-0-exit",
+    ]
+
+
+def test_a_paired_row_whose_width_disagrees_with_its_description_is_refused() -> None:
+    connection = _ResultConnection(_Result(3, [(1, True)]))
+    with pytest.raises(ValueError, match="does not match its result description"):
+        _adapter(connection).execute("select", [], ((1, 2),))
+
+
+@pytest.mark.parametrize("document_reads", [(), ((0, 1),)], ids=["unpaired", "paired"])
+def test_a_result_without_a_description_yields_no_rows_and_is_not_fetched(
+    document_reads: tuple[tuple[int, int], ...],
+) -> None:
+    connection = _ResultConnection(None)
+
+    assert _adapter(connection).execute("set local x = 1", [], document_reads) == []
+    assert "cursor-0-fetch" not in connection.pipeline_events
 
 
 def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync() -> None:
-    connection = _PipelineResultConnection(
-        [(1,), (2,)],
-        [(False, None), (True, connection_module._PRESENT_JSON_NULL)],  # pyright: ignore[reportPrivateUsage] - raw stored JSON null is the boundary input
-    )
+    records: list[tuple[object, ...]] = [(1,), (2,)]
+    connection = _ResultConnection(_Result(1, records), _Result(2, [(False, None), (True, None)]))
     rows = _adapter(connection).execute_pipeline(
         (
             PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
@@ -505,12 +647,15 @@ def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync()
     )
 
     assert rows == [[(1,), (2,)], [(SQL_NULL,), (PresentDocument(None),)]]
+    assert rows[0] is records
     assert connection.pipeline_events == [
         "pipeline-enter",
         "cursor-0-enter",
         "cursor-0-execute:b'select unnest(%s::bigint[])':[[1, 2]]",
         "cursor-1-enter",
         "cursor-1-execute:b'select present, document':[]",
+        "cursor-0-attach",
+        "cursor-1-attach",
         "pipeline-exit",
         "cursor-0-fetch",
         "cursor-1-fetch",
@@ -519,8 +664,20 @@ def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync()
     ]
 
 
+def test_execute_and_execute_pipeline_return_the_same_rows_for_the_same_result() -> None:
+    def result() -> _Result:
+        return _Result(3, [(1, False, None), (2, True, None), (3, True, {"a": 1})])
+
+    ordinary = _adapter(_ResultConnection(result())).execute("select", [], ((1, 2),))
+    (pipelined,) = _adapter(_ResultConnection(result())).execute_pipeline(
+        (PipelineStatement("select", document_reads=((1, 2),)),)
+    )
+
+    assert pipelined == ordinary
+
+
 def test_execute_pipeline_returns_an_empty_result_for_a_statement_without_rows() -> None:
-    assert _adapter(_PipelineResultConnection(None)).execute_pipeline(
+    assert _adapter(_ResultConnection(None)).execute_pipeline(
         (PipelineStatement("set local application_name = 'parallax'"),)
     ) == [[]]
 

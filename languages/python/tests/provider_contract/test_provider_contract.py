@@ -40,9 +40,9 @@ from parallax.core.db_port import (
     isolation_level,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.wire._json import authored_token
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
-from parallax.postgres import _connection as connection_module
 from parallax.postgres import isolation_spelling
 
 
@@ -91,6 +91,33 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
     ) == [(None, None)]
 
 
+def test_live_paired_rows_match_between_execute_and_pipeline(profile_run: Any) -> None:
+    sql = (
+        "select 7 as id, true as left_present, '{\"a\": 1}'::jsonb as left_document, "
+        "'kept' as label, false as right_present, null::jsonb as right_document"
+    )
+    expected = [(7, PresentDocument({"a": 1}), "kept", SQL_NULL)]
+    for document_reads in (((1, 2), (4, 5)), ((4, 5), (1, 2))):
+        assert profile_run.port.execute(sql, [], document_reads) == expected
+        assert profile_run.port.execute_pipeline(
+            (
+                PipelineStatement(sql, (), document_reads),
+                PipelineStatement("select null::jsonb, 'null'::jsonb"),
+            )
+        ) == [expected, [(None, None)]]
+
+
+def test_live_malformed_pair_metadata_is_refused_without_losing_the_session(
+    profile_run: Any,
+) -> None:
+    malformed = PipelineStatement("select true, 'null'::jsonb", (), ((0, 2),))
+    with pytest.raises(ValueError, match="adjacent, zero-based"):
+        profile_run.port.execute_pipeline((malformed, PipelineStatement("select 1")))
+    with pytest.raises(ValueError, match="adjacent, zero-based"):
+        profile_run.port.execute(malformed.sql, [], malformed.document_reads)
+    assert profile_run.port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
+
+
 def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: Any) -> None:
     statements = (
         PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
@@ -109,8 +136,10 @@ def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: An
     try:
         for binary in (False, True):
             with cast("PostgresControl", session).native.cursor(binary=binary) as cursor:
-                cursor.execute(b"select 'null'::jsonb")
-                assert cursor.fetchone() == (connection_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage] - the adapter's own stored-JSON-null sentinel is what this proves the loader returns
+                cursor.execute(b"select 'null'::jsonb, '{\"x\": 0.1}'::jsonb")
+                row = cast("tuple[object, dict[str, float]]", cursor.fetchone())
+                assert row == (None, {"x": 0.1})
+                assert authored_token(row[1]["x"]) == "0.1"
     finally:
         session.close()
 
