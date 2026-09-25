@@ -13,7 +13,13 @@ import gc
 from types import MemberDescriptorType
 from typing import TYPE_CHECKING, Any, cast
 
-from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, allocate, publish
+from parallax.core.entity._construction_input import ABSENT, UNLOADED
+from parallax.core.entity._instance_state import (
+    COMPACT_STATE_SLOT,
+    allocate,
+    plan_of,
+    publish_positional,
+)
 from parallax.core.entity._pydantic_storage import instance_state
 
 if TYPE_CHECKING:
@@ -40,9 +46,29 @@ def published[M](
     ``exclude_unset`` preserve. A relationship left unnamed holds the unloaded
     sentinel, as every relationship a read did not load does.
     """
+    plan = plan_of(cls)
+    loaded = relationships or {}
+    tail = sorted(plan.relationships, key=plan.relationships.__getitem__)
+    undeclared = (members.keys() - set(plan.py_names)) | (loaded.keys() - set(tail))
+    if undeclared:
+        raise ValueError(f"{cls.__name__} declares no {sorted(undeclared)}")
     instance = allocate(cast("type[Any]", cls))
-    publish(instance, members, relationships or {})
+    publish_positional(
+        plan,
+        instance,
+        tuple(members.get(py_name, ABSENT) for py_name in plan.py_names),
+        tuple(loaded.get(py_name, UNLOADED) for py_name in tail),
+        context=None,
+        node=None,
+        occurrence=_as_given,
+        relationship=_as_given,
+        bitmaps={},
+    )
     return cast("M", instance)
+
+
+def _as_given(_context: None, _node: None, _position: int, value: object) -> object:
+    return value
 
 
 def raw_row(value: BaseModel) -> tuple[Any, ...] | None:

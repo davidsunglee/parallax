@@ -565,6 +565,56 @@ def test_a_many_occurrence_is_never_null() -> None:
     assert refusal.value.code == "entity-graph-invalid-value"
 
 
+def test_a_refusal_at_any_value_object_depth_names_the_node_being_populated() -> None:
+    # The allocation index a refusal reads back is the populating node's even
+    # when the refused value sits inside a nested occurrence's own row.
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        first = writer.allocate(_STATUS)
+        second = writer.allocate(_STATUS)
+        writer.populate(first, (*_STATUS_MEMBERS[:4], ABSENT, ABSENT), ())
+        writer.populate(second, (*_STATUS_MEMBERS[:4], _tag("x", details=[_tag("y")]), ABSENT), ())
+        raise AssertionError("unreachable")
+
+    with pytest.raises(GraphConstructionError) as refusal:
+        _construct(build)
+    assert refusal.value.code == "entity-graph-invalid-value"
+    assert refusal.value.index == 1
+    assert cast("Any", refusal.value.identity).path == ("primaryTag", "details")
+
+
+def test_publication_resolves_no_class_facts_per_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Correspondence proves each occurrence path's class and plan once per
+    # model, so publishing a record at any depth looks neither up again.
+    from parallax.core.entity import _graph_construction
+
+    construction = graph_construction_for(_ORDERS)
+
+    def refuse(*_args: object) -> Any:
+        raise AssertionError("a per-record class-fact lookup")
+
+    for name in ("plan_of", "shape_of", "wire_names_of"):
+        monkeypatch.setattr(_graph_construction, name, refuse)
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        status = writer.allocate(_STATUS)
+        writer.populate(
+            status,
+            (
+                *_STATUS_MEMBERS[:4],
+                _tag("x", detail=("handled",), details=(("a",), ("b",))),
+                (_tag("first"), _tag("second", details=())),
+            ),
+            (),
+        )
+        return (status,)
+
+    (root,) = construction.construct(build)
+    status = cast("Any", root)
+    assert status.primary_tag.detail.note == "handled"
+    assert [detail.note for detail in status.primary_tag.details] == ["a", "b"]
+    assert [tag.label for tag in status.tags] == ["first", "second"]
+
+
 def test_a_null_one_occurrence_is_the_documents_own_absent_state() -> None:
     # A One occurrence absent from the document, stored as JSON null, or stored
     # in the wrong kind all reach construction as `None`, because the read seam

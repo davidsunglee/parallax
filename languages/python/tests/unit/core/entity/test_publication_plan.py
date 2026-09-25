@@ -2,10 +2,10 @@
 
 The parity corpus grades what a published value serializes to. This grades what a
 publication plan IS: the two index spaces a class fixes at creation, the order a
-positional row is aligned to, the ordinal each descriptor is handed, and the four
-refusals the one attachment door makes. It also pins the class-creation ORDERING
-the plan depends on — descriptors installed once the class exists, never seeded
-into the namespace Pydantic collects field defaults from.
+positional row is aligned to, the ordinal each descriptor is handed, and what the
+one positional attachment door resolves, fills, and refuses. It also pins the
+class-creation ORDERING the plan depends on — descriptors installed once the class
+exists, never seeded into the namespace Pydantic collects field defaults from.
 """
 
 from __future__ import annotations
@@ -29,16 +29,18 @@ from parallax.core.entity import (
     attr,
     rel,
 )
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import (
     _InheritedMemberShadow,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.entity._instance_state import (
     COMPACT_STATE_SLOT,
+    RowShapeError,
     allocate,
     install,
     is_present,
     plan_of,
-    publish,
+    publish_positional,
 )
 from parallax.core.entity._members import Attr as AttrDescriptor
 from parallax.core.entity._pydantic_storage import instance_presence
@@ -195,28 +197,183 @@ def test_a_required_member_publication_carried_no_value_for_reads_its_position()
     assert value.model_fields_set == {"spot"}
 
 
-def test_a_member_no_class_declares_is_refused() -> None:
-    with pytest.raises(ValueError, match="declares no member 'nope'"):
-        published(Cat, id=1, name="c", nope=2)
+class _Resolutions:
+    """Both resolvers, recording every call and answering a marked value."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object, object, int, object]] = []
+
+    def occurrence(self, context: object, node: object, position: int, value: object) -> object:
+        self.calls.append(("occurrence", context, node, position, value))
+        return ("resolved", value)
+
+    def relationship(self, context: object, node: object, position: int, arm: object) -> object:
+        self.calls.append(("relationship", context, node, position, arm))
+        return ("resolved", arm)
 
 
-def test_a_relationship_no_class_declares_is_refused() -> None:
-    with pytest.raises(ValueError, match="declares no relationship 'nope'"):
-        published(Cat, {"nope": None}, id=1, name="c")
+# `Cat`: id, name, owner_id, indoor, then the occurrences spot and perch; then
+# the relationships friends and owner.
+_CAT_ABSENT: tuple[object, ...] = (ABSENT,) * 6
+_CAT_UNLOADED: tuple[object, ...] = (UNLOADED, UNLOADED)
+
+
+class _CallerDefinedTuple(tuple[object, ...]):
+    __slots__ = ()
+
+
+def _publish(
+    shell: Any,
+    members: object,
+    relationships: object = _CAT_UNLOADED,
+    *,
+    resolutions: _Resolutions | None = None,
+) -> _Resolutions:
+    resolved = resolutions or _Resolutions()
+    publish_positional(
+        plan_of(Cat),
+        shell,
+        cast("tuple[object, ...]", members),
+        cast("tuple[object, ...]", relationships),
+        context="scope",
+        node=7,
+        occurrence=resolved.occurrence,
+        relationship=resolved.relationship,
+        bitmaps={},
+    )
+    return resolved
+
+
+def test_each_position_lands_at_its_own_index_and_only_occurrences_resolve() -> None:
+    # Absent keeps the template default with its bit clear; a carried null is a
+    # value with its bit set; an unloaded relationship keeps the sentinel without
+    # a resolver call.
+    shell = allocate(Cat)
+    resolutions = _publish(shell, (1, None, ABSENT, True, "geo", ABSENT), ("friends", UNLOADED))
+    assert raw_row(shell) == (
+        0b011011,
+        1,
+        None,
+        None,
+        True,
+        ("resolved", "geo"),
+        None,
+        ("resolved", "friends"),
+        UNLOADED,
+    )
+    assert shell.model_fields_set == {"id", "name", "indoor", "spot"}
+    assert resolutions.calls == [
+        ("occurrence", "scope", 7, 4, "geo"),
+        ("relationship", "scope", 7, 0, "friends"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("members", "relationships", "tail", "width"),
+    [
+        pytest.param(list(_CAT_ABSENT), _CAT_UNLOADED, False, 6, id="a-member-list"),
+        pytest.param(
+            _CallerDefinedTuple(_CAT_ABSENT), _CAT_UNLOADED, False, 6, id="a-member-tuple-subtype"
+        ),
+        pytest.param(_CAT_ABSENT[:-1], _CAT_UNLOADED, False, 6, id="too-few-members"),
+        pytest.param((*_CAT_ABSENT, 1), _CAT_UNLOADED, False, 6, id="too-many-members"),
+        pytest.param(_CAT_ABSENT, list(_CAT_UNLOADED), True, 2, id="a-relationship-list"),
+        pytest.param(_CAT_ABSENT, (UNLOADED,), True, 2, id="too-few-relationships"),
+    ],
+)
+def test_a_row_of_the_wrong_kind_or_width_is_refused_before_any_resolver(
+    members: object, relationships: object, tail: bool, width: int
+) -> None:
+    shell = allocate(Cat)
+    resolutions = _Resolutions()
+    with pytest.raises(RowShapeError) as refusal:
+        _publish(shell, members, relationships, resolutions=resolutions)
+    assert (refusal.value.tail, refusal.value.width) == (tail, width)
+    assert resolutions.calls == []
+    assert not hasattr(shell, COMPACT_STATE_SLOT)
 
 
 def test_a_published_value_is_attached_exactly_once() -> None:
     value = published(Cat, id=1, name="c")
+    resolutions = _Resolutions()
     with pytest.raises(ValueError, match="already published"):
-        publish(value, {"id": 2, "name": "d"})
+        _publish(value, (2, "d", ABSENT, ABSENT, "geo", ABSENT), resolutions=resolutions)
     assert value.id == 1
+    assert resolutions.calls == []
 
 
-def test_a_refused_publication_leaves_the_shell_unattached() -> None:
+def test_a_resolver_refusal_leaves_the_shell_unattached() -> None:
+    class _Refusing(_Resolutions):
+        def relationship(self, context: object, node: object, position: int, arm: object) -> Any:
+            raise LookupError(arm)
+
     shell = allocate(Cat)
-    with pytest.raises(ValueError, match="declares no member 'nope'"):
-        publish(shell, {"id": 1, "nope": 2})
+    with pytest.raises(LookupError):
+        _publish(
+            shell, (1, "c", ABSENT, ABSENT, "geo", ABSENT), (UNLOADED, "x"), resolutions=_Refusing()
+        )
     assert not hasattr(shell, COMPACT_STATE_SLOT)
+
+
+def test_a_loaded_relationship_with_no_resolver_is_refused_unattached() -> None:
+    # A class laying out no tail needs no relationship resolver, so the door
+    # defaults one — and that default refuses a loaded arm rather than
+    # installing it unresolved.
+    shell = allocate(Cat)
+    with pytest.raises(ValueError, match="relationship position 1 is loaded"):
+        publish_positional(
+            plan_of(Cat),
+            shell,
+            _CAT_ABSENT,
+            (UNLOADED, "x"),
+            context=None,
+            node=None,
+            occurrence=_Resolutions().occurrence,
+            bitmaps={},
+        )
+    assert not hasattr(shell, COMPACT_STATE_SLOT)
+
+
+class _Wide(ValueObject):
+    """Nine leaves, so a full presence mask is past CPython's small-int cache."""
+
+    a: Attr[int]
+    b: Attr[int]
+    c: Attr[int]
+    d: Attr[int]
+    e: Attr[int]
+    f: Attr[int]
+    g: Attr[int]
+    h: Attr[int]
+    i: Attr[int]
+
+
+def test_one_bitmap_memo_shares_one_mask_between_values_of_one_pattern() -> None:
+    def wide(bitmaps: dict[int, int]) -> Any:
+        record = allocate(_Wide)
+        publish_positional(
+            plan_of(_Wide),
+            record,
+            tuple(range(9)),
+            (),
+            context=None,
+            node=None,
+            occurrence=_Resolutions().occurrence,
+            bitmaps=bitmaps,
+        )
+        return record
+
+    memo: dict[int, int] = {}
+    first, second = wide(memo), wide(memo)
+    assert raw_row(first) == (0b111111111, *range(9))
+    assert (
+        cast("tuple[object, ...]", raw_row(first))[0]
+        is cast("tuple[object, ...]", raw_row(second))[0]
+    )
+    assert (
+        cast("tuple[object, ...]", raw_row(wide({})))[0]
+        is not cast("tuple[object, ...]", raw_row(first))[0]
+    )
 
 
 def test_a_plan_whose_members_are_not_the_class_s_fields_is_refused() -> None:

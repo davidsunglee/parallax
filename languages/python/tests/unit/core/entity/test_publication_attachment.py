@@ -236,6 +236,62 @@ def test_a_published_node_s_row_is_attached_exactly_once() -> None:
     assert raw_row(root) == (0b00011, 2, "south", None, None, None, UNLOADED)
 
 
+def test_a_value_object_refused_mid_row_leaves_the_shell_unattached() -> None:
+    # The occurrence converts after every Attribute position is read, and its
+    # refusal still precedes the one attachment.
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(_PARCEL)
+        with pytest.raises(GraphConstructionError) as refusal:
+            writer.populate(handle, (1, "north", ABSENT, ABSENT, ("red",)), (UNLOADED,))
+        assert refusal.value.code == "entity-graph-invalid-value"
+        assert not hasattr(_shell_of(writer, handle), COMPACT_STATE_SLOT)
+        writer.populate(handle, (2, "south", ABSENT, ABSENT, ABSENT), (UNLOADED,))
+        return (handle,)
+
+    assert cast("Parcel", _published(build)).id == 2
+
+
+def _shell_of(writer: EntityGraphWriter, handle: NodeHandle) -> object:
+    scope = writer._scope  # pyright: ignore[reportPrivateUsage] - the unattached shell is the claim
+    index = scope.index_of(handle)
+    assert index is not None
+    return scope.instances[index]
+
+
+class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS):
+    """Nine members, so a full presence mask is past CPython's small-int cache."""
+
+    id: Attr[int] = attr(primary_key=True)
+    a: Attr[int | None]
+    b: Attr[int | None]
+    c: Attr[int | None]
+    d: Attr[int | None]
+    e: Attr[int | None]
+    f: Attr[int | None]
+    g: Attr[int | None]
+    h: Attr[int | None]
+
+
+def test_nodes_of_one_presence_pattern_share_one_mask_within_one_construction() -> None:
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handles = (writer.allocate(_WideParcel.identity), writer.allocate(_WideParcel.identity))
+        for key, handle in enumerate(handles):
+            writer.populate(handle, (key, *range(8)), ())
+        return handles
+
+    construction = graph_construction_for(DomainModel(_WideParcel))
+    first, second = construction.construct(build)
+    (third, _) = construction.construct(build)
+    assert raw_row(cast("Any", first)) == (0b111111111, 0, *range(8))
+    assert (
+        cast("Any", raw_row(cast("Any", first)))[0] is cast("Any", raw_row(cast("Any", second)))[0]
+    )
+    assert (
+        cast("Any", raw_row(cast("Any", third)))[0]
+        is not cast("Any", raw_row(cast("Any", first)))[0]
+    )
+
+
 def test_populating_a_node_twice_never_reaches_the_row_at_all() -> None:
     # The writer's own refusal stands in front of the row: the second call is
     # rejected on the node's populated state before any member is read, so

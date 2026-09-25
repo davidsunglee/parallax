@@ -132,10 +132,11 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 # row from those ordinals; both frontends extend the root that answers Pydantic
 # for a value's state; `_edit` partitions state and derives edited copies;
 # `_row_codec` selects by presence and reads the provenance
-# slot; `_graph_construction` allocates a shell, attaches one whole row to it,
-# reads a relationship position back, and checks the class's own plan against the
-# model's layout. Delete the Module and the tuple, the bitmap, and the ordinal
-# arithmetic reappear at all eight.
+# slot; `_graph_construction` allocates a shell, attaches one whole row to it from
+# positional rows, attributes a misshapen row, reads a relationship position
+# back, and checks the class's own plan against the model's layout. Delete the
+# Module and the tuple, the bitmap, and the ordinal arithmetic reappear at all
+# eight.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
     "parallax.core.entity._edit": frozenset(
@@ -143,7 +144,14 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     ),
     "parallax.core.entity._entity": frozenset({"BackedModel", "named_state"}),
     "parallax.core.entity._graph_construction": frozenset(
-        {"PublicationPlan", "allocate", "plan_of", "publish", "relationship"}
+        {
+            "PublicationPlan",
+            "RowShapeError",
+            "allocate",
+            "plan_of",
+            "publish_positional",
+            "relationship",
+        }
     ),
     "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
     "parallax.core.entity._row_codec": frozenset({"is_present", "named_state", "plan_of"}),
@@ -344,7 +352,9 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
         synthetic_sources(
             {
                 f"{ENTITY_PACKAGE}._new_writer": (
-                    "from parallax.core.entity._instance_state import allocate, publish\n"
+                    "from parallax.core.entity._instance_state import (\n"
+                    "    allocate, publish_positional,\n"
+                    ")\n"
                     "from parallax.core.entity._pydantic_storage import instance_state\n"
                 ),
                 f"{ENTITY_PACKAGE}._new_package_reader": (
@@ -353,12 +363,12 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
                 f"{ENTITY_PACKAGE}._new_bystander": (
                     "import parallax.core.entity._instance_state\n"
                     "from parallax.core.entity import Entity\n"
-                    "from parallax.core.entity_records._instance_state import publish\n"
+                    "from parallax.core.entity_records._instance_state import publish_positional\n"
                 ),
             }
         )
     ) == {
-        f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "publish"}),
+        f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "publish_positional"}),
         f"{ENTITY_PACKAGE}._new_package_reader": frozenset({"<the module itself>"}),
         f"{ENTITY_PACKAGE}._new_bystander": frozenset({"<the module itself>"}),
     }
