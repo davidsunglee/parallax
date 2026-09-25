@@ -209,6 +209,7 @@ def test_deferred_standalone_evidence_releases_member_state_after_materializatio
     assert evidence.entity == entity
     assert evidence._member_row == ()
     assert evidence._locator is None
+    assert evidence._layout is None
     assert evidence._document is None
 
 
