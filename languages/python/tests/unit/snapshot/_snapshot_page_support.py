@@ -56,6 +56,7 @@ __all__ = [
     "identity_of",
     "invalid_record",
     "layout_of",
+    "physical_members",
     "rendered_members",
     "rendered_occurrence",
 ]
@@ -153,6 +154,24 @@ def rendered_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[s
     rendered.update(
         {
             occurrence.identity.path[-1]: rendered_occurrence(values[position], occurrence)
+            for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count)
+            if values[position] is not ABSENT
+        }
+    )
+    return rendered
+
+
+def physical_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[str, object]:
+    """One member row by each member's physical storage name, ``ABSENT``
+    positions omitted and occurrences rendered as :func:`rendered_members` does."""
+    rendered: dict[str, object] = {
+        attribute.storage.name: values[position]
+        for position, attribute in enumerate(layout.attributes)
+        if values[position] is not ABSENT
+    }
+    rendered.update(
+        {
+            occurrence.storage.name: rendered_occurrence(values[position], occurrence)
             for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count)
             if values[position] is not ABSENT
         }

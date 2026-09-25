@@ -431,8 +431,7 @@
     "view"
   ],
   "parallax.core.unit_work:EntityStateRow": [
-    "over_declared_members",
-    "over_members"
+    "over_declared_members"
   ],
   "parallax.postgres": [
     "OnDemandOptions",

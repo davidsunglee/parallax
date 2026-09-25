@@ -5,8 +5,7 @@ Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
 that contradicts its declared type), scalar provenance, Page identity claims
 (family normalization, projection independence, and the table-per-concrete-subtype
-exception), and the deliberately
-physical observation extraction the write side reads.
+exception), and the whole converted row with its documents decoded.
 
 A row is POSITIONAL: every applicable member occupies its declared position and
 ``ABSENT`` stands where the read carried nothing, so what the suite asserts of a
@@ -59,7 +58,6 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen._compile import AttributeReadContract
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import EntityStateRow
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -82,6 +80,7 @@ from tests.unit.snapshot._snapshot_page_support import (
     documents_of,
     identity_of,
     layout_of,
+    physical_members,
     rendered_occurrence,
 )
 
@@ -223,9 +222,9 @@ def _with_finding(
     return _projection(context, row)
 
 
-def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> EntityStateRow:
+def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> dict[str, object]:
     projection = _converted(model, entity, row)
-    return EntityStateRow.over_members(projection.layout, projection.values, absent=ABSENT)
+    return physical_members(projection.layout, projection.values)
 
 
 def _occurrence(node: _Projection, name: str) -> Any:
@@ -771,11 +770,10 @@ def test_the_builder_answers_nothing_for_a_key_it_never_registered() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The physical-key view over shared Entity State.                               #
+# The whole converted row under physical storage keys.                          #
 # --------------------------------------------------------------------------- #
-def test_entity_state_row_answers_the_whole_row_with_documents_decoded() -> None:
-    # A Predecessor Row is column-keyed by contract (`m-unit-work`), and the
-    # document it retains carries the DECODED declared members — the same
+def test_a_converted_row_answers_the_whole_row_with_documents_decoded() -> None:
+    # A stored document is carried as its DECODED declared members — the same
     # spelling a successor's carried-versus-changed comparison reads.
     row: dict[str, object] = {
         "id": 1,
@@ -794,12 +792,8 @@ def test_entity_state_row_answers_the_whole_row_with_documents_decoded() -> None
     with pytest.raises(KeyError):
         address["geo"]
 
-    projection = _converted(CUSTOMER, "Customer", row)
-    with pytest.raises(ValueError, match="align"):
-        EntityStateRow.over_members(projection.layout, projection.values[:-1], absent=ABSENT)
 
-
-def test_entity_state_row_exposes_many_occurrences_without_rebuilding_them() -> None:
+def test_a_converted_row_carries_a_many_occurrence_one_row_per_element() -> None:
     entity = Entity(
         name="Fleet",
         table="fleet",

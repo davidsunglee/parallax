@@ -1,9 +1,9 @@
 """Entity State row views (`parallax.core.unit_work.observe`).
 
-The Mapping contract of the two positional views over one decoded Entity State —
-keyed by declared member name or by physical storage name — and of the nested
-Value Object views both expose, driven directly through the Mapping interface
-over layouts whose declared and storage names differ.
+The Mapping contract of the positional view over one decoded Entity State, keyed
+by declared member name, and of the nested Value Object views it exposes, driven
+directly through the Mapping interface over layouts whose declared and storage
+names differ.
 """
 
 from __future__ import annotations
@@ -34,17 +34,12 @@ _VALUES: tuple[object, ...] = (
     (("founder",), (None,)),
 )
 _DECLARED_NAMES = ("id", "displayName", "score", "joinedOn", "address", "tags")
-_STORAGE_NAMES = ("id", "display_name", "score", "joined_on", "address", "tags")
 
 
 def _declared(values: tuple[object, ...] = _VALUES) -> EntityStateRow:
     return EntityStateRow.over_declared_members(
         _DOCUMENT_LAYOUT.member_selection, values, absent=ABSENT
     )
-
-
-def _physical(values: tuple[object, ...] = _VALUES) -> EntityStateRow:
-    return EntityStateRow.over_members(_DOCUMENT_LAYOUT, values, absent=ABSENT)
 
 
 def _plain(value: object) -> object:
@@ -213,31 +208,9 @@ def test_a_nested_views_items_view_omits_absent_slots_and_stays_re_iterable() ->
     assert list(items) == list(items) == [("city", "Bergen")]
 
 
-# --------------------------------------------------------------------------- #
-# Physical and declared views of one row agree member for member.             #
-# --------------------------------------------------------------------------- #
-def test_the_physical_and_declared_views_of_one_row_read_the_same_values() -> None:
-    physical = _physical()
-    declared = _declared()
-
-    for storage, name in zip(_STORAGE_NAMES, _DECLARED_NAMES, strict=True):
-        assert _plain(physical[storage]) == _plain(declared[name])
-    assert list(physical) == [storage for storage in _STORAGE_NAMES if storage != "score"]
-    assert len(physical) == len(_STORAGE_NAMES) - 1
-    assert physical["score"] is ABSENT
-    assert "score" in physical
-    assert "display_name" in physical
-    assert "displayName" not in physical
-    with pytest.raises(KeyError):
-        physical["displayName"]
-
-
 def test_both_layout_twins_expose_one_positional_row_identically() -> None:
     columns_twin = EntityStateRow.over_declared_members(
         _COLUMNS_LAYOUT.member_selection, _VALUES, absent=ABSENT
     )
 
     assert _plain(dict(columns_twin.items())) == _plain(dict(_declared().items()))
-    assert _plain(dict(EntityStateRow.over_members(_COLUMNS_LAYOUT, _VALUES, absent=ABSENT))) == (
-        _plain(dict(_physical()))
-    )
