@@ -545,7 +545,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   cannot encode this
   partial order: a `layers` contract lets a higher layer import *every* lower
   layer, silently legalizing illegal non-edges (e.g. `m-batch-write`
-  importing `m-temporal-read`), so the gate must reject illegal non-edges,
+  importing `m-sql-gen`), so the gate must reject illegal non-edges,
   not merely confirm that listed edges match `modules.md`. The script
   re-generates and fails on any diff against the committed contracts. Local:
   `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the

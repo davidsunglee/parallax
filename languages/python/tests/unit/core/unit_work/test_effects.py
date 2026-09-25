@@ -96,8 +96,8 @@ _SHORTFALL_ERRORS: dict[Shortfall, type[WriteEffectError]] = {
 # exercising one tag must build the decision that implies it.
 _KEYED_CONCURRENCY: dict[Shortfall, NonTemporalConcurrency] = {
     MISSING_TARGET: UNVERSIONED,
-    STALE_WRITE: Versioned(gate=UNGATED),
-    OPTIMISTIC_CONFLICT: Versioned(gate=VersionGate(attribute=_VERSION, observed_version=1)),
+    STALE_WRITE: Versioned(attribute=_VERSION, gate=UNGATED),
+    OPTIMISTIC_CONFLICT: Versioned(attribute=_VERSION, gate=VersionGate(observed_version=1)),
 }
 
 _CLOSE_CONCURRENCY: dict[Shortfall, TemporalConcurrency] = {

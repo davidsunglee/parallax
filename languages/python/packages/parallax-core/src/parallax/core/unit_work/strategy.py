@@ -314,15 +314,16 @@ class ConcurrencyStrategy(Protocol):
     ``gates`` takes the write's own Entity beside the preference because a gate
     is settled per Entity, not per transaction: the preference combines with
     that Entity's Optimistic Lock Facet into its Effective Concurrency
-    Strategy, and only the Optimistic one gates. The planner passes the
-    DECLARING entity — the family root, which is where both the version source
-    and the As-Of Axes are declared — exactly as it does to
-    ``version_attribute``.
+    Strategy, and only the Optimistic one gates. Both entity-scoped questions
+    take the accepted model the caller already holds, so one stateless
+    implementation serves every model.
     """
 
-    def version_attribute(self, entity: EntityMetadata) -> AttributeIdentity | None: ...
+    def version_attribute(
+        self, model: Metamodel, entity: EntityIdentity
+    ) -> AttributeIdentity | None: ...
 
-    def gates(self, concurrency: Concurrency, entity: EntityMetadata) -> bool: ...
+    def gates(self, concurrency: Concurrency, model: Metamodel, entity: EntityIdentity) -> bool: ...
 
     def version_arithmetic(self) -> VersionArithmetic: ...
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import inheritance
+from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.metamodel import (
     ApplicationAssigned,
     AttributeMetadata,
@@ -28,37 +28,34 @@ _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 _OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
 
 
-def _family_members(model: Metamodel, entity: EntityMetadata) -> Sequence[AttributeMetadata]:
-    """``entity``'s family-effective Attributes: its own ancestry chain's."""
+def _primary_key(model: Metamodel, entity: EntityMetadata) -> AttributeMetadata:
     position = inheritance.view(model).entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return entity.declared_attributes
-    return position.applicable_attributes
+        raise RuntimeError(f"{entity.identity.canonical}: no compiled inheritance position")
+    return position.primary_key
 
 
 def _is_versioned(model: Metamodel, entity: EntityMetadata) -> bool:
-    return any(attribute.optimistic_locking for attribute in _family_members(model, entity))
+    return isinstance(
+        opt_lock.view(model).key(entity.identity),
+        opt_lock.ExplicitVersion | opt_lock.TransactionTimeDerived,
+    )
 
 
 def _is_temporal(model: Metamodel, entity: EntityMetadata) -> bool:
-    """Whether ``entity``'s family declares an As-Of Axis.
-
-    Temporality is family-wide and root-owned, so the question is asked of the
-    family root's own declaration; a descendant declares none of its own.
-    """
-    position = inheritance.view(model).entity(entity.identity)
-    root = entity if position is None else model.entity(position.root)
-    return root is not None and bool(root.declared_as_of_axes)
+    return isinstance(
+        temporal_read.view(model).shape(entity.identity),
+        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+    )
 
 
 def _is_pk_gen_managed(model: Metamodel, entity: EntityMetadata) -> bool:
-    """Whether ``entity``'s (family-effective) primary key is framework-allocated
+    """Whether ``entity``'s family primary key is framework-allocated
     (`m-pk-gen`) — each row's own key allocation is independent, so a shared
     multi-row statement cannot express it."""
-    return any(
-        isinstance(attribute.primary_key, PrimaryKey)
-        and not isinstance(attribute.primary_key.generation, ApplicationAssigned)
-        for attribute in _family_members(model, entity)
+    primary_key = _primary_key(model, entity).primary_key
+    return isinstance(primary_key, PrimaryKey) and not isinstance(
+        primary_key.generation, ApplicationAssigned
     )
 
 
@@ -100,13 +97,11 @@ def update_collapses(
         return False
     if len(rows) < 2:
         return False
-    pk_names = frozenset(
-        attribute.identity.name
-        for attribute in _family_members(model, entity)
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
-    excluded = pk_names | _OBSERVATION_CONTROL_KEYS
-    assigned = [{k: v for k, v in row.items() if k not in excluded} for row in rows]
+    key_name = _primary_key(model, entity).identity.name
+    assigned = [
+        {k: v for k, v in row.items() if k != key_name and k not in _OBSERVATION_CONTROL_KEYS}
+        for row in rows
+    ]
     first = assigned[0]
     return all(candidate == first for candidate in assigned[1:])
 

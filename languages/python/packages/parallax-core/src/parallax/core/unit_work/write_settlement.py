@@ -414,12 +414,10 @@ class WriteSettlement:
                 concurrency,
                 tx_instant,
             )
-        facts = self._non_temporal_facts(
-            entity, declaring_entity, instruction.mutation, surface="keyed"
-        )
+        facts = self._non_temporal_facts(entity, instruction.mutation, surface="keyed")
         if instruction.mutation == "insert":
             return (self._settle_insert(facts, instruction),)
-        addressed = self._addressed_facts(facts, declaring_entity, concurrency)
+        addressed = self._addressed_facts(facts, concurrency)
         observed_version = self._observed_version(
             entity, instruction, facts.version_attribute, observation
         )
@@ -461,10 +459,10 @@ class WriteSettlement:
         """
         entity = instruction.selection.target
         inheritance.reject_predicate_write(entity)
-        declaring_entity = self._families.declaring(entity)
         if (
-            declaring_entity.declared_as_of_axes
-            or self._concurrency.version_attribute(declaring_entity) is not None
+            self._families.declaring(entity).declared_as_of_axes
+            or self._concurrency.version_attribute(self._families.model, entity.identity)
+            is not None
         ):
             raise WritePlanningError(
                 f"{instruction.selection.target.identity.canonical!r}: a predicate write on a "
@@ -526,7 +524,6 @@ class WriteSettlement:
     def _non_temporal_facts(
         self,
         entity: EntityMetadata,
-        declaring_entity: EntityMetadata,
         mutation: str,
         *,
         surface: WriteSurface,
@@ -550,14 +547,13 @@ class WriteSettlement:
         return _NonTemporalFacts(
             entity=entity,
             view=self._families.view(entity),
-            version_attribute=self._concurrency.version_attribute(declaring_entity),
+            version_attribute=self._concurrency.version_attribute(
+                self._families.model, entity.identity
+            ),
         )
 
     def _addressed_facts(
-        self,
-        facts: _NonTemporalFacts,
-        declaring_entity: EntityMetadata,
-        concurrency: Concurrency,
+        self, facts: _NonTemporalFacts, concurrency: Concurrency
     ) -> _AddressedFacts:
         """What one non-temporal mutation against EXISTING rows settles before
         a row is in hand.
@@ -567,7 +563,7 @@ class WriteSettlement:
         whether the write gates, and how a shortfall against it classifies. An
         insert never reaches here, so it settles no address it does not use.
         """
-        gated = self._concurrency.gates(concurrency, declaring_entity)
+        gated = self._concurrency.gates(concurrency, self._families.model, facts.entity.identity)
         return _AddressedFacts(
             key_attributes=tuple(a.identity for a in self._families.primary_key(facts.entity)),
             gated=gated,
@@ -685,7 +681,7 @@ class WriteSettlement:
                 gate_start_attribute=_gate_axis(
                     declaring_entity, topology.closure.gate_basis
                 ).start_attribute,
-                gated=self._concurrency.gates(concurrency, declaring_entity),
+                gated=self._concurrency.gates(concurrency, self._families.model, entity.identity),
             )
         return _TemporalFacts(
             entity=entity,
@@ -768,13 +764,12 @@ class WriteSettlement:
             return self._settle_temporal_group(
                 group, entity, declaring_entity, concurrency, tx_instant
             )
-        return self._settle_versioned_group(group, entity, declaring_entity, concurrency)
+        return self._settle_versioned_group(group, entity, concurrency)
 
     def _settle_versioned_group(
         self,
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
-        declaring_entity: EntityMetadata,
         concurrency: Concurrency,
     ) -> StepSegment:
         """A versioned (non-temporal) Materialized Write Group's segment.
@@ -796,10 +791,8 @@ class WriteSettlement:
         :meth:`_observed_version`.
         """
         assert isinstance(group.observations, VersionColumns)
-        facts = self._non_temporal_facts(
-            entity, declaring_entity, group.mutation.mutation, surface="predicate"
-        )
-        addressed = self._addressed_facts(facts, declaring_entity, concurrency)
+        facts = self._non_temporal_facts(entity, group.mutation.mutation, surface="predicate")
+        addressed = self._addressed_facts(facts, concurrency)
         mutation = group.mutation.mutation
         if facts.version_attribute is None:
             _require_unobserved(entity, mutation, group.observations)
@@ -1160,9 +1153,8 @@ def _non_temporal_concurrency(
     """
     if version_attr is None or observed_version is None:
         return UNVERSIONED
-    if not gated:
-        return Versioned(gate=UNGATED)
-    return Versioned(gate=VersionGate(attribute=version_attr, observed_version=observed_version))
+    gate = VersionGate(observed_version=observed_version) if gated else UNGATED
+    return Versioned(attribute=version_attr, gate=gate)
 
 
 def _temporal_gate(
@@ -1304,7 +1296,9 @@ def plan_temporal_close(
     key_attributes = tuple(a.identity for a in families.primary_key(entity))
     _refuse_unaddressing_identity(entity, key_attributes, identity)
     gate: TemporalConcurrency = UNGATED
-    if observed_tx_start is not None and concurrency_strategy.gates(concurrency, declaring_entity):
+    if observed_tx_start is not None and concurrency_strategy.gates(
+        concurrency, model, entity.identity
+    ):
         gate = TemporalGate(
             start_attribute=_tx_time_axis(declaring_entity).start_attribute,
             observed_start=observed_tx_start,
