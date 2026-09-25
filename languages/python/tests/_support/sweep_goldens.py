@@ -337,6 +337,12 @@ _WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(f"m-unit-work-{n:03d}" for n
 _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-batch-write-005", "m-batch-write-006", "m-batch-write-007"}
 )
+# The readless ordering barrier (`m-batch-write-011`): the same readless form
+# buffered inside a `uow` group between keyed writes of an unversioned
+# Non-Temporal family, so no statement depends on a query result. The compile
+# lane lowers each step alone; the run lane additionally proves the group's one
+# flush delivers the steps in exactly that order.
+_READLESS_BARRIER_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
 # The Locking-fallback scenario (`m-opt-lock-023`): an unversioned Non-Temporal
 # target under the DEFAULT Concurrency Preference, whose participating find takes
 # the shared row lock and whose keyed update is ungated. Fully authored and
@@ -593,6 +599,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_WRITE_SEQUENCES
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
+    | _READLESS_BARRIER_SCENARIOS
     | _LOCKING_FALLBACK_SCENARIOS
     | _OBJECT_CLAIM_COALESCING_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS

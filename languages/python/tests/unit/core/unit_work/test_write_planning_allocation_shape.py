@@ -24,17 +24,11 @@ a per-planner one — a removal that only moves what it costs — is the differe
 between the readings taken here.
 
 Three readings of the Entity count. What one key derivation allocates and what
-one flush allocates over what an empty flush already allocated, which are the two
-sites a spelling index would be built per call. And what a model-scoped planner
-KEEPS when it is built, which is where that index would be held instead.
-
-The flush reading is a DIFFERENCE rather than a flat line, and the reason is
-named rather than absorbed: dependency ordering builds one topological rank per
-Entity on every flush, empty or not, and that structure is not what is graded
-here. So the flush reading grades what SETTLING a write adds to a flush that
-already paid for ordering, and it is read at an entity count a repeated
-measurement of a quadratic ordering stage can afford, while the key derivation is
-read at a hundred times as many Entities.
+one flush allocates, empty or settling a write, which are the sites a spelling
+index or a dependency graph would be built per call. And what a model-scoped
+planner KEEPS when it is built, which is where either would be held instead.
+Dependency ordering reads the referential rank the relationship module compiled
+with the model, so a flush builds no rank map either.
 
 The row readings are the ones whose seam is a settled plan rather than a call. A
 versioned group's segment holds no strategy; the strategy answers its arithmetic
@@ -129,15 +123,6 @@ references against three hundred, so no threshold is needed to tell the two
 readings apart, and none is used.
 """
 
-ORDERED_MANY: Final = 128
-"""What the flush reading uses instead of :data:`MANY`.
-
-Dependency ordering ranks every Entity against every other, so a flush against
-:data:`MANY` costs milliseconds and the instruments run their seam four hundred
-times. Sixteen times the floor is enough for a per-Entity structure to be
-hundreds of times the constant it would hide behind.
-"""
-
 INSTANT: Final = inert_instant()
 """One unresolved holder for every request below.
 
@@ -149,9 +134,8 @@ than re-created per seam, which would put its own allocation inside the window.
 def _model(entities: int) -> Metamodel:
     """An accepted model of ``entities`` independent single-key Entities.
 
-    Independent, so dependency ordering's rank map is the only structure their
-    number can grow: no relationship means no edge, and the ranks fall back to
-    the model's own canonical order.
+    Independent, so no relationship adds an edge, and the compiled ranks fall
+    back to the model's own canonical order.
     """
     declarations: list[Declaration] = []
     for index in range(entities):
@@ -527,22 +511,22 @@ def test_a_model_scoped_planner_keeps_nothing_per_entity() -> None:
 
 
 @in_a_child_interpreter
-def test_settling_a_write_adds_nothing_per_entity_to_a_flush() -> None:
-    # An empty flush is the control because it runs every stage a flush runs and
-    # settles nothing: whatever it pays per Entity is dependency ordering's rank
-    # map, which is not what this reading grades. Subtracting it leaves what
-    # SETTLING one write costs per Entity, and settlement reads its target through
-    # the Metadata the write already carries, so the two grow by the same bytes.
+def test_a_flush_allocates_nothing_per_entity() -> None:
+    # Settlement reads its target through the Metadata the write already
+    # carries, and ordering reads each ranked write's compiled rank, so neither
+    # an empty flush nor one settling a write grows with the model.
     tracemalloc.start()
     try:
         settled_few = allocation(_flush_of(FEW, 1))
-        settled_many = allocation(_flush_of(ORDERED_MANY, 1))
+        settled_many = allocation(_flush_of(MANY, 1))
         empty_few = allocation(_flush_of(FEW, 0))[1]
-        empty_many = allocation(_flush_of(ORDERED_MANY, 0))[1]
+        empty_many = allocation(_flush_of(MANY, 0))[1]
     finally:
         tracemalloc.stop()
-    assert empty_many - empty_few > 0, "ordering's own growth is the control, and it is missing"
-    assert settled_many[1] - settled_few[1] == empty_many - empty_few
+    assert empty_few > 0, "an empty flush is free, or nothing is being measured"
+    assert empty_many == empty_few
+    assert settled_few[1] > empty_few
+    assert settled_many[1] == settled_few[1]
     assert settled_few[0] < REPEATS
     assert settled_many[0] < REPEATS
 

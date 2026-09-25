@@ -18,6 +18,7 @@ from parallax.core.metamodel import (
 __all__ = [
     "FACET_KEY",
     "RELATIONSHIP_MODULE",
+    "EntityRelationships",
     "RelationshipFacet",
     "RelationshipMetadata",
     "inverted",
@@ -70,6 +71,20 @@ class RelationshipMetadata:
             raise ValueError("a reverse relationship name is either absent or nonempty")
 
 
+@dataclass(frozen=True, slots=True)
+class EntityRelationships:
+    """One Entity's compiled relationship record.
+
+    ``rank`` is the Entity's referential rank: every Entity whose foreign key it
+    holds ranks lower, so ascending rank is a safe insert order and descending
+    rank a safe delete order. Otherwise independent Entities, and the Entities
+    of a referential cycle, rank in canonical Entity order.
+    """
+
+    directions: tuple[RelationshipMetadata, ...]
+    rank: int
+
+
 class RelationshipFacet(Protocol):
     """Every accepted relationship direction, precomputed once per formation.
 
@@ -79,11 +94,13 @@ class RelationshipFacet(Protocol):
     Entity that declares no relationship answers an empty sequence. A known
     Entity's sequence preserves its local declaration order. There is no global
     enumeration and no separate reverse-pair lookup — a direction is reached by
-    its own Identity or through its Entity.
+    its own Identity or through its Entity. ``referential_rank`` answers
+    :attr:`EntityRelationships.rank`, or ``None`` for an unknown Entity.
     """
 
     def relationship(self, identity: RelationshipIdentity) -> RelationshipMetadata | None: ...
     def relationships(self, entity: EntityIdentity) -> Sequence[RelationshipMetadata] | None: ...
+    def referential_rank(self, entity: EntityIdentity) -> int | None: ...
 
 
 class _RelationshipFacet:
@@ -91,18 +108,16 @@ class _RelationshipFacet:
 
     __slots__ = ("_by_entity", "_by_identity")
 
-    _by_entity: Mapping[EntityIdentity, tuple[RelationshipMetadata, ...]]
+    _by_entity: Mapping[EntityIdentity, EntityRelationships]
     _by_identity: Mapping[RelationshipIdentity, RelationshipMetadata]
 
-    def __init__(
-        self, by_entity: Mapping[EntityIdentity, tuple[RelationshipMetadata, ...]]
-    ) -> None:
+    def __init__(self, by_entity: Mapping[EntityIdentity, EntityRelationships]) -> None:
         self._by_entity = MappingProxyType(dict(by_entity))
         self._by_identity = MappingProxyType(
             {
                 value.identity: value
-                for directions in self._by_entity.values()
-                for value in directions
+                for record in self._by_entity.values()
+                for value in record.directions
             }
         )
 
@@ -110,11 +125,16 @@ class _RelationshipFacet:
         return self._by_identity.get(identity)
 
     def relationships(self, entity: EntityIdentity) -> Sequence[RelationshipMetadata] | None:
-        return self._by_entity.get(entity)
+        record = self._by_entity.get(entity)
+        return None if record is None else record.directions
+
+    def referential_rank(self, entity: EntityIdentity) -> int | None:
+        record = self._by_entity.get(entity)
+        return None if record is None else record.rank
 
 
 def relationship_facet(
-    by_entity: Mapping[EntityIdentity, tuple[RelationshipMetadata, ...]],
+    by_entity: Mapping[EntityIdentity, EntityRelationships],
 ) -> RelationshipFacet:
     """The facet serving ``by_entity``, which names every Entity of one model.
 

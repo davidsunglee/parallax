@@ -331,6 +331,48 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     assert port.commits == 1 and port.rollbacks == 0
 
 
+def test_run_scenario_case_holds_a_grouped_readless_predicate_write_in_the_groups_flush() -> None:
+    # m-batch-write-011: the predicate write is buffered into the group's own
+    # transaction rather than run as a unit of its own, so the one flush at the
+    # boundary delivers it between the keyed writes buffered on either side.
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "id": 12,
+                "order_id": 1,
+                "sku": "B-200",
+                "quantity": 1,
+                "shipped_on": dt.date(2024, 2, 15),
+            }
+        ]
+    )
+    run = scenario.run_scenario_case(_case("m-batch-write-011"), port)
+    assert run.round_trips == 5
+    assert [e.case_pointer for e in run.emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/write",
+        "/scenario/2/write",
+        "/scenario/3/write",
+        "/scenario/3/write",
+    ]
+    assert [sql.split("(")[0] for sql, _ in port.writes] == [
+        "delete from order_item where id = %s",
+        "update order_item set sku = %s where quantity < %s",
+        "insert into orders",
+        "insert into order_item",
+    ]
+    assert len(port.reads) == 1
+    assert port.commits == 1 and port.rollbacks == 0
+
+
+def test_a_group_opening_with_a_predicate_write_runs_at_that_writes_own_instant() -> None:
+    steps: list[Mapping[str, object]] = [
+        {"uow": "g", "write": {"mutation": "delete", "at": "2024-05-01T00:00:00+00:00"}},
+        {"uow": "g", "write": [{"mutation": "delete", "at": "2025-01-01T00:00:00+00:00"}]},
+    ]
+    assert scenario._group_tx_instant(steps, 0, 1) == "2024-05-01T00:00:00+00:00"  # pyright: ignore[reportPrivateUsage]
+
+
 def _account(identifier: int, owner: str, balance: str, version: int) -> MappingRow:
     return {
         "id": identifier,

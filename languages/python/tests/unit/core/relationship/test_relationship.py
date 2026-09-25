@@ -77,6 +77,7 @@ from parallax.core.relationship import (
     project_join_endpoints,
     view,
 )
+from parallax.core.relationship._facet import EntityRelationships
 from parallax.core.relationship._rules import (
     CARDINALITY_JOIN_MISMATCH,
     DEFINING_DUPLICATE,
@@ -438,9 +439,111 @@ def test_enumeration_preserves_local_declaration_order() -> None:
 def test_the_facet_offers_no_global_enumeration_or_reverse_pair_lookup() -> None:
     facet = _facet(*_orders((_ITEMS,), (_ORDER_OF_ITEM,)))
     assert {name for name in dir(facet) if not name.startswith("_")} == {
+        "referential_rank",
         "relationship",
         "relationships",
     }
+
+
+# --------------------------------------------------------------------------
+# Referential rank.
+# --------------------------------------------------------------------------
+
+
+def _ranks(*declarations: UnresolvedEntityDeclaration) -> dict[str, int | None]:
+    """Each Entity's referential rank, keyed by name in canonical Entity order."""
+    model = form_metamodel(source(*declarations))
+    facet = view(model)
+    return {
+        entity.identity.name: facet.referential_rank(entity.identity) for entity in model.entities
+    }
+
+
+def _to_one(
+    owner: EntityIdentity, name: str, *, target: EntityIdentity, via: str
+) -> UnresolvedDefiningRelationshipDeclaration:
+    """A defining many-to-one whose foreign key ``via`` the owner holds."""
+    return _defining(
+        owner,
+        name,
+        cardinality=Cardinality.MANY_TO_ONE,
+        join_source=AttributeIdentity(owner, via),
+        target=target,
+        target_attribute="id",
+    )
+
+
+def test_a_model_without_foreign_keys_ranks_in_canonical_entity_order() -> None:
+    ranks = _ranks(*_orders())
+    assert list(ranks) == ["Item", "Order", "Tag"]
+    assert ranks == {"Item": 0, "Order": 1, "Tag": 2}
+
+
+def test_a_one_to_many_ranks_the_key_holding_target_after_its_source() -> None:
+    assert _ranks(*_orders((_ITEMS,))) == {"Item": 1, "Order": 0, "Tag": 2}
+
+
+def test_a_many_to_one_ranks_the_key_holding_source_after_its_target() -> None:
+    to_one = _to_one(_ITEM, "order", target=_ORDER, via="orderId")
+    assert _ranks(*_orders((), (to_one,))) == {"Item": 1, "Order": 0, "Tag": 2}
+
+
+def test_a_reverse_declaration_contributes_no_edge_of_its_own() -> None:
+    assert _ranks(*_orders((_ITEMS,), (_ORDER_OF_ITEM,))) == _ranks(*_orders((_ITEMS,)))
+
+
+def test_a_one_to_one_contributes_no_edge() -> None:
+    one = _defining(
+        _ORDER, "item", cardinality=Cardinality.ONE_TO_ONE, target=_ITEM, target_attribute="id"
+    )
+    assert _ranks(*_orders((one,))) == {"Item": 0, "Order": 1, "Tag": 2}
+
+
+def test_a_self_reference_ranks_after_every_entity_that_becomes_ready() -> None:
+    order, _, tag = _orders()
+    item = Declaration(
+        identity=_ITEM,
+        attributes=(key(_ITEM), attribute(_ITEM, "parentId")),
+        relationships=(_to_one(_ITEM, "parent", target=_ITEM, via="parentId"),),
+    )
+    assert _ranks(order, item, tag) == {"Item": 2, "Order": 0, "Tag": 1}
+
+
+def test_a_cycle_and_what_depends_on_it_follow_in_canonical_order() -> None:
+    order = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER), attribute(_ORDER, "itemId")),
+        relationships=(_to_one(_ORDER, "item", target=_ITEM, via="itemId"),),
+    )
+    item = Declaration(
+        identity=_ITEM,
+        attributes=(key(_ITEM), attribute(_ITEM, "orderId")),
+        relationships=(_to_one(_ITEM, "order", target=_ORDER, via="orderId"),),
+    )
+    alpha = identity("Alpha")
+    independent = identity("Zulu")
+    dependent = Declaration(
+        identity=alpha,
+        attributes=(key(alpha), attribute(alpha, "orderId")),
+        relationships=(_to_one(alpha, "order", target=_ORDER, via="orderId"),),
+    )
+    ranks = _ranks(
+        order, item, dependent, Declaration(identity=independent, attributes=(key(independent),))
+    )
+    assert list(ranks) == ["Alpha", "Item", "Order", "Zulu"]
+    assert ranks == {"Alpha": 1, "Item": 2, "Order": 3, "Zulu": 0}
+
+
+def test_an_entity_the_model_does_not_contain_has_no_rank() -> None:
+    facet = _facet(*_orders((_ITEMS,)))
+    assert facet.referential_rank(EntityIdentity("elsewhere", "Order")) is None
+
+
+def test_an_entitys_record_holds_its_directions_beside_its_rank_and_nothing_else() -> None:
+    assert [field.name for field in dataclasses.fields(EntityRelationships)] == [
+        "directions",
+        "rank",
+    ]
 
 
 # --------------------------------------------------------------------------

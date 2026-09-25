@@ -2315,7 +2315,10 @@ def _group_tx_instant(steps: Sequence[Mapping[str, object]], start: int, end: in
     for i in range(start, end + 1):
         step = steps[i]
         if "write" in step:
-            entries = write_entries(step["write"])
+            raw_write = step["write"]
+            if is_predicate_write_step(raw_write):
+                return entry_instant(cast("Mapping[str, object]", raw_write))
+            entries = write_entries(raw_write)
             if entries:
                 return entry_instant(entries[0])
     return INERT_CLOCK_INSTANT
@@ -2777,7 +2780,11 @@ def run_group_step(
     DB-computed write marker is a choreography unit of its own and no group step
     may carry one (`m-case-format` "Buffered keyed write instructions"), which
     this refuses by name rather than leaving to the verb that would reject the
-    value. A FIND step runs through ``tx.wire.find`` — the participating
+    value. A READLESS predicate-write step lowers and buffers exactly as an
+    ungrouped one does (:func:`_run_readless_predicate_write`), but into the
+    group's held transaction, so the flush that delivers it also orders the
+    keyed writes buffered on either side of it. A FIND step runs through
+    ``tx.wire.find`` — the participating
     Wire read, which force-flushes any pending buffered write, takes the read
     lock its target Entity's own Effective Concurrency Strategy calls for, and
     retains onto each published node what a later write settles against — and
@@ -2803,6 +2810,20 @@ def run_group_step(
     answers ``None``.
     """
     model = context.model
+    if "write" in step and is_predicate_write_step(step["write"]):
+        prepared = _prepared_case_predicate_write(
+            cast("Mapping[str, object]", step["write"]), model
+        )
+        statement = _lower_predicate_write_step(
+            prepared, model, session.dialect, context.concurrency
+        )
+        buffer_prepared_predicate_write(tx, prepared)
+        return (
+            LoweredStep(
+                f"/scenario/{index}/write", (statement,), True, step.get("rollback") is True
+            ),
+            None,
+        )
     if "write" in step:
         entries = write_entries(step["write"])
         named = _source_find_nodes(step, index, state.finds)

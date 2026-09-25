@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import heapq
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from parallax.core.metamodel import (
+    Cardinality,
     CompiledMetadata,
     DefiningRelationshipDeclaration,
     EntityIdentity,
@@ -16,6 +18,7 @@ from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship._facet import (
     FACET_KEY,
     RELATIONSHIP_MODULE,
+    EntityRelationships,
     RelationshipFacet,
     RelationshipMetadata,
     inverted,
@@ -26,19 +29,31 @@ __all__ = ["MODEL_COMPILER"]
 
 
 def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:
-    """Compile every accepted declaration of ``metadata`` into one directional value."""
+    """Compile every accepted declaration of ``metadata`` into one directional
+    value, and every Entity into its referential rank."""
+    position = {entity.identity: index for index, entity in enumerate(metadata.entities)}
     defining: dict[RelationshipIdentity, DefiningRelationshipDeclaration] = {}
     reverse_of: dict[RelationshipIdentity, RelationshipIdentity] = {}
-    for entity in metadata.entities:
+    # Only a defining declaration contributes a foreign-key edge: a reverse one
+    # denotes the same association, and a one-to-one's cardinality does not say
+    # which side holds the key.
+    dependents: list[list[int]] = [[] for _ in metadata.entities]
+    for index, entity in enumerate(metadata.entities):
         for declaration in entity.declared_relationships:
             match declaration:
                 case DefiningRelationshipDeclaration():
                     defining[declaration.identity] = declaration
+                    target = position[declaration.join.target.entity]
+                    if declaration.cardinality is Cardinality.MANY_TO_ONE:
+                        dependents[target].append(index)
+                    elif declaration.cardinality is Cardinality.ONE_TO_MANY:
+                        dependents[index].append(target)
                 case ReverseRelationshipDeclaration():
                     reverse_of[declaration.reverse_of] = declaration.identity
+    ranks = _referential_ranks(dependents)
 
-    by_entity: dict[EntityIdentity, tuple[RelationshipMetadata, ...]] = {}
-    for entity in metadata.entities:
+    by_entity: dict[EntityIdentity, EntityRelationships] = {}
+    for index, entity in enumerate(metadata.entities):
         directions: list[RelationshipMetadata] = []
         for declaration in entity.declared_relationships:
             match declaration:
@@ -56,8 +71,39 @@ def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:
                     )
                 case ReverseRelationshipDeclaration():
                     directions.append(_reverse_direction(declaration, defining))
-        by_entity[entity.identity] = tuple(directions)
+        by_entity[entity.identity] = EntityRelationships(tuple(directions), ranks[index])
     return relationship_facet(by_entity)
+
+
+def _referential_ranks(dependents: Sequence[Sequence[int]]) -> list[int]:
+    """Each canonical Entity position's referential rank.
+
+    ``dependents[p]`` lists the positions holding a foreign key to ``p``, once per
+    edge. Among the Entities whose prerequisites are all ranked, the earliest in
+    canonical order ranks next. An Entity on a referential cycle, a
+    self-reference included, never becomes ready, so once none is, every Entity
+    still unranked follows in canonical order.
+    """
+    waiting = [0] * len(dependents)
+    for held in dependents:
+        for dependent in held:
+            waiting[dependent] += 1
+    ready = [index for index, count in enumerate(waiting) if count == 0]
+    ranks = [-1] * len(dependents)
+    rank = 0
+    while ready:
+        index = heapq.heappop(ready)
+        ranks[index] = rank
+        rank += 1
+        for dependent in dependents[index]:
+            waiting[dependent] -= 1
+            if waiting[dependent] == 0:
+                heapq.heappush(ready, dependent)
+    for index, assigned in enumerate(ranks):
+        if assigned < 0:
+            ranks[index] = rank
+            rank += 1
+    return ranks
 
 
 def _reverse_direction(
