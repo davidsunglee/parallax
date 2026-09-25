@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
-    PrimaryKey,
     entity_by_name,
 )
 from parallax.core.object_query import OrderKey
@@ -22,7 +22,8 @@ from parallax.core.object_query._validated import (
     derive_page,
     resolved_order_term,
 )
-from parallax.core.temporal_read import scans_validated_axis
+from parallax.core.temporal_read import ranked_axes, scans_validated_axis
+from parallax.core.temporal_read import view as temporal_view
 
 __all__ = ["ContinuationError", "ContinuationPlan", "ordered", "plan"]
 
@@ -126,9 +127,9 @@ def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
     lowers and seeks exactly as an authored Sort Key does.
     """
     entity = query.root
-    root = _family_root(entity, model)
+    key = _family_view(entity, model).primary_key.identity
     terms = [_term_from_resolved(term) for term in query.order_by]
-    for identity in (_family_key(root), *_milestone_edge(root, query)):
+    for identity in (key, *_milestone_edge(entity, model, query)):
         if all(term.identity != identity for term in terms):
             terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
     return ContinuationPlan(model, query, tuple(terms))
@@ -144,7 +145,7 @@ def ordered(query: ValidatedObjectQuery, model: Metamodel) -> ValidatedObjectQue
 
 
 def _milestone_edge(
-    root: EntityMetadata, query: ValidatedObjectQuery
+    entity: EntityMetadata, model: Metamodel, query: ValidatedObjectQuery
 ) -> tuple[AttributeIdentity, ...]:
     """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
 
@@ -157,8 +158,10 @@ def _milestone_edge(
     """
     if not scans_validated_axis(query.temporal):
         return ()
-    axes = sorted(root.declared_as_of_axes, key=lambda axis: axis.dimension.value)
-    return tuple(axis.start_attribute for axis in axes)
+    shape = temporal_view(model).shape(entity.identity)
+    if shape is None:  # pragma: no cover - the Temporal Facet covers every accepted Entity
+        raise ContinuationError(f"{entity.identity.canonical}: the model declares no such Entity")
+    return tuple(axis.start_attribute for axis in ranked_axes(shape))
 
 
 def _term(key: OrderKey, model: Metamodel) -> _Term:
@@ -219,34 +222,8 @@ def _reference(identity: AttributeIdentity) -> str:
     return f"{identity.entity.canonical}.{identity.name}"
 
 
-def _family_root(entity: EntityMetadata, model: Metamodel) -> EntityMetadata:
-    """The Entity whose declaration carries ``entity``'s family-wide facts.
-
-    The primary key and the As-Of Axes are both family-wide and root-owned
-    (`m-inheritance`), so a subtype position resolves either through its family
-    root rather than through its own locally empty declaration.
-    """
+def _family_view(entity: EntityMetadata, model: Metamodel) -> InheritanceEntityView:
     position = inheritance_view(model).entity(entity.identity)
-    root = entity if position is None else model.entity(position.root)
-    if root is None:  # pragma: no cover - a resolved position always names a declared root
-        raise ContinuationError(f"{entity.identity.canonical}: the model declares no family root")
-    return root
-
-
-def _family_key(root: EntityMetadata) -> AttributeIdentity:
-    """``root``'s primary-key Attribute.
-
-    It is exactly one Attribute: `m-metamodel` refuses a composite key outright,
-    which is what makes each Continuation Order's key term one bindable value
-    rather than a tuple.
-    """
-    key = [
-        attribute.identity
-        for attribute in root.declared_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    if len(key) != 1:  # pragma: no cover - formation accepts exactly one primary-key Attribute
-        raise ContinuationError(
-            f"{root.identity.canonical}: the Entity declares no single primary-key Attribute"
-        )
-    return key[0]
+    if position is None:  # pragma: no cover - the Inheritance Facet covers every accepted Entity
+        raise ContinuationError(f"{entity.identity.canonical}: the model declares no such Entity")
+    return position

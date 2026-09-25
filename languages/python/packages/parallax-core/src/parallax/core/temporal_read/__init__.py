@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Protocol, assert_never
 
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, normalize_instant
+from parallax.core.inheritance import root_metadata
+from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import LATEST, Latest
@@ -38,6 +40,7 @@ from parallax.core.temporal_read._facet import (
     TemporalFacet,
     TemporalShape,
     TransactionTimeOnly,
+    ranked_axes,
     view,
 )
 
@@ -58,6 +61,7 @@ __all__ = [
     "UndeclaredAxisError",
     "inject_resolved_as_of",
     "milestone_edge",
+    "ranked_axes",
     "resolved_pinned_instants",
     "scans_validated_axis",
     "validated_hop_as_of_terms",
@@ -309,17 +313,15 @@ def validated_hop_as_of_terms(
     root_pins: Mapping[AcceptedDimension, ManagedValue],
 ) -> tuple[ValidatedPredicate, ...]:
     """Build managed per-hop terms; an absent pin means the framework Latest sentinel."""
-    # Import locally to keep the existing temporal facet's module layering unchanged.
-    from parallax.core import inheritance
-
-    declarer_view = inheritance.view(model).entity(target.identity)
-    if declarer_view is None:  # pragma: no cover - accepted metadata is total
-        raise TemporalReadError(f"{target.identity.canonical}: no inheritance view")
-    declarer = model.entity(declarer_view.root)
-    if declarer is None:  # pragma: no cover - accepted metadata is total
-        raise TemporalReadError(f"{declarer_view.root.canonical}: no declaring entity")
+    shape = view(model).shape(target.identity)
+    if shape is None:  # pragma: no cover - accepted metadata is total
+        raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
+    axes = ranked_axes(shape)
+    if not axes:
+        return ()
+    declarer = root_metadata(inheritance_view(model), model, target.identity)
     terms: list[ValidatedPredicate] = []
-    for axis in sorted(declarer.declared_as_of_axes, key=lambda item: item.dimension.value):
+    for axis in axes:
         instant = root_pins.get(axis.dimension)
         if instant is None:
             end = declarer.attribute(axis.end_attribute.name)

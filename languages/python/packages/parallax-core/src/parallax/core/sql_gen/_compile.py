@@ -80,6 +80,8 @@ from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import EntityLayoutView as _EntityLayoutView
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import view as _storage_view
+from parallax.core.temporal_read import ranked_axes as _ranked_axes
+from parallax.core.temporal_read import view as _temporal_view
 from parallax.core.wire import encode_wire
 
 __all__ = [
@@ -471,14 +473,15 @@ def _scalar_read_contracts(
     position: tuple[EntityIdentity, ...],
 ) -> tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...]:
     contracts: list[tuple[EntityIdentity, tuple[AttributeReadContract, ...]]] = []
+    temporal = _temporal_view(model)
     for identity in position:
         view = _entity_view(facet, identity)
         layout = _table_layout(storage, facet, identity)
-        root = model.entity(view.root)
+        shape = temporal.shape(identity)
         temporal_ends: frozenset[AttributeIdentity] = (
             frozenset()
-            if root is None
-            else frozenset(axis.end_attribute for axis in root.declared_as_of_axes)
+            if shape is None
+            else frozenset(axis.end_attribute for axis in _ranked_axes(shape))
         )
         entity_contracts: list[AttributeReadContract] = []
         for attribute in view.applicable_attributes:

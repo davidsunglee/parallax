@@ -169,10 +169,9 @@ def _scope_identities(model: Metamodel, scope: PositionScope) -> tuple[EntityIde
 def _validate_temporal_selections(
     root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
 ) -> tuple[ValidatedTemporalSelection, ...]:
-    family = inheritance.view(model).entity(root.identity)
-    declarer = None if family is None else model.entity(family.root)
-    if declarer is None:
-        return ()
+    # `m-object-query` cannot reach the Temporal Facet, so the family's axes are
+    # read from its root's accepted declaration.
+    declarer = inheritance.root_metadata(inheritance.view(model), model, root.identity)
     declared: dict[TemporalDimension, AsOfAxisMetadata] = {
         "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time": axis
         for axis in declarer.declared_as_of_axes
