@@ -19,7 +19,7 @@ inspected afterwards.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from time import monotonic
 from typing import Any, ClassVar, cast
@@ -61,8 +61,16 @@ class _Column:
 
 
 class _FakeCursor:
-    def __init__(self, connection: _FakeConnection) -> None:
+    """A cursor whose row factory, when given one, builds each row once its result attaches."""
+
+    def __init__(
+        self,
+        connection: _FakeConnection,
+        row_factory: Callable[[_FakeCursor], Callable[[tuple[object, ...]], object]] | None,
+    ) -> None:
         self._connection = connection
+        self._row_factory = row_factory
+        self._make_row: Callable[[tuple[object, ...]], object] | None = None
         self.description: list[_Column] | None = None
         self.rowcount = 0
 
@@ -80,9 +88,13 @@ class _FakeCursor:
             raise self._connection.execute_error
         rows = self._connection.rows
         self.description = [_Column(name) for name in rows[0]] if rows else None
+        if self._row_factory is not None:
+            self._make_row = self._row_factory(self)
 
-    def fetchall(self) -> list[tuple[object, ...]]:
-        return [tuple(row.values()) for row in self._connection.rows]
+    def fetchall(self) -> list[object]:
+        records = [tuple(row.values()) for row in self._connection.rows]
+        make_row = self._make_row
+        return [*records] if make_row is None else [make_row(record) for record in records]
 
 
 class _FakePgConn:
@@ -119,8 +131,12 @@ class _FakeConnection:
         self.closes = 0
         self.pgconn = _FakePgConn(self)
 
-    def cursor(self) -> _FakeCursor:
-        return _FakeCursor(self)
+    def cursor(
+        self,
+        *,
+        row_factory: Callable[[_FakeCursor], Callable[[tuple[object, ...]], object]] | None = None,
+    ) -> _FakeCursor:
+        return _FakeCursor(self, row_factory)
 
     def execute(self, sql: object, binds: Sequence[object] | None = None) -> _FakeCursor:
         text = sql.decode() if isinstance(sql, bytes) else str(sql)
