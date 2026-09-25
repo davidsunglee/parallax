@@ -4,10 +4,11 @@ Formation settles each family's version source and Temporal Shape once. A flow
 that later asks a declared Attribute whether it is the version, or asks an
 Entity's declarations for its As-Of Axes, re-derives that answer, and a correct
 answer hides the duplicate work. These tests record every such declaration read
-while production seams admit, plan, and lower writes, and while they materialize
-already-read Pages and retain their evidence, so a re-derivation fails even when
-it agrees with the owner. They grade the flows they drive, not every spelling in
-the tree.
+while production seams admit, plan, and lower writes, plan and run queries,
+materialize Pages, and retain their evidence, so a re-derivation fails even when
+it agrees with the owner. Object Query validation alone may read a root's
+declared axes, because its module cannot reach the Temporal Facet. The tests
+grade the flows they drive, not every spelling in the tree.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Final, cast
 
 import pytest
 
+from parallax.conformance.graph_models import POLICY_MODEL, Coverage, Policy
 from parallax.conformance.read_models import DepositRate
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
@@ -39,7 +41,8 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
-from parallax.core.object_query import LATEST
+from parallax.core.object_query import LATEST, TX_TIME
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
@@ -82,6 +85,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import edge_of, pin_of
 from parallax.snapshot.handle import (
     Database,
+    ScopedDatabase,
     Transaction,
     build_write_planner,
     plan_temporal_close,
@@ -91,7 +95,15 @@ from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import typed_publication, wire_publication
 from parallax.snapshot.materialize import ClassifiedRoot, InvalidData, RootView, classify_roots
 from tests._support.clock_probes import inert_instant, instant_at
-from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.db_port import (
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    ScriptEntry,
+    Transact,
+    Write,
+    WriteCall,
+)
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests._support.root_ownership import own_root
@@ -120,6 +132,14 @@ _TEMPORAL_MODEL: Final[Metamodel] = formed(
             *_RECORDS["rate"].entities,
         )
     )
+)
+
+
+_GRANT_BOUND: Final = frozenset(
+    {
+        "parallax.core.object_query.validate:_validate_temporal_selections",
+        "parallax.core.object_query._validated:latest_temporal_selections",
+    }
 )
 
 
@@ -430,8 +450,8 @@ def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
             DepositRate.where(DepositRate.id == id_).as_of(valid_time=LATEST)
         ).result()
 
-    updated, terminated = latest(1), latest(2)
     callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
+    updated, terminated = latest(1), latest(2)
 
     def write(tx: Transaction) -> None:
         tx.update(updated.edit(amount=Decimal("2.00")), valid_from=_VALID_FROM)
@@ -439,7 +459,7 @@ def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
 
     database.transact(write)
 
-    assert callers == []
+    assert set(callers) <= _GRANT_BOUND
     closes = [
         call.sql for call in port.calls if isinstance(call, WriteCall) and "set out_z" in call.sql
     ]
@@ -616,3 +636,99 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         if entity == "DepositRate"
         else VersionedStateKey(observed, 3)
     )
+
+
+_LATER: Final = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_POLICY_ROW: Final[Mapping[str, object]] = {
+    "id": 1,
+    "name": "P-1",
+    "from_z": _OPENED,
+    "thru_z": INFINITY_INSTANT,
+    "in_z": _OPENED,
+    "out_z": INFINITY_INSTANT,
+}
+_COVERAGE_ROW: Final[Mapping[str, object]] = {
+    "id": 10,
+    "policy_id": 1,
+    "amount": Decimal("250.00"),
+    "from_z": _OPENED,
+    "thru_z": INFINITY_INSTANT,
+    "in_z": _OPENED,
+    "out_z": INFINITY_INSTANT,
+}
+_RATE_MILESTONES: Final = (
+    {**_deposit_rate_row(1), "out_z": _LATER},
+    {**_deposit_rate_row(1), "amount": Decimal("2.00"), "in_z": _LATER},
+)
+
+
+def _rate_history() -> ObjectQuery[DepositRate, DepositRate]:
+    return DepositRate.where(DepositRate.id == 1).history(TX_TIME).as_of(valid_time=LATEST)
+
+
+def _navigated_policies(database: ScopedDatabase) -> None:
+    query = (
+        Policy.where(Policy.coverages.exists(Coverage.amount > Decimal("0")))
+        .as_of(valid_time=LATEST)
+        .include(Policy.coverages)
+    )
+    assert [policy.id for policy in database.find(query).results()] == [1]
+
+
+def _latest_rate(database: ScopedDatabase) -> None:
+    query = DepositRate.where(DepositRate.id == 1).as_of(valid_time=LATEST)
+    assert database.find(query).result().amount == Decimal("1.00")
+
+
+def _eager_rate_history(database: ScopedDatabase) -> None:
+    milestones = database.find(_rate_history()).results()
+    assert [edge_of(root).tx_time for root in milestones] == [_OPENED, _LATER]
+
+
+def _streamed_rate_history(database: ScopedDatabase) -> None:
+    with database.stream(_rate_history(), batch_size=len(_RATE_MILESTONES) + 1) as stream:
+        assert [edge_of(root).tx_time for root in stream] == [_OPENED, _LATER]
+
+
+def _materialized_policy_update(database: ScopedDatabase) -> None:
+    def update(tx: Transaction) -> None:
+        tx.update_where(
+            Policy.where(Policy.id == 1), Policy.name.set("P-2"), valid_from=_VALID_FROM
+        )
+
+    database.transact(update)
+
+
+_QUERIES: Final[
+    Mapping[str, tuple[DomainModel, tuple[ScriptEntry, ...], Callable[[ScopedDatabase], None]]]
+] = {
+    "navigated-include": (
+        POLICY_MODEL,
+        (Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])),
+        _navigated_policies,
+    ),
+    "inherited-latest": (RATE, (Read(rows=[_deposit_rate_row(1)]),), _latest_rate),
+    "inherited-history": (RATE, (Read(rows=list(_RATE_MILESTONES)),), _eager_rate_history),
+    "inherited-stream": (RATE, (Read(rows=list(_RATE_MILESTONES)),), _streamed_rate_history),
+    "materialized-update": (
+        POLICY_MODEL,
+        (Transact(Read(rows=[_POLICY_ROW]), Write(times=3)),),
+        _materialized_policy_update,
+    ),
+}
+
+
+@pytest.mark.parametrize("flow", sorted(_QUERIES))
+def test_planning_and_running_queries_take_family_facts_from_their_owners(
+    monkeypatch: pytest.MonkeyPatch, flow: str
+) -> None:
+    domain, answers, run = _QUERIES[flow]
+    port = ScriptedAdapter(*answers)
+    database = db_for(domain, port)
+    callers = _trace_declarations(monkeypatch, model_of(domain))
+
+    run(database)
+
+    assert callers
+    assert set(callers) <= _GRANT_BOUND
+    assert any(isinstance(call, ReadCall) for call in port.calls)

@@ -22,7 +22,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance, relationship, storage_layout
+from parallax.core import deep_fetch, inheritance, relationship, storage_layout, temporal_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES, Dialect
@@ -52,6 +52,7 @@ from parallax.core.sql_gen._compile import (
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.storage_layout import _compile as storage_layout_compile
+from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import model, target
@@ -681,6 +682,7 @@ def _fake_model() -> Metamodel:
                 base, inheritance_facet, relationship_compile.compile_facet(base)
             ),
             relationship.FACET_KEY: relationship_compile.compile_facet(base),
+            temporal_read.FACET_KEY: temporal_read_compile.compile_facet(base, inheritance_facet),
         }
     )
 

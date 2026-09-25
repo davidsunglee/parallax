@@ -33,11 +33,12 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, deep_fetch, temporal_read
 from parallax.core.base import INFINITY_LITERAL
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     Metamodel,
     PrimaryKey,
     entity_by_name,
@@ -71,6 +72,7 @@ ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
 BALANCE = accepted_model("balance")
 POSITION = accepted_model("position")
+RATE = accepted_model("rate")
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 
 _ORDER_ID = "parallax.compatibility.Order.id"
@@ -727,6 +729,50 @@ def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> No
         OrderKey(attr=_POSITION_TX_START, direction="desc"),
         OrderKey(attr=_POSITION_ID, direction="asc"),
         OrderKey(attr=_POSITION_VALID_START, direction="asc"),
+    )
+
+
+def _undiscoverable_family_facts(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> None:
+    """Fail any read that asks a declared Attribute whether it is the key, or an
+    Entity's declarations for their As-Of Axes."""
+
+    def refuse(declaration: object, *_dimension: object) -> object:
+        raise AssertionError(f"{declaration} was searched for a family fact")
+
+    entity_type = type(model.entities[0])
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(refuse))
+    monkeypatch.setattr(entity_type, "declared_as_of_axes", property(refuse))
+    monkeypatch.setattr(entity_type, "as_of_axis", refuse)
+
+
+def test_an_inherited_milestone_set_read_orders_by_the_family_owners_key_and_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A concrete subtype declares neither the key nor the axes: both are its
+    # family root's, and the order names them there while the query still
+    # addresses the subtype itself.
+    deposit_rate = entity_of(RATE, "DepositRate")
+    shape = temporal_read.view(RATE).shape(deposit_rate.identity)
+    assert isinstance(shape, temporal_read.Bitemporal)
+    query = validate_object_query(
+        deposit_rate,
+        object_query(
+            deposit_rate.identity,
+            All(),
+            temporal={"transaction-time": History(), "valid-time": AsOf("latest")},
+        ),
+        RATE,
+    )
+    _undiscoverable_family_facts(monkeypatch, RATE)
+
+    node = continuation.plan(query, RATE).first(limit=2)
+
+    root = entity_of(RATE, "Rate").identity.canonical
+    assert node.root.identity == deposit_rate.identity
+    assert node.authored.order_by == (
+        OrderKey(attr=f"{root}.id", direction="asc"),
+        OrderKey(attr=f"{root}.{shape.valid_time.start_attribute.name}", direction="asc"),
+        OrderKey(attr=f"{root}.{shape.transaction_time.start_attribute.name}", direction="asc"),
     )
 
 

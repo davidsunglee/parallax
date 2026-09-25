@@ -245,12 +245,10 @@ def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
         return MissingFamily()
 
     monkeypatch.setattr(inheritance, "view", missing_family_view)
-    assert (
+    with pytest.raises(RuntimeError, match="has no Inheritance Facet view"):
         query_validation._validate_temporal_selections(  # pyright: ignore[reportPrivateUsage]
             malformed, query, cast("Any", Model())
         )
-        == ()
-    )
 
 
 def test_temporal_read_rejects_an_undeclared_dimension() -> None:
@@ -501,6 +499,26 @@ def test_a_narrow_to_a_name_the_model_does_not_declare_resolves_to_nothing() -> 
     op = Narrow(to=("Bogus",), operand=All())
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
+
+
+def test_a_positions_family_set_is_its_roots_concrete_set_without_a_metadata_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An abstract position's own effective set stays narrower than its whole
+    # family's, which the root's compiled view answers.
+    model = formed(_ANIMAL)
+    pet = _root(model, "Pet")
+    own = predicate_validation.effective_set(model, pet)
+
+    def refuse(_model: object, identity: object) -> object:
+        raise AssertionError(f"{identity} was fetched to find its family's set")
+
+    monkeypatch.setattr(type(model), "entity", refuse)
+
+    family = predicate_validation._family_set(model, pet)  # pyright: ignore[reportPrivateUsage]
+
+    assert own == {"parallax.compatibility.Cat", "parallax.compatibility.Dog"}
+    assert family == own | {"parallax.compatibility.WildBoar"}
 
 
 # --------------------------------------------------------------------------- #

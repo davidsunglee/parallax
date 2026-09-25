@@ -370,11 +370,12 @@ def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     A standalone Entity's family is itself, so this equals its effective set and
     the two positional rules stay distinguishable for it.
     """
-    view = inheritance.view(model).entity(entity.identity)
-    root = None if view is None else model.entity(view.root)
-    if root is None:  # pragma: no cover - the facet covers every accepted Entity
+    families = inheritance.view(model)
+    view = families.entity(entity.identity)
+    family = None if view is None else families.entity(view.root)
+    if family is None:  # pragma: no cover - the facet covers every accepted Entity
         return effective_set(model, entity)
-    return effective_set(model, root)
+    return frozenset(identity.canonical for identity in family.concrete_subtypes)
 
 
 def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[str]:

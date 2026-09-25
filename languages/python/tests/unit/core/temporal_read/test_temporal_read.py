@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
+from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch, inheritance
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
@@ -34,6 +34,8 @@ from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
+    FACET_KEY,
+    Bitemporal,
     TemporalReadError,
     TemporalShape,
     inject_resolved_as_of,
@@ -141,9 +143,7 @@ def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
         )
 
 
-def test_hop_temporal_injection_rejects_axes_with_missing_members(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_hop_temporal_injection_rejects_axes_with_missing_members() -> None:
     axis = POSITION.declared_as_of_axes[0]
     without_end = cast(
         "EntityMetadata",
@@ -162,18 +162,20 @@ def test_hop_temporal_injection_rejects_axes_with_missing_members(
         def entity(_identity: object) -> Any:
             return type("Position", (), {"root": without_end.identity})()
 
+    facets: dict[object, object] = {
+        inheritance.FACET_KEY: Family(),
+        FACET_KEY: temporal_view(_ACCEPTED["Position"]),
+    }
+
     class Model:
+        @staticmethod
+        def facet(key: object) -> object:
+            return facets[key]
+
         @staticmethod
         def entity(_identity: object) -> EntityMetadata:
             return without_end
 
-    import parallax.core.inheritance as inheritance_module
-
-    monkeypatch.setattr(
-        inheritance_module,
-        "view",
-        lambda _model: Family(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
-    )
     malformed_model = cast("Any", Model())
 
     with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
@@ -184,6 +186,51 @@ def test_hop_temporal_injection_rejects_axes_with_missing_members(
             malformed_model,
             {axis.dimension: dt.datetime(2024, 1, 1, tzinfo=dt.UTC)},
         )
+
+
+def _undeclared_axes(monkeypatch: pytest.MonkeyPatch, entity: EntityMetadata) -> None:
+    """Fail any read of an Entity's declared As-Of Axes."""
+
+    def refuse(declaration: EntityMetadata, *_dimension: object) -> object:
+        raise AssertionError(f"{declaration.identity} was asked for its declared axes")
+
+    monkeypatch.setattr(type(entity), "declared_as_of_axes", property(refuse))
+    monkeypatch.setattr(type(entity), "as_of_axis", refuse)
+
+
+@pytest.mark.parametrize("pinned", [False, True], ids=["latest", "pinned"])
+def test_hop_terms_at_an_inherited_position_come_from_the_family_shape(
+    monkeypatch: pytest.MonkeyPatch, pinned: bool
+) -> None:
+    model = accepted_model("rate")
+    deposit_rate = target(model, "DepositRate")
+    root = target(model, "Rate")
+    shape = temporal_view(model).shape(deposit_rate.identity)
+    assert isinstance(shape, Bitemporal)
+    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    pins = (
+        {TemporalDimension.VALID_TIME: instant, TemporalDimension.TRANSACTION_TIME: instant}
+        if pinned
+        else {}
+    )
+    _undeclared_axes(monkeypatch, deposit_rate)
+
+    terms = validated_hop_as_of_terms(deposit_rate, model, pins)
+
+    members = [
+        attribute
+        for axis in (shape.valid_time, shape.transaction_time)
+        for attribute in (
+            (axis.start_attribute, axis.end_attribute) if pinned else (axis.end_attribute,)
+        )
+    ]
+    assert [cast("oa.Comparison", term.authored).attr for term in terms] == [
+        f"{root.identity.canonical}.{member.name}" for member in members
+    ]
+    assert all(
+        term.member is root.attribute(member.name)
+        for term, member in zip(terms, members, strict=True)
+    )
 
 
 def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:

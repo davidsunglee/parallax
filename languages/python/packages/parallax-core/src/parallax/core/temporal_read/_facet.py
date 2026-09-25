@@ -22,6 +22,7 @@ __all__ = [
     "TemporalFacet",
     "TemporalShape",
     "TransactionTimeOnly",
+    "ranked_axes",
     "temporal_facet",
     "view",
 ]
@@ -112,6 +113,17 @@ def _declared_axis(shape: TemporalShape, dimension: TemporalDimension) -> AsOfAx
             return valid_time
         case Bitemporal(_, transaction_time), TemporalDimension.TRANSACTION_TIME:
             return transaction_time
+
+
+def ranked_axes(shape: TemporalShape) -> tuple[AsOfAxisMetadata, ...]:
+    """The As-Of Axes ``shape`` declares, in canonical axis rank."""
+    match shape:
+        case NonTemporal():
+            return ()
+        case TransactionTimeOnly(transaction_time):
+            return (transaction_time,)
+        case Bitemporal(valid_time, transaction_time):
+            return (valid_time, transaction_time)
 
 
 class _TemporalFacet:

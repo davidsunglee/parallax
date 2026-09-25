@@ -237,9 +237,9 @@ def plan(
     """Plan validated Includes and resolve the caller's projection request."""
     entity = query.root
     families = inheritance.view(model)
-    temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
+    family_root = inheritance.root_metadata(families, model, entity.identity)
     root_pins = resolved_pinned_instants(query.temporal)
-    root_injected = inject_resolved_as_of(query.predicate, query.temporal, temporal_entity)
+    root_injected = inject_resolved_as_of(query.predicate, query.temporal, family_root)
     predicate = navigate.canonicalize_validated(root_injected, model, entity, root_pins)
     narrow_to = (
         None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
@@ -280,9 +280,9 @@ def plan_mutation_read(
     """Produce the one resolved flat read required to materialize a predicate write."""
     entity = write.selection.target
     families = inheritance.view(model)
-    temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
+    family_root = inheritance.root_metadata(families, model, entity.identity)
     root_pins = resolved_pinned_instants(temporal)
-    injected = inject_resolved_as_of(write.selection.predicate, temporal, temporal_entity)
+    injected = inject_resolved_as_of(write.selection.predicate, temporal, family_root)
     predicate = navigate.canonicalize_validated(injected, model, entity, root_pins)
     assigned = frozenset(
         assignment.member.identity.path[-1]
