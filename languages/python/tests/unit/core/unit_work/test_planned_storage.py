@@ -93,10 +93,11 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, temporal_group
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests._support.root_ownership import own_root
 from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._gc_reachability import reachable_objects
+from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import BALANCE as BALANCE_MODEL
 from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 
