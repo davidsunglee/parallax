@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from operator import itemgetter
 
-from parallax.core import inheritance, temporal_read
-from parallax.core.metamodel import (
-    Cardinality,
-    DefiningRelationshipDeclaration,
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-)
+from parallax.core import inheritance, relationship, temporal_read
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.unit_work.claims import WriteIntent, admits, keyed_intent
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.instructions import (
@@ -85,7 +80,14 @@ class WritePlanner:
     rebinding any of them.
     """
 
-    __slots__ = ("_batching", "_families", "_model", "_settlement", "_temporal_facet")
+    __slots__ = (
+        "_batching",
+        "_families",
+        "_model",
+        "_relationships",
+        "_settlement",
+        "_temporal_facet",
+    )
 
     def __init__(
         self,
@@ -99,6 +101,7 @@ class WritePlanner:
         self._model = model
         self._families = inheritance.view(model)
         self._temporal_facet = temporal_read.view(model)
+        self._relationships = relationship.view(model)
         self._batching = batching
         self._settlement = WriteSettlement(
             model,
@@ -250,34 +253,46 @@ class WritePlanner:
         return result
 
     def _order(self, items: Sequence[OrderedWrite]) -> list[OrderedWrite]:
-        ranks = _fk_ranks(self._model)
-
-        def rank(item: OrderedWrite) -> int:
-            entity = _instruction_target(buffered_instruction(item))
-            return ranks.get(entity.identity, 0)
-
-        def mutation(item: OrderedWrite) -> str:
-            return buffered_instruction(item).mutation
-
-        def order_region(region: Sequence[OrderedWrite]) -> list[OrderedWrite]:
-            inserts = [i for i in region if mutation(i) in INSERT_MUTATIONS]
-            updates = [i for i in region if mutation(i) in UPDATE_MUTATIONS]
-            deletes = [i for i in region if mutation(i) in DESTRUCTIVE_MUTATIONS]
-            inserts.sort(key=rank)
-            deletes.sort(key=lambda i: -rank(i))
-            return [*inserts, *updates, *deletes]
-
+        """``items`` in flush order: each readless predicate write stays where it
+        was authored, and within each region between them inserts go in
+        ascending referential rank, then updates in authored order, then deletes
+        in descending rank. Both sorts are stable."""
         ordered: list[OrderedWrite] = []
-        region: list[OrderedWrite] = []
+        inserts: list[tuple[int, OrderedWrite]] = []
+        updates: list[OrderedWrite] = []
+        deletes: list[tuple[int, OrderedWrite]] = []
+
+        def close_region() -> None:
+            inserts.sort(key=_RANK)
+            deletes.sort(key=_RANK, reverse=True)
+            ordered.extend(item for _, item in inserts)
+            ordered.extend(updates)
+            ordered.extend(item for _, item in deletes)
+            inserts.clear()
+            updates.clear()
+            deletes.clear()
+
         for item in items:
             if isinstance(item, PreparedPredicateWrite):
-                ordered.extend(order_region(region))
+                close_region()
                 ordered.append(item)
-                region = []
-            else:
-                region.append(item)
-        ordered.extend(order_region(region))
+                continue
+            instruction = buffered_instruction(item)
+            if instruction.mutation in UPDATE_MUTATIONS:
+                updates.append(item)
+            elif instruction.mutation in INSERT_MUTATIONS:
+                inserts.append((self._rank(instruction), item))
+            elif instruction.mutation in DESTRUCTIVE_MUTATIONS:
+                deletes.append((self._rank(instruction), item))
+        close_region()
         return ordered
+
+    def _rank(self, instruction: PreparedWrite) -> int:
+        rank = self._relationships.referential_rank(_instruction_target(instruction).identity)
+        return 0 if rank is None else rank
+
+
+_RANK = itemgetter(0)
 
 
 def _merge_update_into_insert(
@@ -506,57 +521,13 @@ def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
     return derive_keyed_write(first, tuple(row for w in run for row in w.rows))
 
 
-def _fk_ranks(model: Metamodel) -> dict[EntityIdentity, int]:
-    """A topological rank per entity: a referenced entity ranks before its
-    referencer.
-
-    A ``many-to-one`` relationship means the source holds the foreign key
-    (source after related); a ``one-to-many`` means the related entity holds
-    it (related after source). ``one-to-one`` contributes no FK-order edge
-    because its storage owner is ambiguous. Ties break by the accepted
-    model's own canonical Entity order; a (defensive) cycle falls back to it
-    too.
-
-    Only DEFINING declarations contribute: a reverse declaration names a
-    defining one rather than repeating it, and the inverted direction it
-    denotes yields the very edge the defining side already contributed, so
-    reading both would add nothing and would need the paired cardinality this
-    scope cannot see. Every declared target is an accepted Entity of this
-    model, so an edge always lands on a ranked position.
-    """
-    identities = [entity.identity for entity in model.entities]
-    prereqs: dict[EntityIdentity, set[EntityIdentity]] = {
-        identity: set() for identity in identities
-    }
-    for entity in model.entities:
-        for declaration in entity.declared_relationships:
-            if not isinstance(declaration, DefiningRelationshipDeclaration):
-                continue
-            related = declaration.join.target.entity
-            if declaration.cardinality is Cardinality.MANY_TO_ONE:
-                prereqs[entity.identity].add(related)
-            elif declaration.cardinality is Cardinality.ONE_TO_MANY:
-                prereqs[related].add(entity.identity)
-    remaining = set(identities)
-    order: list[EntityIdentity] = []
-    while remaining:
-        ready = [i for i in identities if i in remaining and not (prereqs[i] & remaining)]
-        if not ready:
-            # Defensive: reachable models are acyclic; a cycle keeps declaration order.
-            order.extend(i for i in identities if i in remaining)  # pragma: no cover
-            break  # pragma: no cover
-        order.append(ready[0])
-        remaining.discard(ready[0])
-    return {identity: rank for rank, identity in enumerate(order)}
-
-
 def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
     if isinstance(instruction, PreparedKeyedWrite):
         return instruction.target
     # A readless predicate write is always a barrier in `_order`, never a
-    # region member `rank`/`mutation` resolves against — but a Materialized
-    # Write Group's own `mutation` IS a `PredicateWrite`, and a group ranks
-    # as an ordinary region member, so this arm is reached for one.
+    # region member `_rank` resolves against — but a Materialized Write
+    # Group's own `mutation` IS a `PredicateWrite`, and a group ranks as an
+    # ordinary region member, so this arm is reached for one.
     return instruction.selection.target
 
 

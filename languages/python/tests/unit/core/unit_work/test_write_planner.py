@@ -27,7 +27,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
+from parallax.core import bitemp_write, inheritance, relationship, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
@@ -45,6 +45,7 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipJoin,
 )
 from parallax.core.opt_lock import CallerAuthoredVersionError
+from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.unit_work import (
     BufferItem,
     ChunkedColumnBuilder,
@@ -664,6 +665,55 @@ def test_a_defining_many_to_one_orders_its_source_after_its_target() -> None:
         KeyedWrite("insert", "Zeta", ({"id": 2},)),
     ]
     assert _entities(_plan(buffer, model)) == ["Zeta", "Alpha"]
+
+
+def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ranks are the Relationship Facet's, compiled with the model: a flush only
+    # reads one per insert or delete. Updates keep authored order and the
+    # barrier keeps its place, so neither asks.
+    planner = build_write_planner(_ORDERS)
+    facet = relationship.view(_ORDERS)
+    asked: list[str] = []
+    compiled = type(facet).referential_rank
+
+    def recording(self: relationship.RelationshipFacet, entity: EntityIdentity) -> int | None:
+        asked.append(entity.name)
+        return compiled(self, entity)
+
+    def refuse(*_: object) -> list[int]:
+        raise AssertionError("a flush derived referential ranks")
+
+    monkeypatch.setattr(type(facet), "referential_rank", recording)
+    monkeypatch.setattr(relationship_compile, "_referential_ranks", refuse)
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)),
+        KeyedWrite("update", "OrderItem", ({"id": 11, "quantity": 5},)),
+        _predicate_update("Order"),
+        KeyedWrite("delete", "OrderStatus", ({"id": 100},)),
+        KeyedWrite("insert", "OrderTag", ({"id": 7, "orderId": 1, "label": "x", "priority": 1},)),
+    ]
+    request = PlanningRequest(
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=_INSTANT,
+        concurrency="locking",
+        buffered_writes=observed_buffer(buffer, _ORDERS, None),
+    )
+    first = planner.finalize(request).plan
+    second = planner.finalize(request).plan
+    assert asked == ["OrderItem", "OrderStatus", "OrderTag"] * 2
+    assert (
+        _shape(first)
+        == _shape(second)
+        == [
+            ("insert", "OrderItem"),
+            ("update", "OrderItem"),
+            ("update", "Order"),
+            ("insert", "OrderTag"),
+            ("delete", "OrderStatus"),
+        ]
+    )
 
 
 def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> None:

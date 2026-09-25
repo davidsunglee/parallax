@@ -209,6 +209,7 @@ m-unit-work --> m-db-port
 m-unit-work --> m-temporal-read
 m-unit-work --> m-edit
 m-unit-work --> m-document-codec
+m-unit-work --> m-relationship
 m-execution-authority --> m-unit-work
 m-execution-authority --> m-db-port
 m-read-lock --> m-unit-work
@@ -443,6 +444,13 @@ construction it may reference any behavioral module it harnesses.
   and nothing it holds is encoded back through the codec. The
   direction stays one-way — `m-document-codec` names no write, instruction, or
   transaction construct.
+- **`m-unit-work --> m-relationship`.** Foreign-key ordering is fixed by the
+  accepted model: which side of an association holds the key is a relationship
+  fact, decided by its compiled cardinality, so unit work orders a flush from
+  what the relationship module compiled rather than re-reading raw
+  declarations. What unit work keeps is how each write kind uses that order.
+  The direction stays one-way — `m-relationship` names no write, instruction,
+  or transaction construct.
 - **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Managed-object mutation remains developer
