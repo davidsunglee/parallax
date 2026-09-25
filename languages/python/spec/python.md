@@ -556,17 +556,21 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   a new topology decision, not an incidental use of an existing scope grant.
 
   ```carrier-neutral-private-reaches
-  parallax.core.sql_gen._compile | CompiledRead, CompiledTemplate, compile_read, compile_template | parallax.snapshot.handle._materialization
+  parallax.core.sql_gen._compile | CompiledRead, CompiledTemplate, compile_read, compile_template | parallax.snapshot.handle._read_plan
   parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes
+  parallax.core.sql_gen._compile | CompiledRead | parallax.snapshot.handle._materialization; parallax.snapshot.handle._read
+  parallax.core.sql_gen._seek | null_pattern | parallax.snapshot.handle._read_plan
   parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance._lanes.scenario
   ```
 
   Snapshot's imports are first-party private implementation reaches;
-  conformance imports are development-only adapter reaches. Neither defining
-  leaf is exported from `parallax.core.sql_gen`, and no other consumer imports
-  these names. The topology contract test pins this block independently of the
-  broader generated scope graph. The source exact-set inventory MUST use this
-  same importer/name set, so an implementation cannot widen either set silently.
+  conformance imports are development-only adapter reaches. No defining leaf
+  is exported from `parallax.core.sql_gen`, and no other consumer imports these
+  names. The topology contract test pins this block independently of the
+  broader generated scope graph. The source exact-set inventories MUST read
+  every Snapshot and conformance import from a private `parallax.core.sql_gen`
+  module as exactly this importer/name set, so an implementation cannot widen
+  either set silently.
 - **The conformance family's accepted private reaches.** The enforcement unit is
   the scope, so the importing-side exemption above already reaches a granted
   scope's private modules; what the exemption does not decide is *which* of them
