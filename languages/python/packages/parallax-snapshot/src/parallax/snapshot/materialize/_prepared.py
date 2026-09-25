@@ -5,11 +5,24 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from parallax.core.base import SQL_NULL, DocumentValue, UnknownFamilyTag
+from parallax.core.base import (
+    SQL_NULL,
+    DocumentValue,
+    ManagedValue,
+    NeutralType,
+    UnknownFamilyTag,
+)
 from parallax.core.db_port import Row
 from parallax.core.document_codec import DocumentFinding, MemberShape, locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectMetadata
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Occurrence,
+    ValueObjectMetadata,
+)
+from parallax.core.unit_work.observe import occurrence_value
+from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._convert import (
     AttributeReadContract,
     LevelContext,
@@ -20,7 +33,7 @@ from parallax.snapshot.materialize._convert import (
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, PageBuilder
 from parallax.snapshot.materialize._views import SourceLevel
 
-__all__ = ["PreparedRead", "bind"]
+__all__ = ["PreparedRead", "RowPublisher", "bind"]
 
 
 class _CompiledRead(Protocol):
@@ -56,6 +69,10 @@ class _CompiledRead(Protocol):
     def classified_members(self, resolved: EntityIdentity) -> frozenset[str]: ...
 
     def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None: ...
+
+    def publication_keys(
+        self, resolved: EntityIdentity, variant: str | None
+    ) -> tuple[str, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +216,95 @@ class PreparedRead:
             return self._compiled.raw_member_of(row, resolved, key), True
         except KeyError:
             return default, False
+
+    def row_publisher(self) -> RowPublisher:
+        """Open one Page's flat-row publisher; what it derives dies with it."""
+        return RowPublisher(self._compiled, self._levels)
+
+
+class RowPublisher:
+    """Publishes one Page's flat rows, deriving one operation per concrete
+    Entity and `familyVariant` pair on first sight of that pair."""
+
+    __slots__ = ("_compiled", "_levels", "_operations")
+
+    def __init__(
+        self, compiled: _CompiledRead, levels: Mapping[EntityIdentity, LevelContext]
+    ) -> None:
+        self._compiled = compiled
+        self._levels = levels
+        self._operations: dict[tuple[EntityIdentity, str | None], _RowOperation] = {}
+
+    def publish(
+        self, concrete: EntityIdentity, row: tuple[object, ...], variant: str | None
+    ) -> dict[str, object]:
+        """One positional member row of ``concrete`` as its result-keyed flat row."""
+        pair = (concrete, variant)
+        operation = self._operations.get(pair)
+        if operation is None:
+            operation = self._operations[pair] = _row_operation(
+                self._levels[concrete], self._compiled.publication_keys(concrete, variant), variant
+            )
+        return operation(row)
+
+
+@dataclass(frozen=True, slots=True)
+class _RowOperation:
+    members: tuple[tuple[int, str, NeutralType | None, Occurrence | None], ...]
+    keys: tuple[str, ...]
+    variant: str | None
+
+    def __call__(self, row: tuple[object, ...]) -> dict[str, object]:
+        values: dict[str, object] = {}
+        for position, key, encoded, occurrence in self.members:
+            value = row[position]
+            if value is ABSENT:
+                continue
+            if occurrence is not None:
+                value = occurrence_value(value, occurrence, ABSENT)
+            elif encoded is not None and value is not None:
+                value = encode_wire(encoded, cast("ManagedValue", value))
+            values[key] = value
+        for key in self.keys:
+            values.setdefault(key, None)
+        if self.variant is not None:
+            values["familyVariant"] = self.variant
+        return values
+
+
+def _row_operation(
+    level: LevelContext, keys: tuple[str, ...], variant: str | None
+) -> _RowOperation:
+    # Key order is observable: kept members in layout order, then renamed
+    # Attributes, then publication-key padding, then `familyVariant`. An
+    # Attribute published under both its storage and result keys keeps its
+    # storage key and stays unencoded.
+    layout = level.layout
+    reads = level.attribute_reads
+    published = frozenset(keys)
+    kept: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
+    renamed: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
+    for position, attribute in enumerate(layout.attributes):
+        storage = attribute.storage.name
+        if not reads:
+            kept.append((position, storage, None, None))
+            continue
+        read = reads[position]
+        result = read.result_key
+        if storage not in published and result in published:
+            renamed.append((position, result, attribute.type if read.encoded else None, None))
+        else:
+            encoded = (
+                read.encoded
+                and storage in published
+                and (result == storage or result not in published)
+            )
+            kept.append((position, storage, attribute.type if encoded else None, None))
+    kept.extend(
+        (position, occurrence.storage.name, None, occurrence.definition)
+        for position, occurrence in enumerate(layout.occurrences, start=len(layout.attributes))
+    )
+    return _RowOperation((*kept, *renamed), keys, variant)
 
 
 def bind(

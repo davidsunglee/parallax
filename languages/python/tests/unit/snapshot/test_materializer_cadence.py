@@ -13,13 +13,14 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
-from parallax.core.sql_gen._compile import compile_read
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materialization import (
     INERT,
     FlatPageRead,
     MaterializationObserver,
     Materializer,
+    page_cadence,
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
@@ -32,6 +33,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._classify import RootClassifications
 from parallax.snapshot.materialize._convert import LevelContext
+from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests.unit.snapshot._snapshot_page_support import (
     convert_mapping,
@@ -105,24 +107,31 @@ def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
     return publish
 
 
-def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
-    observer = _RecordingObserver()
-    materializer = Materializer(observer)
-
+def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
     meta = model_of(ORDERS_MODEL)
-    model = CatalogedModel(meta)
     query = preflight(
         deserialize({"target": "Order", "predicate": {"all": {}}}),
         model=meta,
         form="graph",
     )
     plan = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
-    compiled = compile_read(plan.root, meta, POSTGRES, result_form="instance")
+    return (
+        meta,
+        CatalogedModel(meta),
+        compile_read(plan.root, meta, POSTGRES, result_form="instance"),
+    )
+
+
+def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
+    observer = _RecordingObserver()
+    materializer = Materializer(observer)
+    meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
 
     stage = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
 
-    assert len(_published_rows(stage, meta)) == 2
+    assert page_cadence(stage.page) is observer
+    assert len(_published_rows(stage, meta, bind(model, compiled).row_publisher())) == 2
     assert observer.events == [
         ("prepared", 1),
         ("statement_rendered", ROOT_LEVEL),
@@ -141,15 +150,7 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observer = _RecordingObserver()
-    meta = model_of(ORDERS_MODEL)
-    model = CatalogedModel(meta)
-    query = preflight(
-        deserialize({"target": "Order", "predicate": {"all": {}}}),
-        model=meta,
-        form="graph",
-    )
-    plan = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
-    compiled = compile_read(plan.root, meta, POSTGRES, result_form="instance")
+    meta, model, compiled = _order_read()
     rows = tuple(tuple(_row(order_id)[key] for key in compiled.result_keys) for order_id in (1, 2))
     stage = Materializer(observer).read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
 
@@ -166,9 +167,19 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
 
     monkeypatch.setattr("parallax.snapshot.handle._read.classify_roots", fail_on_second_root)
     with pytest.raises(RuntimeError, match="later row failed"):
-        _published_rows(stage, meta)
+        _published_rows(stage, meta, bind(model, compiled).row_publisher())
 
     assert [event for event in observer.events if event[0] == "root_published"] == []
+
+
+def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly() -> None:
+    _meta, model, compiled = _order_read()
+    rows = (tuple(_row(1)[key] for key in compiled.result_keys),)
+
+    stage = Materializer().read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+
+    assert stage.page.observer is None
+    assert page_cadence(stage.page) is INERT
 
 
 def test_root_publication_requires_one_pin_per_page_root() -> None:
