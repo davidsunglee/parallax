@@ -72,6 +72,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._read_result import FindResult, HistoryFindResult
 from parallax.snapshot.handle import _read, _read_scope
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     ClassifiedRoot,
@@ -711,7 +712,7 @@ def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge()
     )
     result = _find_history(query, INVOICE, port)
     assert tuple(page_edges(result.page, result.milestones)) == (None,)
-    (verdict,) = classify_roots(RootView(result.page), INVOICE).roots
+    (verdict,) = classify_roots(RootView(result.page), INVOICE, CONCURRENCY).roots
     assert not isinstance(verdict, ClassifiedRoot)
 
 

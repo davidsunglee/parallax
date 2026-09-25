@@ -28,7 +28,7 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import NonTemporal, Pin
+from parallax.core.temporal_read import NonTemporal, Pin, TemporalShape
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ChunkedColumnBuilder,
@@ -338,7 +338,7 @@ def buffer_predicate_instruction(
         conn,
         instruction,
         entity,
-        temporal,
+        shape,
         version_attr,
         attempt,
     )
@@ -350,7 +350,7 @@ def _materialize_predicate_write(
     conn: DatabaseConnection,
     instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
-    temporal: bool,
+    family_shape: TemporalShape,
     version_attr: AttributeIdentity | None,
     attempt: TransactionAttemptActivity,
 ) -> None:
@@ -432,7 +432,7 @@ def _materialize_predicate_write(
     # then projects the ASSIGNED value-object document(s) only — never every
     # declared one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
-    predecessor_need = version_attr is None and temporal
+    predecessor_need = version_attr is None and not isinstance(family_shape, NonTemporal)
     member_columns = members(layout)
     shape = comparison_shape(meta, entity)
     comparison_assignments = _normalize_assignment_values(assignments, shape)
@@ -518,7 +518,7 @@ def _materialize_predicate_write(
 
     def select_state(key_values: tuple[object, ...], observation: WriteObservation) -> None:
         object_key = ObjectKey(entity.identity, tuple(zip(key_attributes, key_values, strict=True)))
-        selected.append(observed_state_key(object_key, observation, root))
+        selected.append(observed_state_key(object_key, observation, family_shape))
 
     if version_attr is not None:
         version_member = version_attr.name

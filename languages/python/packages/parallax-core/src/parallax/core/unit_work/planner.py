@@ -10,7 +10,7 @@ from parallax.core.metamodel import (
     Metamodel,
     entity_by_name,
 )
-from parallax.core.temporal_read import Edge, milestone_edge_from_members
+from parallax.core.temporal_read import Edge, TemporalShape, milestone_edge
 from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PreparedKeyedWrite,
@@ -88,7 +88,7 @@ missing arm, never a key with an empty coordinate.
 
 
 def observed_state_key(
-    object_key: ObjectKey, observation: WriteObservation, declaring_entity: EntityMetadata
+    object_key: ObjectKey, observation: WriteObservation, shape: TemporalShape
 ) -> ObservedStateKey:
     """The exact state ``observation`` is evidence about: ``object_key``
     qualified by the coordinate the observation itself carries.
@@ -98,15 +98,12 @@ def observed_state_key(
     other than the one it is recording — the two-sides-agree property holds by
     construction rather than by every recording site being careful.
 
-    ``declaring_entity`` is the family root that declares the As-Of Axes, whose
-    start Attributes name the members a temporal coordinate is read from.
+    ``shape`` is the observed object's family Temporal Shape, whose axis start
+    Attributes name the members a temporal coordinate is read from.
     """
     if not isinstance(observation, TemporalObservation):
         return VersionedStateKey(object_key, observation.observed_version)
-    return TemporalStateKey(
-        object_key,
-        milestone_edge_from_members(declaring_entity, observation.predecessor.members),
-    )
+    return TemporalStateKey(object_key, milestone_edge(shape, observation.predecessor, None))
 
 
 def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) -> ObjectKey | None:

@@ -1,6 +1,6 @@
 """Write-observation retention unit tests (`parallax.snapshot.handle._retention`).
 
-Drives :class:`ObservedRows` and :func:`deferred_evidence` directly, off
+Drives :class:`ObservedRows` and :func:`deferred_read_sources` directly, off
 hand-written rows admitted as judged positional Entity State rather than through
 a `Transaction.find`: which of the two mutually exclusive branches a row takes (a
 versioned row's observed version, a temporal row's whole predecessor milestone),
@@ -27,6 +27,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import models
+from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.metamodel import EntityIdentity
@@ -44,12 +45,13 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteBatchTrigger,
     WritePlan,
+    observed_state_key,
     run_unit_of_work,
 )
 from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._materialization import Materializer
-from parallax.snapshot.handle._retention import ObservedRows, deferred_evidence
+from parallax.snapshot.handle._retention import ObservedRows, deferred_read_sources
 from parallax.snapshot.materialize import PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import page_rows
@@ -159,7 +161,7 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
     entity = corpus_entity("Order")
     observations = ObservedRows()
     observations.observe_occurrence(0, entity, None)
-    sources = deferred_evidence(
+    sources = deferred_read_sources(
         model,
         observations,
         lambda _node: None,
@@ -181,7 +183,7 @@ def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_a
     unknown = EntityIdentity("parallax.compatibility", "Unknown")
     observations = ObservedRows()
     observations.observe_occurrence(0, unknown, None)
-    sources = deferred_evidence(
+    sources = deferred_read_sources(
         model,
         observations,
         lambda _node: None,
@@ -206,7 +208,7 @@ def test_deferred_standalone_evidence_releases_member_state_after_materializatio
     assert origin.observation.evidence == VersionObservation(observed_version=4)
     assert evidence.entity == entity
     assert evidence._member_row == ()
-    assert evidence._shape is None
+    assert evidence._locator is None
     assert evidence._document is None
 
 
@@ -237,8 +239,90 @@ def test_deferred_standalone_temporal_evidence_retains_its_row_view_and_owns_its
     assert retained == _VOYAGE_DOCUMENT
     assert evidence._member_row == ()
     assert evidence._document is None
-    assert evidence._shape is None
+    assert evidence._locator is None
     assert origin.observation is origin.observation
+
+
+def _deposit_rate_columns() -> Mapping[str, object]:
+    return {
+        "id": 1,
+        "amount": Decimal("2.50"),
+        "grade": "A",
+        "from_z": _VALID_START,
+        "thru_z": _INFINITY,
+        "in_z": _RATE_TX_START,
+        "out_z": _INFINITY,
+    }
+
+
+def test_deferred_evidence_locates_its_state_by_its_familys_owner_object() -> None:
+    # Until it materializes, a standalone row's evidence holds the one object
+    # its family's owner compiled — the explicit version key, or the shared
+    # Temporal Shape an inherited position aliases from its root — and after
+    # materializing it holds only what it produced.
+    account = _accepted("account")
+    rate = _accepted("rate")
+    deposit_rate = corpus_entity("DepositRate")
+    root = temporal_read.view(rate).shape(corpus_entity("Rate"))
+    cases = (
+        (
+            judged_evidence(account, corpus_entity("Account"), _account_columns())[0],
+            opt_lock.view(account).key(corpus_entity("Account")),
+        ),
+        (
+            judged_evidence(rate, deposit_rate, _deposit_rate_columns())[0],
+            temporal_read.view(rate).shape(deposit_rate),
+        ),
+    )
+    assert cases[1][1] is root
+    for origin, owner in cases:
+        evidence = cast("Any", origin)._source
+        assert isinstance(owner, opt_lock.ExplicitVersion | temporal_read.Bitemporal)
+        assert evidence._locator is owner
+        assert origin.observation is not None
+        assert evidence._locator is None
+
+
+def test_resolving_and_materializing_evidence_again_repeats_no_derivation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derived: list[ObservedStateKey] = []
+
+    def counted(*args: Any) -> ObservedStateKey:
+        derived.append(observed_state_key(*args))
+        return derived[-1]
+
+    monkeypatch.setattr("parallax.snapshot.handle._retention.observed_state_key", counted)
+    sources = judged_evidence(
+        _accepted("rate"), corpus_entity("DepositRate"), _deposit_rate_columns()
+    )
+    origin = sources[0]
+    assert sources[0] is origin
+    first = origin.observation
+    assert first is not None
+    assert origin.observation is first
+    assert origin.object_key == corpus_object_key("DepositRate", ("id", 1))
+    assert derived == [first.key]
+
+
+def test_deferred_sources_release_the_family_owners_once_every_origin_resolves() -> None:
+    model = _accepted("rate")
+    sources = cast(
+        "Any",
+        judged_evidence(
+            model,
+            corpus_entity("DepositRate"),
+            _deposit_rate_columns(),
+            {**_deposit_rate_columns(), "id": 2},
+        ),
+    )
+    assert sources._families is inheritance.view(model)
+    assert sources._keys is opt_lock.view(model)
+    assert sources._temporal is temporal_read.view(model)
+    sources[0]
+    assert sources._temporal is temporal_read.view(model)
+    sources[1]
+    assert (sources._families, sources._keys, sources._temporal) == (None, None, None)
 
 
 # --------------------------------------------------------------------------- #

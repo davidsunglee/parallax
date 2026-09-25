@@ -39,7 +39,11 @@ from parallax.core.unit_work import ReadOrigin
 from parallax.core.wire import encode_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import SnapshotInspectionError, snapshot_state_of
-from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
+from parallax.snapshot.materialize._classify import (
+    ClassifiedRoot,
+    VersionAttributes,
+    classify_roots,
+)
 from parallax.snapshot.materialize._invalid import InvalidData
 from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._root import RootView
@@ -310,6 +314,7 @@ public type for the root position where the contract has none."""
 def wire_roots(
     root_view: RootView,
     model: Metamodel,
+    versions: VersionAttributes,
     includes: IncludeTree,
     *,
     ordinal_offset: int = 0,
@@ -321,15 +326,16 @@ def wire_roots(
     Classification runs first and exactly once, so this materializer publishes
     the same verdicts the typed one does: a conforming root answers as itself, a
     hydratable one as its record carrying the unwound value, and a non-hydrating
-    one as its record carrying nothing. ``ordinal_offset`` is where this Root
-    View's roots start in the ordered result, including a later streamed Page.
+    one as its record carrying nothing. ``versions`` names the explicit version
+    Attribute a record publishes. ``ordinal_offset`` is where this Root View's
+    roots start in the ordered result, including a later streamed Page.
 
     ``sources`` is the Read Origin the read retained per projection index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
     license exactly the same writes.
     """
-    classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
+    classification = classify_roots(root_view, model, versions, ordinal_offset=ordinal_offset)
     retained: Mapping[int, ReadOrigin] = (
         sources if classification.conforming else MappingProxyType({})
     )

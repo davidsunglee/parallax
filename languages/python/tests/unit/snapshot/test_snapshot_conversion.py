@@ -68,6 +68,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import MISSING_STORED_VALUE, PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_deferred
 from parallax.snapshot.materialize._page import ABSENT, LogicalKey, StoredDataIssueInput, page_rows
@@ -874,6 +875,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     (root,) = typed_root(
         view,
         CUSTOMER,
+        CONCURRENCY,
         graph_construction_for(vo_models.CUSTOMER_MODEL),
     )
     assert cast("Any", root).id == key

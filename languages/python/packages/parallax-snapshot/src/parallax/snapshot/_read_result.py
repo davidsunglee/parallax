@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from parallax.core.deep_fetch import IncludeTree
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.temporal_read import TemporalShape
 from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot.materialize import InvalidData, Page
 
@@ -40,10 +40,14 @@ class FindResult:
 
 @dataclass(frozen=True, slots=True)
 class HistoryFindResult:
-    """A milestone-set find's one database-ordered page of flat roots."""
+    """A milestone-set find's one database-ordered page of flat roots.
+
+    ``milestones`` is the target family's Temporal Shape, whose axis starts are
+    each root's own edge.
+    """
 
     page: Page
-    milestones: EntityMetadata
+    milestones: TemporalShape
     includes: IncludeTree
 
 

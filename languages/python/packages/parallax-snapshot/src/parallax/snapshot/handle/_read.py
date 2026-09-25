@@ -23,7 +23,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
-    EntityMetadata,
     Metamodel,
 )
 from parallax.core.object_query._nodes import IncludePath
@@ -36,6 +35,7 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import (
     Edge,
     Pin,
+    TemporalShape,
     validated_query_pin,
 )
 from parallax.core.unit_work import Concurrency, EntityStateRow
@@ -52,7 +52,9 @@ from parallax.snapshot._read_result import (
     PublishedRow,
     RowsResult,
 )
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._errors import SnapshotMaterializationError
+from parallax.snapshot.handle._family import temporal_shape
 from parallax.snapshot.handle._materialization import (
     INERT as MATERIALIZATION_INERT,
 )
@@ -105,7 +107,6 @@ __all__ = [
     "convert_rows",
     "correlation_member",
     "correlation_table",
-    "declaring_metadata",
     "entity_read_lock",
     "execute_read",
     "find",
@@ -701,7 +702,7 @@ def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRo
 
     def publish(root: RootView, position: int) -> Iterator[PublishedRow]:
         variant = stage.variants[position]
-        (verdict,) = classify_roots(root, meta, ordinal_offset=position).roots
+        (verdict,) = classify_roots(root, meta, CONCURRENCY, ordinal_offset=position).roots
         node = root.roots[0]
         detached: Mapping[str, object] | None = None
         if node is not None:
@@ -735,7 +736,7 @@ def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRo
         "MaterializationObserver",
         stage.page.observer if stage.page.observer is not None else MATERIALIZATION_INERT,
     )
-    return tuple(Materializer(cadence).roots(stage.page, publish, atomic=True))
+    return tuple(Materializer(cadence).roots(stage.page, publish, atomic=True, model=meta))
 
 
 def find_history(
@@ -773,19 +774,17 @@ def find_history(
     if plan.fetch_count:  # pragma: no cover - validated milestone queries cannot include
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no fetch steps")
-    # `declaring_metadata` resolves the entity whose as-of axes are this target's
-    # FAMILY's actual temporal declaration (the root, for a participant —
-    # temporality is family-wide, `m-inheritance`); every milestone edge the
-    # result derives (`page_edges`, through `milestone_edge_of`) MUST resolve
-    # through it rather than the queried target's own (possibly locally-empty) axes.
-    entity = declaring_metadata(meta, metadata.identity)
+    # Temporality is family-wide (`m-inheritance`), so every milestone edge the
+    # result derives (`page_edges`) reads the family's shared Temporal Shape
+    # rather than the queried target's own, possibly locally empty, axes.
+    shape = temporal_shape(meta, metadata)
     compiled, prepared = plan.root_read()
 
     stage = Materializer(observer).read_page(
         FlatPageRead(model, compiled, lambda: execute_read(port, compiled, read), Pin(), prepared)
     )
 
-    return HistoryFindResult(page=stage.page, milestones=entity, includes=plan.include_tree())
+    return HistoryFindResult(page=stage.page, milestones=shape, includes=plan.include_tree())
 
 
 def convert_rows(
@@ -1082,26 +1081,6 @@ def gather_keys(
     return keys
 
 
-def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:
-    """The accepted Metadata of the position that DECLARES ``target``'s family
-    facts — its family root, which for a standalone Entity is itself.
-
-    Temporality and the physical primary key are family-wide and root-owned
-    (`m-inheritance` "Inherited members"), so every per-entity milestone
-    primitive below resolves through this rather than through the queried
-    target's own (possibly locally empty) declaration.
-
-    Keyed by Entity Identity rather than by an already-resolved Metadata, because
-    a read's preflight answers an identity: the resolution is exact and the
-    caller keeps no metadata it would otherwise have to thread.
-    """
-    position = inheritance.view(model).entity(target)
-    root = model.entity(target if position is None else position.root)
-    if root is None:  # pragma: no cover - preflight resolved this identity in this model
-        raise ValueError(f"{target.canonical}: the model declares no family root")
-    return root
-
-
 def edge_pin(edge: Edge) -> Pin:
     """One milestone's own edge, rendered as a :class:`Pin` (the Python binding: each
     milestone-set root is edge-pinned at its own milestone's from-instant).
@@ -1134,7 +1113,7 @@ class RootsOf(Protocol):
         atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-        milestones: EntityMetadata | None = None,
+        milestones: TemporalShape | None = None,
     ) -> Iterator[object]: ...
 
 
@@ -1251,7 +1230,7 @@ def typed_publication(
         atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-        milestones: EntityMetadata | None = None,
+        milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         del includes
 
@@ -1276,6 +1255,7 @@ def typed_publication(
             page,
             publish,
             atomic=atomic,
+            model=model.meta,
             ordinal_offset=ordinal_offset,
             pins=pins,
             prepare=lambda root: root.prime(sources),
@@ -1314,7 +1294,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
         atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-        milestones: EntityMetadata | None = None,
+        milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         pins = tuple(
             None if edge is None else edge_pin(edge) for edge in page_edges(page, milestones)
@@ -1330,6 +1310,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
             yield from wire_roots(
                 root,
                 model.meta,
+                CONCURRENCY,
                 includes,
                 ordinal_offset=ordinal_offset + position,
                 sources=sources,
@@ -1344,6 +1325,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
             page,
             publish,
             atomic=atomic,
+            model=model.meta,
             ordinal_offset=ordinal_offset,
             pins=pins,
             prepare=lambda root: root.prime(sources),
@@ -1367,7 +1349,9 @@ def _materialize_result_page(
     wrapper is only a defect in building the Entity graph a valid row describes.
     """
     try:
-        return typed_root(root, meta, construction, ordinal_offset=ordinal_offset, sources=sources)
+        return typed_root(
+            root, meta, CONCURRENCY, construction, ordinal_offset=ordinal_offset, sources=sources
+        )
     except Exception as exc:
         raise SnapshotMaterializationError(
             "the read succeeded but its Entity graph could not be built "

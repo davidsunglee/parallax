@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import assert_never
+from typing import Protocol, assert_never
 
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, normalize_instant
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
@@ -31,6 +31,7 @@ from parallax.core.predicate._validated import (
 from parallax.core.temporal_read._compile import MODEL_COMPILER
 from parallax.core.temporal_read._facet import (
     FACET_KEY,
+    NON_TEMPORAL,
     TEMPORAL_READ_MODULE,
     Bitemporal,
     NonTemporal,
@@ -43,9 +44,11 @@ from parallax.core.temporal_read._facet import (
 __all__ = [
     "FACET_KEY",
     "MODEL_COMPILER",
+    "NON_TEMPORAL",
     "TEMPORAL_READ_MODULE",
     "Bitemporal",
     "Edge",
+    "MilestoneRows",
     "NonTemporal",
     "Pin",
     "TemporalFacet",
@@ -54,8 +57,7 @@ __all__ = [
     "TransactionTimeOnly",
     "UndeclaredAxisError",
     "inject_resolved_as_of",
-    "milestone_edge_from_members",
-    "milestone_edge_of",
+    "milestone_edge",
     "resolved_pinned_instants",
     "scans_validated_axis",
     "validated_hop_as_of_terms",
@@ -166,57 +168,50 @@ class Edge:
 # and the milestone-edge computation every materializer builds on.
 
 
-def milestone_edge_of(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) -> Edge:
-    """A milestone's :class:`Edge`, read off values keyed by **member identity**.
+class MilestoneRows[At](Protocol):
+    """A carrier that already holds milestones' As-Of Axis start values.
+
+    ``at`` addresses one milestone within the carrier, in whatever reference the
+    carrier indexes its own storage by. ``axis_start`` answers the value stored
+    for ``attribute`` there through that storage's own lookup, returning an
+    absent or undecoded value as it is rather than refusing it:
+    :func:`milestone_edge` owns that judgement.
+    """
+
+    def axis_start(self, at: At, attribute: AttributeIdentity, /) -> object: ...
+
+
+def milestone_edge[At](shape: TemporalShape, rows: MilestoneRows[At], at: At) -> Edge:
+    """A milestone's :class:`Edge`: each axis's start value in ``rows`` at ``at``.
 
     Each declared axis's edge is the milestone's own **from-instant** — its start
     Attribute's value — the one instant guaranteed to re-select exactly that
-    milestone on a half-open ``[from, to)`` interval. Attribute Identity is the
-    form a materialized node answers in: once a row has been converted, the
-    physical column that carried each value is gone.
-
-    ``entity`` is the Entity whose declaration carries the family's axes, which
-    the caller resolves; a position that inherits them declares none of its own.
+    milestone on a half-open ``[from, to)`` interval. ``shape`` is the family's
+    Temporal Shape, so an inherited position reads the root's axes without its
+    Metadata. Raises :class:`TemporalReadError` for a Non-Temporal family and
+    for a start value that is not a timestamp instant.
     """
-    return _edge(entity, values)
-
-
-def milestone_edge_from_members(entity: EntityMetadata, members: Mapping[str, object]) -> Edge:
-    """The :func:`milestone_edge_of` rule, read off values keyed by **declared member name**.
-
-    The form a retained row payload answers in — a Write Observation's
-    Predecessor Row holds the observed milestone's complete state by declared
-    name, with neither the physical column nor the Attribute Identity that
-    carried it. Deriving the edge from that payload rather than beside it is
-    what keeps a recorder structurally unable to file an observation under a
-    milestone other than the one it is recording.
-    """
-    return _edge(
-        entity,
-        {
-            axis.start_attribute: members.get(axis.start_attribute.name)
-            for axis in entity.declared_as_of_axes
-        },
-    )
-
-
-def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) -> Edge:
-    name = entity.identity.name
-    if not entity.declared_as_of_axes:
-        raise TemporalReadError(f"{name} is not a temporal entity")
-    coords: dict[AcceptedDimension, _dt.datetime] = {}
-    for axis in entity.declared_as_of_axes:
-        value = values.get(axis.start_attribute)
-        if not isinstance(value, _dt.datetime):
-            raise TemporalReadError(
-                f"{name}.{axis.start_attribute.name}: the milestone start value "
-                "is not a timestamp instant"
+    match shape:
+        case TransactionTimeOnly(transaction_time=tx):
+            return Edge(
+                tx_time=_instant(tx.start_attribute, rows.axis_start(at, tx.start_attribute))
             )
-        coords[axis.dimension] = normalize_instant(value)
-    return Edge(
-        tx_time=coords.get(AcceptedDimension.TRANSACTION_TIME),
-        valid_time=coords.get(AcceptedDimension.VALID_TIME),
-    )
+        case Bitemporal(valid_time=vt, transaction_time=tx):
+            return Edge(
+                tx_time=_instant(tx.start_attribute, rows.axis_start(at, tx.start_attribute)),
+                valid_time=_instant(vt.start_attribute, rows.axis_start(at, vt.start_attribute)),
+            )
+        case NonTemporal():
+            raise TemporalReadError("a Non-Temporal family has no milestone edge")
+
+
+def _instant(attribute: AttributeIdentity, value: object) -> _dt.datetime:
+    if not isinstance(value, _dt.datetime):
+        raise TemporalReadError(
+            f"{attribute.entity.name}.{attribute.name}: the milestone start value "
+            "is not a timestamp instant"
+        )
+    return normalize_instant(value)
 
 
 def inject_resolved_as_of(

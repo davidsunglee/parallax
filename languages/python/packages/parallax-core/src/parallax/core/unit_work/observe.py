@@ -6,6 +6,7 @@ from typing import Protocol, cast
 
 from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     DocumentMember,
     Leaf,
@@ -322,6 +323,13 @@ class PredecessorRow:
     def member(self, name: str) -> object:
         """The observed value of one member, by its declared name."""
         return self.members[name]
+
+    def axis_start(self, at: None, attribute: AttributeIdentity, /) -> object:
+        """The observed value of one As-Of Axis start, or ``None`` when the row
+        carries no such member; ``at`` is ``None`` because a Predecessor Row
+        holds one milestone."""
+        del at
+        return self.members.get(attribute.name)
 
 
 def adopt_predecessor_row(

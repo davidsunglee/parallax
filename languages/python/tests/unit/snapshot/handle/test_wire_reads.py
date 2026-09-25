@@ -64,6 +64,7 @@ from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import InvalidData, WireEntity, connect, handle
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._read import wire_publication
 from parallax.snapshot.handle._read_scope import wire_query_node
 from parallax.snapshot.handle._wire import WireDatabaseView
@@ -445,6 +446,7 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         CUSTOMER_META,
+        CONCURRENCY,
         _root_includes(identity),
     )
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
@@ -466,6 +468,7 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         CUSTOMER_META,
+        CONCURRENCY,
         _root_includes(identity),
     )
     node = _entity(published)
@@ -1215,6 +1218,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     (root,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         _VARIANT_MODEL,
+        CONCURRENCY,
         _root_includes(resolved),
     )
     assert root == {

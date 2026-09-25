@@ -41,6 +41,7 @@ from typing import Any, Final, cast
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import PageBuilder, RootView, wire_roots
 from parallax.snapshot.materialize._page import LogicalKey
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -342,6 +343,7 @@ def direct_wire_result(
         roots = wire_roots(
             RootView(cast("Any", page)),
             cast("Any", model),
+            CONCURRENCY,
             cast("Any", includes),
             encode=encoder,
         )

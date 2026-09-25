@@ -4,11 +4,19 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core.base import retain_document_value
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.temporal_read import Pin
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.opt_lock import ExplicitVersion, TransactionTimeDerived
+from parallax.core.temporal_read import (
+    NON_TEMPORAL,
+    Bitemporal,
+    Pin,
+    TemporalFacet,
+    TransactionTimeOnly,
+)
 from parallax.core.unit_work import (
     EntityStateRow,
     ObjectKey,
@@ -22,32 +30,23 @@ from parallax.core.unit_work import (
     WriteObservation,
     observed_state_key,
 )
-from parallax.snapshot.handle._family import (
-    declaring,
-    family_primary_key,
-    is_temporal,
-    tx_time_axis,
-    version_attribute,
-)
 
 __all__ = [
     "ObservationLedger",
     "ObservedRows",
     "ReadSources",
-    "deferred_evidence",
+    "deferred_read_sources",
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class _ObservedRow:
-    """One materialized row's observable state.
+    """One materialized row's observation provenance, pending its judged state.
 
     ``node`` is the Page occurrence this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
-    ``entity`` is the row's own resolved concrete Entity. ``state`` is absent
-    until the Page judges that occurrence, and is then the declared-name
-    :class:`EntityStateRow` view over its shared positional Entity State.
-    ``document`` is the raw Structured Column under Relational Document Layout.
+    ``entity`` is the row's own resolved concrete Entity. ``document`` is the
+    raw Structured Column under Relational Document Layout.
 
     It holds neither a raw driver row nor a materialized node, so an observation
     outlives the read that produced it without pinning either.
@@ -55,7 +54,6 @@ class _ObservedRow:
 
     node: int
     entity: EntityIdentity
-    state: EntityStateRow | None
     document: object | None
 
 
@@ -68,7 +66,7 @@ class ObservedRows:
 
     Occurrence references paired with their row provenance, recorded through
     :meth:`observe_occurrence`: each receives its members only from the judged,
-    Page-owned Entity State, and :func:`deferred_evidence` is the only consumer.
+    Page-owned Entity State, and :func:`deferred_read_sources` is the only consumer.
     """
 
     __slots__ = ("_rows",)
@@ -83,7 +81,7 @@ class ObservedRows:
         document: object | None,
     ) -> None:
         """Record a projection whose columns will come from its judged Entity State."""
-        self._rows.append(node if document is None else _ObservedRow(node, entity, None, document))
+        self._rows.append(node if document is None else _ObservedRow(node, entity, document))
 
 
 type ReadSources = Mapping[int, ReadOrigin]
@@ -110,18 +108,29 @@ class ObservationLedger(Protocol):
     def retain(self, observation: RetainedObservation, /) -> RetainedObservation: ...
 
 
+type _Locator = ExplicitVersion | TransactionTimeOnly | Bitemporal
+"""The owner object that says what evidence a row carries: its family's shared
+explicit version key, or its family's shared Temporal Shape."""
+
+
 def _released_callback(*_args: object) -> None:
     raise RuntimeError("all deferred read sources have already resolved")
 
 
 class _DeferredReadSources(Mapping[int, ReadOrigin]):
-    """Evidence retained only after its page-owned Entity State is judged valid."""
+    """Evidence retained only after its page-owned Entity State is judged valid.
+
+    The pass holds the three family-fact owners by reference until every
+    origin resolves, and each retained row keeps only the owner object its
+    family's evidence is read through.
+    """
 
     __slots__ = (
         "_admitted",
         "_entity",
+        "_families",
+        "_keys",
         "_ledger",
-        "_meta",
         "_observations",
         "_participation",
         "_pass_states",
@@ -129,7 +138,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         "_primary_key",
         "_resolved",
         "_resolved_count",
-        "_shapes",
+        "_temporal",
     )
 
     def __init__(
@@ -143,25 +152,21 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         ledger: ObservationLedger | None,
         pin: Pin,
     ) -> None:
-        self._meta = meta
-        self._shapes: dict[EntityIdentity, _ObservationShape | None] = {}
+        self._families = inheritance.view(meta)
+        self._keys = opt_lock.view(meta)
+        self._temporal = temporal_read.view(meta)
         retained: list[_PendingObservation] = []
         for pending in observations._rows:  # pyright: ignore[reportPrivateUsage] - same-module transfer
             if not isinstance(pending, _ObservedRow):
                 retained.append(pending)
                 continue
-            shape = self._shapes.get(pending.entity)
-            if shape is None and pending.entity not in self._shapes:
-                shape = _observation_shape(meta, pending.entity)
-                self._shapes[pending.entity] = shape
             retained.append(
                 _ObservedRow(
                     pending.node,
                     pending.entity,
-                    pending.state,
                     (None if pending.document is None else retain_document_value(pending.document)),
                 )
-                if shape is not None and shape.temporal
+                if isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
                 else pending.node
             )
         self._observations = retained
@@ -183,7 +188,7 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         except IndexError:
             raise KeyError(key) from None
         if resolved is None:
-            self._refresh_one(key)
+            self._resolve_origin(key)
             resolved = self._resolved[key]
         if resolved is None:
             raise KeyError(key)
@@ -195,79 +200,86 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
     def __len__(self) -> int:
         return self._resolved_count
 
-    def _refresh_one(self, key: int) -> None:
+    def _resolve_origin(self, key: int) -> None:
         try:
             pending = self._observations[key]
         except IndexError:  # pragma: no cover - Root Views request Page occurrence indices only
             raise KeyError(key) from None
         entity = self._entity(key) if isinstance(pending, int) else pending.entity
         self._observations[key] = key
-        shape = self._shapes.get(entity)
-        if shape is None and entity not in self._shapes:
-            shape = _observation_shape(self._meta, entity)
-            self._shapes[entity] = shape
-        if shape is not None and shape.version_member is None and not shape.temporal:
-            primary_key = self._primary_key(key)
-            if primary_key is None:  # pragma: no cover - conforming roots carry identity
+        locator: _Locator
+        match self._keys.key(entity):
+            case None:
                 return
-            self._resolved[key] = ReadOrigin.from_single_primary_key(
-                entity, shape.primary_key[0], primary_key, self._participation
-            )
-            self._resolved_count += 1
-            if self._resolved_count == len(self._observations):
-                self._release_inputs()
-            return
+            case ExplicitVersion() as version:
+                locator = version
+            case TransactionTimeDerived():
+                locator = self._temporal_shape(entity)
+            case _:
+                self._resolve_unversioned(key, entity)
+                return
         admitted = self._admitted(key)
         # Invalid roots suppress their complete origin map before this callback.
         if admitted is None:  # pragma: no cover
             return
         layout, member_row = admitted
-        if self._ledger is None and shape is not None:
+        document = None if isinstance(pending, int) else pending.document
+        if self._ledger is None:
             primary_key = self._primary_key(key)
             if primary_key is None:  # pragma: no cover - conforming roots carry identity
                 return
-            self._resolved[key] = ReadOrigin.deferred(
-                entity,
-                _StandaloneObservedEvidence(
+            self._settle(
+                key,
+                ReadOrigin.deferred(
                     entity,
-                    primary_key,
-                    shape,
-                    layout,
-                    member_row,
-                    None if isinstance(pending, int) else pending.document,
+                    _DeferredEvidence(primary_key, locator, layout, member_row, document),
+                    pin=None if isinstance(locator, ExplicitVersion) else self._pin,
                 ),
-                pin=self._pin if shape.temporal else None,
             )
-            self._resolved_count += 1
-            if self._resolved_count == len(self._observations):
-                self._release_inputs()
             return
-        observed = _ObservedRow(
+        self._settle(
             key,
-            entity,
-            EntityStateRow.over_declared_members(
-                layout.member_selection, member_row, absent=ABSENT
+            _retain_observed(
+                layout,
+                member_row,
+                document,
+                locator,
+                participation=self._participation,
+                pass_states=self._pass_states,
+                ledger=self._ledger,
+                pin=self._pin,
             ),
-            None if isinstance(pending, int) else pending.document,
         )
-        origin = _retain_observed(
-            self._meta,
-            observed,
-            participation=self._participation,
-            pass_states=self._pass_states,
-            shapes=self._shapes,
-            ledger=self._ledger,
-            pin=self._pin,
+
+    def _resolve_unversioned(self, key: int, entity: EntityIdentity) -> None:
+        """An unversioned Non-Temporal row's origin, which names its object and
+        observes no state."""
+        primary_key = self._primary_key(key)
+        view = self._families.entity(entity)
+        # Conforming roots carry identity, and the facet covers every accepted Entity.
+        if primary_key is None or view is None:  # pragma: no cover
+            return
+        self._settle(
+            key,
+            ReadOrigin.from_single_primary_key(
+                entity, view.primary_key.identity.name, primary_key, self._participation
+            ),
         )
-        if origin is not None:
-            self._resolved[key] = origin
-            self._resolved_count += 1
-            if self._resolved_count == len(self._observations):
-                self._release_inputs()
+
+    def _temporal_shape(self, entity: EntityIdentity) -> TransactionTimeOnly | Bitemporal:
+        shape = self._temporal.shape(entity)
+        if not isinstance(shape, TransactionTimeOnly | Bitemporal):  # pragma: no cover
+            raise RuntimeError(f"{entity.canonical}: a Transaction-Time key has no temporal shape")
+        return shape
+
+    def _settle(self, key: int, origin: ReadOrigin) -> None:
+        self._resolved[key] = origin
+        self._resolved_count += 1
+        if self._resolved_count == len(self._observations):
+            self._release_inputs()
 
     def _release_inputs(self) -> None:
         self._observations.clear()
-        self._shapes.clear()
         self._pass_states.clear()
         self._admitted = cast(
             "Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None]", _released_callback
@@ -275,10 +287,12 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._entity = cast("Callable[[int], EntityIdentity]", _released_callback)
         self._primary_key = cast("Callable[[int], object | None]", _released_callback)
         self._ledger = None
-        self._meta = cast("Metamodel", None)
+        self._families = cast("inheritance.InheritanceFacet", None)
+        self._keys = cast("opt_lock.OptimisticLockFacet", None)
+        self._temporal = cast("TemporalFacet", None)
 
 
-def deferred_evidence(
+def deferred_read_sources(
     meta: Metamodel,
     observations: ObservedRows,
     admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
@@ -335,70 +349,86 @@ def deferred_evidence(
 
 
 def _retain_observed(
-    meta: Metamodel,
-    observed: _ObservedRow,
+    layout: EntityLayout,
+    member_row: tuple[object, ...],
+    document: object | None,
+    locator: _Locator,
     *,
     participation: ParticipationToken | None,
     pass_states: dict[ObservedStateKey, RetainedObservation],
-    shapes: dict[EntityIdentity, _ObservationShape | None],
     ledger: ObservationLedger | None,
-    pin: Pin | None,
-) -> ReadOrigin | None:
-    resolved = _observed_object(meta, observed, shapes)
-    if resolved is None:  # pragma: no cover - defends a malformed model/projection
-        return None
-    object_key, declaring_entity, observation = resolved
-    observed_pin = pin if is_temporal(declaring_entity) else None
-    if observation is None:
-        return ReadOrigin(observed.entity, object_key, participation, None, observed_pin)
-    key = observed_state_key(object_key, observation, declaring_entity)
+    pin: Pin,
+) -> ReadOrigin:
+    object_key, observation, key = _observed_state(
+        layout, member_row[layout.primary_key[0]], member_row, document, locator
+    )
     held = pass_states.get(key)
     if held is None:
         held = RetainedObservation(key, observation, participation)
         if ledger is not None:
             held = ledger.retain(held)
         pass_states[key] = held
-    return ReadOrigin(observed.entity, object_key, participation, held, observed_pin)
+    observed_pin = None if isinstance(locator, ExplicitVersion) else pin
+    return ReadOrigin(layout.concrete, object_key, participation, held, observed_pin)
 
 
-@dataclass(frozen=True, slots=True)
-class _ObservationShape:
-    """The family facts one concrete Entity's rows are read through, every
-    member named by its DECLARED name."""
+def _observed_state(
+    layout: EntityLayout,
+    primary_key: object,
+    member_row: tuple[object, ...],
+    document: object | None,
+    locator: _Locator,
+) -> tuple[ObjectKey, WriteObservation, ObservedStateKey]:
+    """One judged row's object, the evidence its family's ``locator`` reads off
+    it, and the exact state that evidence is about.
 
-    identity: EntityIdentity
-    declaring: EntityMetadata
-    primary_key: tuple[str, ...]
-    version_member: str | None
-    temporal: bool
-    tx_start_member: str | None
+    The object is the row's own concrete Entity paired with ``primary_key``
+    under the name of the family key at its layout position. An
+    explicit-version family is Non-Temporal by formation, so its observed state
+    key reads no Temporal Shape.
+    """
+    key_member = cast("AttributeIdentity", layout.members[layout.primary_key[0]])
+    object_key = ObjectKey(layout.concrete, ((key_member.name, primary_key),))
+    members = EntityStateRow.over_declared_members(
+        layout.member_selection, member_row, absent=ABSENT
+    )
+    if isinstance(locator, ExplicitVersion):
+        observation: WriteObservation = VersionObservation(
+            observed_version=cast("int", members[locator.attribute.name])
+        )
+        return object_key, observation, observed_state_key(object_key, observation, NON_TEMPORAL)
+    observation = _temporal_observation(members, document)
+    return object_key, observation, observed_state_key(object_key, observation, locator)
 
 
-class _StandaloneObservedEvidence:
+class _DeferredEvidence:
+    """A standalone read's evidence for one row, materialized on first use.
+
+    Until then it holds the row's judged state and its family's ``_locator``;
+    afterwards it holds only the produced Object Key and observation.
+    """
+
     __slots__ = (
         "_document",
         "_layout",
+        "_locator",
         "_member_row",
         "_primary_key",
-        "_shape",
     )
 
     _primary_key: object
-    _shape: _ObservationShape | None
+    _locator: _Locator | None
 
     def __init__(
         self,
-        entity: EntityIdentity,
         primary_key: object,
-        shape: _ObservationShape,
+        locator: _Locator,
         layout: EntityLayout,
         member_row: tuple[object, ...],
         document: object | None,
     ) -> None:
-        if entity != shape.identity:  # pragma: no cover - shape cache keys concrete Entities
-            raise ValueError("deferred evidence entity does not match its observation shape")
         self._primary_key = primary_key
-        self._shape = shape
+        self._locator = locator
         self._layout = layout
         self._member_row = member_row
         self._document = None if document is None else retain_document_value(document)
@@ -408,105 +438,24 @@ class _StandaloneObservedEvidence:
 
     @property
     def entity(self) -> EntityIdentity:
-        shape = self._shape
-        if shape is None:
-            return cast("tuple[ObjectKey, RetainedObservation]", self._primary_key)[0].entity
-        return shape.identity
+        return self._layout.concrete
 
     def observation(self) -> RetainedObservation:
         return self._materialized()[1]
 
     def _materialized(self) -> tuple[ObjectKey, RetainedObservation]:
-        shape = self._shape
-        if shape is None:
+        locator = self._locator
+        if locator is None:
             return cast("tuple[ObjectKey, RetainedObservation]", self._primary_key)
-        values = (
-            cast("tuple[object, ...]", self._primary_key)
-            if len(shape.primary_key) > 1
-            else (self._primary_key,)
+        object_key, evidence, key = _observed_state(
+            self._layout, self._primary_key, self._member_row, self._document, locator
         )
-        object_key = ObjectKey(shape.identity, tuple(zip(shape.primary_key, values, strict=True)))
-        members = EntityStateRow.over_declared_members(
-            self._layout.member_selection, self._member_row, absent=ABSENT
-        )
-        if shape.version_member is not None:
-            evidence: WriteObservation = VersionObservation(
-                observed_version=cast("int", members[shape.version_member])
-            )
-        else:
-            evidence = _temporal_observation(members, self._document)
-        retained = RetainedObservation(
-            observed_state_key(object_key, evidence, shape.declaring), evidence, None
-        )
-        held = (object_key, retained)
+        held = (object_key, RetainedObservation(key, evidence, None))
         self._primary_key = held
-        self._shape = None
+        self._locator = None
         self._member_row = ()
         self._document = None
         return held
-
-
-def _observation_shape(meta: Metamodel, identity: EntityIdentity) -> _ObservationShape | None:
-    entity = meta.entity(identity)
-    if entity is None:  # pragma: no cover - a materialized row resolved within this model
-        return None
-    declaring_entity = declaring(meta, entity)
-    version_attr = version_attribute(meta, declaring_entity)
-    temporal = is_temporal(declaring_entity)
-    return _ObservationShape(
-        identity=identity,
-        declaring=declaring_entity,
-        primary_key=tuple(
-            attr.identity.name for attr in family_primary_key(meta, declaring_entity)
-        ),
-        version_member=None if version_attr is None else version_attr.identity.name,
-        temporal=temporal,
-        tx_start_member=(tx_time_axis(declaring_entity).start_attribute.name if temporal else None),
-    )
-
-
-def _observed_object(
-    meta: Metamodel,
-    observed: _ObservedRow,
-    shapes: dict[EntityIdentity, _ObservationShape | None],
-) -> tuple[ObjectKey, EntityMetadata, WriteObservation | None] | None:
-    """One observed row's object, its declaring root, and the evidence it
-    observed — or ``None`` where the row cannot be read as an object at all.
-
-    The evidence is absent for an unversioned Non-Temporal row, which observes
-    no state; the object and the declaring root are answered either way, because
-    a hint names the object whether or not a state stands behind it.
-    """
-    shape = shapes.get(observed.entity)
-    if shape is None and observed.entity not in shapes:
-        shape = _observation_shape(meta, observed.entity)
-        shapes[observed.entity] = shape
-    if shape is None:
-        return None
-    members = observed.state
-    if members is None:  # pragma: no cover - deferred retention supplies judged state
-        return None
-    if not shape.primary_key or any(  # pragma: no cover - defends a malformed model/projection
-        name not in members for name in shape.primary_key
-    ):
-        return None
-    object_key = ObjectKey(
-        observed.entity, tuple((name, members[name]) for name in shape.primary_key)
-    )
-    version_member = shape.version_member
-    if version_member is not None:
-        if version_member not in members:  # pragma: no cover - malformed projection
-            return object_key, shape.declaring, None
-        return (
-            object_key,
-            shape.declaring,
-            VersionObservation(observed_version=cast("int", members[version_member])),
-        )
-    if not shape.temporal:
-        return object_key, shape.declaring, None
-    if cast("str", shape.tx_start_member) not in members:  # pragma: no cover - malformed model
-        return object_key, shape.declaring, None
-    return object_key, shape.declaring, _temporal_observation(members, observed.document)
 
 
 def _temporal_observation(
