@@ -602,9 +602,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   The adapter engine's model-facts mechanism and the second-source fixture also
   import the private Snapshot `preflight` operation so compile-only and
   alternate-source reads consume the same validated execution token as
-  production. The engine's private `m-sql` compiler reaches — its scenario
-  lane's, its snapshot lane's, and its reads lane's — are enumerated separately
-  in the carrier-neutral block above,
+  production. The scenario lane's private `m-sql` write-step compiler reach is
+  enumerated separately in the carrier-neutral block above,
   and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Each remaining reach stays
