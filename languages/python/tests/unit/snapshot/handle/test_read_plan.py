@@ -136,6 +136,193 @@ def test_query_key_freezing_normalizes_order_without_erasing_container_types() -
     assert frozen(1) != frozen(1.0)
 
 
+class _HashCountingString(str):
+    hashes = 0
+
+    def __hash__(self) -> int:
+        type(self).hashes += 1
+        return str.__hash__(self)
+
+
+def _key(query: ValidatedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
+    values: dict[str, Any] = {
+        "edition": "edition-a",
+        "model": _MODEL,
+        "dialect": POSTGRES,
+        "query": query,
+        "result_form": "instance",
+        "preference": None,
+    }
+    return _read_plan._read_plan_key(**(values | fields))
+
+
+def _counting_authored_freezes(
+    monkeypatch: pytest.MonkeyPatch, authored_type: type
+) -> dict[str, int]:
+    frozen = cast("Callable[[object], object]", vars(_read_plan)["_frozen_query_value"])
+    counts = {"authored": 0}
+
+    def counting(value: object) -> object:
+        if type(value) is authored_type:
+            counts["authored"] += 1
+        return frozen(value)
+
+    monkeypatch.setattr(_read_plan, "_frozen_query_value", counting)
+    return counts
+
+
+def _counting_family_comparisons(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    same_family = _read_plan._ReadPlanKey.same_family
+    verdicts: list[bool] = []
+
+    def counting(self: _read_plan._ReadPlanKey, other: _read_plan._ReadPlanKey) -> bool:
+        verdict = same_family(self, other)
+        verdicts.append(verdict)
+        return verdict
+
+    monkeypatch.setattr(_read_plan._ReadPlanKey, "same_family", counting)
+    return verdicts
+
+
+def test_a_read_plan_key_hashes_its_frozen_query_once() -> None:
+    literal = _HashCountingString("counted")
+    selected = _name_query(literal)
+    _HashCountingString.hashes = 0
+
+    key = _key(selected)
+    constructed = _HashCountingString.hashes
+    lookups = {key: 1}
+    for _ in range(4):
+        assert lookups[key] == 1
+        hash(key)
+
+    assert constructed == 1
+    assert _HashCountingString.hashes == 1
+
+
+def test_same_family_ignores_only_the_delivery_discriminator() -> None:
+    pages = continuation.plan(_query(), _META)
+    unpaged = _key(_query())
+    first = _key(pages.first(limit=3))
+    after = _key(pages.after(ContinuationCoordinate((1,)), limit=3))
+    null_after = _key(pages.after(ContinuationCoordinate((None,)), limit=3))
+
+    assert len({first, after, null_after}) == 3
+    assert first.same_family(after)
+    assert after.same_family(null_after)
+    assert null_after.same_family(first)
+    assert unpaged.same_family(_key(_query()))
+    for distinct in (
+        _key(_query(2)),
+        _key(_name_query("order-1")),
+        _key(_query(), edition="edition-b"),
+        _key(_query(), model=CatalogedModel(_META)),
+        _key(_query(), dialect=replace(POSTGRES)),
+        _key(_query(), result_form="row"),
+        _key(_query(), preference="locking"),
+    ):
+        assert not unpaged.same_family(distinct)
+        assert not distinct.same_family(unpaged)
+
+
+def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
+    def selected(**clauses: object) -> ValidatedObjectQuery:
+        authored = {"target": "Order", "predicate": {"eq": {"attr": "Order.id", "value": 1}}}
+        return preflight(deserialize(authored | clauses), model=_META, form="graph")
+
+    assert not _key(selected(limit=3)).same_family(_key(selected()))
+    assert not _key(selected(limit=3)).same_family(_key(selected(limit=5)))
+    assert _key(selected(limit=3)) == _key(selected(limit=3))
+
+
+@pytest.mark.parametrize("paged", [False, True])
+def test_hits_and_cold_builds_freeze_the_authored_query_once_per_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    paged: bool,
+) -> None:
+    selected = (
+        continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
+        if paged
+        else _query()
+    )
+    counts = _counting_authored_freezes(monkeypatch, type(selected.authored))
+    cache = ReadPlanCache()
+
+    _plan(cache, selected)
+    assert counts["authored"] == 1
+    _plan(cache, selected)
+    assert counts["authored"] == 2
+    assert cache._statistics().hits == 1
+
+
+def test_a_warm_hit_hashes_its_frozen_query_only_at_key_construction() -> None:
+    cache = ReadPlanCache()
+    _plan(cache, _name_query(_HashCountingString("counted")))
+    warm = _name_query(_HashCountingString("counted"))
+    _HashCountingString.hashes = 0
+
+    _plan(cache, warm)
+
+    assert cache._statistics().hits == 1
+    assert _HashCountingString.hashes == 1
+
+
+def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verdicts = _counting_family_comparisons(monkeypatch)
+    cache = ReadPlanCache()
+    pages = continuation.plan(_query(), _META)
+    first = _plan(cache, pages.first(limit=3))
+    _plan(cache, _query(2))
+    assert verdicts == [False]
+
+    _plan(cache, _query(2))
+    assert verdicts == [False]
+
+    after = _plan(cache, pages.after(ContinuationCoordinate((1,)), limit=3))
+
+    assert verdicts == [False, False, True]
+    assert after.root_read()[1] is not first.root_read()[1]
+    assert after._schema is first._schema
+    assert after._fetches is first._fetches
+
+
+def test_concurrent_waiters_compare_no_family_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
+    started = threading.Event()
+    release = threading.Event()
+    callers = threading.Barrier(8)
+
+    def delayed_build(**kwargs: Any) -> Any:
+        started.set()
+        assert release.wait(timeout=2)
+        return uncached(**kwargs)
+
+    cache = ReadPlanCache()
+    _plan(cache, _query(2))
+    verdicts = _counting_family_comparisons(monkeypatch)
+    monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
+    query = _query()
+
+    def plan(_index: int) -> _read_plan.ReadPlan:
+        callers.wait()
+        return _plan(cache, query)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = tuple(pool.submit(plan, index) for index in range(8))
+        assert started.wait(timeout=2)
+        time.sleep(0.05)
+        release.set()
+        prepared = tuple(future.result() for future in futures)
+
+    assert all(value is prepared[0] for value in prepared)
+    assert verdicts == [False]
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 7, 2, 0)
+
+
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:
     cache = ReadPlanCache(capacity=4)
     pages = continuation.plan(_query(), _META)
@@ -179,6 +366,48 @@ def test_capacity_zero_uses_the_uncached_read_planning_seam() -> None:
     assert second is not first
     assert second.root_read()[0].statement == first.root_read()[0].statement
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(0, 0, 0, 0, 0)
+
+
+class _Untouchable:
+    __slots__ = ()
+
+    def __getattribute__(self, name: str) -> Any:
+        raise AssertionError(f"capacity zero touched cache state through {name}")
+
+
+def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    def reject(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("capacity zero performed key work")
+
+    for name in (
+        "_read_plan_key",
+        "_ReadPlanKey",
+        "_FrozenQuery",
+        "_Identity",
+        "_frozen_query_value",
+        "null_pattern",
+    ):
+        monkeypatch.setattr(_read_plan, name, reject)
+    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
+    received: list[frozenset[str]] = []
+
+    def recording(**kwargs: Any) -> Any:
+        received.append(frozenset(kwargs))
+        return uncached(**kwargs)
+
+    monkeypatch.setattr(_read_plan, "_plan_uncached", recording)
+    planner = ReadPlanCache(capacity=0)
+    planner._entries = cast("Any", _Untouchable())
+    planner._pending = cast("Any", _Untouchable())
+    planner._lock = cast("Any", _Untouchable())
+    continued = continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
+
+    planned = _plan(planner, continued)
+
+    assert 1 in planned.root_read()[0].statement.binds
+    assert received == [
+        frozenset({"model", "dialect", "query", "result_form", "preference"}),
+    ]
 
 
 def test_concurrency_preferences_have_independent_entries() -> None:
