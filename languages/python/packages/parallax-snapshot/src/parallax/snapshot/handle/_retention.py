@@ -418,6 +418,7 @@ class _DeferredEvidence:
 
     _primary_key: object
     _locator: _Locator | None
+    _layout: EntityLayout | None
 
     def __init__(
         self,
@@ -438,21 +439,24 @@ class _DeferredEvidence:
 
     @property
     def entity(self) -> EntityIdentity:
-        return self._layout.concrete
+        layout = self._layout
+        return self._materialized()[0].entity if layout is None else layout.concrete
 
     def observation(self) -> RetainedObservation:
         return self._materialized()[1]
 
     def _materialized(self) -> tuple[ObjectKey, RetainedObservation]:
         locator = self._locator
-        if locator is None:
+        layout = self._layout
+        if locator is None or layout is None:
             return cast("tuple[ObjectKey, RetainedObservation]", self._primary_key)
         object_key, evidence, key = _observed_state(
-            self._layout, self._primary_key, self._member_row, self._document, locator
+            layout, self._primary_key, self._member_row, self._document, locator
         )
         held = (object_key, RetainedObservation(key, evidence, None))
         self._primary_key = held
         self._locator = None
+        self._layout = None
         self._member_row = ()
         self._document = None
         return held
