@@ -110,11 +110,12 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, temporal_group
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit._temporal_group_support import temporal_group
 
 _MODELS = corpus_records()
 _ACCOUNT = corpus_model("account")

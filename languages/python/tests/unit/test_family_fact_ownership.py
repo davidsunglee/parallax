@@ -64,9 +64,10 @@ from parallax.snapshot.handle import (
 )
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, temporal_group
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._temporal_group_support import temporal_group
 from tests.unit._transact_support import RATE
 
 _RECORDS = corpus_records()

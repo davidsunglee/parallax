@@ -11,19 +11,14 @@ from typing import Final
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import (
     BufferItem,
-    ChunkedColumnBuilder,
     KeyedWrite,
     MaterializedWriteGroup,
     ObjectKey,
-    PredecessorColumns,
-    PredecessorShape,
     PredicateWrite,
     SubjectActor,
-    TemporalColumns,
     WriteObservation,
     buffered_write,
     object_key,
-    whole,
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
@@ -33,7 +28,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import ObjectClaimedWrite, ObservedKeyedWrite
 from parallax.core.unit_work.strategy import ActorIdentity
 
-__all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer", "temporal_group"]
+__all__ = ["TEST_ACTOR_IDENTITY", "observed_buffer"]
 
 # An arbitrary Actor Identity: `m-unit-work` requires one on every Planning
 # Request and guarantees it is never inspected, so either closed variant serves
@@ -77,35 +72,3 @@ def _prepared_item(item: BufferItem | KeyedWrite | PredicateWrite, model: Metamo
     ):
         return prepare_typed_write(item, model)
     return item
-
-
-def temporal_group(
-    mutation: PredicateWrite,
-    model: Metamodel,
-    predecessors: Sequence[Mapping[str, object]],
-    *,
-    key_name: str = "id",
-) -> MaterializedWriteGroup:
-    """The Materialized Write Group ``mutation`` settles to once its resolving
-    read matched ``predecessors``: each row keyed by its ``key_name`` member and
-    retained whole as its Predecessor Row."""
-    prepared = prepare_typed_write(mutation, model)
-    assert isinstance(prepared, PreparedPredicateWrite)
-    names = tuple(predecessors[0])
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    members = {name: ChunkedColumnBuilder[object]() for name in names}
-    for row in predecessors:
-        keys.append(row[key_name])
-        for name in names:
-            members[name].append(row[name])
-    return MaterializedWriteGroup(
-        mutation=prepared,
-        key_attributes=(key_name,),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=PredecessorColumns(
-                shape=PredecessorShape(attributes=names),
-                attribute_columns=tuple(whole(members[name].build()) for name in names),
-            )
-        ),
-    )
