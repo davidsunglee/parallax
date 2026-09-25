@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import ItemsView, Iterator, Mapping, Sequence
+from collections.abc import ItemsView, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     DocumentMember,
     Leaf,
     MemberShape,
     Multiplicity,
     Occurrence,
-    ValueObjectMetadata,
 )
 
 __all__ = [
@@ -27,14 +25,6 @@ __all__ = [
 ]
 
 
-class _Layout(Protocol):
-    @property
-    def attributes(self) -> Sequence[AttributeMetadata]: ...
-
-    @property
-    def occurrences(self) -> Sequence[ValueObjectMetadata]: ...
-
-
 class _Selection(Protocol):
     @property
     def shape(self) -> MemberShape: ...
@@ -44,47 +34,24 @@ class EntityStateRow(Mapping[str, object]):
     """A read-only view of one already-decoded Entity State.
 
     The view retains either its source mapping or one positional member row by
-    reference. It exists so observation and publication can share one state
-    without rebuilding or detaching every member into another row-sized
-    dictionary. Nested Value Objects are exposed through mapping views over the
+    reference, so observation shares one state without rebuilding or detaching
+    every member into another row-sized dictionary. A positional row is keyed by
+    declared member name (:meth:`over_declared_members`): every canonical
+    position is a key, an absent slot answers the absent marker rather than
+    raising, and nested Value Objects are exposed through mapping views over the
     same positional state.
-
-    A positional row is keyed one of two ways, fixed at construction: by each
-    member's physical storage name (:meth:`over_members`), where iteration omits
-    absent slots, or by its declared name (:meth:`over_declared_members`), where
-    every canonical position is a key and an absent slot answers the absent
-    marker rather than raising.
     """
 
-    __slots__ = ("_absent", "_layout", "_members", "_shape", "_values")
+    __slots__ = ("_absent", "_members", "_shape", "_values")
 
-    _layout: _Layout | None
     _members: Mapping[str, object] | None
     _shape: MemberShape | None
 
     def __init__(self, members: Mapping[str, object]) -> None:
         self._members = members
         self._values: tuple[object, ...] = ()
-        self._layout = None
         self._shape = None
         self._absent: object | None = None
-
-    @classmethod
-    def over_members(
-        cls, layout: _Layout, values: tuple[object, ...], *, absent: object
-    ) -> EntityStateRow:
-        """View one positional member row through its physical storage keys."""
-        attributes = layout.attributes
-        occurrences = layout.occurrences
-        if len(attributes) + len(occurrences) != len(values):
-            raise ValueError("an Entity State row layout must align with its member state")
-        row = object.__new__(cls)
-        row._members = None
-        row._layout = layout
-        row._shape = None
-        row._values = values
-        row._absent = absent
-        return row
 
     @classmethod
     def over_declared_members(
@@ -101,7 +68,6 @@ class EntityStateRow(Mapping[str, object]):
             raise ValueError("an Entity State row selection must align with its member state")
         row = object.__new__(cls)
         row._members = None
-        row._layout = None
         row._shape = shape
         row._values = values
         row._absent = absent
@@ -111,29 +77,11 @@ class EntityStateRow(Mapping[str, object]):
         members = self._members
         if members is not None:
             return members[key]
-        shape = self._shape
-        if shape is not None:
-            position = shape.position(key)
-            if position is None:
-                raise KeyError(key)
-            return _member_value(shape.members[position], self._values[position], self._absent)
-        layout = cast("_Layout", self._layout)
-        attributes = layout.attributes
-        position = next(
-            (
-                index
-                for index, member in enumerate((*attributes, *layout.occurrences))
-                if member.storage.name == key
-            ),
-            None,
-        )
+        shape = cast("MemberShape", self._shape)
+        position = shape.position(key)
         if position is None:
             raise KeyError(key)
-        value = self._values[position]
-        if position < len(attributes):
-            return value
-        declared = layout.occurrences[position - len(attributes)]
-        return occurrence_value(value, declared.definition, self._absent)
+        return _member_value(shape.members[position], self._values[position], self._absent)
 
     def __contains__(self, key: object) -> bool:
         shape = self._shape
@@ -145,25 +93,13 @@ class EntityStateRow(Mapping[str, object]):
         members = self._members
         if members is not None:
             return iter(members)
-        shape = self._shape
-        if shape is not None:
-            return (member.name for member in shape.members)
-        layout = cast("_Layout", self._layout)
-        return (
-            member.storage.name
-            for member, value in zip(
-                (*layout.attributes, *layout.occurrences), self._values, strict=True
-            )
-            if value is not self._absent
-        )
+        return (member.name for member in cast("MemberShape", self._shape).members)
 
     def __len__(self) -> int:
         members = self._members
         if members is not None:
             return len(members)
-        if self._shape is not None:
-            return len(self._values)
-        return sum(1 for _key in self)
+        return len(self._values)
 
     def items(self) -> ItemsView[str, object]:
         shape = self._shape

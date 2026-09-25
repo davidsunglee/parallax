@@ -56,7 +56,6 @@ from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
-from parallax.core.unit_work import EntityStateRow
 from parallax.descriptor._records import (
     Attribute,
     DocumentLayout,
@@ -87,7 +86,7 @@ from tests.unit._snapshot_materialization_support import (
     query,
     rows_per_level,
 )
-from tests.unit.snapshot._snapshot_page_support import rendered_members
+from tests.unit.snapshot._snapshot_page_support import physical_members, rendered_members
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")
@@ -270,9 +269,7 @@ def _observed(prepared: PreparedRead, stored: Mapping[str, object]) -> dict[str,
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
-    return dict(
-        EntityStateRow.over_members(rows.layouts[index], root.member_values(0), absent=ABSENT)
-    )
+    return physical_members(rows.layouts[index], root.member_values(0))
 
 
 def _stored_document(members: Mapping[str, object]) -> PresentDocument:

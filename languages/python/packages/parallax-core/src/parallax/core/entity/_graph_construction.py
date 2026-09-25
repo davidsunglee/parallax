@@ -135,8 +135,8 @@ def require_correspondence(layout: EntityLayout, names: WireNames, plan: Publica
     declarations behind each position are compared as well as the order they sit
     in.
 
-    Passing is what makes the plan positional afterwards: a member is read off
-    ``plan.py_names`` at the layout's own position on the strength of this
+    Passing is what makes the plan positional afterwards: the member at layout
+    position ``i`` is installed at plan position ``i`` on the strength of this
     comparison, rather than through a second mapping built beside it.
 
     Compared once per (class, model) — this runs where the per-Entity facts are
