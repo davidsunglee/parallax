@@ -1328,7 +1328,7 @@ def test_a_first_party_scope_declared_by_two_rows_fails_generation(
     row = next(
         line
         for line in original.splitlines()
-        if line.startswith("| `parallax.snapshot.handle._retention` | `m-metamodel`")
+        if line.startswith("| `parallax.snapshot.handle._retention` |") and "`m-metamodel`" in line
     )
     contradiction = row.replace("`m-metamodel`", "`m-sql`", 1)
     assert contradiction != row
