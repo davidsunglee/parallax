@@ -52,12 +52,18 @@ from parallax.core.temporal_read import (
     TemporalFacet,
     TransactionTimeOnly,
 )
+from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.core.temporal_read._compile import compile_facet
 from parallax.core.temporal_read._facet import NON_TEMPORAL
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
 from tests.unit._metamodel_support import Declaration, identity, instant, key, source
+from tests.unit.core._family_owner_support import (
+    DescendantsFirst,
+    family_roots,
+    record_root_derivations,
+)
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"
@@ -274,8 +280,56 @@ def test_a_family_formed_by_hand_shares_one_shape() -> None:
         )
     )
     facet = temporal_read.view(model)
-    assert facet.shape(root) == facet.shape(entry)
-    assert facet.axis(entry, _TX_TIME) == facet.axis(root, _TX_TIME)
+    assert facet.shape(entry) is facet.shape(root)
+    assert facet.axis(entry, _TX_TIME) is facet.axis(root, _TX_TIME)
+
+
+# A bitemporal family of each strategy and a Transaction-Time-Only one, by root.
+_TEMPORAL_FAMILY_ROOTS: Final[dict[str, str]] = {
+    "instrument": "Instrument",
+    "quote": "Quote",
+    "rate": "Rate",
+}
+
+
+@pytest.mark.parametrize(("stem", "root_name"), sorted(_TEMPORAL_FAMILY_ROOTS.items()))
+def test_every_position_in_a_family_answers_its_roots_one_shape_object(
+    stem: str, root_name: str
+) -> None:
+    model = _formed(stem)
+    families = inheritance.view(model)
+    facet = temporal_read.view(model)
+    root = _corpus_entity(root_name)
+    shape = facet.shape(root)
+    assert isinstance(shape, TransactionTimeOnly | Bitemporal)
+    members = [
+        entity.identity
+        for entity in model.entities
+        if (view := families.entity(entity.identity)) is not None and view.root == root
+    ]
+    assert len(members) > 1
+    for member in members:
+        assert facet.shape(member) is shape, member
+
+
+def test_a_family_listed_descendants_first_derives_its_shape_once_at_the_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _formed("rate")
+    metadata = DescendantsFirst(model)
+    listed = [entity.identity.name for entity in metadata.entities]
+    assert listed.index("DepositRate") < listed.index("Rate")
+    derived = record_root_derivations(monkeypatch, temporal_read_compile, "_shape")
+    facet = compile_facet(metadata, inheritance_compile.compile_facet(metadata))
+    assert sorted(derived, key=_canonical) == sorted(family_roots(model), key=_canonical)
+    shape = facet.shape(_corpus_entity("Rate"))
+    assert isinstance(shape, Bitemporal)
+    for name in ("DepositRate", "LoanRate"):
+        assert facet.shape(_corpus_entity(name)) is shape, name
+
+
+def _canonical(identity: EntityIdentity) -> tuple[str, str]:
+    return identity.sort_key
 
 
 # --------------------------------------------------------------------------

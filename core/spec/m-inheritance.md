@@ -622,6 +622,7 @@ EntityMemberSelection
 InheritanceEntityView
   entity: EntityIdentity
   root: EntityIdentity
+  primary_key: AttributeMetadata
   strategy: InheritanceStrategy | absent
   ancestry: nonempty immutable sequence<EntityIdentity>
   concrete_subtypes: immutable sequence<EntityIdentity>
@@ -651,9 +652,11 @@ absent only for an identity outside the accepted Metamodel. It covers
 **every** accepted Entity, not only inheritance participants: a standalone
 Entity has the trivial view whose `root` is itself, whose `ancestry` and
 `concrete_subtypes` are `[entity]`, and whose `strategy`, `tag_column`, and
-`tag_value` are absent. Every view member and named lookup is an expected
-amortized O(1) read of formation output — the compiler precomputes these
-answers once, so behavioral modules never repeat ancestry walks at query or
+`tag_value` are absent. `primary_key` is the family's one primary-key
+Attribute as its root declares it, so every position of one family answers the
+same value. Every view member and named lookup is an expected amortized O(1)
+read of formation output — the compiler precomputes these answers once, so
+behavioral modules never repeat ancestry walks or key searches at query or
 write time.
 
 `member_selection` is the one complete inheritance-effective Attribute and

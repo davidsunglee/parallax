@@ -7,6 +7,7 @@ from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
     CompiledMetadata,
+    EntityIdentity,
     EntityMetadata,
     FacetKey,
     TemporalDimension,
@@ -27,13 +28,23 @@ __all__ = ["MODEL_COMPILER"]
 
 
 def compile_facet(metadata: CompiledMetadata, inheritance: InheritanceFacet) -> TemporalFacet:
-    """Compile every accepted Entity's effective temporal shape."""
-    return temporal_facet(
-        {
-            entity.identity: _shape(root_metadata(inheritance, metadata, entity.identity))
-            for entity in metadata.entities
-        }
-    )
+    """Compile every accepted Entity's effective temporal shape.
+
+    Each family's shape is derived once, from its root, and every descendant's
+    entry is that same object.
+    """
+    families = [
+        (entity.identity, root_metadata(inheritance, metadata, entity.identity))
+        for entity in metadata.entities
+    ]
+    shapes: dict[EntityIdentity, TemporalShape] = {}
+    for entity, root in families:
+        if root.identity == entity:
+            shapes[entity] = _shape(root)
+    for entity, root in families:
+        if root.identity != entity:
+            shapes[entity] = shapes[root.identity]
+    return temporal_facet(shapes)
 
 
 def _shape(root: EntityMetadata) -> TemporalShape:

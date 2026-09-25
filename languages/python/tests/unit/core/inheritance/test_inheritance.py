@@ -46,6 +46,7 @@ from parallax.core.metamodel import (
     AbstractSubtype,
     AttributeIdentity,
     AttributeLocation,
+    AttributeMetadata,
     AttributeReference,
     Cardinality,
     Column,
@@ -187,6 +188,41 @@ def test_reject_predicate_write_raises_for_the_abstract_root() -> None:
 
 def test_reject_predicate_write_is_a_no_op_for_a_non_participant() -> None:
     inheritance.reject_predicate_write(_metadata("account", "Account"))  # no raise
+
+
+# --------------------------------------------------------------------------- #
+# `validate_subtype_write`'s keyless branch reads the family key formation     #
+# already found, at every position below the root that declared it.           #
+# --------------------------------------------------------------------------- #
+def _undiscoverable_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any read that asks a declared Attribute whether it is the key."""
+
+    def undiscoverable(attribute: AttributeMetadata) -> object:
+        raise AssertionError(f"{attribute.identity} was searched for the family key")
+
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
+
+
+@pytest.mark.parametrize(("stem", "name"), [("animal", "Dog"), ("appliance", "Oven")])
+def test_a_keyless_subtype_write_is_refused_by_the_formed_family_key(
+    monkeypatch: pytest.MonkeyPatch, stem: str, name: str
+) -> None:
+    model = corpus_model(stem)
+    entity = _metadata(stem, name)
+    _undiscoverable_keys(monkeypatch)
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        inheritance.validate_subtype_write(model, entity, {"name": "Rex"})
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
+    assert "primary-key attribute(s) ['id']" in str(caught.value)
+
+
+def test_a_keyed_subtype_write_passes_the_keyless_check_without_a_key_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = corpus_model("animal")
+    dog = _metadata("animal", "Dog")
+    _undiscoverable_keys(monkeypatch)
+    inheritance.validate_subtype_write(model, dog, {"id": 1, "name": "Rex"})  # no raise
 
 
 # --------------------------------------------------------------------------- #

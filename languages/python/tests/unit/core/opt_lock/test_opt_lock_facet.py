@@ -8,7 +8,7 @@ from typing import Final, cast
 import pytest
 
 from parallax.conformance import case_format
-from parallax.core import opt_lock
+from parallax.core import inheritance, opt_lock
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
@@ -51,6 +51,7 @@ from parallax.core.opt_lock import (
     OptimisticLockFacet,
     TransactionTimeDerived,
 )
+from parallax.core.opt_lock import _compile as opt_lock_compile
 from parallax.core.opt_lock._compile import compile_facet
 from parallax.core.opt_lock._facet import UNVERSIONED
 from parallax.core.opt_lock._rules import MULTIPLE_ATTRIBUTES, TEMPORAL_EXPLICIT_ATTRIBUTE
@@ -63,11 +64,15 @@ from tests._support import fake_metamodel as fake
 from tests.unit._metamodel_support import (
     Declaration,
     accepted,
-    attribute,
     identity,
     instant,
     key,
     source,
+)
+from tests.unit.core._family_owner_support import (
+    DescendantsFirst,
+    family_roots,
+    record_root_derivations,
 )
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -258,6 +263,59 @@ def test_an_unversioned_family_is_unversioned_at_every_position() -> None:
     assert facet.key(entry) == UNVERSIONED
 
 
+# The explicit version of each strategy, and a Transaction-Time-derived key of
+# each strategy, by root.
+_KEYED_FAMILY_ROOTS: Final[dict[str, str]] = {
+    "appliance": "Appliance",
+    "instrument": "Instrument",
+    "rate": "Rate",
+    "vehicle": "Vehicle",
+}
+
+
+@pytest.mark.parametrize(("stem", "root_name"), sorted(_KEYED_FAMILY_ROOTS.items()))
+def test_every_position_in_a_family_answers_its_roots_one_key_object(
+    stem: str, root_name: str
+) -> None:
+    model = _formed(stem)
+    families = inheritance.view(model)
+    facet = opt_lock.view(model)
+    root = _corpus_entity(root_name)
+    key = facet.key(root)
+    assert isinstance(key, ExplicitVersion | TransactionTimeDerived)
+    members = [
+        entity.identity
+        for entity in model.entities
+        if (view := families.entity(entity.identity)) is not None and view.root == root
+    ]
+    assert len(members) > 1
+    for member in members:
+        assert facet.key(member) is key, member
+
+
+def test_a_family_listed_descendants_first_derives_its_key_once_at_the_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _formed("appliance")
+    metadata = DescendantsFirst(model)
+    listed = [entity.identity.name for entity in metadata.entities]
+    assert listed.index("Oven") < listed.index("Appliance")
+    derived = record_root_derivations(monkeypatch, opt_lock_compile, "_key")
+    families = inheritance_compile.compile_facet(metadata)
+    facet = compile_facet(
+        metadata, families, temporal_read_compile.compile_facet(metadata, families)
+    )
+    assert sorted(derived, key=_canonical) == sorted(family_roots(model), key=_canonical)
+    key = facet.key(_corpus_entity("Appliance"))
+    assert isinstance(key, ExplicitVersion)
+    for name in ("Fridge", "Oven"):
+        assert facet.key(_corpus_entity(name)) is key, name
+
+
+def _canonical(identity: EntityIdentity) -> tuple[str, str]:
+    return identity.sort_key
+
+
 # --------------------------------------------------------------------------
 # opt-lock-multiple-attributes.
 # --------------------------------------------------------------------------
@@ -431,7 +489,7 @@ def test_a_root_declaring_two_version_attributes_is_a_compiler_contract_failure(
                 entity,
                 declared_container=Table("ledger"),
                 declared_attributes=(
-                    attribute(entity, "id"),
+                    key(entity),
                     _version(entity),
                     _version(entity, "revision"),
                 ),

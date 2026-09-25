@@ -67,13 +67,17 @@ class InheritanceEntityView(Protocol):
     root first, the ``applicable_*`` sequences are that chain's declared members
     in chain order, and ``container``/``tag_column``/``tag_value`` are the
     physical facts the root's strategy fixes. ``persistence`` is the effective
-    root-owned mode and is never absent.
+    root-owned mode and is never absent. ``primary_key`` is the family's one key
+    Attribute: the root's accepted declaration, the same object at every
+    position of the family.
     """
 
     @property
     def entity(self) -> EntityIdentity: ...
     @property
     def root(self) -> EntityIdentity: ...
+    @property
+    def primary_key(self) -> AttributeMetadata: ...
     @property
     def strategy(self) -> InheritanceStrategy | None: ...
     @property
@@ -134,6 +138,7 @@ class InheritanceEntityFacts:
 
     entity: EntityIdentity
     root: EntityIdentity
+    primary_key: AttributeMetadata
     strategy: InheritanceStrategy | None
     ancestry: tuple[EntityIdentity, ...]
     concrete_subtypes: tuple[EntityIdentity, ...]
@@ -304,6 +309,7 @@ class _InheritanceEntityView:
 
     entity: EntityIdentity
     root: EntityIdentity
+    primary_key: AttributeMetadata
     strategy: InheritanceStrategy | None
     ancestry: tuple[EntityIdentity, ...]
     concrete_subtypes: tuple[EntityIdentity, ...]
@@ -384,6 +390,7 @@ def _entity_view(
     return _InheritanceEntityView(
         entity=position.entity,
         root=position.root,
+        primary_key=position.primary_key,
         strategy=position.strategy,
         ancestry=position.ancestry,
         concrete_subtypes=position.concrete_subtypes,

@@ -37,16 +37,23 @@ __all__ = ["MODEL_COMPILER"]
 def compile_facet(
     metadata: CompiledMetadata, inheritance: InheritanceFacet, temporal: TemporalFacet
 ) -> OptimisticLockFacet:
-    """Compile every accepted Entity's optimistic key from its family root."""
-    return optimistic_lock_facet(
-        {
-            entity.identity: _key(
-                root_metadata(inheritance, metadata, entity.identity),
-                _shape(temporal, entity.identity),
-            )
-            for entity in metadata.entities
-        }
-    )
+    """Compile every accepted Entity's optimistic key from its family root.
+
+    Each family's key is derived once, from its root, and every descendant's
+    entry is that same object.
+    """
+    families = [
+        (entity.identity, root_metadata(inheritance, metadata, entity.identity))
+        for entity in metadata.entities
+    ]
+    keys: dict[EntityIdentity, OptimisticKey] = {}
+    for entity, root in families:
+        if root.identity == entity:
+            keys[entity] = _key(root, _shape(temporal, entity))
+    for entity, root in families:
+        if root.identity != entity:
+            keys[entity] = keys[root.identity]
+    return optimistic_lock_facet(keys)
 
 
 def _shape(temporal: TemporalFacet, entity: EntityIdentity) -> TemporalShape:
