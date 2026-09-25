@@ -5,9 +5,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
-from parallax.core import inheritance
+from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
-from parallax.core.inheritance import InheritanceEntityView
+from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -21,6 +21,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
+from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import (
     ColumnSlice,
@@ -84,7 +85,6 @@ from parallax.core.unit_work.planned import (
     shortfall_for,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
-from parallax.core.unit_work.planner import FamilyFacts, family_facts
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
@@ -99,7 +99,6 @@ from parallax.core.unit_work.strategy import (
 )
 from parallax.core.unit_work.temporal import (
     ResolvedSuccessor,
-    TemporalAxes,
     bind_successor,
     resolve_successors,
 )
@@ -198,17 +197,16 @@ class _TemporalFacts:
     Write Group, by :meth:`WriteSettlement._temporal_facts` alone.
 
     Everything here is a value some producer emitted for THIS mutation: the
-    facet's compiled view of the target, the axis names the family bounds its
-    intervals with, the instant the clock resolved, what closing takes if the
-    topology closes anything, and the successors the Temporal Strategy's
+    facet's compiled view of the target, the family's Temporal Shape whose axes
+    bound its intervals, the instant the clock resolved, what closing takes if
+    the topology closes anything, and the successors the Temporal Strategy's
     topology described. No producer is among them, which is what lets a segment
     hold this by reference and still settle no decision at step access.
     """
 
     entity: EntityMetadata
-    declaring_entity: EntityMetadata
     view: InheritanceEntityView
-    axes: TemporalAxes
+    shape: TransactionTimeOnly | Bitemporal
     instant: dt.datetime
     close: _SettledClose | None
     resolved_successors: tuple[ResolvedSuccessor, ...]
@@ -301,25 +299,36 @@ class WriteSettlement:
     """The Write Planner's own settlement module (`m-unit-work`).
 
     Constructed once per accepted Metamodel by the planner that owns it, with
-    the family-fact reader that planner holds and the concurrency, temporal, and
-    audit strategies the composition layer wired. :meth:`settle` is its entire
-    surface: no caller settles one item, packs a segment, decorates a step, or
-    collects a claim by hand.
+    that model, the Inheritance and Temporal facets it compiled, and the
+    concurrency, temporal, and audit strategies the composition layer wired.
+    :meth:`settle` is its entire surface: no caller settles one item, packs a
+    segment, decorates a step, or collects a claim by hand.
     """
 
-    __slots__ = ("_audit", "_concurrency", "_families", "_temporal")
+    __slots__ = (
+        "_audit",
+        "_concurrency",
+        "_families",
+        "_model",
+        "_temporal_facet",
+        "_temporal_strategy",
+    )
 
     def __init__(
         self,
-        families: FamilyFacts,
+        model: Metamodel,
+        families: InheritanceFacet,
+        temporal_facet: TemporalFacet,
         *,
         concurrency: ConcurrencyStrategy,
         temporal: TemporalStrategy,
         audit: AuditStrategy,
     ) -> None:
+        self._model = model
         self._families = families
+        self._temporal_facet = temporal_facet
         self._concurrency = concurrency
-        self._temporal = temporal
+        self._temporal_strategy = temporal
         self._audit = audit
 
     def settle(
@@ -404,11 +413,11 @@ class WriteSettlement:
         if isinstance(instruction, PreparedPredicateWrite):
             return self._settle_predicate(instruction)
         entity = instruction.target
-        declaring_entity = self._families.declaring(entity)
-        if declaring_entity.declared_as_of_axes:
+        shape = self._temporal_facet.shape(entity.identity)
+        if isinstance(shape, TransactionTimeOnly | Bitemporal):
             return self._settle_temporal(
                 entity,
-                declaring_entity,
+                shape,
                 instruction,
                 observation,
                 concurrency,
@@ -460,9 +469,10 @@ class WriteSettlement:
         entity = instruction.selection.target
         inheritance.reject_predicate_write(entity)
         if (
-            self._families.declaring(entity).declared_as_of_axes
-            or self._concurrency.version_attribute(self._families.model, entity.identity)
-            is not None
+            isinstance(
+                self._temporal_facet.shape(entity.identity), TransactionTimeOnly | Bitemporal
+            )
+            or self._concurrency.version_attribute(self._model, entity.identity) is not None
         ):
             raise WritePlanningError(
                 f"{instruction.selection.target.identity.canonical!r}: a predicate write on a "
@@ -546,10 +556,8 @@ class WriteSettlement:
         _reject_milestone_verb(entity, mutation, surface)
         return _NonTemporalFacts(
             entity=entity,
-            view=self._families.view(entity),
-            version_attribute=self._concurrency.version_attribute(
-                self._families.model, entity.identity
-            ),
+            view=_view(self._families, entity),
+            version_attribute=self._concurrency.version_attribute(self._model, entity.identity),
         )
 
     def _addressed_facts(
@@ -563,9 +571,9 @@ class WriteSettlement:
         whether the write gates, and how a shortfall against it classifies. An
         insert never reaches here, so it settles no address it does not use.
         """
-        gated = self._concurrency.gates(concurrency, self._families.model, facts.entity.identity)
+        gated = self._concurrency.gates(concurrency, self._model, facts.entity.identity)
         return _AddressedFacts(
-            key_attributes=tuple(a.identity for a in self._families.primary_key(facts.entity)),
+            key_attributes=(facts.view.primary_key.identity,),
             gated=gated,
             shortfall=shortfall_classification(
                 observing=facts.version_attribute is not None, gated=gated
@@ -587,7 +595,7 @@ class WriteSettlement:
     def _settle_temporal(
         self,
         entity: EntityMetadata,
-        declaring_entity: EntityMetadata,
+        shape: TransactionTimeOnly | Bitemporal,
         instruction: PreparedKeyedWrite,
         observation: WriteObservation | None,
         concurrency: Concurrency,
@@ -610,7 +618,7 @@ class WriteSettlement:
         observed = observation if isinstance(observation, TemporalObservation) else None
         facts = self._temporal_facts(
             entity,
-            declaring_entity,
+            shape,
             instruction.mutation,
             instruction.bounds,
             surface="keyed",
@@ -633,7 +641,7 @@ class WriteSettlement:
     def _temporal_facts(
         self,
         entity: EntityMetadata,
-        declaring_entity: EntityMetadata,
+        shape: TransactionTimeOnly | Bitemporal,
         mutation: str,
         bounds: PreparedTemporalBounds,
         *,
@@ -645,17 +653,20 @@ class WriteSettlement:
         """Everything one temporal mutation settles before a row is in hand.
 
         The sole site for each of these decisions, whichever representation the
-        mutation arrived as: what the family's As-Of Axes are named, whether
-        the verb has a milestone to act on at all, which topology the Temporal
-        Facet describes it with, what closing takes if that topology closes
-        anything, which successors exist and what each one's bound expression
-        and represented-state kind is, and the one instant the attempt stamps.
+        mutation arrived as: whether the verb has a milestone to act on at all,
+        which topology the Temporal Facet describes it with, what closing takes
+        if that topology closes anything, which successors exist and what each
+        one's bound expression and represented-state kind is, and the one
+        instant the attempt stamps.
         An eagerly settled instruction and a Materialized Write Group therefore
         cannot answer any of them differently.
 
         A topology that closes nothing settles no close: it addresses no
         existing row and gates against none, so neither the target's primary
         key nor the Concurrency Strategy's gate decision is a fact about it.
+
+        ``shape`` is the family's Temporal Shape the caller already read to
+        dispatch here, retained by reference so no later decision re-reads it.
 
         ``observed`` says whether a Temporal Observation reached this mutation;
         a topology that closes has nothing to address, gate on, or carry state
@@ -664,35 +675,26 @@ class WriteSettlement:
         capturing the attempt's instant.
         """
         _reject_temporal_delete(entity, mutation, surface)
-        topology = self._temporal.topology(declaring_entity, mutation)
+        topology = self._temporal_strategy.topology(shape, mutation)
         if topology.closure is not None and not observed:
             raise WritePlanningError(
                 f"{entity.identity.name!r}: a temporal {mutation!r} closes the "
                 "current milestone, and every close requires the Temporal Observation it "
                 "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
             )
-        valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
-        tx_axis = _tx_time_axis(declaring_entity)
+        view = _view(self._families, entity)
         close: _SettledClose | None = None
         if topology.closure is not None:
             close = _SettledClose(
                 cause=topology.closure.cause,
-                key_attributes=tuple(a.identity for a in self._families.primary_key(entity)),
-                gate_start_attribute=_gate_axis(
-                    declaring_entity, topology.closure.gate_basis
-                ).start_attribute,
-                gated=self._concurrency.gates(concurrency, self._families.model, entity.identity),
+                key_attributes=(view.primary_key.identity,),
+                gate_start_attribute=_gate_axis(shape, topology.closure.gate_basis).start_attribute,
+                gated=self._concurrency.gates(concurrency, self._model, entity.identity),
             )
         return _TemporalFacts(
             entity=entity,
-            declaring_entity=declaring_entity,
-            view=self._families.view(entity),
-            axes=TemporalAxes(
-                transaction_start=tx_axis.start_attribute,
-                transaction_end=tx_axis.end_attribute,
-                valid_start=None if valid_axis is None else valid_axis.start_attribute,
-                valid_end=None if valid_axis is None else valid_axis.end_attribute,
-            ),
+            view=view,
+            shape=shape,
             # Reaching a surviving temporal mutation is what makes the attempt
             # capture its instant; the close's new Transaction-Time end and
             # every successor's fresh start derive from that one value.
@@ -759,11 +761,9 @@ class WriteSettlement:
         group's own compact columns alone.
         """
         entity = group.mutation.selection.target
-        declaring_entity = self._families.declaring(entity)
-        if declaring_entity.declared_as_of_axes:
-            return self._settle_temporal_group(
-                group, entity, declaring_entity, concurrency, tx_instant
-            )
+        shape = self._temporal_facet.shape(entity.identity)
+        if isinstance(shape, TransactionTimeOnly | Bitemporal):
+            return self._settle_temporal_group(group, entity, shape, concurrency, tx_instant)
         return self._settle_versioned_group(group, entity, concurrency)
 
     def _settle_versioned_group(
@@ -824,7 +824,7 @@ class WriteSettlement:
         self,
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
-        declaring_entity: EntityMetadata,
+        shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> StepSegment:
@@ -841,7 +841,7 @@ class WriteSettlement:
         assert isinstance(group.observations, TemporalColumns)
         facts = self._temporal_facts(
             entity,
-            declaring_entity,
+            shape,
             group.mutation.mutation,
             group.mutation.bounds,
             surface="predicate",
@@ -1003,13 +1003,13 @@ def _temporal_steps(
         steps.append(
             _close(
                 facts.entity,
-                facts.declaring_entity,
+                facts.shape,
                 key_attributes=close.key_attributes,
                 identity=key_row,
                 observed_valid_end=(
-                    None
-                    if facts.axes.valid_end is None
-                    else predecessor.member(facts.axes.valid_end.name)
+                    predecessor.member(facts.shape.valid_time.end_attribute.name)
+                    if isinstance(facts.shape, Bitemporal)
+                    else None
                 ),
                 cause=close.cause,
                 gate=_temporal_gate(close.gate_start_attribute, predecessor, close.gated),
@@ -1035,7 +1035,7 @@ def _temporal_steps(
                 value_objects = {**predecessor_value_objects, **authored_value_objects}
         entry = bind_successor(
             resolved,
-            facts.axes,
+            facts.shape,
             transaction_instant=facts.instant,
             attributes=attributes,
             value_objects=value_objects,
@@ -1290,22 +1290,23 @@ def plan_temporal_close(
     production Write Planner was constructed with, so the two can never
     disagree about a gate decision.
     """
-    families = family_facts(model)
     entity = _require_entity(model, entity_name)
-    declaring_entity = families.declaring(entity)
-    key_attributes = tuple(a.identity for a in families.primary_key(entity))
+    key_attributes = (_view(inheritance.view(model), entity).primary_key.identity,)
     _refuse_unaddressing_identity(entity, key_attributes, identity)
+    shape = temporal_read.view(model).shape(entity.identity)
+    if not isinstance(shape, TransactionTimeOnly | Bitemporal):
+        raise WritePlanningError(f"{entity.identity.canonical}: no Transaction-Time axis")
     gate: TemporalConcurrency = UNGATED
     if observed_tx_start is not None and concurrency_strategy.gates(
         concurrency, model, entity.identity
     ):
         gate = TemporalGate(
-            start_attribute=_tx_time_axis(declaring_entity).start_attribute,
+            start_attribute=shape.transaction_time.start_attribute,
             observed_start=observed_tx_start,
         )
     return _close(
         entity,
-        declaring_entity,
+        shape,
         key_attributes=key_attributes,
         identity=identity,
         observed_valid_end=observed_valid_end,
@@ -1343,7 +1344,7 @@ def _refuse_unaddressing_identity(
 
 def _close(
     entity: EntityMetadata,
-    declaring_entity: EntityMetadata,
+    shape: TransactionTimeOnly | Bitemporal,
     *,
     key_attributes: tuple[AttributeIdentity, ...],
     identity: Mapping[str, object],
@@ -1365,20 +1366,29 @@ def _close(
         target=MilestoneTarget(
             key_attributes=key_attributes,
             key_values=_key_tuple(entity, key_attributes, identity),
-            end_attributes=tuple(axis.end_attribute for axis in _as_of_axes(declaring_entity)),
-            end_values=_end_values(entity, declaring_entity, observed_valid_end),
+            end_attributes=_end_attributes(shape),
+            end_values=_end_values(entity, shape, observed_valid_end),
         ),
-        assignments=PlannedAssignments(
-            attributes={_tx_time_axis(declaring_entity).end_attribute: instant}
-        ),
+        assignments=PlannedAssignments(attributes={shape.transaction_time.end_attribute: instant}),
         cause=cause,
         concurrency=gate,
         affected_rows=ExactCount(expected=1, on_shortfall=shortfall_for(gate)),
     )
 
 
+def _end_attributes(shape: TransactionTimeOnly | Bitemporal) -> tuple[AttributeIdentity, ...]:
+    """One exclusive-end Attribute per As-Of Axis, in canonical order."""
+    match shape:
+        case TransactionTimeOnly(transaction_time=transaction_time):
+            return (transaction_time.end_attribute,)
+        case Bitemporal(valid_time=valid_time, transaction_time=transaction_time):
+            return (valid_time.end_attribute, transaction_time.end_attribute)
+
+
 def _end_values(
-    entity: EntityMetadata, declaring_entity: EntityMetadata, observed_valid_end: object | None
+    entity: EntityMetadata,
+    shape: TransactionTimeOnly | Bitemporal,
+    observed_valid_end: object | None,
 ) -> tuple[TemporalUpperBound, ...]:
     """One exclusive upper bound per As-Of Axis, in canonical order.
 
@@ -1389,40 +1399,30 @@ def _end_values(
     behind, so binding a constant on both axes would silently miss every
     bounded sibling.
     """
-    values: list[TemporalUpperBound] = []
-    for axis in _as_of_axes(declaring_entity):
-        if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            values.append(INFINITY)
-        elif observed_valid_end is None:
-            raise WritePlanningError(
-                f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
-                "supplied — a Bitemporal milestone address needs one exclusive upper bound "
-                "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
-            )
-        elif observed_valid_end == INFINITY_LITERAL or observed_valid_end is TemporalBound.INFINITY:
-            values.append(INFINITY)
-        else:
-            values.append(Finite(instant=observed_valid_end))
-    return tuple(values)
+    if isinstance(shape, TransactionTimeOnly):
+        return (INFINITY,)
+    if observed_valid_end is None:
+        raise WritePlanningError(
+            f"bitemporal close on {entity.identity.name!r}: no observed Valid-Time end "
+            "supplied — a Bitemporal milestone address needs one exclusive upper bound "
+            "per As-Of Axis (m-bitemp-write 'Address and gate are separate')"
+        )
+    if observed_valid_end == INFINITY_LITERAL or observed_valid_end is TemporalBound.INFINITY:
+        return (INFINITY, INFINITY)
+    return (Finite(instant=observed_valid_end), INFINITY)
 
 
-def _as_of_axes(declaring_entity: EntityMetadata) -> tuple[AsOfAxisMetadata, ...]:
-    """``declaring_entity``'s declared As-Of Axes in canonical order."""
-    valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
-    tx_axis = _tx_time_axis(declaring_entity)
-    return (tx_axis,) if valid_axis is None else (valid_axis, tx_axis)
-
-
-def _gate_axis(declaring_entity: EntityMetadata, gate_basis: TemporalDimension) -> AsOfAxisMetadata:
+def _gate_axis(
+    shape: TransactionTimeOnly | Bitemporal, gate_basis: TemporalDimension
+) -> AsOfAxisMetadata:
     """The As-Of Axis a close's optimistic gate binds, by the topology's declared basis."""
-    return next(axis for axis in _as_of_axes(declaring_entity) if axis.dimension is gate_basis)
-
-
-def _tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
-    axis = declaring_entity.as_of_axis(TemporalDimension.TRANSACTION_TIME)
-    if axis is None:  # pragma: no cover - callers guard on a temporal declaring Entity
-        raise WritePlanningError(f"{declaring_entity.identity.canonical}: no Transaction-Time axis")
-    return axis
+    if gate_basis is TemporalDimension.TRANSACTION_TIME:
+        return shape.transaction_time
+    if isinstance(shape, Bitemporal):
+        return shape.valid_time
+    raise WritePlanningError(  # pragma: no cover - only a Bitemporal topology gates on Valid Time
+        "a Transaction-Time-Only close has no Valid-Time axis to gate on"
+    )
 
 
 def reject_readless_document_many(
@@ -1466,6 +1466,20 @@ def assigned_many_path(occurrence: ValueObjectMetadata, authored: object) -> tup
         if path is not None:
             return (name, *path)
     return None
+
+
+def _view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
+    """``entity``'s compiled family-effective view — its applicable member
+    chain, the indexes a write row's names resolve through, and the family key.
+
+    An inheritance participant declares only its own members while its
+    writes name every inherited one, so the applicable chain, not the
+    Entity's own declarations, is what a write-side member lookup reads.
+    """
+    position = families.entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    return position
 
 
 def _require_entity(model: Metamodel, spelling: str) -> EntityMetadata:

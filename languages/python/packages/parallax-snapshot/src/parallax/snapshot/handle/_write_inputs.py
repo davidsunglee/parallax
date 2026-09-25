@@ -9,14 +9,20 @@ from parallax.core.base import InstantError, normalize_instant
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._declaration import declaration_of, wire_names_of
 from parallax.core.metamodel import (
+    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    TemporalDimension,
     entity_by_name,
 )
 from parallax.core.object_query import Latest
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import (
+    Bitemporal,
+    NonTemporal,
+    Pin,
+    TemporalShape,
+    TransactionTimeOnly,
+)
 from parallax.core.unit_work import (
     BOUNDED_MUTATIONS,
     INSERT_MUTATIONS,
@@ -43,7 +49,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle._family import family_primary_key, is_temporal
+from parallax.snapshot.handle._family import family_view
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -130,32 +136,23 @@ for — the one reading that must answer rather than raise, since it runs before
 the refusal such a value has coming."""
 
 
-def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
-    return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
-
-
 def written_object_key(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
     :class:`~parallax.core.unit_work.ObjectKey` a source's own Read Origins name
     their objects by (the instance's OWN Entity Identity, never
-    family-normalized; pk pairs by canonical attribute name, in the
-    family-effective primary key's own order) and `unit_work.object_key`
-    computes at flush, so a verb-time refusal and the flush-time settle can
-    never name the object two different ways.
+    family-normalized; its one pair keyed by the family key's canonical
+    attribute name) and `unit_work.object_key` computes at flush, so a
+    verb-time refusal and the flush-time settle can never name the object two
+    different ways.
 
     ``row`` is that instance's identity row as the Entity Row Codec derived it,
-    passed in rather than derived here: this module owns the semantic family
-    facts the key's ORDER comes from, and the codec owns what an Entity value's
-    canonical primary key IS."""
-    return ObjectKey(
-        record.identity,
-        tuple(
-            (attr.identity.name, row[attr.identity.name])
-            for attr in family_primary_key(meta, record)
-        ),
-    )
+    passed in rather than derived here: the Inheritance Facet owns which member
+    is the family key, and the codec owns what an Entity value's canonical
+    primary key IS."""
+    name = family_view(meta, record).primary_key.identity.name
+    return ObjectKey(record.identity, ((name, row[name]),))
 
 
 type WrittenObject = tuple[EntityIdentity, tuple[tuple[str, object], ...]]
@@ -167,9 +164,9 @@ an :class:`~parallax.core.unit_work.ObjectKey`."""
 def source_identity_row(
     record: EntityMetadata, meta: Metamodel, value: EntityBase
 ) -> Mapping[str, object] | None:
-    """``value``'s primary-key members read straight off it — or ``None`` when it
-    states no value for one of them, because its own class carries no attribute
-    for that member or because nothing ever populated the one it carries.
+    """``value``'s family-key member read straight off it — or ``None`` when it
+    states no value for it, because its own class carries no attribute for that
+    member or because nothing ever populated the one it carries.
 
     Total for every value of the Entity, which is what this reading exists for:
     the identity row is what names the object to the buffered-insert ledger, and
@@ -177,7 +174,7 @@ def source_identity_row(
     object of this store has coming, so a value this reading could refuse would
     be answered ahead of the honest complaint about it. The Entity Row Codec's
     :meth:`~parallax.core.entity.EntityRowCodec.identity_row` selects the same
-    members and is total over neither case: it refuses the class that carries no
+    member and is total over neither case: it refuses the class that carries no
     attribute for the member and fails on the attribute read for the one that
     carries it unpopulated. Whichever it does follows later, when the write goes
     to derive the row it would actually buffer.
@@ -185,39 +182,36 @@ def source_identity_row(
     ``None`` means no object, so no insert of it was buffered, which is what
     leaves such a value's provenance refusal standing.
 
-    A primary key is Attributes alone, whose canonical form is the value itself,
-    so members are carried here exactly as a row would serialize them and a
-    reading of this row compares equal to a reading of the row an insert buffers.
+    A primary key is an Attribute, whose canonical form is the value itself, so
+    the member is carried here exactly as a row would serialize it and a reading
+    of this row compares equal to a reading of the row an insert buffers.
     """
-    names = wire_names_of(type(value))
-    row: dict[str, object] = {}
-    for attribute in family_primary_key(meta, record):
-        py_name = names.name_to_py.get(attribute.identity.name)
-        if py_name is None:
-            return None
-        member = getattr(value, py_name, _UNPOPULATED)
-        if member is _UNPOPULATED:
-            return None
-        row[attribute.identity.name] = member
-    return row
+    name = family_view(meta, record).primary_key.identity.name
+    py_name = wire_names_of(type(value)).name_to_py.get(name)
+    if py_name is None:
+        return None
+    member = getattr(value, py_name, _UNPOPULATED)
+    if member is _UNPOPULATED:
+        return None
+    return {name: member}
 
 
 def written_object_of_row(
-    record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
+    record: EntityIdentity, key: AttributeMetadata, row: Mapping[str, object]
 ) -> WrittenObject | None:
     """Which object a written ROW names.
 
     The one reading, whatever produced the row: the identity row a source states
     (:func:`source_identity_row`, an object key a read filed) and the canonical
-    row an insert buffers key by the SAME family-effective primary-key members in
-    the SAME order and carry the values as the caller supplied them, so a Typed
+    row an insert buffers key by the SAME family key member ``key`` and carry
+    the value as the caller supplied it, so a Typed
     insert and a Wire update of one object name one member of
     :class:`BufferedInserts` — which is what makes the exemption span both
     representations rather than one each.
 
-    ``None`` for a row that names no object: one short of a primary-key member,
-    or one whose member carries something no object can be addressed BY. A row
-    short of a member is defensive rather than reachable — a keyed write's
+    ``None`` for a row that names no object: one short of the key member, or one
+    whose member carries something no object can be addressed BY. A row short
+    of the member is defensive rather than reachable — a keyed write's
     identity row is the key the source itself states, and an insert's is judged
     complete before this is asked. An unaddressable member is reachable, because
     a source states its key members as its caller populated them and only the
@@ -225,16 +219,13 @@ def written_object_of_row(
     is what leaves that value's own refusal standing instead of failing the
     ledger's question about it.
     """
-    pairs: list[tuple[str, object]] = []
-    for attribute in family_primary_key(meta, record):
-        name = attribute.identity.name
-        if name not in row:  # pragma: no cover - every caller holds a complete key already
-            return None
-        member = row[name]
-        if not _addresses_an_object(member):
-            return None
-        pairs.append((name, member))
-    return (record.identity, tuple(pairs))
+    name = key.identity.name
+    if name not in row:  # pragma: no cover - every caller holds a complete key already
+        return None
+    member = row[name]
+    if not _addresses_an_object(member):
+        return None
+    return (record, ((name, member),))
 
 
 def _addresses_an_object(member: object) -> bool:
@@ -937,7 +928,7 @@ def refuse_repeated_insert(
 
 def reject_temporal_delete(
     entity: EntityMetadata,
-    declaring_entity: EntityMetadata,
+    shape: TemporalShape,
     mutation: str,
     *,
     surface: instructions.WriteSurface,
@@ -961,7 +952,7 @@ def reject_temporal_delete(
     the caller can drop; a boundless ``terminate`` clears the gate in silence and
     reaches the quadrant prepared-write production states.
     """
-    if not is_temporal(declaring_entity):
+    if isinstance(shape, NonTemporal):
         return
     refusal = instructions.temporal_delete_refusal(entity.identity.name, mutation, surface=surface)
     if refusal is not None:
@@ -987,7 +978,8 @@ def _stated_instant(name: str, mutation: KeyedMutation, bound: str, value: objec
 
 
 def validate_window(
-    declaring_entity: EntityMetadata,
+    root: EntityIdentity,
+    shape: TemporalShape,
     mutation: KeyedMutation,
     valid_from: object,
     until: object,
@@ -1015,16 +1007,19 @@ def validate_window(
     (:class:`~parallax.core.unit_work.WriteInstructionError`); a bound that is
     no instant keeps `m-core`'s :class:`~parallax.core.base.InstantError`. All
     are ``ValueError``s, and all precede any evidence question.
+
+    ``root`` names the family root whose temporality ``shape`` is, and every
+    refusal names the family by it.
     """
-    _require_stated_window(declaring_entity, mutation, valid_from, until)
-    valid_from_managed = _validate_valid_from(declaring_entity, mutation, valid_from)
+    _require_stated_window(root, mutation, valid_from, until)
+    valid_from_managed = _validate_valid_from(root, shape, mutation, valid_from)
     if until is None:
         return valid_from_managed, None
-    return valid_from_managed, _validate_until(declaring_entity, mutation, valid_from, until)
+    return valid_from_managed, _validate_until(root, mutation, valid_from, until)
 
 
 def _require_stated_window(
-    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object, until: object
+    root: EntityIdentity, mutation: KeyedMutation, valid_from: object, until: object
 ) -> None:
     if mutation not in BOUNDED_MUTATIONS:
         return
@@ -1032,13 +1027,12 @@ def _require_stated_window(
     if missing is None:
         return
     raise instructions.WriteInstructionError(
-        f"{declaring_entity.identity.name}: a bounded {mutation!r} states its window as a pair, "
-        f"and {missing} is absent"
+        f"{root.name}: a bounded {mutation!r} states its window as a pair, and {missing} is absent"
     )
 
 
 def _validate_valid_from(
-    declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object
+    root: EntityIdentity, shape: TemporalShape, mutation: KeyedMutation, valid_from: object
 ) -> dt.datetime | None:
     """Validate and normalize a write verb's ``valid_from``:
     a Bitemporal target requires it (the mutation's own Valid-Time instant
@@ -1055,8 +1049,8 @@ def _validate_valid_from(
     Valid-Time dimension takes no bound whatever type the caller spelled it as.
     Both are ``ValueError``s, and both precede any evidence question.
     """
-    name = declaring_entity.identity.name
-    if _is_bitemporal(declaring_entity):
+    name = root.name
+    if isinstance(shape, Bitemporal):
         if valid_from is None:
             raise instructions.WriteInstructionError(
                 f"{name}: a bitemporal {mutation!r} requires valid_from "
@@ -1064,16 +1058,20 @@ def _validate_valid_from(
             )
         return normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from))
     if valid_from is not None:
-        shape = "a Transaction-Time-Only" if is_temporal(declaring_entity) else "a non-temporal"
+        profile = (
+            "a Transaction-Time-Only"
+            if isinstance(shape, TransactionTimeOnly)
+            else "a non-temporal"
+        )
         raise instructions.WriteInstructionError(
-            f"{name}: {shape} {mutation!r} takes no valid_from "
+            f"{name}: {profile} {mutation!r} takes no valid_from "
             f"({name!r} declares no Valid-Time dimension to bound)"
         )
     return None
 
 
 def _validate_until(
-    declaring_entity: EntityMetadata,
+    root: EntityIdentity,
     mutation: KeyedMutation,
     valid_from: object,
     until: object,
@@ -1105,7 +1103,7 @@ def _validate_until(
     :class:`~parallax.core.base.InstantError`
     :func:`~parallax.core.base.normalize_instant` raises for any datetime it
     cannot put in UTC."""
-    name = declaring_entity.identity.name
+    name = root.name
     valid_from_normalized = normalize_instant(
         _stated_instant(name, mutation, "valid_from", valid_from)
     )

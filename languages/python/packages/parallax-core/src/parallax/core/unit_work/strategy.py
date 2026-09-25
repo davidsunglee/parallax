@@ -11,6 +11,7 @@ from parallax.core.metamodel import (
     Metamodel,
     TemporalDimension,
 )
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planned import CloseCause, PlannedWrite
@@ -243,14 +244,16 @@ class MilestoneTopology:
 class TemporalStrategy(Protocol):
     """How one temporal facet describes an authored mutation's topology.
 
-    ``entity`` is the declaring root: selecting the Transaction-Time-Only facet
-    versus the Bitemporal one is itself part of "how a temporal facet describes
-    a mutation" (the two facet modules are optional policy this scope cannot
-    import), so the injected adapter dispatches on the entity's own declared
-    As-Of Axes rather than the caller doing so.
+    ``shape`` is the target family's compiled Temporal Shape: selecting the
+    Transaction-Time-Only facet versus the Bitemporal one is itself part of "how
+    a temporal facet describes a mutation" (the two facet modules are optional
+    policy this scope cannot import), so the injected adapter dispatches on the
+    shape's variant rather than the caller doing so.
     """
 
-    def topology(self, entity: EntityMetadata, mutation: str) -> MilestoneTopology: ...
+    def topology(
+        self, shape: TransactionTimeOnly | Bitemporal, mutation: str
+    ) -> MilestoneTopology: ...
 
 
 @runtime_checkable

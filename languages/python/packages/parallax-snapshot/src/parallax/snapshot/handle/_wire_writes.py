@@ -33,7 +33,7 @@ from parallax.core.unit_work.instructions import (
     PreparedTemporalBounds,
 )
 from parallax.core.wire import encode_wire
-from parallax.snapshot.handle._family import declaring as declaring_of
+from parallax.snapshot.handle._family import family_view, temporal_shape
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     PreparedSourceWrite,
@@ -235,8 +235,8 @@ def wire_predicate_write(
     is `m-predicate`'s own refusal rather than whatever the model happens to say
     about the Entity, the window, or the assignments beside it. The Entity is
     then resolved HERE rather than left to the instruction build, because the
-    temporal bounds are rendered against the target's own declaring Entity and a
-    bound has to be canonical from the moment the instruction exists — and
+    temporal bounds are rendered against the target family's Temporal Shape and
+    a bound has to be canonical from the moment the instruction exists — and
     ``delete_where``, which offers no bound to render, hears the target's
     verdict on the VERB before the window gate is reached at all, exactly as the
     Typed ``_where`` lane does.
@@ -246,9 +246,11 @@ def wire_predicate_write(
     entity_name = _selection_shape(selection)
     authored = _authored_changes(mutation, changes)
     entity = instructions.resolve_target(lane.keyed.model.meta, entity_name)
-    declaring = declaring_of(lane.keyed.model.meta, entity)
-    reject_temporal_delete(entity, declaring, mutation, surface="predicate")
-    valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
+    shape = temporal_shape(lane.keyed.model.meta, entity)
+    reject_temporal_delete(entity, shape, mutation, surface="predicate")
+    valid_from_managed, until_managed = validate_window(
+        family_view(lane.keyed.model.meta, entity).root, shape, mutation, valid_from, until
+    )
     members = _row_members(lane.keyed.model.meta, entity)
     unknown = sorted(set(authored) - set(members))
     if unknown:

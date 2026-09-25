@@ -7,9 +7,11 @@ flush names; the second is a Materialized Write Group's resolved-row count, for
 rows the group already holds.
 
 A prepared write carries the exact target Metadata its ingress resolved, and the
-model's Inheritance Facet was compiled when the model was accepted. Between them
-nothing planning needs about a target has to be searched for — so what the
-accepted model declares BESIDE the target is not planning's to pay for, and
+model's Inheritance and Temporal facets were compiled when the model was
+accepted; the planner and its settlement module hold the model and those facets
+by reference. Between them nothing planning needs about a target has to be
+searched for — so what the accepted model declares BESIDE the target is not
+planning's to pay for, and
 planning builds no spelling index — a canonical/bare spelling map or a name-count
 dictionary, sized by the model's Entity count — to resolve a spelling no prepared
 input carries.
@@ -512,7 +514,8 @@ def test_a_model_scoped_planner_keeps_nothing_per_entity() -> None:
     # removed by being MOVED into the planner would leave every flush cheaper and
     # every planner heavier by the same shape. What the planner keeps of an
     # eight-hundred-Entity model is what it keeps of an eight-Entity one, so what
-    # it holds is two references and the strategies wired into it.
+    # it holds is references to the model and its compiled facets, and the
+    # strategies wired into it.
     tracemalloc.start()
     try:
         few = retained(_planner_over(FEW))

@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import CardPayment, Person
+from parallax.conformance.read_models import CardPayment, DepositRate, Person
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
     Contact,
@@ -79,6 +79,7 @@ from tests.unit._transact_support import (
     INSERT_SQL,
     PAYMENT,
     PERSON,
+    RATE,
     WHERE_POSITION_META,
     WherePosition,
     account_db,
@@ -800,6 +801,45 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 
     with raises_contextualized(ValueError, match="takes no valid_from"):
         account_db(port).transact(fn)
+
+
+@pytest.mark.parametrize(
+    ("window", "refusal"),
+    [
+        ({}, "Rate: a bitemporal 'insert' requires valid_from"),
+        (
+            {"valid_from": dt.datetime(2024, 6, 1, tzinfo=dt.UTC), "until": FIXED},
+            r"Rate: 'insertUntil' requires valid_from < until",
+        ),
+    ],
+)
+def test_an_inherited_positions_window_is_judged_by_its_family_shape(
+    monkeypatch: pytest.MonkeyPatch, window: Mapping[str, dt.datetime], refusal: str
+) -> None:
+    # The window gate asks the family's compiled Temporal Shape whether the
+    # target admits a bound and names the family by its root, so a concrete
+    # subtype's refusal reads exactly as its root's would without either
+    # Entity's declarations being asked for their As-Of Axes.
+    database = own_root(
+        Database.connect(ScriptedAdapter(Transact()), RATE, clock=FixedClock(FIXED))
+    )
+
+    def undeclared(*_args: object) -> object:
+        raise AssertionError("the window gate read a declared As-Of Axis")
+
+    entity_type = type(cataloged_for(RATE).meta.entities[0])
+    monkeypatch.setattr(entity_type, "as_of_axis", undeclared)
+    monkeypatch.setattr(entity_type, "declared_as_of_axes", property(undeclared))
+    rate = DepositRate(id=1, amount=Decimal("1.00"), grade="A")
+
+    def fn(tx: Transaction) -> None:
+        if "until" in window:
+            tx.insert_until(rate, valid_from=window["valid_from"], until=window["until"])
+        else:
+            tx.insert(rate)
+
+    with raises_contextualized(WriteInstructionError, match=f"^{refusal}"):
+        database.using_database_login().transact(fn)
 
 
 # --------------------------------------------------------------------------- #

@@ -32,8 +32,7 @@ from parallax.core.unit_work.instructions import (
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
-from parallax.snapshot.handle._family import comparison_shape
-from parallax.snapshot.handle._family import declaring as declaring_of
+from parallax.snapshot.handle._family import comparison_shape, family_view, temporal_shape
 from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     Provenance,
@@ -301,9 +300,12 @@ def keyed_write(
     source.capture(mutation)
     meta = ctx.model.meta
     resolved = source.resolve(meta, mutation)
+    family = family_view(meta, resolved.entity)
     identity_row = resolved.identity_row
     written = (
-        None if identity_row is None else written_object_of_row(resolved.entity, meta, identity_row)
+        None
+        if identity_row is None
+        else written_object_of_row(resolved.entity.identity, family.primary_key, identity_row)
     )
     opened_by = ctx.inserts.opened_by(written)
     validate_provenance(
@@ -314,9 +316,11 @@ def keyed_write(
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
-    declaring = declaring_of(meta, resolved.entity)
-    reject_temporal_delete(resolved.entity, declaring, mutation, surface="keyed")
-    valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
+    shape = temporal_shape(meta, resolved.entity)
+    reject_temporal_delete(resolved.entity, shape, mutation, surface="keyed")
+    valid_from_managed, until_managed = validate_window(
+        family.root, shape, mutation, valid_from, until
+    )
     prepared = source.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
     row, restorations = _effective_row(ctx, resolved, prepared, mutation)
     if row is None:
@@ -394,12 +398,13 @@ def keyed_insert(
         inserted=False,
         representation=resolved.representation,
     )
+    family = family_view(meta, resolved.entity)
     valid_from_managed, until_managed = validate_window(
-        declaring_of(meta, resolved.entity), mutation, valid_from, until
+        family.root, temporal_shape(meta, resolved.entity), mutation, valid_from, until
     )
     prepared = opening.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
     row = prepared.rows[0]
-    written = written_object_of_row(resolved.entity, meta, row)
+    written = written_object_of_row(resolved.entity.identity, family.primary_key, row)
     refuse_repeated_insert(
         resolved.entity.identity,
         mutation,

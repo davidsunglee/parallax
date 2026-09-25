@@ -23,20 +23,24 @@ import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 
-from parallax.core import inheritance
+from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     AttributeReference,
     Cardinality,
+    EntityIdentity,
     Metamodel,
     RelationshipIdentity,
     RelativeEntityReference,
     Table,
+    TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
 )
@@ -47,6 +51,7 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
+    MilestoneTopology,
     ObjectKey,
     PlannedClose,
     PlannedInsert,
@@ -94,6 +99,7 @@ from parallax.core.unit_work.planned import (
     PlannedRow,
     PlannedUpdate,
     PlannedWrite,
+    TemporalGate,
     ValidatedMutationSelection,
     Versioned,
     VersionGate,
@@ -104,8 +110,8 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
-from tests.unit._corpus_identity_support import corpus_object_key
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, temporal_group
+from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
@@ -929,6 +935,31 @@ def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
     assert row["id"] == MAX_PLUS_ONE
 
 
+def test_object_key_reads_the_family_key_its_owner_compiled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Formation proved the family has one key and the Inheritance Facet names
+    # it at every position, so deriving an Object Key searches no declaration
+    # for it — for a prepared write and a raw spelled one, at a standalone
+    # Entity and at an inherited position alike. Preparation judges assignments
+    # against the key Attribute, so it runs before discovery is refused.
+    card = KeyedWrite("update", "CardPayment", ({"id": 1, "amount": Decimal("5.00")},))
+    account = KeyedWrite("update", "Account", ({"id": 2, "balance": Decimal("0.00")},))
+    prepared_card = _prepared_keyed(card, _PAYMENT)
+    prepared_account = _prepared_keyed(account, _ACCOUNT)
+    card_key = corpus_object_key("CardPayment", ("id", 1))
+    account_key = corpus_object_key("Account", ("id", 2))
+
+    def undiscoverable(attribute: AttributeMetadata) -> object:
+        raise AssertionError(f"{attribute.identity} was searched for the family key")
+
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
+    assert object_key(prepared_card, _PAYMENT) == card_key
+    assert object_key(card, _PAYMENT) == card_key
+    assert object_key(prepared_account, _ACCOUNT) == account_key
+    assert object_key(account, _ACCOUNT) == account_key
+
+
 def test_recorded_observations_bind_to_their_own_planned_update() -> None:
     row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},))
     row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": Decimal("0.00")},))
@@ -1626,6 +1657,180 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     assert "close" in kinds
     assert kinds.count("update") == 2  # the addressed Account update and the group's one row
     assert kinds[-1] == "delete"  # the readless predicate write, held at the barrier
+
+
+# --------------------------------------------------------------------------- #
+# Settlement reads a temporal mutation's Temporal Shape once, at dispatch, and #
+# every later decision reads that same family-owned object.                    #
+# --------------------------------------------------------------------------- #
+_TEMPORAL_FAMILIES = formed(
+    DescriptorMetamodel(
+        entities=(
+            *_MODELS["balance"].entities,
+            *_MODELS["quote"].entities,
+            *_MODELS["rate"].entities,
+        )
+    )
+)
+_OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class _RecordingTopology:
+    """The production topology dispatch, recording each shape it was handed."""
+
+    shapes: list[object]
+
+    def topology(
+        self,
+        shape: temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+        mutation: str,
+    ) -> MilestoneTopology:
+        self.shapes.append(shape)
+        if isinstance(shape, temporal_read.Bitemporal):
+            return bitemp_write.RECTANGLE_SPLIT.topology(mutation)
+        return txtime_write.MILESTONE_CHAIN.topology(mutation)
+
+
+def _temporal_family_writes() -> list[BufferItem]:
+    """Observed updates of an inherited Transaction-Time-Only and an inherited
+    Bitemporal position, then a three-row group over a standalone target."""
+    quote = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
+    rate = KeyedWrite(
+        "update",
+        "DepositRate",
+        ({"id": 2, "amount": Decimal("3.00")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    transaction_time = {"txStart": _OPENED, "txEnd": "infinity"}
+    observed = {
+        corpus_object_key("SpotQuote", ("id", 1)): {
+            "id": 1,
+            "price": Decimal("1.00"),
+            "symbol": "Q",
+            **transaction_time,
+        },
+        corpus_object_key("DepositRate", ("id", 2)): {
+            "id": 2,
+            "amount": Decimal("1.00"),
+            "grade": "A",
+            "validStart": _OPENED,
+            "validEnd": "infinity",
+            **transaction_time,
+        },
+    }
+    group = temporal_group(
+        PredicateWrite(
+            "terminate",
+            PredicateSelection(
+                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00")
+            ),
+        ),
+        _TEMPORAL_FAMILIES,
+        [
+            {"id": row, "acctNum": "B", "value": Decimal("1.00"), **transaction_time}
+            for row in (10, 11, 12)
+        ],
+    )
+    return [
+        *observed_buffer(
+            [quote, rate],
+            _TEMPORAL_FAMILIES,
+            {
+                key_: TemporalObservation(predecessor=PredecessorRow(members=members))
+                for key_, members in observed.items()
+            },
+        ),
+        group,
+    ]
+
+
+def test_settlement_reads_each_temporal_mutations_family_shape_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One read per addressed write and one per group, however many rows the group
+    # resolved, and none on step access: the shape dispatch read is the one every
+    # later decision — topology, close address, gate basis, successor binding —
+    # reuses. What those decisions receive is the family's own interned object,
+    # so an inherited position hands on its root's shape rather than an equal
+    # rebuilt one.
+    facet = temporal_read.view(_TEMPORAL_FAMILIES)
+    owners = {
+        name: facet.shape(corpus_entity(name)) for name in ("SpotQuote", "DepositRate", "Balance")
+    }
+    buffered = _temporal_family_writes()
+    shapes: list[object] = []
+    monkeypatch.setattr(
+        planning_composition, "_TemporalAdapter", lambda: _RecordingTopology(shapes)
+    )
+    planner = build_write_planner(_TEMPORAL_FAMILIES)
+    reads: list[str] = []
+    read_shape = type(facet).shape
+
+    def counting(self: temporal_read.TemporalFacet, entity: EntityIdentity) -> object:
+        reads.append(entity.name)
+        return read_shape(self, entity)
+
+    monkeypatch.setattr(type(facet), "shape", counting)
+    plan = planner.finalize(
+        PlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            buffered_writes=buffered,
+        )
+    ).plan
+    assert reads == ["SpotQuote", "DepositRate", "Balance"]
+    _ = list(plan.steps)
+    _ = plan.steps[len(plan.steps) - 1]
+    assert reads == ["SpotQuote", "DepositRate", "Balance"]
+    assert all(shape is owners[name] for shape, name in zip(shapes, reads, strict=True))
+    group_segment = plan.steps.segments[-1]
+    assert cast("Any", group_segment).facts.shape is owners["Balance"]
+    assert len(group_segment) == 3
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidTimeGatedTopology:
+    """The Bitemporal topology with its close gated on the Valid-Time axis."""
+
+    def topology(
+        self,
+        shape: temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+        mutation: str,
+    ) -> MilestoneTopology:
+        topology = bitemp_write.RECTANGLE_SPLIT.topology(mutation)
+        assert topology.closure is not None
+        return dataclasses.replace(
+            topology,
+            closure=dataclasses.replace(topology.closure, gate_basis=TemporalDimension.VALID_TIME),
+        )
+
+
+def test_a_close_gates_on_the_axis_its_topology_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The gate basis is the topology's decision, and settlement binds the start
+    # of whichever axis of the family's shape it names.
+    update = KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 5, "value": Decimal("42.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    key_ = object_key(update, _POSITION)
+    assert key_ is not None
+    monkeypatch.setattr(planning_composition, "_TemporalAdapter", _ValidTimeGatedTopology)
+    plan = _plan(
+        [update],
+        _POSITION,
+        observations={key_: _bitemporal_observation()},
+        concurrency="optimistic",
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    close = plan.steps[0]
+    assert isinstance(close, PlannedClose)
+    assert isinstance(close.concurrency, TemporalGate)
+    assert close.concurrency.start_attribute.name == "validStart"
+    assert close.concurrency.observed_start == "2024-01-01T00:00:00+00:00"
 
 
 # --------------------------------------------------------------------------- #
