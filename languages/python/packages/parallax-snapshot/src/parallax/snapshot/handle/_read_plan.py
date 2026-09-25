@@ -4,7 +4,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
-from typing import Final, Literal, Protocol, cast
+from typing import Final, Literal, NamedTuple, Protocol, cast
 
 from parallax.core import deep_fetch
 from parallax.core.dialect import Dialect, LockMode
@@ -38,15 +38,6 @@ __all__ = [
 ]
 
 type ResultForm = Literal["row", "instance"]
-type _ReadPlanKey = tuple[
-    str,
-    _Identity,
-    _Identity,
-    object,
-    ResultForm,
-    Concurrency | None,
-]
-type _FamilyKey = tuple[str, _Identity, _Identity, object, ResultForm, Concurrency | None]
 
 DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 16
 """The bounded plan reuse a handle composed without an explicit capacity gets."""
@@ -142,7 +133,6 @@ class ReadPlanner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _CachedDelivery:
-    family_key: _FamilyKey
     plan: ReadPlan
     coordinate_positions: tuple[tuple[int, int], ...] = ()
     limit_positions: tuple[int, ...] = ()
@@ -178,6 +168,42 @@ class _Identity:
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, _Identity) and self.value is other.value
+
+
+class _FrozenQuery:
+    __slots__ = ("_hash", "value")
+
+    def __init__(self, authored: object) -> None:
+        self.value = _frozen_query_value(authored)
+        self._hash = hash(self.value)
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _FrozenQuery) and (
+            self is other or (self._hash == other._hash and self.value == other.value)
+        )
+
+
+class _ReadPlanKey(NamedTuple):
+    edition: str
+    model: _Identity
+    dialect: _Identity
+    query: _FrozenQuery
+    result_form: ResultForm
+    concurrency: Concurrency | None
+    delivery: object
+
+    def same_family(self, other: _ReadPlanKey) -> bool:
+        return (
+            self.edition == other.edition
+            and self.model == other.model
+            and self.dialect == other.dialect
+            and self.result_form == other.result_form
+            and self.concurrency == other.concurrency
+            and self.query == other.query
+        )
 
 
 @dataclass(slots=True)
@@ -217,22 +243,6 @@ def _frozen_query_value(value: object) -> object:
     return value_type, value
 
 
-def _query_key(query: ValidatedObjectQuery) -> object:
-    paging = query.paging
-    page = (
-        None
-        if paging is None
-        else ("first" if paging.seek is None else ("after", null_pattern(paging.seek.coordinate)))
-    )
-    return _frozen_query_value(
-        (
-            query.authored if paging is None else replace(query.authored, limit=None),
-            query.limit if paging is None else None,
-            page,
-        )
-    )
-
-
 def _read_plan_key(
     *,
     edition: str,
@@ -242,34 +252,23 @@ def _read_plan_key(
     result_form: ResultForm,
     preference: Concurrency | None,
 ) -> _ReadPlanKey:
-    return (
+    paging = query.paging
+    if paging is None:
+        authored, delivery = query.authored, (query.limit, None)
+    else:
+        authored = replace(query.authored, limit=None)
+        delivery = (
+            None,
+            "first" if paging.seek is None else ("after", null_pattern(paging.seek.coordinate)),
+        )
+    return _ReadPlanKey(
         edition,
         _Identity(model),
         _Identity(dialect),
-        _query_key(query),
+        _FrozenQuery(authored),
         result_form,
         preference,
-    )
-
-
-def _family_key(
-    *,
-    edition: str,
-    model: CatalogedModel,
-    dialect: Dialect,
-    query: ValidatedObjectQuery,
-    result_form: ResultForm,
-    preference: Concurrency | None,
-) -> _FamilyKey:
-    return (
-        edition,
-        _Identity(model),
-        _Identity(dialect),
-        _frozen_query_value(
-            query.authored if query.paging is None else replace(query.authored, limit=None)
-        ),
-        result_form,
-        preference,
+        _frozen_query_value(delivery),
     )
 
 
@@ -302,7 +301,6 @@ def _template_query(
 
 def _plan_uncached(
     *,
-    edition: str,
     model: CatalogedModel,
     dialect: Dialect,
     query: ValidatedObjectQuery,
@@ -402,19 +400,7 @@ def _plan_uncached(
     )
     if limit_marker is not None and not limit_positions:
         raise ValueError("compiled continuation lost its page limit bind")
-    return _CachedDelivery(
-        _family_key(
-            edition=edition,
-            model=model,
-            dialect=dialect,
-            query=query,
-            result_form=result_form,
-            preference=preference,
-        ),
-        prepared,
-        positions,
-        limit_positions,
-    )
+    return _CachedDelivery(prepared, positions, limit_positions)
 
 
 class ReadPlanCache:
@@ -451,7 +437,6 @@ class ReadPlanCache:
     ) -> ReadPlan:
         if self._capacity == 0:
             return _plan_uncached(
-                edition=edition,
                 model=model,
                 dialect=dialect,
                 query=query,
@@ -459,14 +444,6 @@ class ReadPlanCache:
                 preference=preference,
             ).render(query)
         key = _read_plan_key(
-            edition=edition,
-            model=model,
-            dialect=dialect,
-            query=query,
-            result_form=result_form,
-            preference=preference,
-        )
-        family_key = _family_key(
             edition=edition,
             model=model,
             dialect=dialect,
@@ -489,8 +466,8 @@ class ReadPlanCache:
                 reusable = next(
                     (
                         value.plan
-                        for value in reversed(self._entries.values())
-                        if value.family_key == family_key
+                        for existing, value in reversed(self._entries.items())
+                        if existing.same_family(key)
                     ),
                     None,
                 )
@@ -513,7 +490,6 @@ class ReadPlanCache:
 
         try:
             cached = _plan_uncached(
-                edition=edition,
                 model=model,
                 dialect=dialect,
                 query=query,
