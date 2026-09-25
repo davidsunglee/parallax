@@ -221,6 +221,20 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
 }
 
 
+def _reach(one: Import) -> tuple[str, str]:
+    """The module an import reads from and the name it records there.
+
+    An underscored name bound from a package is read as the private child module
+    it spells, recorded whole as a plain ``import`` of that module records it:
+    `from pkg import _child` reaches `pkg._child` exactly as `import pkg._child`
+    does, and nothing here resolves whether the name is a module.
+    """
+    if one.source and one.name.startswith("_"):
+        child = f"{one.source}.{one.name}"
+        return child, child
+    return one.source or one.name, one.name
+
+
 def _private_entity_reaches(imported: Iterable[Import]) -> dict[tuple[str, str], set[str]]:
     reached: dict[tuple[str, str], set[str]] = {}
     for one in imported:
@@ -232,13 +246,9 @@ def _private_entity_reaches(imported: Iterable[Import]) -> dict[tuple[str, str],
 
 
 def _entity_package_imports(imported: Iterable[Import]) -> list[str]:
-    """Every ``import parallax.core.entity._x``, which binds the package rather
-    than a name and so reaches a private module without appearing above."""
-    return [
-        one.site
-        for one in imported
-        if not one.source and one.name.startswith(f"{ENTITY_PACKAGE}._")
-    ]
+    """Every import binding a private module of the package whole, which reaches
+    it without importing a name from it and so without appearing above."""
+    return [one.site for one in imported if _reach(one)[1].startswith(f"{ENTITY_PACKAGE}._")]
 
 
 def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> None:
@@ -258,6 +268,7 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
                         "from parallax.core.entity._model import model_of\n"
                         "import parallax.core.entity._declaration\n"
                         "from ...core.entity._construction_input import UNLOADED\n"
+                        "from parallax.core.entity import _instance_state\n"
                     ),
                     "parallax.snapshot.handle._resembling": (
                         "from parallax.core.entity import model_of, row_codec_of\n"
@@ -275,17 +286,18 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
         ("parallax.snapshot.materialize._new", "_construction_input"): {"UNLOADED"},
     }
     assert _entity_package_imports(imported) == [
-        synthetic_site("parallax.snapshot.materialize._new", 2)
+        synthetic_site("parallax.snapshot.materialize._new", 2),
+        synthetic_site("parallax.snapshot.materialize._new", 4),
     ]
 
 
 def _private_sql_gen_reaches(imported: Iterable[Import]) -> dict[tuple[str, str], set[str]]:
     reached: dict[tuple[str, str], set[str]] = {}
     for one in imported:
-        source = one.source or one.name
+        source, name = _reach(one)
         if not source.startswith("parallax.core.sql_gen._"):
             continue
-        reached.setdefault((one.importer, source), set()).add(one.name)
+        reached.setdefault((one.importer, source), set()).add(name)
     return reached
 
 
@@ -303,6 +315,7 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
                 "parallax.snapshot.handle._new": (
                     "from parallax.core.sql_gen._predicate import compile_predicate\n"
                     "import parallax.core.sql_gen._seek\n"
+                    "from parallax.core.sql_gen import _compile\n"
                 ),
                 "parallax.snapshot.handle._resembling": (
                     "from parallax.core.sql_gen import LoweredStatement\n"
@@ -318,6 +331,9 @@ def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_doo
         },
         ("parallax.snapshot.handle._new", "parallax.core.sql_gen._seek"): {
             "parallax.core.sql_gen._seek"
+        },
+        ("parallax.snapshot.handle._new", "parallax.core.sql_gen._compile"): {
+            "parallax.core.sql_gen._compile"
         },
     }
 
@@ -430,16 +446,16 @@ def _conformance_private_reaches(imported: Iterable[Import]) -> dict[tuple[str, 
     A module counts as private when any dotted segment after the distribution's
     top package starts with an underscore, so both
     ``parallax.core.object_query._fluent`` and a future ``parallax.core._x.y``
-    are seen.
+    are seen, however `_reach` reads the import as reaching it.
     """
     reached: dict[tuple[str, str], set[str]] = {}
     for one in imported:
-        source = one.source or one.name
+        source, name = _reach(one)
         if not source.startswith("parallax.") or source.startswith("parallax.conformance"):
             continue
         if not any(part.startswith("_") for part in source.split(".")[1:]):
             continue
-        reached.setdefault((one.importer, source), set()).add(one.name)
+        reached.setdefault((one.importer, source), set()).add(name)
     return reached
 
 
@@ -459,6 +475,7 @@ def test_the_conformance_reach_inventory_names_a_new_reach_and_passes_the_suppor
                     "from parallax.core.storage_layout import StorageLayoutFacet\n"
                     "from parallax.conformance._corpus import load\n"
                     "import parallax.snapshot\n"
+                    "from parallax.core.object_query import _fluent\n"
                 )
             }
         )
@@ -466,6 +483,9 @@ def test_the_conformance_reach_inventory_names_a_new_reach_and_passes_the_suppor
     assert _conformance_private_reaches(imported) == {
         ("parallax.conformance.probe", "parallax.core.storage_layout._rules"): {"RuleSet"},
         ("parallax.conformance.probe", "parallax.core._formation_profile"): {"PROFILE"},
+        ("parallax.conformance.probe", "parallax.core.object_query._fluent"): {
+            "parallax.core.object_query._fluent"
+        },
     }
 
 
