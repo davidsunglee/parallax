@@ -32,6 +32,7 @@ from parallax.core.object_query._validated import (
 )
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import (
     Edge,
     Pin,
@@ -56,7 +57,6 @@ from parallax.snapshot.handle._materialization import (
     INERT as MATERIALIZATION_INERT,
 )
 from parallax.snapshot.handle._materialization import (
-    CompiledRead,
     EagerPageRead,
     FlatPageRead,
     MaterializationObserver,

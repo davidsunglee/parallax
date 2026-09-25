@@ -75,13 +75,25 @@ from tests.unit._source_inventory_support import (
 _PRIVATE_SQL_REACH_FENCE = "```carrier-neutral-private-reaches\n"
 _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
-        "parallax.snapshot.handle._materialization",
+        "parallax.snapshot.handle._read_plan",
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead", "compile_template", "CompiledTemplate"}),
     (
         "parallax.snapshot.handle._predicate_writes",
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead"}),
+    (
+        "parallax.snapshot.handle._materialization",
+        "parallax.core.sql_gen._compile",
+    ): frozenset({"CompiledRead"}),
+    (
+        "parallax.snapshot.handle._read",
+        "parallax.core.sql_gen._compile",
+    ): frozenset({"CompiledRead"}),
+    (
+        "parallax.snapshot.handle._read_plan",
+        "parallax.core.sql_gen._seek",
+    ): frozenset({"null_pattern"}),
     (
         "parallax.snapshot.handle._write_lowering",
         "parallax.core.sql_gen._write",
@@ -108,6 +120,16 @@ def _documented_carrier_neutral_private_sql_reaches() -> dict[tuple[str, str], f
         for importer in importers_text.split(";"):
             reaches[(importer.strip(), module)] = names
     return reaches
+
+
+def _carrier_neutral_private_sql_reaches_from(
+    importers: str,
+) -> dict[tuple[str, str], frozenset[str]]:
+    return {
+        reach: names
+        for reach, names in _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES.items()
+        if reach[0].startswith(importers)
+    }
 
 
 def test_carrier_neutral_private_sql_reaches_match_the_language_contract() -> None:
@@ -257,6 +279,49 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
     ]
 
 
+def _private_sql_gen_reaches(imported: Iterable[Import]) -> dict[tuple[str, str], set[str]]:
+    reached: dict[tuple[str, str], set[str]] = {}
+    for one in imported:
+        source = one.source or one.name
+        if not source.startswith("parallax.core.sql_gen._"):
+            continue
+        reached.setdefault((one.importer, source), set()).add(one.name)
+    return reached
+
+
+def test_snapshots_private_sql_gen_reaches_are_exactly_the_carrier_neutral_block() -> None:
+    assert _private_sql_gen_reaches(snapshot_imports()) == {
+        reach: set(names)
+        for reach, names in _carrier_neutral_private_sql_reaches_from("parallax.snapshot.").items()
+    }
+
+
+def test_the_sql_gen_reach_inventory_names_a_new_reach_and_passes_the_public_door() -> None:
+    imported = declared_imports(
+        synthetic_sources(
+            {
+                "parallax.snapshot.handle._new": (
+                    "from parallax.core.sql_gen._predicate import compile_predicate\n"
+                    "import parallax.core.sql_gen._seek\n"
+                ),
+                "parallax.snapshot.handle._resembling": (
+                    "from parallax.core.sql_gen import LoweredStatement\n"
+                    "import parallax.core.sql_gen\n"
+                    "from parallax.core.sql_generation._compile import compile_read\n"
+                ),
+            }
+        )
+    )
+    assert _private_sql_gen_reaches(imported) == {
+        ("parallax.snapshot.handle._new", "parallax.core.sql_gen._predicate"): {
+            "compile_predicate"
+        },
+        ("parallax.snapshot.handle._new", "parallax.core.sql_gen._seek"): {
+            "parallax.core.sql_gen._seek"
+        },
+    }
+
+
 # The conformance adapter's reaches into shipped-distribution privates.
 #
 # The adapter drives production through supported entry points; what remains
@@ -304,9 +369,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
         {"authored_number"}
     ),
-    ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._write"): frozenset(
-        {"compile_write_step"}
-    ),
+    **_carrier_neutral_private_sql_reaches_from("parallax.conformance."),
     (
         "parallax.conformance.another_source",
         "parallax.snapshot.handle._materialization",
