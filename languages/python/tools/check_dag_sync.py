@@ -502,50 +502,6 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
-    # Write-observation retention is scoped apart from its own package so the
-    # generated contract carries the OUTWARD half of its module docstring's
-    # account: what a read retains is a pure function of accepted metadata, the
-    # columns a row observed, and Unit Work's own observation vocabulary,
-    # resolved through the family leaf. The half facing INTO the package is
-    # beyond any contract sourced here and is graded by its SEALED policy below.
-    # Measured against the PARENT grant this row replaces, nine of its
-    # twenty-five grants fall outside this row's closure — `continuation`,
-    # `parallax.snapshot.materialize`, `parallax.snapshot._read_result`,
-    # `parallax.snapshot._inspection`,
-    # `parallax.core.entity` (private `_declaration` / `_entity` with it),
-    # `read_lock`, `auto_retry`, `execution_lifecycle` and `batch_write` — so
-    # retention reaches neither the read's own machinery nor an Entity frontend,
-    # and can never grow the third accepted private-Entity reach its keyed
-    # sibling's two would otherwise leave room for.
-    #
-    # Two claims a reader might expect are NOT made, for one shape of reason.
-    # `m-deep-fetch` and `m-navigate` stay inside the closure although nothing
-    # here names them: `_family`'s own grant reaches `m-sql`, which reaches both.
-    # Port- and SQL-freedom goes the same way — `m-unit-work` reaches
-    # `m-db-port`, and `_family` names `sql_gen`, `dialect` and `db_port`
-    # outright — so `_preflight`'s property cannot be replicated short of
-    # splitting `_family`, which no decision here takes.
-    #
-    # The complement this row generates is therefore identical to the lowering
-    # group's, because `_family` is retention's only handle dependency and its
-    # grant already covers the other three. What the row carries is the
-    # DECLARATION: the file resolves here rather than to the parent's twenty-five
-    # scopes, and a reach outside the closure these four open has to widen this
-    # entry to land. What this row rejects that the parent's permits is those
-    # nine grants together with what only they reached — `_formation_profile`
-    # and `value_object` behind the Entity frontend, `db_error` behind the
-    # retrying execution path. INSIDE the closure the four grants open, the row
-    # says nothing.
-    #
-    # The one-way rule — retention never names the read executor — is the half no
-    # contract sourced here can state: `compute_forbidden` subtracts a scope's
-    # ancestors unconditionally, import-linter's forbidden contracts are
-    # package-scoped on both sides, and the read executor lives in the parent
-    # scope, so a row naming it overlaps its own source and is silently skipped.
-    # That is what the SEALED policy below is for: `check_scope_ownership.py` walks
-    # this scope's files and refuses every import into `parallax.snapshot.handle`
-    # no grant covers, so `_read`, `_write_inputs`, and every sibling but the
-    # granted `_family` are rejected over the source rather than left to prose.
     # A prepared Model Selection is process-local and holds no transaction,
     # connection, Clock, or Execution Lifecycle Provider. Granting the scope the
     # Entity frontend — for the Domain Model, the cataloged model, the row
@@ -560,12 +516,39 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.unit_work",
         }
     ),
+    # Write-observation retention is scoped apart from its own package so the
+    # generated contract carries the OUTWARD half of its boundary: what a read
+    # retains is a pure function of accepted metadata, the member layout a row is
+    # judged against, and Unit Work's own observation vocabulary, and each family
+    # fact it reads — key, Temporal Shape, optimistic key — is named at its owner
+    # rather than through a handle sibling. The half facing INTO the package is
+    # beyond any contract sourced here and is graded by its SEALED policy below.
+    #
+    # Against the PARENT grant this row replaces, the closure leaves out the
+    # read's own machinery, the Entity frontend, SQL generation, storage layout,
+    # and the temporal write planners, and with them what only they reached —
+    # `_formation_profile`, `value_object`, and `db_error`. Port- and
+    # dialect-freedom is NOT claimed: `m-unit-work` reaches `m-db-port` and
+    # `m-dialect`, so `_preflight`'s property cannot be replicated here.
+    #
+    # The one-way rule — retention never names the read executor — is the half no
+    # contract sourced here can state: `compute_forbidden` subtracts a scope's
+    # ancestors unconditionally, import-linter's forbidden contracts are
+    # package-scoped on both sides, and the read executor lives in the parent
+    # scope, so a row naming it overlaps its own source and is silently skipped.
+    # That is what the SEALED policy below is for: `check_scope_ownership.py` walks
+    # this scope's files and refuses every import into `parallax.snapshot.handle`
+    # no grant covers, and no grant here covers any module of it.
     "parallax.snapshot.handle._retention": frozenset(
         {
+            "parallax.core.entity._construction_input",
+            "parallax.core.entity._layout",
+            "parallax.core.base",
             "parallax.core.metamodel",
-            "parallax.core.unit_work",
+            "parallax.core.inheritance",
             "parallax.core.temporal_read",
-            "parallax.snapshot.handle._family",
+            "parallax.core.unit_work",
+            "parallax.core.opt_lock",
         }
     ),
     "parallax.postgres": frozenset(
@@ -713,7 +696,7 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     # a module of the parent package, so no contract sourced at the child can
     # reject that import and the seal is where the rule is GRADED rather than
     # merely stated — and it holds the rest of the package out with it, which is
-    # what makes retention's four grants its whole reach rather than its whole
+    # what makes retention's grants its whole reach rather than its whole
     # intent.
     "parallax.snapshot.handle._retention": ChildScope(
         parent="parallax.snapshot.handle", policy="sealed"
