@@ -37,6 +37,7 @@ from tests.unit._source_inventory_support import (
     ENTITY_SRC,
     declared_imports,
     production_sources,
+    reach,
     synthetic_sources,
 )
 
@@ -253,10 +254,10 @@ def _consumers(over: Iterator[tuple[Path, str]]) -> dict[str, frozenset[str]]:
     """Each module importing the instance-state Module, and what it imports."""
     taken: dict[str, set[str]] = {}
     for one in declared_imports(over):
-        if one.source == _INSTANCE_STATE:
-            taken.setdefault(one.importer, set()).add(one.name)
-        elif not one.source and one.name == _INSTANCE_STATE:
-            taken.setdefault(one.importer, set()).add("<the module itself>")
+        source, name = reach(one)
+        if source == _INSTANCE_STATE:
+            whole = name == _INSTANCE_STATE
+            taken.setdefault(one.importer, set()).add("<the module itself>" if whole else name)
     return {importer: frozenset(names) for importer, names in taken.items()}
 
 
@@ -346,6 +347,9 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
                     "from parallax.core.entity._instance_state import allocate, publish\n"
                     "from parallax.core.entity._pydantic_storage import instance_state\n"
                 ),
+                f"{ENTITY_PACKAGE}._new_package_reader": (
+                    "from parallax.core.entity import _instance_state\n"
+                ),
                 f"{ENTITY_PACKAGE}._new_bystander": (
                     "import parallax.core.entity._instance_state\n"
                     "from parallax.core.entity import Entity\n"
@@ -355,6 +359,7 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
         )
     ) == {
         f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "publish"}),
+        f"{ENTITY_PACKAGE}._new_package_reader": frozenset({"<the module itself>"}),
         f"{ENTITY_PACKAGE}._new_bystander": frozenset({"<the module itself>"}),
     }
 

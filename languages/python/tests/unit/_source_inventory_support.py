@@ -44,6 +44,7 @@ __all__ = [
     "import_every_module",
     "parsed",
     "production_sources",
+    "reach",
     "site_of",
     "snapshot_imports",
     "sources",
@@ -175,6 +176,20 @@ class Import:
     def distribution(self) -> str:
         """The top-level package the import reads from, however it is spelled."""
         return (self.source or self.name).partition(".")[0]
+
+
+def reach(one: Import) -> tuple[str, str]:
+    """The module an import reads from and the name it records there.
+
+    An underscored name bound from a package is read as the private child module
+    it spells, recorded whole as a plain ``import`` of that module records it:
+    `from pkg import _child` reaches `pkg._child` exactly as `import pkg._child`
+    does, and nothing here resolves whether the name is a module.
+    """
+    if one.source and one.name.startswith("_"):
+        child = f"{one.source}.{one.name}"
+        return child, child
+    return one.source or one.name, one.name
 
 
 def _absolute(importer: str, path: Path, level: int, module: str) -> str:
