@@ -1,12 +1,13 @@
-"""Family facts reach a prepared write flow from the facets that formed them.
+"""Family facts reach prepared write and read flows from the facets that formed them.
 
 Formation settles each family's version source and Temporal Shape once. A flow
 that later asks a declared Attribute whether it is the version, or asks an
 Entity's declarations for its As-Of Axes, re-derives that answer, and a correct
 answer hides the duplicate work. These tests record every such declaration read
-while production seams admit, plan, and lower writes, so a re-derivation fails
-even when it agrees with the owner. They grade the flows they drive, not every
-spelling in the tree.
+while production seams admit, plan, and lower writes, and while they materialize
+already-read Pages and retain their evidence, so a re-derivation fails even when
+it agrees with the owner. They grade the flows they drive, not every spelling in
+the tree.
 """
 
 from __future__ import annotations
@@ -15,16 +16,32 @@ import datetime as dt
 import inspect
 from collections.abc import Callable, Mapping
 from decimal import Decimal
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
 from parallax.conformance.read_models import DepositRate
-from parallax.core import opt_lock, temporal_read
+from parallax.core import (
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    Int32,
+    attr,
+    opt_lock,
+    temporal_read,
+)
 from parallax.core import predicate as predicate_algebra
+from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
+from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
     ChunkedColumnBuilder,
@@ -37,12 +54,18 @@ from parallax.core.unit_work import (
     PredecessorRow,
     PredicateSelection,
     PredicateWrite,
+    RetainedObservation,
     TemporalObservation,
+    TransactionSettings,
+    UnitOfWork,
     VersionColumns,
     VersionObservation,
     WriteAssignment,
+    WriteBatchTrigger,
     WriteObservation,
+    WritePlan,
     object_key,
+    run_unit_of_work,
     whole,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
@@ -54,7 +77,9 @@ from parallax.core.unit_work.planned import (
     TemporalGate,
     Versioned,
 )
+from parallax.core.unit_work.planner import TemporalStateKey, VersionedStateKey
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from parallax.snapshot import edge_of, pin_of
 from parallax.snapshot.handle import (
     Database,
     Transaction,
@@ -62,13 +87,19 @@ from parallax.snapshot.handle import (
     plan_temporal_close,
     stream_lowered,
 )
+from parallax.snapshot.handle._concurrency import CONCURRENCY
+from parallax.snapshot.handle._read import typed_publication, wire_publication
+from parallax.snapshot.materialize import ClassifiedRoot, InvalidData, RootView, classify_roots
 from tests._support.clock_probes import inert_instant, instant_at
-from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.model_capabilities import graph_construction_for
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._judged_evidence_support import judged_rows, retained_sources
 from tests.unit._temporal_group_support import temporal_group
-from tests.unit._transact_support import RATE
+from tests.unit._transact_support import INFINITY_INSTANT, RATE, db_for
+from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of
 
 _RECORDS = corpus_records()
 _MODEL: Final[Metamodel] = formed(
@@ -370,3 +401,218 @@ def test_a_typed_temporal_insert_admits_and_flushes_from_the_family_shape(
     assert callers == []
     (write,) = [call for call in port.calls if isinstance(call, WriteCall)]
     assert write.sql.startswith("insert into deposit_rate")
+
+
+def _deposit_rate_row(id_: int) -> Mapping[str, object]:
+    return {
+        "id": id_,
+        "amount": Decimal("1.00"),
+        "grade": "A",
+        "from_z": _OPENED,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": _OPENED,
+        "out_z": INFINITY_INSTANT,
+    }
+
+
+def test_keyed_temporal_writes_settle_standalone_evidence_from_the_family_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = ScriptedAdapter(
+        Read(rows=[_deposit_rate_row(1)]),
+        Read(rows=[_deposit_rate_row(2)]),
+        Transact(Write(times=5)),
+    )
+    database = db_for(RATE, port)
+
+    def latest(id_: int) -> DepositRate:
+        return database.find(
+            DepositRate.where(DepositRate.id == id_).as_of(valid_time=LATEST)
+        ).result()
+
+    updated, terminated = latest(1), latest(2)
+    callers = _trace_declarations(monkeypatch, _TEMPORAL_MODEL)
+
+    def write(tx: Transaction) -> None:
+        tx.update(updated.edit(amount=Decimal("2.00")), valid_from=_VALID_FROM)
+        tx.terminate(terminated, valid_from=_VALID_FROM)
+
+    database.transact(write)
+
+    assert callers == []
+    closes = [
+        call.sql for call in port.calls if isinstance(call, WriteCall) and "set out_z" in call.sql
+    ]
+    assert len(closes) == 2
+    assert all("in_z = " in close for close in closes)
+
+
+class OwnedAppliance(
+    Entity,
+    namespace="parallax.ownership",
+    inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=32)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class OwnedFridge(
+    OwnedAppliance,
+    table="owned_fridge",
+    namespace="parallax.ownership",
+    inheritance=ConcreteSubtype,
+):
+    litres: Attr[int | None] = attr(type=Int32)
+
+
+_APPLIANCE: Final = DomainModel(OwnedAppliance, OwnedFridge)
+_PUBLICATIONS: Final = ("typed", "wire", "rows")
+
+
+class _PreparedPage:
+    """One conforming and one issue-carrying root of ``entity``, sealed into a
+    Page with everything publication needs formed before any trace starts."""
+
+    def __init__(
+        self,
+        domain: DomainModel,
+        entity: str,
+        conforming: Mapping[str, object],
+        invalid: Mapping[str, object],
+        *,
+        history: bool,
+    ) -> None:
+        meta = model_of(domain)
+        fixture = PageFixture(domain, model=meta)
+        self.page = fixture.page(fixture.node(entity, conforming), fixture.node(entity, invalid))
+        self.cataloged = CatalogedModel(meta)
+        self.construction = graph_construction_for(domain)
+        self.identity = identity_of(meta, entity)
+        self.includes = build_include_tree(
+            queried=self.identity, root=(self.identity,), positions=()
+        )
+        self.milestones = temporal_read.view(meta).shape(self.identity) if history else None
+
+    def published(self, publication: str) -> tuple[object, ...]:
+        if publication == "rows":
+            return classify_roots(RootView(self.page), self.cataloged.meta, CONCURRENCY).roots
+        selected = (
+            typed_publication(self.cataloged, self.construction, "owned")
+            if publication == "typed"
+            else wire_publication(self.cataloged, "owned")
+        )
+        return tuple(
+            selected.roots_of(self.page, self.includes, atomic=True, milestones=self.milestones)
+        )
+
+
+def _record(published: object) -> ClassifiedRoot | InvalidData[object]:
+    assert isinstance(published, ClassifiedRoot | InvalidData)
+    return cast("ClassifiedRoot | InvalidData[object]", published)
+
+
+@pytest.mark.parametrize("publication", _PUBLICATIONS)
+def test_materializing_an_inherited_versioned_page_reads_the_version_from_its_owner(
+    monkeypatch: pytest.MonkeyPatch, publication: str
+) -> None:
+    row = {"id": 1, "name": "Chill", "version": 3, "litres": 40}
+    prepared = _PreparedPage(
+        _APPLIANCE, "OwnedFridge", row, {**row, "id": 2, "name": None}, history=False
+    )
+    callers = _trace_declarations(monkeypatch, prepared.cataloged.meta)
+
+    _conforming, invalid = prepared.published(publication)
+
+    assert callers == []
+    record = _record(invalid)
+    assert record.version == 3
+    assert record.object_key == ObjectKey(prepared.identity, (("id", 2),))
+
+
+@pytest.mark.parametrize("publication", _PUBLICATIONS)
+def test_materializing_an_inherited_milestone_page_reads_axes_from_the_family_shape(
+    monkeypatch: pytest.MonkeyPatch, publication: str
+) -> None:
+    row = {
+        "id": 1,
+        "amount": Decimal("1.00"),
+        "grade": "A",
+        "from_z": _VALID_FROM,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": _OPENED,
+        "out_z": INFINITY_INSTANT,
+    }
+    prepared = _PreparedPage(
+        RATE, "DepositRate", row, {**row, "id": 2, "amount": None}, history=True
+    )
+    callers = _trace_declarations(monkeypatch, prepared.cataloged.meta)
+
+    conforming, invalid = prepared.published(publication)
+
+    assert callers == []
+    edge = Edge(tx_time=_OPENED, valid_time=_VALID_FROM)
+    assert _record(invalid).edge == edge
+    if publication == "typed":
+        assert edge_of(conforming) == edge
+        assert pin_of(conforming) == Pin(tx_time=_OPENED, valid_time=_VALID_FROM)
+
+
+def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    return None
+
+
+_EVIDENCE: Final = {
+    "DepositRate": (
+        RATE,
+        {
+            "id": 1,
+            "amount": Decimal("1.00"),
+            "grade": "A",
+            "from_z": _VALID_FROM,
+            "thru_z": INFINITY_INSTANT,
+            "in_z": _OPENED,
+            "out_z": INFINITY_INSTANT,
+        },
+    ),
+    "OwnedFridge": (_APPLIANCE, {"id": 1, "name": "Chill", "version": 3, "litres": 40}),
+}
+
+
+@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
+@pytest.mark.parametrize("entity", sorted(_EVIDENCE))
+def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
+    monkeypatch: pytest.MonkeyPatch, entity: str, participating: bool
+) -> None:
+    domain, columns = _EVIDENCE[entity]
+    meta = model_of(domain)
+    identity = identity_of(meta, entity)
+    judged = judged_rows(meta, identity, columns)
+    planner = build_write_planner(meta)
+    callers = _trace_declarations(monkeypatch, meta)
+
+    def retain(ledger: UnitOfWork | None) -> RetainedObservation | None:
+        return retained_sources(meta, judged, ledger=ledger)[0].observation
+
+    retained = (
+        run_unit_of_work(
+            retain,
+            settings=TransactionSettings(),
+            clock=FixedClock(_OPENED),
+            meta=meta,
+            flush_executor=_no_flush,
+            planner=planner,
+            actor_identity=TEST_ACTOR_IDENTITY,
+        )
+        if participating
+        else retain(None)
+    )
+
+    assert callers == []
+    assert retained is not None
+    observed = ObjectKey(identity, (("id", 1),))
+    assert retained.key == (
+        TemporalStateKey(observed, Edge(tx_time=_OPENED, valid_time=_VALID_FROM))
+        if entity == "DepositRate"
+        else VersionedStateKey(observed, 3)
+    )

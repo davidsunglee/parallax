@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, Protocol, cast
 
+from parallax.core import temporal_read
 from parallax.core.entity._layout import EntityLayout
-from parallax.core.inheritance import view as inheritance_view
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-    PrimaryKey,
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.temporal_read import (
+    Edge,
+    NonTemporal,
+    TemporalFacet,
+    TemporalReadError,
+    milestone_edge,
 )
-from parallax.core.temporal_read import Edge, TemporalReadError, milestone_edge_of
 from parallax.core.unit_work import ObjectKey
 from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
 from parallax.snapshot.materialize._page import (
@@ -28,9 +28,24 @@ __all__ = [
     "ClassifiedRoot",
     "ConformingRoot",
     "RootClassifications",
+    "VersionAttributes",
     "classify_roots",
     "hydrates",
 ]
+
+
+class VersionAttributes(Protocol):
+    """Where an Entity's explicit optimistic-lock version Attribute is named.
+
+    Answers ``None`` for a family that carries no explicit version, a temporal
+    one included. The runtime composing a read supplies the policy that owns
+    that fact, so publishing an observed version needs no Metadata scan here.
+    """
+
+    def version_attribute(
+        self, model: Metamodel, entity: EntityIdentity
+    ) -> AttributeIdentity | None: ...
+
 
 NON_HYDRATING_CODES: Final[frozenset[StoredDataIssueCode]] = frozenset(
     {
@@ -124,12 +139,17 @@ class RootClassifications:
 
 
 def classify_roots(
-    root_view: RootView, model: Metamodel, *, ordinal_offset: int = 0
+    root_view: RootView,
+    model: Metamodel,
+    versions: VersionAttributes,
+    *,
+    ordinal_offset: int = 0,
 ) -> RootClassifications:
     """``root_view``'s per-root verdicts, attributed over each root's reachable tree.
 
-    ``ordinal_offset`` is where this Page's roots start in the ordered result a
-    Snapshot publishes.
+    ``versions`` names the explicit version Attribute a record publishes its
+    observed version from. ``ordinal_offset`` is where this Page's roots start
+    in the ordered result a Snapshot publishes.
     """
     if not root_view.has_issues:
         return RootClassifications(
@@ -139,7 +159,7 @@ def classify_roots(
     count = len(root_view.order)
     carried = tuple(root_view.issues(index) for index in range(count))
     children = tuple(_children(root_view, index) for index in range(count))
-    keys = tuple(_object_key(model, root_view, index) for index in range(count))
+    keys = tuple(_object_key(root_view, index) for index in range(count))
     diagnoses = tuple(
         frozenset(_diagnosis(issue, key) for issue in issues)
         for issues, key in zip(carried, keys, strict=True)
@@ -148,6 +168,7 @@ def classify_roots(
 
     roots: list[RootClassification] = []
     reached_by_published: set[int] = set()
+    temporal = temporal_read.view(model)
     keyless_roots = iter(root_view.invalid_roots)
     for position, index in enumerate(root_view.roots):
         ordinal = ordinal_offset + position
@@ -161,14 +182,13 @@ def classify_roots(
             reached_by_published |= reachable
             continue
         hydrating = not any(blocking[node] for node in reachable)
-        declaring = _declaring(model, root_view.layout(index).concrete)
         roots.append(
             ClassifiedRoot(
                 ordinal=ordinal,
                 issues=issues,
                 object_key=keys[index],
-                version=_version(declaring, root_view, index),
-                edge=_edge(declaring, root_view, index),
+                version=_version(model, versions, root_view, index),
+                edge=_edge(temporal, root_view, index),
                 node=index if hydrating else None,
             )
         )
@@ -247,61 +267,48 @@ def _reachable(children: tuple[tuple[int, ...], ...], root: int) -> frozenset[in
     return frozenset(seen)
 
 
-def _object_key(model: Metamodel, root_view: RootView, node: int) -> ObjectKey | None:
+def _object_key(root_view: RootView, node: int) -> ObjectKey | None:
     """``node``'s object identity, or absence where nothing trustworthy decoded.
 
     Derived exactly as a keyed write derives its own: the row's OWN resolved
-    concrete Entity, never family-normalized, paired with the family-declared
-    primary key's ``(name, value)`` pairs in declaration order (`m-unit-work`).
+    concrete Entity, never family-normalized, paired with the family key's
+    ``(name, value)`` pair read at the layout's key position (`m-unit-work`).
     """
     layout = root_view.layout(node)
     if any(issue.code in _UNIDENTIFIED_CODES for issue in root_view.issues(node)):
         return None
-    declaring = _declaring(model, layout.concrete)
-    if declaring is None:  # pragma: no cover - a family root is always accepted
-        return None
-    primary_key = tuple(
-        attribute
-        for attribute in declaring.declared_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
-    if not primary_key:  # pragma: no cover - formation refuses a primary-key-less Entity
-        return None
-    values = root_view.member_values(node)
+    position = layout.primary_key[0]
+    value = root_view.member_values(node)[position]
     return ObjectKey(
         layout.concrete,
-        tuple(
-            (attribute.identity.name, _member(layout, values, attribute.identity))
-            for attribute in primary_key
+        (
+            (
+                cast("AttributeIdentity", layout.members[position]).name,
+                None if value is ABSENT else value,
+            ),
         ),
     )
 
 
-def _version(declaring: EntityMetadata | None, root_view: RootView, node: int) -> int | None:
-    """``node``'s observed explicit version, or absence for every other shape.
-
-    A temporal family derives its concurrency coordinate from its own axis rather
-    than from a version Attribute — and formation refuses a temporal root that
-    declares one — so the two locators are mutually exclusive by construction.
-    """
-    if declaring is None or declaring.declared_as_of_axes:
+def _version(
+    model: Metamodel, versions: VersionAttributes, root_view: RootView, node: int
+) -> int | None:
+    """``node``'s observed explicit version, or absence for every other shape."""
+    layout = root_view.layout(node)
+    attribute = versions.version_attribute(model, layout.concrete)
+    if attribute is None:
         return None
-    version = next(
-        (attribute for attribute in declaring.declared_attributes if attribute.optimistic_locking),
-        None,
-    )
-    if version is None:
-        return None
-    value = _member(root_view.layout(node), root_view.member_values(node), version.identity)
+    value = _member(layout, root_view.member_values(node), attribute)
     return value if isinstance(value, int) else None
 
 
-def _edge(declaring: EntityMetadata | None, root_view: RootView, node: int) -> Edge | None:
+def _edge(temporal: TemporalFacet, root_view: RootView, node: int) -> Edge | None:
     """``node``'s observed milestone, or absence where no temporal edge decoded."""
-    if declaring is None or not declaring.declared_as_of_axes:
+    shape = temporal.shape(root_view.layout(node).concrete)
+    if shape is None or isinstance(shape, NonTemporal):
         return None
     try:
-        return milestone_edge_of(declaring, _values(root_view, node))
+        return milestone_edge(shape, root_view, node)
     except TemporalReadError:
         return None
 
@@ -318,21 +325,3 @@ def _member(layout: EntityLayout, values: tuple[object, ...], member: AttributeI
         return None
     value = values[position]
     return None if value is ABSENT else value
-
-
-def _values(root_view: RootView, node: int) -> dict[AttributeIdentity, object]:
-    """``node``'s carried Attribute values by identity, for the temporal
-    primitives that read a whole row rather than a named position."""
-    layout = root_view.layout(node)
-    values = root_view.member_values(node)
-    return {
-        attribute.identity: values[position]
-        for position, attribute in enumerate(layout.attributes)
-        if values[position] is not ABSENT
-    }
-
-
-def _declaring(model: Metamodel, entity: EntityIdentity) -> EntityMetadata | None:
-    """The position declaring ``entity``'s family-wide facts — its family root."""
-    position = inheritance_view(model).entity(entity)
-    return model.entity(entity if position is None else position.root)

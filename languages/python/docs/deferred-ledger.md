@@ -866,7 +866,7 @@ own, so the deletion lands in a named module rather than mid-lane. Two nearby
 gaps are deliberately NOT in its scope: a Wire pin accessor, which ADR 0057
 refuses in terms ("Wire Entity mappings expose no temporal milestone
 coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
-`temporal_read.milestone_edge_from_members` instead; and `CompiledRead`'s
+`temporal_read.milestone_edge` instead; and `CompiledRead`'s
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
 

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots, hydrates
+from parallax.snapshot.materialize._classify import (
+    ClassifiedRoot,
+    VersionAttributes,
+    classify_roots,
+    hydrates,
+)
 from parallax.snapshot.materialize._convert import SnapshotDecodingError
 from parallax.snapshot.materialize._invalid import (
     MISSING_STORED_VALUE,
@@ -40,6 +45,7 @@ __all__ = [
     "SnapshotConsistencyError",
     "SnapshotDecodingError",
     "StoredDataIssue",
+    "VersionAttributes",
     "WireEntity",
     "WireValue",
     "classify_roots",

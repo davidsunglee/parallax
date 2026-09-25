@@ -15,21 +15,22 @@ from parallax.core.execution_lifecycle._activity import (
     SnapshotStreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.temporal_read import (
     Pin,
+    TemporalShape,
     scans_validated_axis,
     validated_query_pin,
 )
+from parallax.snapshot.handle._family import temporal_shape
 from parallax.snapshot.handle._materialization import DeliveryPage, DeliveryPlan
 from parallax.snapshot.handle._paging import At, PagePlan
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import (
     ResultPublication,
-    declaring_metadata,
     projection_concrete,
     wire_position,
 )
@@ -390,7 +391,7 @@ class SnapshotStream[T]:
         self._page_plan: DeliveryPlan | None = None
         self._pages: Generator[object] | None = None
         self._pin: Pin = Pin()
-        self._milestones: EntityMetadata | None = None
+        self._milestones: TemporalShape | None = None
         self._activity: SnapshotStreamActivity = INERT
         self._failure: BaseException | None = None
 
@@ -418,13 +419,11 @@ class SnapshotStream[T]:
         try:
             meta = read.selected.model.meta
             validated = preflight(self._node, model=meta, form="graph")
-            entity = self._entity(meta)
-            declaring = declaring_metadata(meta, entity.identity)
             self._page_plan = DeliveryPlan(
                 PagePlan(continuation.plan(validated, meta), self._batch_size, self._node.limit)
             )
             if scans_validated_axis(validated.temporal):
-                self._milestones = declaring
+                self._milestones = temporal_shape(meta, validated.root)
                 self._pin = Pin()
             else:
                 self._pin = validated_query_pin(validated.temporal)
@@ -574,12 +573,6 @@ class SnapshotStream[T]:
         if read is None:  # pragma: no cover - see above
             raise SnapshotStreamStateError(_IN_SCOPE)
         return read
-
-    def _entity(self, meta: Metamodel) -> EntityMetadata:
-        entity = entity_by_name(meta, self._node.target.canonical)
-        if entity is None:  # pragma: no cover - the gate above resolved this target
-            raise SnapshotStreamStateError(f"{self._node.target.canonical}: no such Entity")
-        return entity
 
     def _advance(self, pages: Generator[object], /) -> object:
         """One advance of a view: the scope check, the next root, the state it settles.

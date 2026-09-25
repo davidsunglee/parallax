@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast, overload
 
-from parallax.core import deep_fetch
+from parallax.core import deep_fetch, opt_lock
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import (
@@ -486,7 +486,7 @@ class Materializer:
     ) -> ReadSources:
         if scans_validated_axis(temporal):
             return MappingProxyType({})
-        from parallax.snapshot.handle._retention import deferred_evidence
+        from parallax.snapshot.handle._retention import deferred_read_sources
 
         rows = page_rows(page)
 
@@ -501,7 +501,7 @@ class Materializer:
             key = rows.keys[node]
             return None if key is None else key.primary_key
 
-        return deferred_evidence(
+        return deferred_read_sources(
             meta,
             observations,
             admitted,
@@ -564,18 +564,29 @@ class Materializer:
         publish: Callable[[RootView, int], Iterator[T]],
         *,
         atomic: bool = False,
+        model: Metamodel | None = None,
         ordinal_offset: int = 0,
         pins: Sequence[Pin | None] | None = None,
         prepare: Callable[[RootView], None] | None = None,
     ) -> Iterator[T]:
-        """Judge and publish one Page root at a time through one shared seam."""
+        """Judge and publish one Page root at a time through one shared seam.
+
+        An ``atomic`` publication defers judging every root's state when each
+        root's family carries write evidence, which ``model``'s Optimistic Lock
+        Facet answers; it is required exactly then.
+        """
         if pins is not None and len(pins) != page.root_count:
             raise ValueError("root pin count must match the Page root count")
         if atomic:
+            if model is None:
+                raise ValueError("an atomic publication decides state deferral against its model")
+            keys = opt_lock.view(model)
             rows = page_rows(page)
             deferred_states = all(
-                rows.layouts[root].temporal_starts
-                or any(attribute.optimistic_locking for attribute in rows.layouts[root].attributes)
+                isinstance(
+                    keys.key(rows.layouts[root].concrete),
+                    opt_lock.ExplicitVersion | opt_lock.TransactionTimeDerived,
+                )
                 for root in rows.roots
             )
             last_uses = (

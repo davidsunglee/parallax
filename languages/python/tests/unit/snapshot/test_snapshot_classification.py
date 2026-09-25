@@ -34,10 +34,13 @@ from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
+    Metamodel,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
+from parallax.core.temporal_read import Edge
 from parallax.snapshot import (
     MISSING_STORED_VALUE,
     InvalidData,
@@ -46,6 +49,7 @@ from parallax.snapshot import (
     StoredDataIssue,
     connect,
 )
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.materialize import ClassifiedRoot, RootView, classify_roots
 from parallax.snapshot.materialize._classify import (
     ConformingRoot,
@@ -95,6 +99,7 @@ def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> RootClas
     return classify_roots(
         RootView(graph),
         model_of(ORDERS_MODEL),
+        CONCURRENCY,
         ordinal_offset=offset,
     )
 
@@ -308,6 +313,60 @@ def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> N
     published = invalid_record(fixture.materialize(root)[0])
     assert published.version is None
     assert published.edge is None
+
+
+class _NamedVersions:
+    """A version seam naming one Attribute for every Entity, recording each ask."""
+
+    def __init__(self, attribute: AttributeIdentity) -> None:
+        self._attribute = attribute
+        self.asked: list[EntityIdentity] = []
+
+    def version_attribute(self, model: Metamodel, entity: EntityIdentity) -> AttributeIdentity:
+        del model
+        self.asked.append(entity)
+        return self._attribute
+
+
+def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_the_seam_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `DepositRate` inherits its key from the root `Rate`. The record reads the
+    # key's name and value at the layout's key position, never by discovering
+    # the key among declarations, and reads a version exactly where the
+    # supplied seam names one — here the key Attribute itself, so the answer is
+    # visibly the seam's rather than a declared version's.
+    fixture = PageFixture(read_models.RATE_MODEL)
+    root = fixture.node(
+        "DepositRate",
+        {
+            "id": 7,
+            "amount": None,
+            "grade": "A",
+            "from_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            "thru_z": INFINITY,
+            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "out_z": INFINITY,
+        },
+    )
+    layout = fixture.layout_for("DepositRate")
+    view = RootView(fixture.page(root))
+    versions = _NamedVersions(cast("AttributeIdentity", layout.members[layout.primary_key[0]]))
+
+    def undiscoverable(_attribute: object) -> object:
+        raise AssertionError("classification discovered the key among declarations")
+
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
+    (verdict,) = classify_roots(view, model_of(read_models.RATE_MODEL), versions).roots
+
+    record = _classified(verdict)
+    assert record.object_key == ObjectKey(layout.concrete, (("id", 7),))
+    assert record.version == 7
+    assert versions.asked == [layout.concrete]
+    assert record.edge == Edge(
+        tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        valid_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    )
 
 
 def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:

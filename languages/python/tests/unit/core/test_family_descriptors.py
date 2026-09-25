@@ -10,8 +10,7 @@ one the root declares itself. Formation is what makes the root's own
 declaration the family's answer: `m-inheritance` "One family primary key" is
 asked of EVERY position's applicable ancestry chain, and a root's chain is the
 root alone, so a key declared below the root leaves the root's own chain
-without one. The handle's :mod:`~parallax.snapshot.handle._family` helpers are
-held to the same answers.
+without one.
 
 Family-shape resolution AS A WHOLE stays covered by the `m-inheritance-*` corpus
 cases and by the downstream suites that write and read through these owners.
@@ -34,7 +33,6 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TablePerHierarchy,
 )
-from parallax.snapshot.handle._family import declaring, family_primary_key
 from tests.unit._corpus_model_support import corpus
 
 _CORPUS: Final[tuple[str, ...]] = tuple(sorted(corpus()))
@@ -179,25 +177,10 @@ def test_every_position_reads_its_roots_family_facts_by_identity(stem: str) -> N
     assert divergent == {}
 
 
-@pytest.mark.parametrize("stem", _CORPUS)
-def test_the_handle_family_helpers_answer_the_owners_root_and_key(stem: str) -> None:
-    model = corpus()[stem]
-    families = inheritance.view(model)
-    divergent: set[str] = set()
-    for entity in model.entities:
-        view = families.entity(entity.identity)
-        assert view is not None
-        if declaring(model, entity) is not inheritance.root_metadata(
-            families, model, entity.identity
-        ) or family_primary_key(model, entity) != (view.primary_key,):
-            divergent.add(entity.identity.canonical)
-    assert divergent == set()
-
-
 def test_the_measured_families_span_both_strategies_every_position_and_every_fact() -> None:
-    """What makes the sweeps above statements about inheritance.
+    """What makes the sweep above a statement about inheritance.
 
-    Both are measured over the whole corpus, most of which is standalone
+    It is measured over the whole corpus, most of which is standalone
     Entities the equivalence holds trivially for. This is the witness that the
     corpus they walk really does declare both strategies at every position, an
     ancestry deep enough for a key to be inherited across an intermediate

@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
 from typing import cast
 
+from parallax.core import temporal_read
 from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
@@ -12,20 +13,15 @@ from parallax.core.entity import (
     NodeHandle,
     ResolutionView,
 )
-from parallax.core.inheritance import view as inheritance_view
-from parallax.core.metamodel import (
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-    RelationshipIdentity,
-)
-from parallax.core.temporal_read import Edge, milestone_edge_of
+from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
+from parallax.core.temporal_read import Edge, NonTemporal, TemporalFacet, milestone_edge
 from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
     ConformingRoot,
     RootClassifications,
+    VersionAttributes,
     classify_roots,
 )
 from parallax.snapshot.materialize._invalid import InvalidData
@@ -38,6 +34,7 @@ __all__ = ["typed_root"]
 def typed_root(
     root: RootView,
     model: Metamodel,
+    versions: VersionAttributes,
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
@@ -49,17 +46,20 @@ def typed_root(
     closes on an object that already exists, and everything constructible
     publishes at once or not at all.
 
-    ``ordinal_offset`` is where this Root View's roots start in the ordered result
-    the caller publishes, including a later root or streamed Page. ``sources`` is
+    ``versions`` names the explicit version Attribute a classified record
+    publishes. ``ordinal_offset`` is where this Root View's roots start in the
+    ordered result the caller publishes, including a later root or streamed Page. ``sources`` is
     the Read Origin the executor retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """
-    classification = classify_roots(root, model, ordinal_offset=ordinal_offset)
+    classification = classify_roots(root, model, versions, ordinal_offset=ordinal_offset)
     retained: Mapping[int, ReadOrigin] = (
         root.by_allocation(sources) if classification.conforming else MappingProxyType({})
     )
-    return _Materialization(root, model, classification, retained).run(construction)
+    return _Materialization(root, temporal_read.view(model), classification, retained).run(
+        construction
+    )
 
 
 class _Materialization:
@@ -75,22 +75,22 @@ class _Materialization:
     __slots__ = (
         "_classification",
         "_handles",
-        "_model",
         "_pending",
         "_root",
         "_scope",
         "_sources",
+        "_temporal",
     )
 
     def __init__(
         self,
         root: RootView,
-        model: Metamodel,
+        temporal: TemporalFacet,
         classification: RootClassifications,
         sources: Mapping[int, ReadOrigin],
     ) -> None:
         self._root = root
-        self._model = model
+        self._temporal = temporal
         self._classification = classification
         self._sources = sources
         self._scope = tuple(
@@ -210,23 +210,15 @@ class _Materialization:
     def _edge(self, index: int) -> Edge | None:
         """One node's milestone edge, or absence for a non-temporal family.
 
-        As-of axes are family-wide metadata declared on the family root, so the
-        interval members are read at the root's own Attribute Identities — the
-        identities an inherited member reaches every concrete descendant under.
+        As-of axes are family-wide, so the family's shared Temporal Shape names
+        the start Attributes read from this node's member row, at the root's own
+        Attribute Identities an inherited member reaches every concrete
+        descendant under.
         """
-        layout = self._root.layout(index)
-        declaring = _declaring(self._model, layout.concrete)
-        if declaring is None or not declaring.declared_as_of_axes:
+        shape = self._temporal.shape(self._root.layout(index).concrete)
+        if shape is None or isinstance(shape, NonTemporal):
             return None
-        values = self._root.member_values(index)
-        return milestone_edge_of(
-            declaring,
-            {
-                attribute.identity: values[position]
-                for position, attribute in enumerate(layout.attributes)
-                if values[position] is not ABSENT
-            },
-        )
+        return milestone_edge(shape, self._root, index)
 
 
 def _undeclared_direction(
@@ -279,10 +271,3 @@ def _by_arm[T](
     if value is None:
         return null
     return one(cast("int", value))
-
-
-def _declaring(model: Metamodel, identity: EntityIdentity) -> EntityMetadata | None:
-    """The position declaring ``identity``'s family-wide temporal facts — its family
-    root, which for a standalone Entity is itself."""
-    position = inheritance_view(model).entity(identity)
-    return model.entity(identity if position is None else position.root)

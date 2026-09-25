@@ -15,12 +15,11 @@ from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
-    EntityMetadata,
     MemberIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge_of
+from parallax.core.temporal_read import Edge, Pin, TemporalReadError, TemporalShape, milestone_edge
 from parallax.snapshot.materialize._views import SourceLevel, SourceViewLayout, ViewSchema
 
 __all__ = [
@@ -277,6 +276,14 @@ class PageRows:
     source_ordinals: Sequence[int] = ()
     claims: Sequence[int | tuple[int, ...]] = ()
 
+    def axis_start(self, projection: int, attribute: AttributeIdentity, /) -> object:
+        """``projection``'s stored value at one As-Of Axis start, read from its
+        logical key's coordinates, which align with its layout's
+        ``temporal_starts``."""
+        layout = self.layouts[projection]
+        coordinates = cast("LogicalKey", self.keys[projection]).coordinates
+        return coordinates[layout.temporal_starts.index(layout.index_of[attribute])]
+
 
 class Page:
     """One materialization's Page: every occurrence, the roots in result order,
@@ -412,13 +419,12 @@ def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
     return projection_last, logical_last
 
 
-def page_edges(page: Page, declaring: EntityMetadata | None) -> Iterator[Edge | None]:
+def page_edges(page: Page, shape: TemporalShape | None) -> Iterator[Edge | None]:
     """Each root's own As-Of edge in result order, or absence where it has none.
 
-    ``declaring`` is the Entity whose declaration carries the family's axes for a
-    MILESTONE-SET read, and ``None`` for every read at one instant — whose roots
-    stand at the Page's own pin and have no edge of their own to be published
-    at.
+    ``shape`` is the target family's Temporal Shape for a MILESTONE-SET read,
+    and ``None`` for every read at one instant — whose roots stand at the Page's
+    own pin and have no edge of their own to be published at.
 
     Absent, too, for a milestone root whose axis starts did not decode. Such a
     root is published at the page's own pin and the delivery continues past it:
@@ -427,26 +433,17 @@ def page_edges(page: Page, declaring: EntityMetadata | None) -> Iterator[Edge | 
     """
     rows = page_rows(page)
     for root in rows.roots:
-        if declaring is None:
+        if shape is None:
             yield None
             continue
-        yield _root_edge(declaring, rows, root)
+        yield _root_edge(shape, rows, root)
 
 
-def _root_edge(declaring: EntityMetadata, rows: PageRows, root: int) -> Edge | None:
-    layout = rows.layouts[root]
-    key = rows.keys[root]
-    if key is None:  # pragma: no cover - a temporal result root with no key has no edge
+def _root_edge(shape: TemporalShape, rows: PageRows, root: int) -> Edge | None:
+    if rows.keys[root] is None:  # pragma: no cover - a temporal result root with no key has no edge
         return None
     try:
-        return milestone_edge_of(
-            declaring,
-            {
-                cast("AttributeIdentity", layout.members[position]): value
-                for position, value in zip(layout.temporal_starts, key.coordinates, strict=True)
-                if value is not ABSENT
-            },
-        )
+        return milestone_edge(shape, rows, root)
     except TemporalReadError:
         return None
 

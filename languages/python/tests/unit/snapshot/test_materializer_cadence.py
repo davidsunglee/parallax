@@ -23,7 +23,13 @@ from parallax.snapshot.handle._materialization import (
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
-from parallax.snapshot.materialize import Page, PageBuilder, RootView, classify_roots
+from parallax.snapshot.materialize import (
+    Page,
+    PageBuilder,
+    RootView,
+    VersionAttributes,
+    classify_roots,
+)
 from parallax.snapshot.materialize._classify import RootClassifications
 from parallax.snapshot.materialize._convert import LevelContext
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -148,11 +154,15 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
     stage = Materializer(observer).read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
 
     def fail_on_second_root(
-        root: RootView, accepted: Metamodel, *, ordinal_offset: int = 0
+        root: RootView,
+        accepted: Metamodel,
+        versions: VersionAttributes,
+        *,
+        ordinal_offset: int = 0,
     ) -> RootClassifications:
         if ordinal_offset == 1:
             raise RuntimeError("later row failed")
-        return classify_roots(root, accepted, ordinal_offset=ordinal_offset)
+        return classify_roots(root, accepted, versions, ordinal_offset=ordinal_offset)
 
     monkeypatch.setattr("parallax.snapshot.handle._read.classify_roots", fail_on_second_root)
     with pytest.raises(RuntimeError, match="later row failed"):
@@ -204,10 +214,20 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
 
     received: list[object] = []
     with pytest.raises(RuntimeError, match="later root failed"):
-        received.extend(Materializer(observer).roots(page, publish, atomic=True))
+        received.extend(
+            Materializer(observer).roots(page, publish, atomic=True, model=model_of(ORDERS_MODEL))
+        )
 
     assert received == []
     assert [event for event in observer.events if event[0] == "root_published"] == []
+
+
+def test_an_atomic_publication_needs_the_model_that_decides_state_deferral() -> None:
+    observer = _RecordingObserver()
+    page = _page(observer, 1)
+    with pytest.raises(ValueError, match="state deferral against its model"):
+        list(Materializer(observer).roots(page, _publish(page), atomic=True))
+    assert observer.events == []
 
 
 def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() -> None:

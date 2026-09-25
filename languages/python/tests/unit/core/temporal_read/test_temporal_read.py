@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
@@ -34,13 +35,15 @@ from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     TemporalReadError,
+    TemporalShape,
     inject_resolved_as_of,
-    milestone_edge_from_members,
-    milestone_edge_of,
+    milestone_edge,
     scans_validated_axis,
     validated_hop_as_of_terms,
     validated_query_pin,
 )
+from parallax.core.temporal_read import view as temporal_view
+from parallax.core.unit_work import PredecessorRow
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target
 
@@ -394,32 +397,58 @@ def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
 # --------------------------------------------------------------------------- #
 # Edge-pin + Pin / Edge value model.                                           #
 # --------------------------------------------------------------------------- #
-def _starts(entity: EntityMetadata, **values: object) -> dict[AttributeIdentity, object]:
-    """``values`` keyed by the start Attribute Identity of each named axis."""
-    return {
-        axis.start_attribute: values[axis.start_attribute.name]
-        for axis in entity.declared_as_of_axes
-        if axis.start_attribute.name in values
-    }
+class _Starts:
+    """Axis starts one carrier holds by Attribute Identity, answered by lookup.
+
+    Every read is recorded, and enumeration is refused: an edge names the axes
+    it needs rather than scanning a row for them.
+    """
+
+    def __init__(self, **values: object) -> None:
+        self._values = values
+        self.reads: list[tuple[str, AttributeIdentity]] = []
+
+    def axis_start(self, at: str, attribute: AttributeIdentity, /) -> object:
+        self.reads.append((at, attribute))
+        return self._values.get(attribute.name, _UNREAD)
+
+    def __iter__(self) -> Iterator[object]:
+        raise AssertionError("a milestone edge reads its starts by lookup, never by enumeration")
 
 
-def test_milestone_edge_reads_each_axis_from_its_start_member() -> None:
-    edge = milestone_edge_of(
-        POSITION,
-        _starts(
-            POSITION,
-            validStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-            txStart=dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-        ),
+_UNREAD = object()
+
+
+def _shape(entity: EntityMetadata) -> TemporalShape:
+    shape = temporal_view(_ACCEPTED[entity.identity.name]).shape(entity.identity)
+    assert shape is not None
+    return shape
+
+
+def _start(entity: EntityMetadata, dimension: TemporalDimension) -> AttributeIdentity:
+    axis = entity.as_of_axis(dimension)
+    assert axis is not None
+    return axis.start_attribute
+
+
+def test_a_bitemporal_edge_reads_exactly_its_two_axis_starts() -> None:
+    rows = _Starts(
+        validStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+        txStart=dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
     )
+    edge = milestone_edge(_shape(POSITION), rows, "milestone")
     assert edge.valid_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time == dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    assert sorted(rows.reads, key=lambda read: read[1].name) == [
+        ("milestone", _start(POSITION, TemporalDimension.TRANSACTION_TIME)),
+        ("milestone", _start(POSITION, TemporalDimension.VALID_TIME)),
+    ]
 
 
-def test_edge_strict_accessor_raises_on_undeclared_axis() -> None:
-    edge = milestone_edge_of(
-        BALANCE, _starts(BALANCE, txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    )
+def test_a_transaction_time_edge_reads_one_start_and_declares_no_valid_time() -> None:
+    rows = _Starts(txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC), validStart="never read")
+    edge = milestone_edge(_shape(BALANCE), rows, "milestone")
+    assert rows.reads == [("milestone", _start(BALANCE, TemporalDimension.TRANSACTION_TIME))]
     assert edge.tx_time == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.tx_time_or_none == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert edge.valid_time_or_none is None
@@ -443,61 +472,72 @@ def test_edge_equality_and_hashing() -> None:
     assert len({a, b, c}) == 2
 
 
-def test_milestone_edge_on_non_temporal_entity_raises() -> None:
-    with pytest.raises(TemporalReadError, match="not a temporal entity"):
-        milestone_edge_of(ORDERS, {})
+def test_a_non_temporal_family_has_no_edge_and_reads_nothing() -> None:
+    rows = _Starts(txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+    with pytest.raises(TemporalReadError, match="Non-Temporal family"):
+        milestone_edge(_shape(ORDERS), rows, "milestone")
+    assert rows.reads == []
 
 
-def test_milestone_edge_rejects_a_non_instant_start_member() -> None:
-    with pytest.raises(TemporalReadError, match="not a timestamp instant"):
-        milestone_edge_of(BALANCE, _starts(BALANCE, txStart="not-a-datetime"))
+@pytest.mark.parametrize(
+    "stored",
+    [_UNREAD, None, "2024-06-01T00:00:00Z", dt.date(2024, 6, 1)],
+    ids=["missing", "null", "string", "date"],
+)
+def test_a_start_that_is_not_an_instant_is_refused_under_the_family_roots_name(
+    stored: object,
+) -> None:
+    starts = {} if stored is _UNREAD else {"txStart": stored}
+    with pytest.raises(TemporalReadError, match=r"Balance\.txStart: .*not a timestamp instant"):
+        milestone_edge(_shape(BALANCE), _Starts(**starts), "milestone")
 
 
-def test_the_two_keying_schemes_derive_one_milestones_edge_identically() -> None:
-    # One milestone reaches two keying schemes on its way through the system:
-    # declared member names as a retained row payload holds them, and Attribute
-    # Identities as a materialized node answers in. Both name the SAME
+def test_a_bitemporal_edge_refuses_a_missing_valid_time_start() -> None:
+    rows = _Starts(txStart=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+    with pytest.raises(TemporalReadError, match=r"Position\.validStart"):
+        milestone_edge(_shape(POSITION), rows, "milestone")
+
+
+def test_a_predecessor_row_and_an_identity_keyed_carrier_derive_one_edge() -> None:
+    # One milestone reaches two carriers on its way through the system: a
+    # retained Predecessor Row holding members by declared name, and a
+    # materialized row answering at Attribute Identities. Both name the SAME
     # milestone, so both must produce an EQUAL Edge — otherwise a write's
     # evidence could be filed under one coordinate and looked up under another.
-    # Equality holds by shared derivation rather than by coincidence: each
-    # scheme resolves the axis start values and hands them to one computation.
     valid_start = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     tx_start = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    axes = {axis.dimension: axis for axis in POSITION.declared_as_of_axes}
-    starts = {
-        axes[TemporalDimension.VALID_TIME].start_attribute: valid_start,
-        axes[TemporalDimension.TRANSACTION_TIME].start_attribute: tx_start,
-    }
+    shape = _shape(POSITION)
 
-    by_member = milestone_edge_from_members(
-        POSITION, {"validStart": valid_start, "txStart": tx_start, "value": "carried"}
+    by_member = milestone_edge(
+        shape,
+        PredecessorRow({"validStart": valid_start, "txStart": tx_start, "value": "carried"}),
+        None,
     )
-    by_identity = milestone_edge_of(POSITION, starts)
+    by_identity = milestone_edge(
+        shape, _Starts(validStart=valid_start, txStart=tx_start), "milestone"
+    )
 
-    assert by_member == by_identity
+    assert by_member == by_identity == Edge(tx_time=tx_start, valid_time=valid_start)
 
 
-def test_a_member_keyed_edge_normalizes_an_offset_instant_to_utc() -> None:
+def test_a_predecessor_rows_edge_normalizes_an_offset_instant_to_utc() -> None:
     # The member-keyed payload carries what the driver returned, which need not be
     # spelled in UTC. Two spellings of one instant name one milestone, so the
     # derived edges are equal and the observation lands in one slot.
     offset = dt.timezone(dt.timedelta(hours=-4))
-    shifted = milestone_edge_from_members(
-        BALANCE, {"txStart": dt.datetime(2024, 3, 31, 20, tzinfo=offset)}
+    shape = _shape(BALANCE)
+    shifted = milestone_edge(
+        shape, PredecessorRow({"txStart": dt.datetime(2024, 3, 31, 20, tzinfo=offset)}), None
     )
-    assert shifted == milestone_edge_from_members(
-        BALANCE, {"txStart": dt.datetime(2024, 4, 1, tzinfo=dt.UTC)}
+    assert shifted == milestone_edge(
+        shape, PredecessorRow({"txStart": dt.datetime(2024, 4, 1, tzinfo=dt.UTC)}), None
     )
+    assert shifted.tx_time.tzinfo is dt.UTC
 
 
-def test_member_keyed_edge_on_non_temporal_entity_raises() -> None:
-    with pytest.raises(TemporalReadError, match="not a temporal entity"):
-        milestone_edge_from_members(ORDERS, {"id": 1})
-
-
-def test_member_keyed_edge_rejects_a_non_instant_member() -> None:
+def test_a_predecessor_row_missing_its_start_member_is_refused() -> None:
     with pytest.raises(TemporalReadError, match="not a timestamp instant"):
-        milestone_edge_from_members(BALANCE, {"txStart": "not-a-datetime"})
+        milestone_edge(_shape(BALANCE), PredecessorRow({"id": 1}), None)
 
 
 def test_pin_reports_only_pinned_axes() -> None:

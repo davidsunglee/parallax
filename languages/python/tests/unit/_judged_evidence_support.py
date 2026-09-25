@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import cast
 
 from parallax.core.entity._construction_input import ABSENT
@@ -13,8 +14,54 @@ from parallax.snapshot.handle._retention import (
     ObservationLedger,
     ObservedRows,
     ReadSources,
-    deferred_evidence,
+    deferred_read_sources,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class JudgedRows:
+    """One Entity's laid-out, judged positional rows, one per projection."""
+
+    layout: EntityLayout
+    member_rows: tuple[tuple[object, ...], ...]
+
+
+def judged_rows(
+    model: Metamodel, entity: EntityIdentity, *rows: Mapping[str, object]
+) -> JudgedRows:
+    """``rows`` as the judged positional state a Page holds for ``entity``.
+
+    A row is keyed by physical storage name, occurrences already decoded to their
+    declared shape.
+    """
+    layout = LayoutCatalog(model).entity(entity)
+    return JudgedRows(layout, tuple(_member_row(layout, row) for row in rows))
+
+
+def retained_sources(
+    model: Metamodel,
+    judged: JudgedRows,
+    *,
+    document: object | None = None,
+    ledger: ObservationLedger | None = None,
+) -> ReadSources:
+    """The sources a graph-form read retains for one projection per judged
+    row, each admitted with its positional state; ``document`` is the raw
+    Structured Column every projection carries."""
+    layout, member_rows = judged.layout, judged.member_rows
+    entity = layout.concrete
+    observations = ObservedRows()
+    for node in range(len(member_rows)):
+        observations.observe_occurrence(node, entity, document)
+    return deferred_read_sources(
+        model,
+        observations,
+        lambda node: (layout, member_rows[node]),
+        lambda _node: entity,
+        lambda node: member_rows[node][layout.primary_key[0]],
+        ledger=ledger,
+        pin=Pin(),
+    )
 
 
 def judged_evidence(
@@ -25,25 +72,10 @@ def judged_evidence(
     ledger: ObservationLedger | None = None,
 ) -> ReadSources:
     """The sources a graph-form read retains for one projection per ``rows``
-    entry, each admitted with the judged positional state that decodes it.
-
-    A row is keyed by physical storage name, occurrences already decoded to their
-    declared shape; ``document`` is the raw Structured Column every projection
-    carries.
-    """
-    layout = LayoutCatalog(model).entity(entity)
-    member_rows = tuple(_member_row(layout, row) for row in rows)
-    observations = ObservedRows()
-    for node in range(len(member_rows)):
-        observations.observe_occurrence(node, entity, document)
-    return deferred_evidence(
-        model,
-        observations,
-        lambda node: (layout, member_rows[node]),
-        lambda _node: entity,
-        lambda node: member_rows[node][layout.primary_key[0]],
-        ledger=ledger,
-        pin=Pin(),
+    entry, as :func:`judged_rows` lays them out and :func:`retained_sources`
+    admits them."""
+    return retained_sources(
+        model, judged_rows(model, entity, *rows), document=document, ledger=ledger
     )
 
 
