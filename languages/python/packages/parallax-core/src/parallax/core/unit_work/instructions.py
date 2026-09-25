@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
 
-from parallax.core import inheritance
+from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import (
     TIMESTAMP,
@@ -719,20 +719,6 @@ def temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) 
     )
 
 
-def _derives_as_of_axes(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
-    """Whether ``entity``'s inheritance FAMILY derives an As-Of Axis.
-
-    Temporality is family-level metadata only the root may declare
-    (`m-inheritance`), so a descendant's own accepted Metadata carries no axis
-    even when every one of its rows is milestoned.
-    """
-    position = inheritance.view(model).entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return bool(entity.declared_as_of_axes)
-    root = model.entity(position.root)
-    return bool((entity if root is None else root).declared_as_of_axes)
-
-
 def _preflight_write_shape(
     instruction: WriteInstruction, model: AcceptedMetamodel
 ) -> EntityMetadata:
@@ -752,7 +738,10 @@ def _preflight_write_shape(
                 raise WriteInstructionError(
                     f"{entity.identity.name}: keyed write row names undeclared member(s) {unknown}"
                 )
-    if _derives_as_of_axes(model, entity):
+    if isinstance(
+        temporal_read.view(model).shape(entity.identity),
+        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+    ):
         plural = temporal_singleton_refusal(entity.identity.name, instruction)
         if plural is not None:
             raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)

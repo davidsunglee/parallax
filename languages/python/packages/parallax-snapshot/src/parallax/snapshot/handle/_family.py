@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from parallax.core import inheritance, opt_lock, storage_layout
+from parallax.core import inheritance, opt_lock, storage_layout, temporal_read
 from parallax.core.document_codec import MemberShape
+from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -12,6 +13,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.storage_layout import EntityLayoutView
+from parallax.core.temporal_read import TemporalShape
 from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
@@ -21,11 +23,30 @@ __all__ = [
     "entity_layout",
     "entity_of",
     "family_primary_key",
+    "family_view",
     "is_temporal",
     "members",
+    "temporal_shape",
     "tx_time_axis",
     "version_attribute",
 ]
+
+
+def family_view(model: Metamodel, entity: EntityMetadata) -> InheritanceEntityView:
+    """``entity``'s compiled Inheritance view: its family root's identity, the
+    family key, and its applicable members."""
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
+    return view
+
+
+def temporal_shape(model: Metamodel, entity: EntityMetadata) -> TemporalShape:
+    """``entity``'s family Temporal Shape, compiled once for the whole family."""
+    shape = temporal_read.view(model).shape(entity.identity)
+    if shape is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise RuntimeError(f"{entity.identity.canonical}: no Temporal Facet shape")
+    return shape
 
 
 def family_primary_key(model: Metamodel, entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
@@ -142,10 +163,7 @@ def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:
     formed from those members, and returning that exact object keeps both write
     surfaces on one member set without reconstructing it for each comparison.
     """
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise RuntimeError(f"{entity.identity.canonical}: no Inheritance Facet view")
-    return view.applicable_document_shape
+    return family_view(model, entity).applicable_document_shape
 
 
 def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:

@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Literal, Protocol
 from weakref import WeakValueDictionary
 
+from parallax.core import inheritance
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.claims import ClaimScope, ClaimTable, ClaimVerdict, WriteIntent
 from parallax.core.unit_work.clock import Clock, TransactionInstant
@@ -14,10 +15,8 @@ from parallax.core.unit_work.instructions import DESTRUCTIVE_MUTATIONS, INSERT_M
 from parallax.core.unit_work.materialized import BufferItem, buffered_instruction
 from parallax.core.unit_work.plan import WritePlan
 from parallax.core.unit_work.planner import (
-    FamilyFacts,
     ObjectKey,
     ObservedStateKey,
-    family_facts,
     resolve_object_key,
 )
 from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
@@ -143,7 +142,6 @@ class UnitOfWork:
         "_buffer",
         "_claims",
         "_closed",
-        "_families",
         "_observations",
         "_participation",
         "_pending_inserts",
@@ -208,10 +206,6 @@ class UnitOfWork:
         # what the flush will do with an insert cannot be told one thing while
         # the flush does another.
         self._pending_inserts: set[ObjectKey] = set()
-        # Key resolution reads the same family facts the planner holds; the
-        # Metamodel is fixed for this scope's life, so it is built once, on the
-        # first keyed write, and never for a scope that only reads.
-        self._families: FamilyFacts | None = None
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -285,9 +279,7 @@ class UnitOfWork:
         mutation = instruction.mutation
         if mutation not in INSERT_MUTATIONS and mutation not in DESTRUCTIVE_MUTATIONS:
             return
-        if self._families is None:
-            self._families = family_facts(self.meta)
-        key = resolve_object_key(instruction, self._families)
+        key = resolve_object_key(instruction, inheritance.view(self.meta))
         if key is None:
             return
         if mutation in INSERT_MUTATIONS:

@@ -17,7 +17,7 @@ from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
 from parallax.core.metamodel import (
-    AttributeMetadata,
+    AttributeIdentity,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
@@ -28,7 +28,7 @@ from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import NonTemporal, Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ChunkedColumnBuilder,
@@ -57,16 +57,15 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
 )
 from parallax.core.unit_work.write_settlement import reject_readless_document_many
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._family import (
     assignment_member,
     comparison_shape,
-    declaring,
     entity_layout,
     entity_of,
-    family_primary_key,
-    is_temporal,
+    family_view,
     members,
-    version_attribute,
+    temporal_shape,
 )
 from parallax.snapshot.handle._materialization import Materializer, RowPublication
 from parallax.snapshot.handle._read import (
@@ -170,10 +169,10 @@ def buffer_predicate(
     selection = mutation_selection(query)
     entity = entity_of(meta, selection.target.canonical)
     _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
-    declaring_entity = declaring(meta, entity)
-    reject_temporal_delete(entity, declaring_entity, mutation, surface="predicate")
+    shape = temporal_shape(meta, entity)
+    reject_temporal_delete(entity, shape, mutation, surface="predicate")
     valid_from_managed, until_managed = validate_window(
-        declaring_entity, mutation, valid_from, until
+        family_view(meta, entity).root, shape, mutation, valid_from, until
     )
     instruction = PredicateWrite(
         mutation,
@@ -313,9 +312,9 @@ def buffer_predicate_instruction(
     entity = instruction.selection.target
     assert entity is not None
     inheritance.reject_predicate_write(entity)
-    declaring_entity = declaring(meta, entity)
-    version_attr = version_attribute(meta, declaring_entity)
-    temporal = is_temporal(declaring_entity)
+    shape = temporal_shape(meta, entity)
+    version_attr = CONCURRENCY.version_attribute(meta, entity.identity)
+    temporal = not isinstance(shape, NonTemporal)
     applicability = (
         instructions.temporal_delete_refusal(
             entity.identity.name, instruction.mutation, surface="predicate"
@@ -339,7 +338,7 @@ def buffer_predicate_instruction(
         conn,
         instruction,
         entity,
-        declaring_entity,
+        temporal,
         version_attr,
         attempt,
     )
@@ -351,8 +350,8 @@ def _materialize_predicate_write(
     conn: DatabaseConnection,
     instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
-    declaring_entity: EntityMetadata,
-    version_attr: AttributeMetadata | None,
+    temporal: bool,
+    version_attr: AttributeIdentity | None,
     attempt: TransactionAttemptActivity,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
@@ -394,7 +393,7 @@ def _materialize_predicate_write(
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.managed_assignments
     }
-    temporal = is_temporal(declaring_entity)
+    root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
     # Need-sensitive projection (`m-case-format` "Predicate-selected write
     # instruction"): the resolving read projects the resolved row's own
     # value-object document(s) for TWO independent needs, on EVERY target
@@ -464,7 +463,7 @@ def _materialize_predicate_write(
             query = deep_fetch.plan_mutation_read(
                 instruction,
                 model=meta,
-                temporal=latest_temporal_selections(declaring_entity),
+                temporal=latest_temporal_selections(root),
                 projection=deep_fetch.ReadProjectionRequest(
                     "all" if predecessor_need else "none",
                     predecessor_need,
@@ -507,24 +506,22 @@ def _materialize_predicate_write(
         resolved
     ):  # pragma: no cover - publishable staging has one valid root per row
         raise ValueError("predicate-write staging requires one Entity State per resolved row")
-    pk_attrs = family_primary_key(meta, entity)
-    key_attributes = tuple(attr.identity.name for attr in pk_attrs)
-    key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
+    key_attributes = (family_view(meta, entity).primary_key.identity.name,)
+    key_builders = (ChunkedColumnBuilder[object](),)
     matched = 0
 
     def append_key(key_values: tuple[object, ...]) -> None:
         for builder, value in zip(key_builders, key_values, strict=True):
             builder.append(value)
 
-    declaring_entity = declaring(meta, entity)
     selected: list[ObservedStateKey] = []
 
     def select_state(key_values: tuple[object, ...], observation: WriteObservation) -> None:
         object_key = ObjectKey(entity.identity, tuple(zip(key_attributes, key_values, strict=True)))
-        selected.append(observed_state_key(object_key, observation, declaring_entity))
+        selected.append(observed_state_key(object_key, observation, root))
 
     if version_attr is not None:
-        version_member = version_attr.identity.name
+        version_member = version_attr.name
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
             if assignment_bearing and _is_no_op_assignment(shape, comparison_assignments, row):

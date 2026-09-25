@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from parallax.core import inheritance, temporal_read
 from parallax.core.metamodel import (
     Cardinality,
     DefiningRelationshipDeclaration,
@@ -30,12 +31,7 @@ from parallax.core.unit_work.materialized import (
     buffered_instruction,
 )
 from parallax.core.unit_work.observe import WriteObservation
-from parallax.core.unit_work.planner import (
-    FamilyFacts,
-    ObjectKey,
-    family_facts,
-    resolve_object_key,
-)
+from parallax.core.unit_work.planner import ObjectKey, resolve_object_key
 from parallax.core.unit_work.strategy import (
     ActorIdentity,
     AuditStrategy,
@@ -83,13 +79,13 @@ class WritePlanner:
     instant acquisition, or provenance decoration by hand.
 
     The settlement module it constructs here is its own, built over the same
-    family-fact reader and living exactly as long: a prepared Model Selection
-    carries a mutually consistent model, codec, planner, and settlement module,
-    and publication replaces the whole selection rather than rebinding any of
-    them.
+    model and compiled facets and living exactly as long: a prepared Model
+    Selection carries a mutually consistent model, codec, planner, and
+    settlement module, and publication replaces the whole selection rather than
+    rebinding any of them.
     """
 
-    __slots__ = ("_batching", "_families", "_settlement")
+    __slots__ = ("_batching", "_families", "_model", "_settlement", "_temporal_facet")
 
     def __init__(
         self,
@@ -100,10 +96,17 @@ class WritePlanner:
         temporal: TemporalStrategy,
         audit: AuditStrategy,
     ) -> None:
-        self._families = family_facts(model)
+        self._model = model
+        self._families = inheritance.view(model)
+        self._temporal_facet = temporal_read.view(model)
         self._batching = batching
         self._settlement = WriteSettlement(
-            self._families, concurrency=concurrency, temporal=temporal, audit=audit
+            model,
+            self._families,
+            self._temporal_facet,
+            concurrency=concurrency,
+            temporal=temporal,
+            audit=audit,
         )
 
     def finalize(self, request: PlanningRequest) -> WritePlanningResult:
@@ -127,22 +130,23 @@ class WritePlanner:
         answers is returned unchanged, because packing, provenance, and claim
         collection are decided there and nothing is left for the planner to add.
         """
-        families = self._families
-        coalesced = self._coalesce(request.buffered_writes, families)
+        coalesced = self._coalesce(request.buffered_writes)
         survivors = [
             item
-            for item in (_without_noop_rows(item, families) for item in coalesced)
+            for item in (
+                _without_noop_rows(item, self._families, self._temporal_facet) for item in coalesced
+            )
             if item is not None
         ]
-        batched = self._form_batches(survivors, families)
+        batched = self._form_batches(survivors)
         return self._settlement.settle(
-            self._order(batched, families),
+            self._order(batched),
             concurrency=request.concurrency,
             actor_identity=request.actor_identity,
             transaction_instant=request.transaction_instant,
         )
 
-    def _coalesce(self, buffer: BufferedWrites, families: FamilyFacts) -> list[OrderedWrite]:
+    def _coalesce(self, buffer: BufferedWrites) -> list[OrderedWrite]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
         # Where each object's still-open claims sit, so a second write claiming
@@ -162,7 +166,7 @@ class WritePlanner:
                 result.append(item)
                 continue
             instruction = buffered_instruction(item)
-            key = resolve_object_key(instruction, families)
+            key = resolve_object_key(instruction, self._families)
             if not isinstance(instruction, PreparedKeyedWrite) or key is None:
                 result.append(item)
                 continue
@@ -177,7 +181,7 @@ class WritePlanner:
                 # always a bare instruction — and folding an update into it
                 # yields an insert, which is why the merged item stays bare.
                 assert isinstance(base, PreparedKeyedWrite)
-                result[index] = _merge_update_into_insert(base, instruction, families)
+                result[index] = _merge_update_into_insert(base, instruction, self._families)
             elif verb in DESTRUCTIVE_MUTATIONS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
             elif isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
@@ -190,17 +194,13 @@ class WritePlanner:
             if surviving is not None
         ]
 
-    def _form_batches(
-        self, buffer: Sequence[OrderedWrite], families: FamilyFacts
-    ) -> list[OrderedWrite]:
+    def _form_batches(self, buffer: Sequence[OrderedWrite]) -> list[OrderedWrite]:
         result: list[OrderedWrite] = []
         run: list[PreparedKeyedWrite] = []
         run_group: object = None
 
         def group_key(item: PreparedKeyedWrite) -> object:
-            return self._batching.group_key(
-                families.model, item.target, item.mutation, item.rows[0]
-            )
+            return self._batching.group_key(self._model, item.target, item.mutation, item.rows[0])
 
         def flush_run() -> None:
             if not run:
@@ -209,7 +209,7 @@ class WritePlanner:
             rows = [row for w in run for row in w.rows]
             if len(run) == 1:
                 result.extend(run)
-            elif self._batching.collapses(families.model, entity, run[0].mutation, rows):
+            elif self._batching.collapses(self._model, entity, run[0].mutation, rows):
                 result.append(_merge_rows(run))
             else:
                 result.extend(run)
@@ -228,7 +228,7 @@ class WritePlanner:
         # versioned and temporal alike. A carrier is single-row by
         # construction, so the run this skips is the only way its row could
         # have joined a multi-row statement.
-        for item in _decomposed_updates(buffer, families):
+        for item in _decomposed_updates(buffer, self._temporal_facet):
             if isinstance(item, PreparedKeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
                 if (
@@ -249,8 +249,8 @@ class WritePlanner:
         flush_run()
         return result
 
-    def _order(self, items: Sequence[OrderedWrite], families: FamilyFacts) -> list[OrderedWrite]:
-        ranks = _fk_ranks(families.model)
+    def _order(self, items: Sequence[OrderedWrite]) -> list[OrderedWrite]:
+        ranks = _fk_ranks(self._model)
 
         def rank(item: OrderedWrite) -> int:
             entity = _instruction_target(buffered_instruction(item))
@@ -281,7 +281,9 @@ class WritePlanner:
 
 
 def _merge_update_into_insert(
-    insert: PreparedKeyedWrite, update: PreparedKeyedWrite, families: FamilyFacts
+    insert: PreparedKeyedWrite,
+    update: PreparedKeyedWrite,
+    families: inheritance.InheritanceFacet,
 ) -> PreparedKeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
@@ -290,10 +292,10 @@ def _merge_update_into_insert(
     settling per temporal flavor) but carries the FINAL values — no
     ``INSERT`` + ``UPDATE``.
     """
-    pk_names = {a.identity.name for a in families.primary_key(insert.target)}
+    key_name = _key_name(families, insert.target)
     merged = dict(insert.rows[0])
     for name, value in update.rows[0].items():
-        if name not in pk_names:
+        if name != key_name:
             merged[name] = value
     return derive_keyed_write(insert, (merged,))
 
@@ -438,7 +440,7 @@ def _without_object_claim(item: ClaimedKeyedWrite) -> OrderedWrite:
 
 
 def _decomposed_updates(
-    buffer: Sequence[OrderedWrite], families: FamilyFacts
+    buffer: Sequence[OrderedWrite], temporal_facet: temporal_read.TemporalFacet
 ) -> list[OrderedWrite]:
     """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
     back into one single-row instruction per row.
@@ -467,18 +469,33 @@ def _decomposed_updates(
     """
     decomposed: list[OrderedWrite] = []
     for item in buffer:
-        if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, families):
+        if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, temporal_facet):
             decomposed.append(item)
             continue
         decomposed.extend(derive_keyed_write(item, (row,)) for row in item.rows)
     return decomposed
 
 
-def _splits_into_rows(item: PreparedKeyedWrite, families: FamilyFacts) -> bool:
+def _splits_into_rows(
+    item: PreparedKeyedWrite, temporal_facet: temporal_read.TemporalFacet
+) -> bool:
     if len(item.rows) < 2 or item.mutation not in UPDATE_MUTATIONS:
         return False
-    entity = item.target
-    return not families.declaring(entity).declared_as_of_axes
+    return not _is_temporal(temporal_facet, item.target)
+
+
+def _is_temporal(temporal_facet: temporal_read.TemporalFacet, entity: EntityMetadata) -> bool:
+    return isinstance(
+        temporal_facet.shape(entity.identity),
+        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+    )
+
+
+def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) -> str:
+    position = families.entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    return position.primary_key.identity.name
 
 
 def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
@@ -543,7 +560,11 @@ def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
     return instruction.selection.target
 
 
-def _without_noop_rows(item: OrderedWrite, families: FamilyFacts) -> OrderedWrite | None:
+def _without_noop_rows(
+    item: OrderedWrite,
+    families: inheritance.InheritanceFacet,
+    temporal_facet: temporal_read.TemporalFacet,
+) -> OrderedWrite | None:
     """``item`` with its known no-op rows gone, or ``None`` when none survive.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
@@ -580,10 +601,10 @@ def _without_noop_rows(item: OrderedWrite, families: FamilyFacts) -> OrderedWrit
     ):
         return item
     entity = instruction.target
-    if len(instruction.rows) > 1 and families.declaring(entity).declared_as_of_axes:
+    if len(instruction.rows) > 1 and _is_temporal(temporal_facet, entity):
         return item
-    pk_names = {a.identity.name for a in families.primary_key(entity)}
-    kept = tuple(row for row in instruction.rows if not all(name in pk_names for name in row))
+    key_name = _key_name(families, entity)
+    kept = tuple(row for row in instruction.rows if not all(name == key_name for name in row))
     if not kept:
         return None
     if len(kept) == len(instruction.rows):

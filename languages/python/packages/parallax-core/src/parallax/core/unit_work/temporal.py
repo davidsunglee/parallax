@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.base import INFINITY_LITERAL
-from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
+from parallax.core.metamodel import AsOfAxisMetadata, AttributeIdentity, ValueObjectIdentity
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work.observe import PredecessorRow
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
@@ -30,24 +31,9 @@ from parallax.core.unit_work.strategy import (
 
 __all__ = [
     "ResolvedSuccessor",
-    "TemporalAxes",
     "bind_successor",
     "resolve_successors",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class TemporalAxes:
-    """The Attribute identities one family's As-Of Axes bind intervals with.
-
-    Valid-Time identities are absent on a Transaction-Time-Only family, which is the
-    same condition that leaves a successor without a Valid-Time window.
-    """
-
-    transaction_start: AttributeIdentity
-    transaction_end: AttributeIdentity
-    valid_start: AttributeIdentity | None = None
-    valid_end: AttributeIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +119,7 @@ def _resolve_bound(
 
 def bind_successor(
     successor: ResolvedSuccessor,
-    axes: TemporalAxes,
+    shape: TransactionTimeOnly | Bitemporal,
     *,
     transaction_instant: object,
     attributes: dict[AttributeIdentity, PlannedValue],
@@ -147,11 +133,16 @@ def bind_successor(
     is written, whatever Valid-Time window it covers.
     """
     if successor.window is not None:
-        assert axes.valid_start is not None and axes.valid_end is not None  # a windowed family
-        attributes[axes.valid_start] = _bind_bound(successor.window.start, axes, predecessor)
-        attributes[axes.valid_end] = _bind_bound(successor.window.end, axes, predecessor)
-    attributes[axes.transaction_start] = transaction_instant
-    attributes[axes.transaction_end] = INFINITY_LITERAL
+        assert isinstance(shape, Bitemporal)  # only a Bitemporal topology windows a successor
+        valid_time = shape.valid_time
+        attributes[valid_time.start_attribute] = _bind_bound(
+            successor.window.start, valid_time, predecessor
+        )
+        attributes[valid_time.end_attribute] = _bind_bound(
+            successor.window.end, valid_time, predecessor
+        )
+    attributes[shape.transaction_time.start_attribute] = transaction_instant
+    attributes[shape.transaction_time.end_attribute] = INFINITY_LITERAL
     return InsertEntry(
         row=adopt_planned_row(attributes, value_objects),
         origin=_origin(successor.state, predecessor),
@@ -171,14 +162,14 @@ def _origin(state: SuccessorState, predecessor: PredecessorRow | None) -> Insert
 
 
 def _bind_bound(
-    resolved: ResolvedBound, axes: TemporalAxes, predecessor: PredecessorRow | None
+    resolved: ResolvedBound, valid_time: AsOfAxisMetadata, predecessor: PredecessorRow | None
 ) -> object:
     match resolved:
         case _Literal(value):
             return value
         case PredecessorStart():
-            assert predecessor is not None and axes.valid_start is not None
-            return predecessor.member(axes.valid_start.name)
+            assert predecessor is not None
+            return predecessor.member(valid_time.start_attribute.name)
         case PredecessorEnd():
-            assert predecessor is not None and axes.valid_end is not None
-            return predecessor.member(axes.valid_end.name)
+            assert predecessor is not None
+            return predecessor.member(valid_time.end_attribute.name)

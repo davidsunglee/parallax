@@ -4,7 +4,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core import batch_write, bitemp_write, txtime_write
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.unit_work import (
     NO_AUDIT,
     Concurrency,
@@ -47,18 +48,16 @@ class _TemporalAdapter:
 
     Which facet answers is itself part of "how a temporal facet describes a
     mutation" — the planner cannot import either facet module, so this
-    composition-root adapter selects between them from the declaring entity's
-    own declared As-Of Axes, a plain Metamodel fact the planner already reads
-    directly.
+    composition-root adapter selects between them by the variant of the
+    family's Temporal Shape the planner already settled.
     """
 
-    def topology(self, entity: EntityMetadata, mutation: str) -> MilestoneTopology:
-        strategy = (
-            bitemp_write.RECTANGLE_SPLIT
-            if entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
-            else txtime_write.MILESTONE_CHAIN
-        )
-        return strategy.topology(mutation)
+    def topology(self, shape: TransactionTimeOnly | Bitemporal, mutation: str) -> MilestoneTopology:
+        match shape:
+            case Bitemporal():
+                return bitemp_write.RECTANGLE_SPLIT.topology(mutation)
+            case TransactionTimeOnly():
+                return txtime_write.MILESTONE_CHAIN.topology(mutation)
 
 
 def build_write_planner(model: Metamodel) -> WritePlanner:

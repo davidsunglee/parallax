@@ -31,7 +31,7 @@ from typing import Final, cast
 
 import pytest
 
-from parallax.core import bitemp_write, storage_layout, txtime_write
+from parallax.core import bitemp_write, storage_layout, temporal_read, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES, Dialect
@@ -947,6 +947,13 @@ def test_a_probe_naming_an_undeclared_entity_is_refused() -> None:
         _probe("optimistic", entity="Nowhere")
 
 
+def test_a_probe_naming_a_non_temporal_entity_is_refused() -> None:
+    # A standalone close ends a milestone's Transaction-Time currency, so a
+    # target whose family declares no As-Of Axis has nothing to close.
+    with pytest.raises(WritePlanningError, match="no Transaction-Time axis"):
+        _probe("optimistic", entity="Account", meta=_MODELS["account"])
+
+
 def test_a_probe_identity_naming_more_than_the_address_is_refused() -> None:
     # The probe's `identity` IS the address, unlike the pipeline's own close,
     # whose `identity` is the full durable row the surrounding mutation revises.
@@ -965,6 +972,63 @@ def test_a_probe_identity_naming_more_than_the_address_is_refused() -> None:
             "2024-04-01T00:00:00+00:00",
             "infinity",
         )
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+@pytest.mark.parametrize(
+    ("entity", "meta", "observed_valid_end"),
+    [("SpotQuote", QUOTE, None), ("DepositRate", RATE, "infinity")],
+    ids=["transaction-time", "bitemporal"],
+)
+def test_a_probe_closes_an_inherited_position_by_its_family_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    entity: str,
+    meta: Metamodel,
+    observed_valid_end: str | None,
+    concurrency: Concurrency,
+) -> None:
+    # The probe reads the family's compiled Temporal Shape once and closes by
+    # it: every end Attribute it addresses and the start its optimistic gate
+    # binds are the root's own axis Attributes, reached without asking any
+    # Entity's declarations for its As-Of Axes.
+    model = formed(meta)
+    shape = temporal_read.view(model).shape(EntityIdentity("parallax.compatibility", entity))
+    assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
+
+    def undeclared(*_args: object) -> object:
+        raise AssertionError("the probe read a declared As-Of Axis")
+
+    entity_type = type(model.entities[0])
+    monkeypatch.setattr(entity_type, "as_of_axis", undeclared)
+    monkeypatch.setattr(entity_type, "declared_as_of_axes", property(undeclared))
+    step = plan_temporal_close(
+        {"id": 1},
+        entity,
+        model,
+        concurrency,
+        instant_at("2024-10-01T00:00:00+00:00"),
+        _instant("2024-04-01T00:00:00+00:00"),
+        None if observed_valid_end is None else _managed_instant(observed_valid_end),
+    )
+    ends = tuple(
+        axis.end_attribute
+        for axis in (
+            (shape.valid_time, shape.transaction_time)
+            if isinstance(shape, temporal_read.Bitemporal)
+            else (shape.transaction_time,)
+        )
+    )
+    assert len(step.target.end_attributes) == len(ends)
+    assert all(
+        settled is owned for settled, owned in zip(step.target.end_attributes, ends, strict=True)
+    )
+    (assigned,) = step.assignments.attributes
+    assert assigned is shape.transaction_time.end_attribute
+    if concurrency == "optimistic":
+        assert isinstance(step.concurrency, TemporalGate)
+        assert step.concurrency.start_attribute is shape.transaction_time.start_attribute
+    else:
+        assert step.concurrency == UNGATED
 
 
 def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:

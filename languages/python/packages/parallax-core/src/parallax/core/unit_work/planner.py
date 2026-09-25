@@ -5,11 +5,9 @@ from dataclasses import dataclass
 
 from parallax.core import inheritance
 from parallax.core.metamodel import (
-    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    PrimaryKey,
     entity_by_name,
 )
 from parallax.core.temporal_read import Edge, milestone_edge_from_members
@@ -22,10 +20,8 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.observe import TemporalObservation, WriteObservation
 
 __all__ = [
-    "FamilyFacts",
     "ObjectKey",
     "ObservedStateKey",
-    "family_facts",
     "object_key",
     "observed_state_key",
     "resolve_object_key",
@@ -113,62 +109,6 @@ def observed_state_key(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class FamilyFacts:
-    """One accepted model's family-effective facts, read off the Inheritance
-    Facet it already carries.
-
-    Two references and no index: every fact answered here is an O(1) read of a
-    precompiled :class:`~parallax.core.inheritance.InheritanceEntityView`, so a
-    model-scoped holder builds one once and prepares nothing the facet does not
-    already hold. It resolves no entity spelling — a prepared write carries the
-    exact target Metadata, and raw authored input resolves its spelling
-    through :func:`~parallax.core.metamodel.entity_by_name`, the accepted
-    model's own rule for an Entity spelling in a reference position.
-    """
-
-    model: Metamodel
-    families: inheritance.InheritanceFacet
-
-    def view(self, entity: EntityMetadata) -> inheritance.InheritanceEntityView:
-        """``entity``'s compiled family-effective view — its applicable member
-        chain and the indexes over it a write row's names resolve through.
-
-        An inheritance participant declares only its own members while its
-        writes name every inherited one, so the applicable chain, not the
-        Entity's own declarations, is what a write-side member lookup reads.
-        """
-        position = self.families.entity(entity.identity)
-        if position is None:  # pragma: no cover - the facet covers every accepted Entity
-            raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-        return position
-
-    def declaring(self, entity: EntityMetadata) -> EntityMetadata:
-        """The accepted Metadata that DECLARES ``entity``'s family facts — its
-        family root, itself for a standalone Entity.
-
-        Temporality, the version column, and the physical primary key are
-        family-wide and root-owned (`m-inheritance` "Inherited members"), so
-        every write-side family fact resolves through this rather than through
-        a possibly-empty local declaration.
-        """
-        root = self.model.entity(self.view(entity).root)
-        return entity if root is None else root
-
-    def primary_key(self, entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
-        """``entity``'s family-effective primary key, in chain order."""
-        return tuple(
-            attribute
-            for attribute in self.view(entity).applicable_attributes
-            if isinstance(attribute.primary_key, PrimaryKey)
-        )
-
-
-def family_facts(model: Metamodel) -> FamilyFacts:
-    """``model``'s family-fact reader over the Inheritance Facet it carries."""
-    return FamilyFacts(model=model, families=inheritance.view(model))
-
-
 def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) -> ObjectKey | None:
     """The identity of the single object a keyed write targets, or ``None``.
 
@@ -182,23 +122,24 @@ def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) 
     one) — an unidentifiable write is never coalesced nor observation-bound.
     """
     if isinstance(instruction, PreparedKeyedWrite):
-        return resolve_object_key(instruction, family_facts(model))
+        return resolve_object_key(instruction, inheritance.view(model))
     if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
         return None
     entity = entity_by_name(model, instruction.entity)
     if entity is None:
         return None
-    return _row_identity(entity, family_facts(model), instruction.rows[0])
+    return _row_identity(entity, inheritance.view(model), instruction.rows[0])
 
 
-def resolve_object_key(instruction: PreparedWrite, families: FamilyFacts) -> ObjectKey | None:
-    """:func:`object_key` for a caller that already holds the family facts.
+def resolve_object_key(
+    instruction: PreparedWrite, families: inheritance.InheritanceFacet
+) -> ObjectKey | None:
+    """:func:`object_key` for a caller that already holds the Inheritance Facet.
 
-    Primary-key resolution is FAMILY-EFFECTIVE: an inheritance participant's key
-    is declared on the root alone (m-inheritance "Inherited members"), so the
-    Entity's own declared Attributes are wrongly empty for a concrete subtype —
-    every corpus family's own keyed writes — and the applicable member chain the
-    Inheritance Facet precomputes is what carries the inherited key.
+    The key is the family's: an inheritance participant's key is declared on the
+    root alone (m-inheritance "Inherited members"), so the Entity's own
+    declarations are wrongly empty for a concrete subtype, and the compiled view
+    names the root's key Attribute at every position.
     """
     if not isinstance(instruction, PreparedKeyedWrite) or len(instruction.rows) != 1:
         return None
@@ -206,23 +147,17 @@ def resolve_object_key(instruction: PreparedWrite, families: FamilyFacts) -> Obj
 
 
 def _row_identity(
-    entity: EntityMetadata, families: FamilyFacts, row: Mapping[str, object]
+    entity: EntityMetadata, families: inheritance.InheritanceFacet, row: Mapping[str, object]
 ) -> ObjectKey | None:
     """``row``'s Object Key under ``entity`` — the one key derivation both
-    entry points share, so the family-effective primary key stays one decision."""
-    # An accepted Entity always carries a primary key, so the family-effective
-    # chain is never empty and only the row itself can leave a write unkeyed.
-    pairs: list[tuple[str, object]] = []
-    for name in primary_key_names(families, entity):
-        if name not in row:
-            return None
-        value = row[name]
-        if isinstance(value, Mapping):
-            return None
-        pairs.append((name, value))
-    return ObjectKey(entity.identity, tuple(pairs))
-
-
-def primary_key_names(families: FamilyFacts, entity: EntityMetadata) -> list[str]:
-    """``entity``'s family-effective primary-key Attribute names, in chain order."""
-    return [attribute.identity.name for attribute in families.primary_key(entity)]
+    entry points share, so the family primary key stays one decision."""
+    position = families.entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    name = position.primary_key.identity.name
+    if name not in row:
+        return None
+    value = row[name]
+    if isinstance(value, Mapping):
+        return None
+    return ObjectKey(entity.identity, ((name, value),))

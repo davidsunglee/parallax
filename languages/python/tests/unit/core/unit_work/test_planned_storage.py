@@ -27,7 +27,7 @@ import pytest
 # up, which is this module's own namespace rather than `unit_work.temporal`'s.
 import parallax.core.unit_work.write_settlement as write_settlement
 from parallax.conformance import models
-from parallax.core import inheritance
+from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.base import INFINITY, FrozenMap
@@ -35,7 +35,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.metamodel import FacetKey
+from parallax.core.metamodel import AttributeMetadata, FacetKey, Metamodel
 from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
@@ -74,9 +74,6 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.observe import adopt_predecessor_row
 from parallax.core.unit_work.planned import ChangedFrom, PlannedUpdate, adopt_planned_row
-from parallax.core.unit_work.planner import (
-    FamilyFacts,  # producer-reach regression only
-)
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -96,7 +93,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, temporal_group
 from tests._support.root_ownership import own_root
 from tests.unit._document_layout_support import PERSON, document_model
 from tests.unit._gc_reachability import reachable_objects
@@ -107,6 +104,7 @@ _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
 _BALANCE = _MODELS["balance"]
 _BRANCH = _MODELS["branch"]
+_POSITION = _MODELS["position"]
 
 
 # --------------------------------------------------------------------------- #
@@ -628,7 +626,6 @@ _PRODUCER_CLASSES = (
     SystemClock,
     WritePlanner,
     WriteSettlement,
-    FamilyFacts,
     MilestoneTopology,
     BatchingStrategy,
     ConcurrencyStrategy,
@@ -867,6 +864,96 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
     _ = list(plan.steps)
     # No step access — first, repeated, or iterated — re-resolves the topology.
     assert len(calls) == 1
+
+
+def _refuse_producers(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> None:
+    """Fail every model, facet, and declaration read a settled step could use
+    to re-derive a family fact, from now on."""
+
+    def consulted(*_args: object) -> object:
+        raise AssertionError("packed step access consulted a producer")
+
+    for facet, methods in (
+        (inheritance.view(model), ("entity", "position")),
+        (temporal_read.view(model), ("shape", "axis")),
+        (opt_lock.view(model), ("key",)),
+    ):
+        for method in methods:
+            monkeypatch.setattr(type(facet), method, consulted)
+    monkeypatch.setattr(type(model), "facet", consulted)
+    monkeypatch.setattr(type(model), "entity", consulted)
+    entity_type = type(model.entities[0])
+    monkeypatch.setattr(entity_type, "as_of_axis", consulted)
+    monkeypatch.setattr(entity_type, "declared_as_of_axes", property(consulted))
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(consulted))
+    monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(consulted))
+
+
+def _value_update(entity: str, valid_from: dt.datetime | None) -> PredicateWrite:
+    return PredicateWrite(
+        "update",
+        PredicateSelection(
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00")
+        ),
+        assignments=(WriteAssignment(f"{entity}.value", Decimal("9.00")),),
+        valid_from=valid_from,
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "entity", "axes", "valid_from"),
+    [
+        (_BALANCE, "Balance", {}, None),
+        (
+            _POSITION,
+            "Position",
+            {"validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC), "validEnd": INFINITY},
+            dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        ),
+    ],
+    ids=["transaction-time", "bitemporal"],
+)
+def test_packed_temporal_steps_consult_no_producer_on_repeated_access(
+    monkeypatch: pytest.MonkeyPatch,
+    model: Metamodel,
+    entity: str,
+    axes: Mapping[str, object],
+    valid_from: dt.datetime | None,
+) -> None:
+    # Every row of a packed group closes by the family's settled axes, binds
+    # its successors' intervals from them, and resolves its members through the
+    # retained view, so once `finalize()` returns no row's step — first,
+    # repeated, out of order, or iterated — reads a facet, the model, or a
+    # declaration again.
+    rows = [
+        {
+            "id": row_id,
+            "acctNum": "A",
+            "value": Decimal("1.00"),
+            **axes,
+            "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "txEnd": INFINITY,
+        }
+        for row_id in (1, 2, 3)
+    ]
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                actor_identity=TEST_ACTOR_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[temporal_group(_value_update(entity, valid_from), model, rows)],
+            )
+        )
+        .plan
+    )
+    settled = list(plan.steps)
+    assert len(settled) == len(rows) * (3 if valid_from is not None else 2)
+    _refuse_producers(monkeypatch, model)
+    assert [plan.steps[index] for index in reversed(range(len(settled)))] == settled[::-1]
+    assert [plan.steps[index] for index in range(len(settled))] == settled
+    assert list(plan.steps) == settled
 
 
 def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> None:

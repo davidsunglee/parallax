@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.storage_layout import DocumentPath, EntityLayoutView
-from parallax.snapshot.handle._family import entity_layout, family_primary_key
+from parallax.snapshot.handle._family import entity_layout, family_view
 
 __all__ = [
     "collapse_group_key",
@@ -92,7 +92,7 @@ def collapse_group_key(
     if view is None:
         return None
     members: Sequence[str] = (
-        [attribute.identity.name for attribute in family_primary_key(meta, entity)]
+        (family_view(meta, entity).primary_key.identity.name,)
         if mutation == "delete"
         else list(row)
     )
