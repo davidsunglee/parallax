@@ -19,7 +19,6 @@ after formation accepted it.
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -64,7 +63,6 @@ from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"
-_COMPOSITE_KEY = frozenset({"id", "sku"})
 
 
 def _identity(name: str, *, namespace: str | None = _NAMESPACE) -> EntityIdentity:
@@ -131,29 +129,21 @@ class _DoctoredFacet:
 
 
 class _DoctoredModel:
-    """One accepted model with a replaced Inheritance Facet, local metadata, or both."""
+    """One accepted model with a replaced Inheritance Facet."""
 
-    def __init__(
-        self,
-        real: Metamodel,
-        *,
-        facet: InheritanceFacet | None = None,
-        entities: dict[EntityIdentity, Any] | None = None,
-    ) -> None:
+    def __init__(self, real: Metamodel, *, facet: InheritanceFacet) -> None:
         self._real = real
         self._facet = facet
-        self._entities = entities or {}
 
     @property
     def entities(self) -> Sequence[Any]:
         return self._real.entities
 
     def entity(self, identity: EntityIdentity) -> Any:
-        replacement = self._entities.get(identity)
-        return self._real.entity(identity) if replacement is None else replacement
+        return self._real.entity(identity)
 
     def facet[T](self, key: FacetKey[T]) -> T:
-        if self._facet is not None and key == INHERITANCE_FACET_KEY:
+        if key == INHERITANCE_FACET_KEY:
             return cast("T", self._facet)
         return self._real.facet(key)
 
@@ -417,49 +407,29 @@ def test_an_inherited_key_is_the_position_the_family_root_declared() -> None:
     assert cat.primary_key == animal.primary_key == (cat.index_of[key],)
 
 
-def _with_composite_key(model: Metamodel, identity: EntityIdentity) -> Metamodel:
-    """``model`` with every ``_COMPOSITE_KEY`` Attribute of ``identity`` declared
-    a primary key.
-
-    No accepted Metamodel carries a composite key — formation admits one
-    primary-key Attribute per Entity (`metamodel-primary-key-multiple`) — so the
-    second key column is doctored on after formation accepted the model.
-    """
-    declared = model.entity(identity)
-    assert declared is not None
-    composite = _DoctoredEntity(
-        declared,
-        tuple(
-            attribute
-            if attribute.identity.name not in _COMPOSITE_KEY
-            else dataclasses.replace(attribute, primary_key=PrimaryKey())
-            for attribute in declared.declared_attributes
-        ),
-    )
-    return cast("Metamodel", _DoctoredModel(model, entities={identity: composite}))
+def test_every_corpus_key_position_locates_its_family_key_in_its_own_row() -> None:
+    for stem, model, identity, layout in _corpus_layouts():
+        key = _view(model, identity).primary_key
+        assert layout.primary_key == (layout.index_of[key.identity],), (stem, identity.canonical)
 
 
-def test_a_composite_key_is_its_positions_in_the_order_the_family_declared_it() -> None:
-    identity = _identity("Order")
-    layout = LayoutCatalog(_with_composite_key(corpus_model("orders"), identity)).entity(identity)
-    positions = tuple(
-        layout.index_of[attribute.identity]
-        for attribute in layout.attributes
-        if attribute.identity.name in _COMPOSITE_KEY
-    )
-    assert len(positions) == len(_COMPOSITE_KEY)
-    assert layout.primary_key == positions
+def test_laying_out_a_family_reads_its_formed_key_rather_than_searching_declarations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Formation already found each family's one key Attribute, so a catalog
+    # built afterwards locates that answer and never asks a declared Attribute
+    # whether it is the key.
+    model = corpus_model("animal")
+    keys = {entity.identity: _view(model, entity.identity).primary_key for entity in model.entities}
 
+    def undiscoverable(attribute: AttributeMetadata) -> object:
+        raise AssertionError(f"the catalog searched {attribute.identity} for the family key")
 
-class _DoctoredEntity:
-    """One Entity's accepted local metadata with its Attributes replaced."""
-
-    def __init__(self, real: Any, attributes: tuple[AttributeMetadata, ...]) -> None:
-        self._real = real
-        self.declared_attributes = attributes
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._real, name)
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
+    catalog = LayoutCatalog(model)
+    for identity, key in keys.items():
+        layout = catalog.entity(identity)
+        assert layout.primary_key == (layout.index_of[key.identity],), identity
 
 
 def _key_attribute(layout: EntityLayout) -> Any:

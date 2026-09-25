@@ -20,6 +20,7 @@ from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
 )
+from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.inheritance._compile import compile_facet
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
@@ -52,6 +53,11 @@ from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
 from tests._support import fake_metamodel as fake
 from tests.unit._metamodel_support import Declaration, identity, key, source
+from tests.unit.core._family_owner_support import (
+    DescendantsFirst,
+    family_roots,
+    record_root_derivations,
+)
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"
@@ -348,6 +354,68 @@ def test_a_family_inherits_the_root_declared_persistence() -> None:
 
 
 # --------------------------------------------------------------------------
+# One owner per family fact: the root's Metadata and its key Attribute.
+# --------------------------------------------------------------------------
+
+# A three-level table-per-hierarchy family, and the table-per-concrete-subtype
+# families that carry an explicit version and bitemporal axes on their roots.
+_FAMILY_ROOTS: Final[dict[str, str]] = {
+    "animal": "Animal",
+    "appliance": "Appliance",
+    "rate": "Rate",
+}
+
+
+@pytest.mark.parametrize(("stem", "root_name"), sorted(_FAMILY_ROOTS.items()))
+def test_every_position_in_a_family_shares_its_roots_metadata_and_key_attribute(
+    stem: str, root_name: str
+) -> None:
+    model = _formed(stem)
+    facet = inheritance.view(model)
+    root = model.entity(_corpus_entity(root_name))
+    assert root is not None
+    key = root.attribute("id")
+    assert key is not None
+    members = [
+        entity.identity
+        for entity in model.entities
+        if _view(facet, entity.identity.name).root == root.identity
+    ]
+    assert len(members) > 2
+    for member in members:
+        assert inheritance.root_metadata(facet, model, member) is root, member
+        assert _view(facet, member.name).primary_key is key, member
+
+
+def test_a_standalone_entitys_key_is_the_attribute_it_declares() -> None:
+    model = _formed("animal")
+    person = model.entity(_corpus_entity("Person"))
+    assert person is not None
+    assert inheritance.root_metadata(inheritance.view(model), model, person.identity) is person
+    assert _view(inheritance.view(model), "Person").primary_key is person.attribute("id")
+
+
+def test_a_family_listed_descendants_first_derives_its_key_once_at_the_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _formed("animal")
+    metadata = DescendantsFirst(model)
+    listed = [entity.identity.name for entity in metadata.entities]
+    assert listed.index("Dog") < listed.index("Pet") < listed.index("Animal")
+    derived = record_root_derivations(monkeypatch, inheritance_compile, "_primary_key")
+    facet = compile_facet(metadata)
+    assert sorted(derived, key=_canonical) == sorted(family_roots(model), key=_canonical)
+    root = model.entity(_corpus_entity("Animal"))
+    assert root is not None
+    for name in ("Animal", "Pet", "Dog", "Cat", "WildBoar"):
+        assert _view(facet, name).primary_key is root.attribute("id"), name
+
+
+def _canonical(identity: EntityIdentity) -> tuple[str, str]:
+    return identity.sort_key
+
+
+# --------------------------------------------------------------------------
 # Position projection.
 # --------------------------------------------------------------------------
 
@@ -584,6 +652,25 @@ def test_an_ancestry_reaching_no_abstract_root_is_a_compiler_contract_failure() 
         compile_facet(metadata)
 
 
+@pytest.mark.parametrize("keys", [0, 2])
+def test_a_root_without_exactly_one_key_is_a_compiler_contract_failure(keys: int) -> None:
+    # Validation proves every accepted family declares exactly one key on its
+    # root, so any other count means the compiler was handed metadata no
+    # accepted model can be.
+    widget = EntityIdentity(None, "Widget")
+    metadata = fake.FakeMetamodel(
+        (
+            fake.FakeEntity(
+                widget,
+                declared_container=Table("widget"),
+                declared_attributes=tuple(key(widget, f"id{index}") for index in range(keys)),
+            ),
+        )
+    )
+    with pytest.raises(RuntimeError, match=f"declares {keys} primary-key Attributes"):
+        compile_facet(metadata)
+
+
 def test_the_facet_copies_no_attribute_or_value_object_metadata() -> None:
     model = _formed("animal")
     facet = inheritance.view(model)
@@ -603,6 +690,7 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     view = facet.entity(fake.ACCOUNT)
     assert view is not None
     assert view.root == fake.ACCOUNT
+    assert view.primary_key.identity == AttributeIdentity(fake.ACCOUNT, "id")
     assert view.concrete_subtypes == (fake.ACCOUNT,)
     assert view.container == Table("account")
     assert _value_object_names(view.superset_value_objects) == ["contact"]

@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
-from parallax.core.inheritance import EntityMemberSelection, family_variant_name
+from parallax.core.inheritance import (
+    EntityMemberSelection,
+    InheritanceEntityView,
+    family_variant_name,
+)
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -14,7 +18,6 @@ from parallax.core.metamodel import (
     MemberIdentity,
     Metamodel,
     Multiplicity,
-    PrimaryKey,
     RelationshipIdentity,
     TablePerConcreteSubtype,
     ValueObjectMetadata,
@@ -46,11 +49,12 @@ class NarrowableView(Protocol):
 class EntityLayout:
     """Member rows contain ancestry-ordered Attributes, then Value Objects.
 
-    ``primary_key`` indexes that row in declared key order. ``family`` is the
-    family root except for table-per-concrete-subtype, whose concrete classes
-    have independent key namespaces. Relationship positions use whole identities
-    and ancestry-first declaration order. ``family_variant`` is qualified only
-    when concrete local names collide; standalone Entities have none.
+    ``primary_key`` locates the family's key Attribute in that row. ``family``
+    is the family root except for table-per-concrete-subtype, whose concrete
+    classes have independent key namespaces. Relationship positions use whole
+    identities and ancestry-first declaration order. ``family_variant`` is
+    qualified only when concrete local names collide; standalone Entities have
+    none.
     """
 
     concrete: EntityIdentity
@@ -175,7 +179,7 @@ class LayoutCatalog:
                 for direction in navigable
                 if direction.cardinality.target is Multiplicity.MANY
             ),
-            primary_key=self._key_positions(identity, position.root, index_of),
+            primary_key=self._key_positions(position, index_of),
             temporal_starts=self._temporal_start_positions(position.root, index_of),
             family_variant=(
                 None if position.strategy is None else family_variant_name(facet, identity)
@@ -202,39 +206,26 @@ class LayoutCatalog:
             for axis in sorted(declaring.declared_as_of_axes, key=lambda axis: axis.dimension.value)
         )
 
+    @staticmethod
     def _key_positions(
-        self,
-        identity: EntityIdentity,
-        root: EntityIdentity,
-        index_of: Mapping[MemberIdentity, int],
+        position: InheritanceEntityView, index_of: Mapping[MemberIdentity, int]
     ) -> tuple[int, ...]:
         """Where the family's primary key sits in this concrete's member row.
 
         The family root owns the key even when a descendant is what a row
-        resolved to, so the positions are the root's declared primary-key
-        Attributes located in the concrete's own family-effective row. A family
-        declaring no key, and one whose key does not locate there in full, are
-        both model defects: no row of such an Entity could carry a graph-local
+        resolved to, so the position is the family key Attribute located in the
+        concrete's own family-effective row. A key that does not locate there is
+        a model defect: no row of such an Entity could carry a graph-local
         identity at all.
         """
-        declaring = self._model.entity(root)
-        if declaring is None:  # pragma: no cover - an accepted model declares every family root
+        at = index_of.get(position.primary_key.identity)
+        if at is None:
             raise ValueError(
-                f"{identity.canonical} names a family root {root.canonical} this model "
-                "does not declare"
+                f"{position.entity.canonical} carries no position for the primary key its "
+                f"family {position.root.canonical} declares, so no row of it names a "
+                "logical node"
             )
-        key = tuple(
-            attribute.identity
-            for attribute in declaring.declared_attributes
-            if isinstance(attribute.primary_key, PrimaryKey)
-        )
-        positions = tuple(index_of[name] for name in key if name in index_of)
-        if not key or len(positions) != len(key):
-            raise ValueError(
-                f"{identity.canonical} carries no position for the primary key its family "
-                f"{root.canonical} declares, so no row of it names a logical node"
-            )
-        return positions
+        return (at,)
 
 
 @dataclass(frozen=True, slots=True)

@@ -27,7 +27,6 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     EntityMetadata,
-    PrimaryKey,
     ValueObjectMetadata,
     VoDocumentViolation,
     WriteAssignmentError,
@@ -122,17 +121,13 @@ def validate_subtype_write(
     facet = view(model)
     position = _entity_view(facet, entity.identity)
     root = _entity_view(facet, position.root)
-    pk_names = frozenset(
-        attribute.identity.name
-        for attribute in root.applicable_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
+    key = position.primary_key.identity.name
     name = entity.identity.name
-    if not pk_names & row.keys():
+    if key not in row:
         raise InheritanceError(
             "subtype-write-set-based-unsupported",
             f"{name}: write carries none of the family's primary-key attribute(s) "
-            f"{sorted(pk_names)} -- a keyless payload denotes an unsupported set-based "
+            f"{[key]} -- a keyless payload denotes an unsupported set-based "
             "inheritance write",
             entity=name,
         )

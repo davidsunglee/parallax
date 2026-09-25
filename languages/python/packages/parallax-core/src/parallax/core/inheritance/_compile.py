@@ -21,6 +21,7 @@ from parallax.core.metamodel import (
     FacetKey,
     InheritanceStrategy,
     PersistenceMode,
+    PrimaryKey,
     RelationshipDeclaration,
     StorageContainer,
     TablePerConcreteSubtype,
@@ -36,13 +37,15 @@ __all__ = ["MODEL_COMPILER", "root_metadata"]
 def root_metadata(
     inheritance: InheritanceFacet, metadata: CompiledMetadata, entity: EntityIdentity
 ) -> EntityMetadata:
-    """The Metadata of ``entity``'s family root, resolved through the facet.
+    """The accepted Metadata of ``entity``'s family root, resolved through the facet.
 
-    A downstream compiler reads a root's own declarations — its axes, its version
-    Attribute — through this. The Inheritance Facet covers every accepted Entity
-    and its root is one of them, so an absent view, or a root the accepted
-    Metamodel does not contain, is a state formation output cannot be in and
-    raises a compiler contract failure rather than a model defect.
+    The one read of a root's own declarations, for downstream compilers over
+    ``CompiledMetadata`` and runtime consumers over an accepted Metamodel alike;
+    a consumer needing only the family's identity reads the view's ``root``.
+    The Inheritance Facet covers every accepted Entity and its root is one of
+    them, so an absent view, or a root the metadata does not contain, is a state
+    formation output cannot be in and raises a contract failure rather than a
+    model defect.
     """
     position = inheritance.entity(entity)
     root = None if position is None else metadata.entity(position.root)
@@ -55,7 +58,12 @@ def root_metadata(
 
 
 def compile_facet(metadata: CompiledMetadata) -> InheritanceFacet:
-    """Compile every accepted Entity's family-effective position."""
+    """Compile every accepted Entity's family-effective position.
+
+    Roots compile first, whatever order ``metadata`` lists them in, so each
+    family's primary key is found once on its root and every descendant carries
+    that same accepted Attribute.
+    """
     by_identity = {entity.identity: entity for entity in metadata.entities}
     ancestries = {entity.identity: _ancestry(entity, by_identity) for entity in metadata.entities}
     children: dict[EntityIdentity, list[EntityIdentity]] = {}
@@ -63,12 +71,40 @@ def compile_facet(metadata: CompiledMetadata) -> InheritanceFacet:
         parent = inheritance_parent(entity.inheritance)
         if parent is not None:
             children.setdefault(parent, []).append(entity.identity)
-    return inheritance_facet(
-        [
-            _facts(entity, by_identity, ancestries[entity.identity], children)
-            for entity in metadata.entities
-        ]
-    )
+    facts: dict[EntityIdentity, InheritanceEntityFacts] = {}
+    for entity in metadata.entities:
+        ancestry = ancestries[entity.identity]
+        if ancestry[0] == entity.identity:
+            facts[entity.identity] = _facts(
+                entity, by_identity, ancestry, children, _primary_key(entity)
+            )
+    for entity in metadata.entities:
+        ancestry = ancestries[entity.identity]
+        if ancestry[0] != entity.identity:
+            facts[entity.identity] = _facts(
+                entity, by_identity, ancestry, children, facts[ancestry[0]].primary_key
+            )
+    return inheritance_facet([facts[entity.identity] for entity in metadata.entities])
+
+
+def _primary_key(root: EntityMetadata) -> AttributeMetadata:
+    """The one primary-key Attribute ``root`` declares for its whole family.
+
+    Validation asks the one-key rule of every position, the root included, so an
+    accepted family declares exactly one key and declares it on the root; any
+    other count is a state no accepted model can be in.
+    """
+    keys = [
+        attribute
+        for attribute in root.declared_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    ]
+    if len(keys) != 1:
+        raise RuntimeError(
+            f"Entity {root.identity.canonical!r} declares {len(keys)} primary-key "
+            "Attributes for its family, which validation should have rejected"
+        )
+    return keys[0]
 
 
 def _ancestry(
@@ -140,6 +176,7 @@ def _facts(
     by_identity: Mapping[EntityIdentity, EntityMetadata],
     ancestry: tuple[EntityIdentity, ...],
     children: Mapping[EntityIdentity, list[EntityIdentity]],
+    primary_key: AttributeMetadata,
 ) -> InheritanceEntityFacts:
     root = by_identity[ancestry[0]]
     strategy = root.inheritance.strategy if isinstance(root.inheritance, AbstractRoot) else None
@@ -154,6 +191,7 @@ def _facts(
     return InheritanceEntityFacts(
         entity=entity.identity,
         root=root.identity,
+        primary_key=primary_key,
         strategy=strategy,
         ancestry=ancestry,
         concrete_subtypes=_concrete_subtypes(entity, by_identity, children),
