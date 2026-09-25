@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast, overload
+from typing import Protocol, cast, overload
 
 from parallax.core import deep_fetch, opt_lock
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
@@ -40,9 +40,6 @@ from parallax.snapshot.materialize._page import judged_state, release_page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
-if TYPE_CHECKING:
-    from parallax.core.base import NeutralType
-
 __all__ = [
     "INERT",
     "DeliveryPage",
@@ -53,6 +50,7 @@ __all__ = [
     "Materializer",
     "RowPublication",
     "StreamPageRead",
+    "page_cadence",
 ]
 
 
@@ -106,6 +104,16 @@ class _InertObserver:
 INERT: MaterializationObserver = _InertObserver()
 
 
+def _page_observer(observer: MaterializationObserver) -> MaterializationObserver | None:
+    return None if observer is INERT else observer
+
+
+def page_cadence(page: Page) -> MaterializationObserver:
+    """The observer ``page`` was built under, or the inert one."""
+    observer = page.observer
+    return INERT if observer is None else cast("MaterializationObserver", observer)
+
+
 @dataclass(frozen=True, slots=True)
 class EagerPageRead:
     """Inputs for one eager Page read."""
@@ -135,15 +143,12 @@ class FlatPageRead:
 class RowPublication:
     """One flat batch and the Page-owned Entity States that judged it.
 
-    Header metadata needed by row publication and predecessor evidence is retained
-    beside the Page. Provider rows end at Page assembly.
+    Each row's `familyVariant` and shared document are retained beside the Page.
+    Provider rows end at Page assembly.
     """
 
     variants: tuple[str | None, ...]
     documents: tuple[object | None, ...]
-    publication_keys: tuple[tuple[str, ...], ...]
-    publication_renames: tuple[tuple[tuple[str, str], ...], ...]
-    publication_encodings: tuple[tuple[tuple[str, NeutralType], ...], ...]
     page: Page
 
 
@@ -248,51 +253,14 @@ class Materializer:
             rows = request.read()
             self.observer.statement_executed(ROOT_LEVEL, len(rows))
             prepared = request.prepared or bind(request.model, request.compiled)
-            builder = PageBuilder(ViewSchema.of(), self.observer)
+            builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
             converted = tuple(
                 prepared.convert_driver(row, builder, source=ROOT_LEVEL) for row in rows
             )
-            page = builder.finish(tuple(item[0] for item in converted), request.pin)
-            publication_keys = tuple(
-                request.compiled.publication_keys(item[1], item[3]) for item in converted
-            )
-            publication_renames: list[tuple[tuple[str, str], ...]] = []
-            for item, keys in zip(converted, publication_keys, strict=True):
-                layout = request.model.layouts.entity(item[1])
-                reads = request.compiled.attribute_reads(item[1])
-                publication_renames.append(
-                    tuple(
-                        (attribute.storage.name, read.result_key)
-                        for attribute, read in zip(layout.attributes, reads, strict=True)
-                        if attribute.storage.name not in keys and read.result_key in keys
-                    )
-                    if reads
-                    else ()
-                )
-            publication_encodings: list[tuple[tuple[str, NeutralType], ...]] = []
-            for item, keys in zip(converted, publication_keys, strict=True):
-                layout = request.model.layouts.entity(item[1])
-                reads = request.compiled.attribute_reads(item[1])
-                publication_encodings.append(
-                    tuple(
-                        (
-                            read.result_key if read.result_key in keys else attribute.storage.name,
-                            attribute.type,
-                        )
-                        for attribute, read in zip(layout.attributes, reads, strict=True)
-                        if read.encoded
-                        and (read.result_key in keys or attribute.storage.name in keys)
-                    )
-                    if reads
-                    else ()
-                )
             return RowPublication(
                 tuple(item[3] for item in converted),
                 tuple(item[2] for item in converted),
-                publication_keys,
-                tuple(publication_renames),
-                tuple(publication_encodings),
-                page,
+                builder.finish(tuple(item[0] for item in converted), request.pin),
             )
 
         return self._read_delivery_page(request)
@@ -358,7 +326,7 @@ class Materializer:
         meta = model.meta
         plan = root_read.plan
         includes = plan.include_tree()
-        builder = plan.page_builder(None if root_read.observer is INERT else root_read.observer)
+        builder = plan.page_builder(_page_observer(root_read.observer))
         observations = ObservedRows()
         root_rows = root_read.take_rows()
         root_refs = _read.convert_rows(

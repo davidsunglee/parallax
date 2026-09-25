@@ -40,7 +40,9 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core import predicate as oa
 from parallax.core.deep_fetch import RelationshipViewKey
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -50,6 +52,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
+    entity_by_name,
 )
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
@@ -69,10 +72,12 @@ from parallax.snapshot.materialize._page import (
     page_rows,
     stored_order_key,
 )
+from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._publication import publication_issue
 from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize._wire import EntityReader
 from tests._support import snapshot_models as sm
+from tests._support.sql import compile_read
 from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -243,9 +248,13 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
     # diagnostic state into an ordinary mapping.
     fixture = PageFixture(_ORDERS)
     keyless = fixture.node("SnapOrder", {**_ORDER_ROW, "id": None})
-    stage = RowPublication((None,), (None,), ((),), ((),), ((),), fixture.page(keyless))
+    stage = RowPublication((None,), (None,), fixture.page(keyless))
+    meta = model_of(_ORDERS)
+    order = entity_by_name(meta, "SnapOrder")
+    assert order is not None
+    prepared = bind(CatalogedModel(meta), compile_read(oa.All(), meta, POSTGRES, order))
 
-    (published,) = _published_rows(stage, model_of(_ORDERS))
+    (published,) = _published_rows(stage, meta, prepared.row_publisher())
 
     assert invalid_record(published).data is None
 

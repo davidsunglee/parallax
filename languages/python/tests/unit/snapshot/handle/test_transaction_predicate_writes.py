@@ -62,6 +62,7 @@ from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
     BufferItem,
     EntityStateRow,
@@ -624,6 +625,30 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest(
         "update account set balance = ?, version = ? where id = ? and version = ?"
     )
     assert write_binds == (100.00, 2, 3, 1)  # account 1's no-op row never wrote
+
+
+def test_a_materializing_write_derives_no_row_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("predicate acquisition derived a row publication")
+
+    monkeypatch.setattr(CompiledRead, "publication_keys", forbidden)
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
+            Write(),
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("100.00"))
+        )
+
+    account_db(port).transact(fn, concurrency="optimistic")
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, CommitCall]
 
 
 def test_materializing_delete_where_writes_every_resolved_row() -> None:

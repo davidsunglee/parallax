@@ -23,6 +23,7 @@ __all__ = [
     "VersionObservation",
     "WriteObservation",
     "adopt_predecessor_row",
+    "occurrence_value",
 ]
 
 
@@ -132,7 +133,7 @@ class EntityStateRow(Mapping[str, object]):
         if position < len(attributes):
             return value
         declared = layout.occurrences[position - len(attributes)]
-        return _occurrence_value(value, declared.definition, self._absent)
+        return occurrence_value(value, declared.definition, self._absent)
 
     def __contains__(self, key: object) -> bool:
         shape = self._shape
@@ -252,10 +253,15 @@ class _DocumentItems(_AlignedItems):
 def _member_value(member: DocumentMember, value: object, absent: object | None) -> object:
     if isinstance(member, Leaf):
         return value
-    return _occurrence_value(value, member, absent)
+    return occurrence_value(value, member, absent)
 
 
-def _occurrence_value(value: object, declared: Occurrence, absent: object | None) -> object:
+def occurrence_value(value: object, declared: Occurrence, absent: object | None) -> object:
+    """View one positional Value Object cell by declared name without copying it.
+
+    A One cell answers one mapping view and a Many cell a tuple of them; ``None``
+    and ``absent`` pass through unchanged.
+    """
     if value is None or value is absent:
         return value
     shape = declared.shape

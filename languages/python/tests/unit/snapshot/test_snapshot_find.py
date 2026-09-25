@@ -12,7 +12,7 @@ edge-grouping/ordering.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
@@ -45,7 +45,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._layout import CatalogedModel, LayoutCatalog
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -57,7 +57,12 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, TemporalReadError
+from parallax.descriptor._records import Attribute as DescriptorAttribute
+from parallax.descriptor._records import Entity as DescriptorEntity
+from parallax.descriptor._records import Inheritance
+from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import (
     DeferredFeatureError,
     InvalidData,
@@ -74,6 +79,7 @@ from parallax.snapshot._read_result import FindResult, HistoryFindResult
 from parallax.snapshot.handle import _read, _read_scope
 from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.snapshot.materialize import (
     ClassifiedRoot,
     Page,
@@ -95,6 +101,7 @@ from tests._support.db_port import (
 )
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
+from tests.unit._corpus_model_support import formed
 from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
 
 _MODELS = models.load_models()
@@ -998,6 +1005,233 @@ def test_the_values_lane_trusts_each_native_scalar_row() -> None:
     ).rows
     assert first == {"id": 1, "name": "Ada"}
     assert second == {"id": 2, "name": None}
+
+
+def _encoded_payload_family() -> Metamodel:
+    root = DescriptorEntity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            DescriptorAttribute(name="id", type="int64", column="id", primary_key=True),
+            DescriptorAttribute(name="payload", type="bytes", column="payload", nullable=True),
+        ),
+    )
+    first = DescriptorEntity(
+        name="First",
+        table="first_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+    )
+    second = DescriptorEntity(
+        name="Second",
+        table="second_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+        attributes=(DescriptorAttribute(name="size", type="int32", column="size", nullable=True),),
+    )
+    return formed(DescriptorMetamodel(entities=(root, first, second)))
+
+
+def _row_form(
+    model: Metamodel,
+    target: str,
+    stored: list[MappingRow],
+    *,
+    cataloged: CatalogedModel | None = None,
+    planner: ReadPlanner = UNCACHED_READ_PLANNER,
+) -> tuple[_read.PublishedRow, ...]:
+    query = preflight(
+        deserialize_query({"target": target, "predicate": {"all": {}}}), model=model, form="rows"
+    )
+    return _read.find_rows(
+        query,
+        cataloged or _cataloged(model),
+        QueuePort([stored]),
+        edition="",
+        planner=planner,
+    ).rows
+
+
+def _counting_publication_keys(patched: pytest.MonkeyPatch) -> list[tuple[str, str | None]]:
+    derived: list[tuple[str, str | None]] = []
+    publication_keys = CompiledRead.publication_keys
+
+    def counting(
+        compiled: CompiledRead, resolved: EntityIdentity, variant: str | None
+    ) -> tuple[str, ...]:
+        derived.append((resolved.name, variant))
+        return publication_keys(compiled, resolved, variant)
+
+    patched.setattr(CompiledRead, "publication_keys", counting)
+    return derived
+
+
+def _animal(ordinal: int, kind: str) -> MappingRow:
+    return {**_ANIMAL_ROW, "id": ordinal, "kind": kind}
+
+
+def test_row_form_derives_one_publication_per_concrete_and_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derived = _counting_publication_keys(monkeypatch)
+
+    published = _row_form(
+        ANIMAL,
+        "Animal",
+        [
+            _animal(ordinal, kind)
+            for ordinal, kind in enumerate(("dog", "cat", "dog", "zebra", "cat", "zebra"), 1)
+        ],
+    )
+
+    assert len(published) == 6
+    assert derived == [("Dog", "Dog"), ("Cat", "Cat"), ("Animal", None)]
+
+
+def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cataloged, planner = _cataloged(ANIMAL), ReadPlanCache()
+    stored = [_animal(1, "dog"), _animal(2, "cat")]
+    first = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("row publication looked a bound fact up again")
+
+    monkeypatch.setattr(CompiledRead, "attribute_reads", forbidden)
+    monkeypatch.setattr(LayoutCatalog, "entity", forbidden)
+    derived = _counting_publication_keys(monkeypatch)
+    second = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
+
+    assert second == first
+    assert derived == [("Dog", "Dog"), ("Cat", "Cat")]
+
+
+def test_history_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("a history read derived a row publication")
+
+    monkeypatch.setattr(CompiledRead, "publication_keys", forbidden)
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "temporal": {"transaction-time": {"history": {}}},
+        }
+    )
+
+    assert _find_history(query, INVOICE, port).page.root_count == 1
+
+
+def _items(row: object) -> list[tuple[str, object]]:
+    return list(cast("Mapping[str, object]", row).items())
+
+
+def test_row_form_publishes_renamed_members_after_the_members_it_keeps() -> None:
+    first, second = _row_form(
+        _encoded_payload_family(),
+        "Root",
+        [
+            {"id": 1, "payload": "00ff", "size": None, "family_variant": "First"},
+            {"id": 2, "payload": None, "size": 3, "family_variant": "Second"},
+        ],
+    )
+
+    assert _items(first) == [
+        ("id", 1),
+        ("payload_hex", "00ff"),
+        ("size", None),
+        ("familyVariant", "First"),
+    ]
+    assert _items(second) == [
+        ("id", 2),
+        ("size", 3),
+        ("payload_hex", None),
+        ("familyVariant", "Second"),
+    ]
+
+
+def test_row_form_pads_sibling_keys_in_publication_key_order() -> None:
+    (invoice,) = _row_form(
+        DOCUMENT,
+        "Document",
+        [
+            {
+                "id": 1,
+                "title": "A",
+                "folder_id": None,
+                "currency": "USD",
+                "amount_due": Decimal("2.50"),
+                "body": None,
+                "paid_amount": None,
+                "family_variant": "Invoice",
+            }
+        ],
+    )
+
+    assert _items(invoice) == [
+        ("id", 1),
+        ("title", "A"),
+        ("folder_id", None),
+        ("currency", "USD"),
+        ("amount_due", Decimal("2.50")),
+        ("body", None),
+        ("paid_amount", None),
+        ("familyVariant", "Invoice"),
+    ]
+
+
+def test_row_form_publishes_an_unknown_tag_under_the_family_root_with_no_variant() -> None:
+    (unknown,) = _row_form(ANIMAL, "Animal", [{**_ANIMAL_ROW, "id": 2, "kind": "zebra"}])
+
+    record = cast("InvalidData[Mapping[str, object]]", unknown)
+    assert [issue.code for issue in record.issues] == ["stored-data-family-tag-unknown"]
+    assert _items(record.data) == [
+        ("id", 2),
+        ("name", ""),
+        ("owner_id", 10),
+        ("license_id", None),
+        ("indoor", None),
+        ("bark_volume", None),
+        ("tusk_length", None),
+    ]
+
+
+def test_row_form_leaves_a_member_published_under_both_names_unencoded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def both_names(
+        compiled: CompiledRead, resolved: EntityIdentity, variant: str | None
+    ) -> tuple[str, ...]:
+        del compiled, resolved, variant
+        return ("id", "payload", "payload_hex")
+
+    monkeypatch.setattr(CompiledRead, "publication_keys", both_names)
+    (first,) = _row_form(
+        _encoded_payload_family(),
+        "Root",
+        [{"id": 1, "payload": "00ff", "size": None, "family_variant": "First"}],
+    )
+
+    assert _items(first) == [
+        ("id", 1),
+        ("payload", b"\x00\xff"),
+        ("payload_hex", None),
+        ("familyVariant", "First"),
+    ]
 
 
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(

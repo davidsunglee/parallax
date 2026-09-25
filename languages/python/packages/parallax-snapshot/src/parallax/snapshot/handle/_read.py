@@ -38,11 +38,9 @@ from parallax.core.temporal_read import (
     TemporalShape,
     validated_query_pin,
 )
-from parallax.core.unit_work import Concurrency, EntityStateRow
-from parallax.core.wire import encode_wire
+from parallax.core.unit_work import Concurrency
 
 if TYPE_CHECKING:
-    from parallax.core.base import ManagedValue
     from parallax.snapshot.materialize._wire import EntityReader
 
 from parallax.snapshot._inspection import SnapshotInspectionError
@@ -64,6 +62,7 @@ from parallax.snapshot.handle._materialization import (
     MaterializationObserver,
     Materializer,
     RowPublication,
+    page_cadence,
 )
 from parallax.snapshot.handle._read_plan import UNCACHED_READ_PLANNER, ReadPlanner
 from parallax.snapshot.handle._retention import (
@@ -84,7 +83,7 @@ from parallax.snapshot.materialize import (
     wire_roots,
 )
 from parallax.snapshot.materialize._page import ABSENT
-from parallax.snapshot.materialize._prepared import PreparedRead
+from parallax.snapshot.materialize._prepared import PreparedRead, RowPublisher
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
@@ -694,34 +693,26 @@ def find_rows(
             prepared,
         )
     )
-    return RowsResult(rows=_published_rows(stage, meta), edition=edition)
+    return RowsResult(rows=_published_rows(stage, meta, prepared.row_publisher()), edition=edition)
 
 
-def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRow, ...]:
+def _published_rows(
+    stage: RowPublication, meta: Metamodel, publisher: RowPublisher
+) -> tuple[PublishedRow, ...]:
     """One published element per staged row, in result order."""
 
     def publish(root: RootView, position: int) -> Iterator[PublishedRow]:
-        variant = stage.variants[position]
         (verdict,) = classify_roots(root, meta, CONCURRENCY, ordinal_offset=position).roots
         node = root.roots[0]
-        detached: Mapping[str, object] | None = None
-        if node is not None:
-            values = dict(
-                EntityStateRow.over_members(
-                    root.layout(node), root.member_values(node), absent=ABSENT
+        detached = (
+            None
+            if node is None
+            else MappingProxyType(
+                publisher.publish(
+                    root.layout(node).concrete, root.member_values(node), stage.variants[position]
                 )
             )
-            for source, target in stage.publication_renames[position]:
-                if source in values:
-                    values[target] = values.pop(source)
-            for key, neutral_type in stage.publication_encodings[position]:
-                if key in values and values[key] is not None:
-                    values[key] = encode_wire(neutral_type, cast("ManagedValue", values[key]))
-            for key in stage.publication_keys[position]:
-                values.setdefault(key, None)
-            if variant is not None:
-                values["familyVariant"] = variant
-            detached = MappingProxyType(values)
+        )
         if isinstance(verdict, ClassifiedRoot):
             yield cast(
                 "InvalidData[Mapping[str, object]]",
@@ -732,11 +723,9 @@ def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRo
             raise ValueError("row publication requires one materialized root state")
         yield detached
 
-    cadence = cast(
-        "MaterializationObserver",
-        stage.page.observer if stage.page.observer is not None else MATERIALIZATION_INERT,
+    return tuple(
+        Materializer(page_cadence(stage.page)).roots(stage.page, publish, atomic=True, model=meta)
     )
-    return tuple(Materializer(cadence).roots(stage.page, publish, atomic=True, model=meta))
 
 
 def find_history(
@@ -1247,11 +1236,7 @@ def typed_publication(
                 sources=sources,
             )
 
-        cadence = cast(
-            "MaterializationObserver",
-            page.observer if page.observer is not None else MATERIALIZATION_INERT,
-        )
-        yield from Materializer(cadence).roots(
+        yield from Materializer(page_cadence(page)).roots(
             page,
             publish,
             atomic=atomic,
@@ -1317,11 +1302,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:
                 encode=current,
             )
 
-        cadence = cast(
-            "MaterializationObserver",
-            page.observer if page.observer is not None else MATERIALIZATION_INERT,
-        )
-        yield from Materializer(cadence).roots(
+        yield from Materializer(page_cadence(page)).roots(
             page,
             publish,
             atomic=atomic,

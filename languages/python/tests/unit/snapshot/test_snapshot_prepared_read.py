@@ -659,6 +659,27 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
     assert tuple(map(dict, marks)) == ({"tag": "founder", "origin": {"port": "Oslo"}},)
 
 
+def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
+    prepared = _prepared(REGISTER, "Register")
+    builder = PageBuilder(ViewSchema.of())
+    index, _resolved, _document, variant = prepared.convert_driver(
+        {"id": 1, "payload": _stored_document(_ADA)}, builder, source=ROOT_LEVEL
+    )
+    root = RootView(builder.finish((index,), Pin()))
+
+    published = prepared.row_publisher().publish(
+        root.layout(0).concrete, root.member_values(0), variant
+    )
+
+    assert list(published) == ["id", "label", "note", "stamp", "marks"]
+    assert published["stamp"] == dt.date(2026, 1, 15)
+    (mark,) = cast("tuple[Mapping[str, object], ...]", published["marks"])
+    assert (mark["tag"], dict(cast("Mapping[str, object]", mark["origin"]))) == (
+        "founder",
+        {"port": "Oslo"},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # What still happens per row on the conforming path.                           #
 # --------------------------------------------------------------------------- #
