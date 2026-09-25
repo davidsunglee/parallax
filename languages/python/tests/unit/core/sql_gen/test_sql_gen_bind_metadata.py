@@ -14,7 +14,6 @@ from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen import _predicate as sql_predicate
-from parallax.core.sql_gen import _write as sql_write
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
@@ -59,24 +58,6 @@ def test_entity_scope_reference_front_doors_resolve_direct_members() -> None:
     assert scope.subject_for(
         scope.entity_attribute(f"{entity.identity.canonical}.id")
     ).compared == ("t0.id")
-
-
-def test_declaring_helper_bounds_a_missing_inheritance_position(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entity = WALLET.entities[0]
-
-    class MissingPosition:
-        @staticmethod
-        def entity(_identity: object) -> None:
-            return None
-
-    def missing_view(_model: object) -> MissingPosition:
-        return MissingPosition()
-
-    monkeypatch.setattr(inheritance, "view", missing_view)
-
-    assert sql_write.declaring(WALLET, entity) is entity
 
 
 def test_nested_lowering_helpers_reject_the_wrong_validated_node_family() -> None:

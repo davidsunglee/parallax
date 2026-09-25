@@ -119,29 +119,8 @@ def _attribute(meta: Metamodel, identity: AttributeIdentity) -> AttributeMetadat
     return attribute
 
 
-def declaring(meta: Metamodel, entity: EntityMetadata) -> EntityMetadata:
-    position = inheritance.view(meta).entity(entity.identity)
-    if position is None:
-        return entity
-    root = meta.entity(position.root)
-    return entity if root is None else root
-
-
 def entity_layout(meta: Metamodel, entity: EntityMetadata) -> EntityLayoutView | None:
     return storage_layout.view(meta).entity(entity.identity)
-
-
-def version_attribute(
-    meta: Metamodel, declaring_entity: EntityMetadata
-) -> AttributeMetadata | None:
-    return next(
-        (
-            attribute
-            for attribute in declaring_entity.declared_attributes
-            if attribute.optimistic_locking
-        ),
-        None,
-    )
 
 
 def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
@@ -239,7 +218,8 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Low
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     ctx = _ctx(meta, dialect)
-    assignment_sql = _assignment_clause(ctx, view, step.assignments, meta, entity, dialect)
+    version = step.concurrency.attribute if isinstance(step.concurrency, Versioned) else None
+    assignment_sql = _assignment_clause(ctx, view, step.assignments, version, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
     return ctx.finish(
@@ -259,7 +239,7 @@ def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> Lower
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     ctx = _ctx(meta, dialect)
-    assignment_sql = _assignment_clause(ctx, view, step.assignments, meta, entity, dialect)
+    assignment_sql = _assignment_clause(ctx, view, step.assignments, None, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
@@ -281,12 +261,11 @@ def _assignment_clause(
     ctx: StatementBuilder,
     view: EntityLayoutView,
     assignments: PlannedAssignments,
-    meta: Metamodel,
+    version: AttributeIdentity | None,
     entity: EntityMetadata,
     dialect: Dialect,
 ) -> str:
-    version = version_attribute(meta, declaring(meta, entity))
-    version_column = None if version is None else _column(view, version.identity, entity)
+    version_column = None if version is None else _column(view, version, entity)
     cells = _member_cells(
         view,
         assignments.attributes,
@@ -463,13 +442,12 @@ def _gate(
     """
     if not isinstance(concurrency, Versioned) or not isinstance(concurrency.gate, VersionGate):
         return ""
-    gate = concurrency.gate
-    slot = view.layout.contribution(gate.attribute)
+    slot = view.layout.contribution(concurrency.attribute)
     if slot is None:  # pragma: no cover - a gate names the target's own version Attribute
         raise SqlGenError(
             f"{view.entity.canonical}: the version gate's Attribute occupies no Column"
         )
-    _bind(ctx, gate.observed_version, _attribute(meta, gate.attribute).type)
+    _bind(ctx, concurrency.gate.observed_version, _attribute(meta, concurrency.attribute).type)
     return f" and {dialect.quote(slot.column.name)} = ?"
 
 

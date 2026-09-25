@@ -838,13 +838,13 @@ destroy stored state no assignment can name.
 ### Write Gate and the concurrency decision
 
 ```text
-VersionGate(attribute: AttributeIdentity, observed_version: PositiveInt)
+VersionGate(observed_version: PositiveInt)
 TemporalGate(start_attribute: AttributeIdentity, observed_start: Instant)
 Ungated
 
 NonTemporalConcurrency =
     Unversioned
-  | Versioned(VersionGate | Ungated)
+  | Versioned(attribute: AttributeIdentity, gate: VersionGate | Ungated)
 ```
 
 A **Write Gate** carries only the extra equality predicate lowering renders. The
@@ -852,6 +852,11 @@ advanced version value and the close instant are **assignments**, not gate
 members, and a gate repeats neither the full observation nor the transaction's
 Effective Concurrency Strategy — both are consumed during planning and do not
 survive in the plan.
+
+`Versioned` names the target's version Attribute once, as planning settled it.
+Both strategies advance that Attribute, and only a Version Gate compares it
+against the observed version, so lowering reads it from the decision rather than
+deriving the target's version source again.
 
 Planned Update and Planned Delete carry a Non-Temporal Concurrency decision;
 Planned Close carries `TemporalGate | Ungated` directly, because every close

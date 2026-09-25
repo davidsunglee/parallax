@@ -257,7 +257,7 @@ def test_an_exact_affected_row_count_is_positive() -> None:
 @pytest.mark.parametrize(
     ("concurrency", "affected_rows"),
     [
-        (Versioned(gate=UNGATED), ANY_COUNT),
+        (Versioned(attribute=_VERSION, gate=UNGATED), ANY_COUNT),
         (UNVERSIONED, ExactCount(expected=1, on_shortfall=MISSING_TARGET)),
     ],
     ids=["versioned", "exact-count"],
@@ -295,7 +295,7 @@ def test_a_version_gate_requires_a_singleton_key_target() -> None:
     with pytest.raises(ValueError, match="singleton Key Target"):
         _delete(
             _TWO_KEYS,
-            Versioned(gate=VersionGate(attribute=_VERSION, observed_version=3)),
+            Versioned(attribute=_VERSION, gate=VersionGate(observed_version=3)),
             ExactCount(expected=2, on_shortfall=OPTIMISTIC_CONFLICT),
         )
 
@@ -305,7 +305,7 @@ def test_an_ungated_versioned_decision_may_address_several_keys() -> None:
     # is bound when the decision is Ungated.
     step = _delete(
         _TWO_KEYS,
-        Versioned(gate=UNGATED),
+        Versioned(attribute=_VERSION, gate=UNGATED),
         ExactCount(expected=2, on_shortfall=STALE_WRITE),
     )
     assert step.target == _TWO_KEYS
@@ -315,8 +315,8 @@ def test_an_ungated_versioned_decision_may_address_several_keys() -> None:
     ("concurrency", "shortfall"),
     [
         (UNVERSIONED, MISSING_TARGET),
-        (Versioned(gate=UNGATED), STALE_WRITE),
-        (Versioned(gate=VersionGate(attribute=_VERSION, observed_version=3)), OPTIMISTIC_CONFLICT),
+        (Versioned(attribute=_VERSION, gate=UNGATED), STALE_WRITE),
+        (Versioned(attribute=_VERSION, gate=VersionGate(observed_version=3)), OPTIMISTIC_CONFLICT),
     ],
     ids=["unversioned", "ungated", "gated"],
 )
@@ -333,10 +333,10 @@ def test_one_concurrency_decision_admits_one_shortfall_classification(
 @pytest.mark.parametrize(
     ("concurrency", "shortfall"),
     [
-        (Versioned(gate=UNGATED), MISSING_TARGET),
-        (Versioned(gate=UNGATED), OPTIMISTIC_CONFLICT),
+        (Versioned(attribute=_VERSION, gate=UNGATED), MISSING_TARGET),
+        (Versioned(attribute=_VERSION, gate=UNGATED), OPTIMISTIC_CONFLICT),
         (UNVERSIONED, STALE_WRITE),
-        (Versioned(gate=VersionGate(attribute=_VERSION, observed_version=3)), STALE_WRITE),
+        (Versioned(attribute=_VERSION, gate=VersionGate(observed_version=3)), STALE_WRITE),
     ],
     ids=["ungated-as-missing", "ungated-as-conflict", "unversioned-as-stale", "gated-as-stale"],
 )

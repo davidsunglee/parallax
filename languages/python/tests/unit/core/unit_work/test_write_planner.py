@@ -1012,7 +1012,7 @@ def test_a_versioned_update_with_a_recorded_observation_carries_a_settled_gate()
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
     version = next(ident for ident in step.assignments.attributes if ident.name == "version")
-    assert step.concurrency == Versioned(gate=VersionGate(attribute=version, observed_version=3))
+    assert step.concurrency == Versioned(attribute=version, gate=VersionGate(observed_version=3))
     assert step.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
 
 
@@ -1039,7 +1039,9 @@ def test_a_versioned_delete_with_a_recorded_observation_is_ungated_under_locking
     plan = _plan([delete], _ACCOUNT, observations={key_: VersionObservation(observed_version=3)})
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
-    assert step.concurrency == Versioned(gate=UNGATED)
+    assert step.concurrency == Versioned(
+        attribute=AttributeIdentity(_ACCOUNT.entities[0].identity, "version"), gate=UNGATED
+    )
     assert step.affected_rows == ExactCount(1, STALE_WRITE)
 
 

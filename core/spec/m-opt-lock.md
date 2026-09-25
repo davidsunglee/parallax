@@ -128,14 +128,10 @@ the observed version last.
 ### A gate carries only its equality predicate
 
 The gate decision is settled **during planning**, and what survives onto the
-planned write is only what the statement still has to render (`m-unit-work`'s
-Write Gate):
-
-```text
-VersionGate(attribute: AttributeIdentity, observed_version: PositiveInt)
-TemporalGate(start_attribute: AttributeIdentity, observed_start: Instant)
-Ungated
-```
+planned write is only what the statement still has to render. `m-unit-work`'s
+[Write Gate](m-unit-work.md#write-gate-and-the-concurrency-decision) owns the
+`VersionGate`, `TemporalGate`, and `Ungated` shapes and the `Versioned` decision
+that names a versioned target's Attribute.
 
 - The **advanced** version (`observed + 1`) and the close's Transaction-Time end
   are **assignments**, not gate members. A gate answers "which extra equality

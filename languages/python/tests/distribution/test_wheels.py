@@ -128,6 +128,7 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
         "parallax/snapshot/handle/__init__.py",
         "parallax/snapshot/handle/_adoption.py",
+        "parallax/snapshot/handle/_concurrency.py",
         "parallax/snapshot/handle/_connection_lifecycle.py",
         "parallax/snapshot/handle/_database.py",
         "parallax/snapshot/handle/_errors.py",

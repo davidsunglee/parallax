@@ -226,6 +226,7 @@ m-process-cache --> m-unit-work
 m-op-list --> m-object-query
 m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
+m-batch-write --> m-opt-lock
 m-cascade-delete --> m-op-list
 m-cascade-delete --> m-unit-work
 m-navigate --> m-predicate

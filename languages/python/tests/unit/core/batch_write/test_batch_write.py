@@ -21,13 +21,15 @@ import pytest
 from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest, WriteRejectedError
+from parallax.descriptor import _records
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests.unit._corpus_model_support import formed
 
 _MODELS = models.load_models()
 
@@ -44,6 +46,42 @@ ACCOUNT = _target("account", "Account")
 WALLET = _target("wallet", "Wallet")
 BALANCE = _target("balance", "Balance")
 POSITION = _target("position", "Position")
+DOG = _target("animal", "Dog")
+FRIDGE = _target("appliance", "Fridge")
+DEPOSIT_RATE = _target("rate", "DepositRate")
+
+
+def _generated_key_leaf() -> tuple[Metamodel, EntityMetadata]:
+    """A concrete subtype whose family root's key the framework allocates.
+
+    No corpus family generates its key, so this one is formed by hand.
+    """
+    root = _records.Entity(
+        name="Ticket",
+        inheritance=_records.Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            _records.Attribute(
+                name="id",
+                type="int64",
+                column="id",
+                primary_key=True,
+                pk_generator=_records.PkGenerator(strategy="max"),
+            ),
+            _records.Attribute(name="title", type="string", column="title"),
+        ),
+    )
+    leaf = _records.Entity(
+        name="Bug",
+        table="bug",
+        inheritance=_records.Inheritance(role="concrete-subtype", parent="Ticket"),
+        attributes=(_records.Attribute(name="severity", type="int32", column="severity"),),
+    )
+    model = formed(_records.Metamodel(entities=(root, leaf)))
+    (bug,) = (entity for entity in model.entities if entity.identity.name == "Bug")
+    return model, bug
+
+
+GENERATED_KEY_LEAF = _generated_key_leaf()
 
 
 def _flush_and_lower(
@@ -125,6 +163,65 @@ def test_delete_never_collapses_for_a_versioned_entity() -> None:
 
 def test_delete_never_collapses_for_a_temporal_entity() -> None:
     assert batch_write.delete_collapses(*BALANCE) is False
+
+
+@pytest.mark.parametrize(
+    ("target", "rows", "insert", "update", "delete"),
+    [
+        (
+            DOG,
+            [{"id": 1, "name": "Rex"}, {"id": 2, "name": "Rex"}],
+            True,
+            True,
+            True,
+        ),
+        (
+            FRIDGE,
+            [{"id": 1, "name": "Chill"}, {"id": 2, "name": "Chill"}],
+            True,
+            False,
+            False,
+        ),
+        (
+            DEPOSIT_RATE,
+            [{"id": 1, "amount": Decimal("1.00")}, {"id": 2, "amount": Decimal("1.00")}],
+            False,
+            False,
+            False,
+        ),
+        (
+            GENERATED_KEY_LEAF,
+            [{"id": 1, "title": "Crash"}, {"id": 2, "title": "Crash"}],
+            False,
+            True,
+            True,
+        ),
+    ],
+    ids=["unversioned-family", "versioned-family", "bitemporal-family", "generated-key-family"],
+)
+def test_a_descendant_collapses_as_its_family_root_decides(
+    monkeypatch: pytest.MonkeyPatch,
+    target: tuple[Metamodel, EntityMetadata],
+    rows: list[dict[str, object]],
+    insert: bool,
+    update: bool,
+    delete: bool,
+) -> None:
+    # Version, temporality, and the key are root-owned, so a descendant reads
+    # the answers its family formed rather than consulting any declaration: the
+    # uniform update runs differ only in the inherited key, which they address.
+    model, entity = target
+
+    def undeclared(member: object) -> object:
+        raise AssertionError(f"collapse eligibility consulted a declaration of {member}")
+
+    monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undeclared))
+    monkeypatch.setattr(type(entity), "declared_as_of_axes", property(undeclared))
+    monkeypatch.setattr(type(entity), "as_of_axis", undeclared)
+    assert batch_write.insert_collapses(model, entity) is insert
+    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undeclared))
+    assert batch_write.update_collapses(model, entity, rows) is update
+    assert batch_write.delete_collapses(model, entity) is delete
 
 
 def test_collapses_dispatches_by_mutation() -> None:

@@ -48,6 +48,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
     Metamodel,
     Multiplicity,
@@ -94,6 +95,7 @@ from parallax.core.unit_work.planned import (
     PlannedRow,
     PlannedUpdate,
     SelfIncrement,
+    Ungated,
     ValidatedMutationSelection,
     Versioned,
     VersionGate,
@@ -1226,7 +1228,7 @@ def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() 
                     version: 4,
                 }
             ),
-            concurrency=Versioned(gate=VersionGate(attribute=version, observed_version=3)),
+            concurrency=Versioned(attribute=version, gate=VersionGate(observed_version=3)),
             affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
         ),
     )
@@ -1248,7 +1250,9 @@ def test_finalization_records_an_explicit_ungated_decision_under_locking() -> No
             target=KeyTarget(
                 key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
             ),
-            concurrency=Versioned(gate=UNGATED),
+            concurrency=Versioned(
+                attribute=_attribute(ACCOUNT, "Account", "version"), gate=UNGATED
+            ),
             affected_rows=ExactCount(expected=1, on_shortfall=STALE_WRITE),
         ),
     )
@@ -1430,3 +1434,51 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
     )
     with pytest.raises(SqlGenError, match="one row at a time"):
         compile_write_step(step, PK_MAX, POSTGRES)
+
+
+@pytest.mark.parametrize(
+    ("gate", "sql", "binds"),
+    [
+        (
+            VersionGate(observed_version=5),
+            "update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?",
+            ("Coupe", 6, 1, "car", 5),
+        ),
+        (
+            UNGATED,
+            "update vehicle set name = ?, version = ? where id = ? and kind = ?",
+            ("Coupe", 6, 1, "car"),
+        ),
+    ],
+    ids=["optimistic", "locking"],
+)
+def test_step_lowering_places_the_settled_version_from_the_versioned_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    gate: VersionGate | Ungated,
+    sql: str,
+    binds: tuple[object, ...],
+) -> None:
+    # Planning named the family's version Attribute on the decision, so lowering
+    # renders its advance after every other assignment, and any gate after the
+    # tag guard, without asking a declared Attribute whether it is the version.
+    # The advance leads the assignments here, so its place is not dict order.
+    version = _attribute(VEHICLE, "Car", "version")
+    step = PlannedUpdate(
+        entity=_identity(VEHICLE, "Car"),
+        target=KeyTarget(key_attributes=(_attribute(VEHICLE, "Car", "id"),), key_values=((1,),)),
+        assignments=PlannedAssignments(
+            attributes={version: 6, _attribute(VEHICLE, "Car", "name"): "Coupe"}
+        ),
+        concurrency=Versioned(attribute=version, gate=gate),
+        affected_rows=ExactCount(
+            expected=1,
+            on_shortfall=OPTIMISTIC_CONFLICT if isinstance(gate, VersionGate) else STALE_WRITE,
+        ),
+    )
+
+    def undiscoverable(attribute: AttributeMetadata) -> object:
+        raise AssertionError(f"lowering asked {attribute.identity} whether it is the version")
+
+    monkeypatch.setattr(AttributeMetadata, "optimistic_locking", property(undiscoverable))
+    statement = compile_write_step(step, VEHICLE, POSTGRES)
+    assert (statement.sql, statement.binds) == (sql, binds)

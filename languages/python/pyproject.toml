@@ -368,7 +368,6 @@ forbidden_modules = [
     "parallax.core.deep_fetch",
     "parallax.core.execution_lifecycle",
     "parallax.core.navigate",
-    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
     "parallax.core.relationship",

@@ -2,39 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
 
-from parallax.core import batch_write, bitemp_write, opt_lock, txtime_write
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityIdentity,
-    EntityMetadata,
-    Metamodel,
-    TemporalDimension,
-)
+from parallax.core import batch_write, bitemp_write, txtime_write
+from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension
 from parallax.core.unit_work import (
     NO_AUDIT,
     Concurrency,
     MilestoneTopology,
     PlannedClose,
     TransactionInstant,
-    VersionArithmetic,
-    WriteObservation,
     WritePlanner,
 )
 from parallax.core.unit_work import plan_temporal_close as _plan_temporal_close
+from parallax.snapshot.handle._concurrency import CONCURRENCY
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 
 __all__ = ["build_write_planner", "plan_temporal_close"]
-
-# `m-opt-lock` owns both numbers, so the step is read as the difference one
-# advance makes rather than restated here. One instance serves every planner:
-# the arithmetic varies with nothing — not the model, not the Entity, not the
-# transaction's Concurrency Preference.
-_VERSION_ARITHMETIC: Final[VersionArithmetic] = VersionArithmetic(
-    initial=opt_lock.INITIAL_VERSION,
-    increment=opt_lock.advance(opt_lock.INITIAL_VERSION) - opt_lock.INITIAL_VERSION,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,37 +38,6 @@ class _BatchingAdapter:
         self, model: Metamodel, entity: EntityMetadata, mutation: str, row: Mapping[str, object]
     ) -> object:
         return collapse_group_key(model, entity, mutation, row)
-
-
-@dataclass(frozen=True, slots=True)
-class _ConcurrencyAdapter:
-    """``m-opt-lock``'s per-Entity strategy derivation, version arithmetic, and
-    observation-licensing policy, structurally satisfying
-    ``ConcurrencyStrategy``.
-
-    Holding the model is what lets a gate be settled per Entity: every question
-    the planner asks resolves through the same Optimistic Lock Facet the
-    formation compiled once.
-    """
-
-    model: Metamodel
-
-    def version_attribute(self, entity: EntityMetadata) -> AttributeIdentity | None:
-        key = opt_lock.view(self.model).key(entity.identity)
-        return key.attribute if isinstance(key, opt_lock.ExplicitVersion) else None
-
-    def gates(self, concurrency: Concurrency, entity: EntityMetadata) -> bool:
-        key = opt_lock.view(self.model).key(entity.identity)
-        return opt_lock.effective_strategy(concurrency, key) == "optimistic"
-
-    def version_arithmetic(self) -> VersionArithmetic:
-        return _VERSION_ARITHMETIC
-
-    def require_version(self, entity: EntityIdentity, observation: WriteObservation | None) -> int:
-        return opt_lock.require_observed(entity.name, observation)
-
-    def reject_authored_version(self, entity: EntityIdentity, attribute: AttributeIdentity) -> None:
-        opt_lock.reject_caller_authored_version(entity.name, attribute.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +71,7 @@ def build_write_planner(model: Metamodel) -> WritePlanner:
     return WritePlanner(
         model,
         batching=_BatchingAdapter(),
-        concurrency=_ConcurrencyAdapter(model),
+        concurrency=CONCURRENCY,
         temporal=_TemporalAdapter(),
         audit=NO_AUDIT,
     )
@@ -135,14 +87,14 @@ def plan_temporal_close(
     observed_valid_end: object | None = None,
 ) -> PlannedClose:
     """The `m-opt-lock` conflict lane's standalone close probe, wired with the
-    SAME concurrency adapter :func:`build_write_planner` injects — see
+    same concurrency adapter :func:`build_write_planner` injects — see
     :func:`parallax.core.unit_work.plan_temporal_close`."""
     return _plan_temporal_close(
         identity,
         entity_name,
         model,
         concurrency,
-        _ConcurrencyAdapter(model),
+        CONCURRENCY,
         tx_instant,
         observed_tx_start,
         observed_valid_end,

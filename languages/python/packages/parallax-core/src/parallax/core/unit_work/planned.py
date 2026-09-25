@@ -440,12 +440,13 @@ predecessor state and from any concurrency condition."""
 class VersionGate:
     """The extra equality predicate an optimistic-mode versioned write renders.
 
-    It carries only what the predicate binds. The advanced version is an
-    assignment, not a gate member, and the transaction's concurrency mode is
-    consumed while the gate is being decided rather than repeated here.
+    It carries only what the predicate binds. The version Attribute it compares
+    is named once by the enclosing :class:`Versioned` decision, the advanced
+    version is an assignment rather than a gate member, and the transaction's
+    concurrency mode is consumed while the gate is being decided rather than
+    repeated here.
     """
 
-    attribute: AttributeIdentity
     observed_version: int
 
 
@@ -493,8 +494,13 @@ UNVERSIONED: Final[Unversioned] = Unversioned()
 @dataclass(frozen=True, slots=True)
 class Versioned:
     """The target declares an optimistic-lock version, and the mode decided the
-    gate."""
+    gate.
 
+    ``attribute`` is the version Attribute planning settled, which both
+    concurrency modes advance and only a :class:`VersionGate` compares.
+    """
+
+    attribute: AttributeIdentity
     gate: VersionGate | Ungated
 
 
@@ -594,7 +600,7 @@ def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> 
     match concurrency:
         case Unversioned():
             return shortfall_classification(observing=False, gated=False)
-        case Versioned(gate):
+        case Versioned(gate=gate):
             return shortfall_classification(observing=True, gated=isinstance(gate, VersionGate))
         case TemporalGate():
             return shortfall_classification(observing=True, gated=True)
