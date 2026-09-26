@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterator, Mapping, MutableMapping, Sequence
-from typing import Any, TypeGuard, cast
+from typing import Any, TypeGuard, assert_type, cast
 
 import pytest
 
@@ -25,8 +25,10 @@ from parallax.core.metamodel import (
     IndexMetadata,
     MemberShape,
     Multiplicity,
+    NestedValueObjectMetadata,
     NestedValueObjectOccurrenceDeclaration,
     Occurrence,
+    OccurrenceMetadata,
     PersistenceMode,
     RelationshipIdentity,
     RelativeEntityReference,
@@ -38,6 +40,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
+    ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
@@ -236,6 +239,42 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     assert leaf.type == base.Decimal(9, 6)
     assert leaf.nullable is True
     assert nested.attribute("absent") is None
+
+
+def _occurrence_paths(occurrence: OccurrenceMetadata) -> tuple[tuple[str, ...], ...]:
+    return (
+        occurrence.identity.path,
+        *(path for nested in occurrence.value_objects for path in _occurrence_paths(nested)),
+    )
+
+
+def test_either_occurrence_depth_is_read_through_the_common_occurrence_protocol() -> None:
+    metadata = compile_metadata(accepted(source(_model(), _peer())))
+    order = metadata.entity(_ORDER)
+    assert order is not None
+    ship_to = order.value_object("shipTo")
+    assert ship_to is not None
+    geo = ship_to.value_object("geo")
+    assert geo is not None
+    assert_type(ship_to, ValueObjectMetadata)
+    assert_type(geo, NestedValueObjectMetadata)
+    assert_type(ship_to.value_objects, Sequence[NestedValueObjectMetadata])
+    assert_type(geo.value_objects, Sequence[NestedValueObjectMetadata])
+
+    assert _occurrence_paths(ship_to) == (("shipTo",), ("shipTo", "geo"))
+    assert _occurrence_paths(geo) == (("shipTo", "geo"),)
+    assert ship_to.storage == Column("ship_to")
+    with pytest.raises(AttributeError):
+        geo.storage  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # noqa: B018
+
+
+def test_a_top_level_occurrence_structurally_satisfies_the_nested_protocol() -> None:
+    order = compile_metadata(accepted(source(_model(), _peer()))).entity(_ORDER)
+    assert order is not None
+    ship_to = order.value_object("shipTo")
+    assert ship_to is not None
+    as_nested: NestedValueObjectMetadata = ship_to
+    assert as_nested.value_object("geo") is ship_to.value_object("geo")
 
 
 def _occurrence_windows() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:

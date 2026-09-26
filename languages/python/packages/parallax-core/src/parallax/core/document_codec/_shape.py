@@ -9,8 +9,8 @@ from parallax.core.metamodel import (
     DocumentMember,
     Leaf,
     MemberShape,
-    NestedValueObjectMetadata,
     Occurrence,
+    OccurrenceMetadata,
     ValueObjectMetadata,
     ValueObjectShapeDeclaration,
 )
@@ -122,7 +122,7 @@ def shape_of_declaration(declaration: ValueObjectShapeDeclaration) -> MemberShap
     return declaration.member_shape
 
 
-def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata) -> MemberShape:
+def occurrence_shape(container: OccurrenceMetadata) -> MemberShape:
     """The document shape held by one accepted Value Object occurrence."""
     return container.document_shape
 

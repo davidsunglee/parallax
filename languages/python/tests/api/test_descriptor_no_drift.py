@@ -31,9 +31,8 @@ if TYPE_CHECKING:
     from parallax.core.metamodel import (
         EntityMetadata,
         Metamodel,
-        NestedValueObjectMetadata,
+        OccurrenceMetadata,
         ValueObjectAttributeMetadata,
-        ValueObjectMetadata,
     )
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -50,8 +49,8 @@ def _leaf(left: ValueObjectAttributeMetadata, right: ValueObjectAttributeMetadat
 
 
 def _occurrence(
-    left: NestedValueObjectMetadata | ValueObjectMetadata,
-    right: NestedValueObjectMetadata | ValueObjectMetadata,
+    left: OccurrenceMetadata,
+    right: OccurrenceMetadata,
 ) -> None:
     assert left.identity == right.identity
     assert left.multiplicity is right.multiplicity

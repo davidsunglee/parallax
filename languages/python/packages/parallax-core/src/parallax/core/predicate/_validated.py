@@ -8,10 +8,9 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     RelationshipIdentity,
     ValueObjectAttributeMetadata,
-    ValueObjectMetadata,
 )
 from parallax.core.predicate._nodes import (
     All,
@@ -27,7 +26,6 @@ from parallax.core.predicate._nodes import (
 from parallax.core.wire import encode_wire
 
 type ResolvedPredicateMember = AttributeMetadata | ValueObjectAttributeMetadata
-type ResolvedValueObject = ValueObjectMetadata | NestedValueObjectMetadata
 type BindForm = Literal["managed", "framework"]
 
 
@@ -59,7 +57,7 @@ class ValidatedPredicate:
     children: tuple[ValidatedPredicate, ...] = ()
     operands: ValidatedOperands | None = None
     member: ResolvedPredicateMember | None = None
-    container: ResolvedValueObject | None = None
+    container: OccurrenceMetadata | None = None
     relationship_target: EntityMetadata | None = None
     relationship: RelationshipIdentity | None = None
     relationship_source: AttributeMetadata | None = None

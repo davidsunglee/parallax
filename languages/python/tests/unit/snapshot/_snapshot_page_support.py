@@ -31,7 +31,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     Metamodel,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     RelationshipIdentity,
     ValueObjectMetadata,
     entity_by_name,
@@ -61,7 +61,6 @@ __all__ = [
     "rendered_occurrence",
 ]
 
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 _NO_PIN = Pin()
 
@@ -179,7 +178,7 @@ def physical_members(layout: EntityLayout, values: tuple[object, ...]) -> dict[s
     return rendered
 
 
-def rendered_occurrence(value: object, declared: _VoContainer) -> object:
+def rendered_occurrence(value: object, declared: OccurrenceMetadata) -> object:
     """One occurrence slot by declared member name at every depth: ``None`` for a
     collapsed One, a tuple of mappings for a Many, a mapping otherwise."""
     if declared.multiplicity is Multiplicity.MANY:
@@ -188,7 +187,7 @@ def rendered_occurrence(value: object, declared: _VoContainer) -> object:
     return None if value is None else _occurrence_row(cast("tuple[object, ...]", value), declared)
 
 
-def _occurrence_row(row: tuple[object, ...], declared: _VoContainer) -> dict[str, object]:
+def _occurrence_row(row: tuple[object, ...], declared: OccurrenceMetadata) -> dict[str, object]:
     rendered: dict[str, object] = {
         leaf.identity.name: row[position]
         for position, leaf in enumerate(declared.attributes)

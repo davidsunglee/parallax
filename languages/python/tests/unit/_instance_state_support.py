@@ -117,8 +117,7 @@ from parallax.core.entity._pydantic_storage import attach_instance_state, instan
 from parallax.core.metamodel import (
     EntityIdentity,
     Multiplicity,
-    NestedValueObjectMetadata,
-    ValueObjectMetadata,
+    OccurrenceMetadata,
 )
 from parallax.snapshot._inspection import SnapshotNodeState
 from tests._support.model_capabilities import cataloged_for, graph_construction_for
@@ -140,8 +139,6 @@ __all__ = [
 ]
 
 NAMESPACE: Final = "instance.state"
-
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 # --------------------------------------------------------------------------- #
@@ -368,7 +365,7 @@ class LegacyPlan:
     cls: type
     attributes: tuple[tuple[int, str], ...]
     """Each carried-or-not Attribute as its row position and Python name."""
-    occurrences: tuple[tuple[int, str, _VoContainer, type], ...]
+    occurrences: tuple[tuple[int, str, OccurrenceMetadata, type], ...]
     """Each top-level occurrence as its row position, Python name, declared
     metadata, and Value Object class."""
     relationships: tuple[str, ...]
@@ -544,7 +541,7 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
     return _warmed(scenario, cast("Any", plan.cls)(**members))
 
 
-def _ordinary_occurrence(value: object, declared: _VoContainer, vo_class: type) -> object:
+def _ordinary_occurrence(value: object, declared: OccurrenceMetadata, vo_class: type) -> object:
     """One occurrence slot as a caller would pass it, the declared multiplicity
     deciding the shape."""
     if declared.multiplicity is Multiplicity.MANY:
@@ -557,7 +554,9 @@ def _ordinary_occurrence(value: object, declared: _VoContainer, vo_class: type) 
     return _ordinary_record(cast("tuple[object, ...]", value), declared, vo_class)
 
 
-def _ordinary_record(row: tuple[object, ...], declared: _VoContainer, vo_class: type) -> object:
+def _ordinary_record(
+    row: tuple[object, ...], declared: OccurrenceMetadata, vo_class: type
+) -> object:
     """One positional Value Object row as an ordinary instance, at every depth.
 
     An omitted leaf is omitted rather than passed as ``None``, which is what
@@ -816,7 +815,7 @@ def state_cells(instance: object) -> int:
     return len(instance_state(cast("BaseModel", instance)))
 
 
-def _legacy_occurrence(value: object, declared: _VoContainer, vo_class: type) -> object:
+def _legacy_occurrence(value: object, declared: OccurrenceMetadata, vo_class: type) -> object:
     """One occurrence slot, the declared multiplicity deciding the shape."""
     if declared.multiplicity is Multiplicity.MANY:
         rows = cast("tuple[object, ...]", value) if isinstance(value, tuple) else ()
@@ -828,7 +827,7 @@ def _legacy_occurrence(value: object, declared: _VoContainer, vo_class: type) ->
     return _legacy_record(cast("tuple[object, ...]", value), declared, vo_class)
 
 
-def _legacy_record(row: tuple[object, ...], declared: _VoContainer, vo_class: type) -> object:
+def _legacy_record(row: tuple[object, ...], declared: OccurrenceMetadata, vo_class: type) -> object:
     """One positional Value Object row as a frozen instance, at every depth.
 
     ``present`` is the members the row carried, so an omitted leaf reads as its

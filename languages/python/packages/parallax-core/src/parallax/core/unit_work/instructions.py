@@ -26,7 +26,6 @@ from parallax.core.document_codec._authoring import (
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
-    NestedValueObjectMetadata,
     ValueObjectMetadata,
     VoDocumentViolation,
     entity_by_name,
@@ -1120,7 +1119,6 @@ def _decode_wire_bound(value: object | None, path: str) -> dt.datetime | None:
 
 
 type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
-type _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 def _member_selection(

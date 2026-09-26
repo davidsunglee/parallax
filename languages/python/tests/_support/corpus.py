@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from parallax.core.metamodel import (
         EntityIdentity,
         Metamodel,
-        NestedValueObjectMetadata,
+        OccurrenceMetadata,
         ValueObjectMetadata,
     )
 
@@ -342,16 +342,14 @@ class _Occurrence:
     """One Value Object occurrence's document: its leaves and nested occurrences."""
 
     model: Metamodel
-    declared: ValueObjectMetadata | NestedValueObjectMetadata
+    declared: OccurrenceMetadata
 
     def key(self, name: str) -> _Key:
         nested = self.declared.value_object(name)
         return _UNDECLARED if nested is None else _occurrence_key(self.model, nested)
 
 
-def _occurrence_key(
-    model: Metamodel, declared: ValueObjectMetadata | NestedValueObjectMetadata
-) -> _Key:
+def _occurrence_key(model: Metamodel, declared: OccurrenceMetadata) -> _Key:
     """One occurrence key: a `many` holds the ordered element documents the stored
     order is, a `one` a single document and never a collection."""
     from parallax.core.metamodel import Multiplicity

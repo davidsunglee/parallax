@@ -11,7 +11,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -31,7 +31,6 @@ from parallax.core.unit_work.instructions import (
 
 __all__ = ["normalize_case_query", "prepare_case_write"]
 
-type _Occurrence = ValueObjectMetadata | NestedValueObjectMetadata
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
 
@@ -145,7 +144,7 @@ def _normalize_member(member: AttributeMetadata | ValueObjectMetadata, value: ob
     return _normalize_occurrence(member, value)
 
 
-def _normalize_occurrence(occurrence: _Occurrence, value: object) -> object:
+def _normalize_occurrence(occurrence: OccurrenceMetadata, value: object) -> object:
     if occurrence.multiplicity is Multiplicity.MANY:
         if not isinstance(value, Sequence) or isinstance(value, str | bytes):
             return value
@@ -153,7 +152,7 @@ def _normalize_occurrence(occurrence: _Occurrence, value: object) -> object:
     return _normalize_document(occurrence, value)
 
 
-def _normalize_document(container: _Occurrence, value: object) -> object:
+def _normalize_document(container: OccurrenceMetadata, value: object) -> object:
     if not isinstance(value, Mapping):
         return value
     attributes = {member.identity.name: member for member in container.attributes}
@@ -173,7 +172,7 @@ def _normalize_document(container: _Occurrence, value: object) -> object:
 def _normalize_predicate(
     node: predicate.PredicateNode,
     model: AcceptedMetamodel,
-    element_container: _Occurrence | None = None,
+    element_container: OccurrenceMetadata | None = None,
 ) -> predicate.PredicateNode:
     match node:
         case predicate.Comparison(attr=attr, value=value):
@@ -261,7 +260,7 @@ def _predicate_leaf(model: AcceptedMetamodel, reference: str, value: object) -> 
 
 def _nested_predicate_leaf(
     model: AcceptedMetamodel,
-    element_container: _Occurrence | None,
+    element_container: OccurrenceMetadata | None,
     reference: str,
     value: object,
 ) -> object:
@@ -283,7 +282,7 @@ def _predicate_nested_leaf(
     return None if container is None else _relative_leaf(container, path[1:])
 
 
-def _predicate_container(model: AcceptedMetamodel, reference: str) -> _Occurrence | None:
+def _predicate_container(model: AcceptedMetamodel, reference: str) -> OccurrenceMetadata | None:
     entity_name, path = split_reference(reference)
     if entity_name is None or not path:
         return None
@@ -308,7 +307,7 @@ def _top_level_occurrence(
 
 
 def _relative_leaf(
-    container: _Occurrence | None, path: Sequence[str]
+    container: OccurrenceMetadata | None, path: Sequence[str]
 ) -> ValueObjectAttributeMetadata | None:
     if container is None or not path:
         return None

@@ -69,14 +69,10 @@ type _BoundMember = ValueObjectAttributeMetadata | NestedValueObjectMetadata
 
 @dataclass(frozen=True, slots=True)
 class _OccurrenceMetadata:
-    """Everything a top-level and a nested Value Object occurrence hold alike.
+    """The ``OccurrenceMetadata`` surface both occurrence leaves share.
 
-    The two Metadata shapes differ in exactly one fact — the Storage Location a
-    top-level occurrence owns and a nested one cannot — so the members they
-    share are declared once here. This is shared implementation between two
-    private classes and not a relation between the protocols they satisfy:
-    neither occurrence protocol is a subtype of the other, and a consumer holding
-    a nested occurrence still has no ``storage`` to read.
+    Only the top-level leaf adds the Storage Location it owns, so a nested
+    occurrence has no ``storage`` to read.
     """
 
     identity: ValueObjectIdentity
