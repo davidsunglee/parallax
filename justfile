@@ -189,7 +189,7 @@ core-show-language-spec language_spec:
 # ===========================================================================
 
 [doc("Every harness check that needs no live database.")]
-harness-check-dbfree: harness-check-database-access harness-format-check harness-lint harness-typecheck harness-audit-dependencies harness-test-dbfree
+harness-check-dbfree: harness-check-database-access harness-format-check harness-lint harness-typecheck harness-check-lock harness-audit-dependencies harness-test-dbfree
 
 [doc("Every harness check that needs a live database (Docker).")]
 harness-check-db: harness-test-db
@@ -256,6 +256,11 @@ harness-lint-duplication:
 [doc("Typecheck the harness with basedpyright.")]
 harness-typecheck:
     cd {{harness}} && uv run basedpyright
+
+[metadata("runtime:fast")]
+[doc("The committed harness lockfile agrees with the declared dependencies.")]
+harness-check-lock:
+    cd {{harness}} && uv lock --check
 
 [metadata("runtime:fast")]
 [doc("Harness dependency declarations match its imports, and every development dependency is used.")]
