@@ -18,10 +18,11 @@ it:
 
 A dependency with no classification is a failure, as is one that is not
 installed. Development dependencies are read from both
-``[project.optional-dependencies] dev`` and ``[dependency-groups] dev``; when a
-manifest declares both, they must list the same requirements. Either list
-holding anything but requirement strings, such as an ``include-group`` table,
-cannot be read and fails the check.
+``[project.optional-dependencies] dev`` and ``[dependency-groups] dev``; a group
+entry naming the project's own extra, such as ``<project>[dev]``, stands for that
+extra's requirements. Either list holding anything but requirement strings, such
+as an ``include-group`` table, or a group entry selecting an extra the project
+does not declare, cannot be read and fails the check.
 
 The check must run inside the project's own environment: installed metadata is
 read from the given import paths, which the command line takes from the running
@@ -91,6 +92,7 @@ _UV_VALUE_OPTIONS = frozenset(
 )
 _PYTHON_EXECUTABLE_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
 _REQUIREMENT_NAME_RE = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
+_EXTRAS_RE = re.compile(r"\s*\[([^\]]*)\]")
 _ENVIRONMENT_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
@@ -137,58 +139,73 @@ def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _split_requirement(requirement: str) -> tuple[str, str]:
-    """*requirement*'s normalized name, and the rest of it with whitespace
-    removed."""
+def _requirement_name_match(requirement: str) -> re.Match[str]:
     matched = _REQUIREMENT_NAME_RE.match(requirement)
     if matched is None:
         raise ValueError(f"not a requirement: {requirement!r}")
-    return _normalized(matched.group(1)), "".join(requirement[matched.end() :].split())
+    return matched
 
 
 def _requirement_name(requirement: str) -> str:
-    return _split_requirement(requirement)[0]
+    return _normalized(_requirement_name_match(requirement).group(1))
 
 
-def _canonical_requirement(requirement: str) -> str:
-    return "".join(_split_requirement(requirement))
+def _self_extras(requirement: str, project_name: str) -> tuple[str, ...] | None:
+    """The normalized extras *requirement* selects when it names the project
+    itself, or ``None`` when it names another distribution."""
+    named = _requirement_name_match(requirement)
+    if _normalized(named.group(1)) != project_name:
+        return None
+    selected = _EXTRAS_RE.match(requirement, named.end())
+    if selected is None:
+        raise ValueError(f"`{requirement}` names the project itself without selecting an extra")
+    return tuple(_normalized(extra) for extra in selected.group(1).split(",") if extra.strip())
 
 
-def _development_lists(manifest: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
-    """Every development list *manifest* declares, by its location."""
-    project: Any = manifest.get("project", {})
-    optional: Any = project.get("optional-dependencies", {}) if isinstance(project, Mapping) else {}
-    groups: Any = manifest.get("dependency-groups", {})
-    candidates: dict[str, Any] = {
-        f"[project.optional-dependencies] {_DEV_GROUP}": optional.get(_DEV_GROUP),
-        f"[dependency-groups] {_DEV_GROUP}": groups.get(_DEV_GROUP),
-    }
-    lists: dict[str, tuple[str, ...]] = {}
-    for location, entries in candidates.items():
-        if entries is None:
+def _table(value: Any, location: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{location} must be a table")
+    table: Mapping[str, Any] = value
+    return table
+
+
+def _requirement_strings(entries: Any, location: str) -> tuple[str, ...]:
+    if not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries):
+        raise ValueError(f"{location} must be a list of requirement strings")
+    listed: list[str] = entries
+    return tuple(listed)
+
+
+def _development_requirements(manifest: Mapping[str, Any]) -> tuple[str, ...]:
+    """Every requirement the development extra and development group declare,
+    with a group entry naming one of the project's own extras replaced by that
+    extra's requirements."""
+    project = _table(manifest.get("project", {}), "[project]")
+    name = _normalized(str(project.get("name", "")))
+    optional = _table(project.get("optional-dependencies", {}), "[project.optional-dependencies]")
+    groups = _table(manifest.get("dependency-groups", {}), "[dependency-groups]")
+    extras = {_normalized(extra): entries for extra, entries in optional.items()}
+    requirements = list(
+        _requirement_strings(
+            extras.get(_DEV_GROUP, []), f"[project.optional-dependencies] {_DEV_GROUP}"
+        )
+    )
+    group_location = f"[dependency-groups] {_DEV_GROUP}"
+    for entry in _requirement_strings(groups.get(_DEV_GROUP, []), group_location):
+        selected = _self_extras(entry, name)
+        if selected is None:
+            requirements.append(entry)
             continue
-        if not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries):
-            raise ValueError(f"{location} must be a list of requirement strings")
-        listed: list[str] = entries
-        lists[location] = tuple(listed)
-    return lists
-
-
-def _divergence(lists: Mapping[str, tuple[str, ...]]) -> Iterator[Diagnostic]:
-    if len(lists) < 2:
-        return
-    (first, first_entries), (second, second_entries) = lists.items()
-    first_set = {_canonical_requirement(entry) for entry in first_entries}
-    second_set = {_canonical_requirement(entry) for entry in second_entries}
-    for only, present, absent in (
-        (sorted(first_set - second_set), first, second),
-        (sorted(second_set - first_set), second, first),
-    ):
-        for requirement in only:
-            yield Diagnostic(
-                "dev-dependency-lists-diverge",
-                f"`{requirement}` is declared in {present} but not in {absent}",
+        for extra in selected:
+            if extra not in extras:
+                raise ValueError(
+                    f"`{entry}` in {group_location} selects the extra `{extra}`, which "
+                    f"[project.optional-dependencies] does not declare"
+                )
+            requirements.extend(
+                _requirement_strings(extras[extra], f"[project.optional-dependencies] {extra}")
             )
+    return tuple(requirements)
 
 
 def _python_sources(project: Path) -> Iterator[Path]:
@@ -385,9 +402,9 @@ def audit(project: Path, repository: Path, site_paths: Sequence[str]) -> Invento
     project = project.resolve()
     repository = repository.resolve()
     with (project / "pyproject.toml").open("rb") as manifest:
-        lists = _development_lists(tomllib.load(manifest))
-    diagnostics = list(_divergence(lists))
-    declared = sorted({_requirement_name(entry) for entries in lists.values() for entry in entries})
+        requirements = _development_requirements(tomllib.load(manifest))
+    diagnostics: list[Diagnostic] = []
+    declared = sorted({_requirement_name(requirement) for requirement in requirements})
     imports = _imported_modules(project)
     invocations = _invocations(project, repository)
     classifications: list[Classification] = []
@@ -433,7 +450,7 @@ def main(argv: list[str]) -> int:
     second.
 
     Exit codes: 0 — every development dependency is classified; 1 — one is not,
-    the lists diverge, or an input could not be read; 2 — usage error.
+    or an input could not be read; 2 — usage error.
     """
     if len(argv) != 2:
         print(_usage(), file=sys.stderr)
