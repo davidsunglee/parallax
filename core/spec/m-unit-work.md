@@ -789,7 +789,8 @@ value aligned with each row's member state, so a logical Predecessor Row view ov
 it exposes the raw document without allocating a second per-row carrier. The
 document is read-only under the same logical immutability: a successor that
 changes a member composes its own document from a copy (`m-document-codec`
-patching), and no reader alters the retained one.
+patching), and no reader alters the retained one. What a successor binds from it
+crosses the port as `m-db-port` requires of a retained document.
 
 The field is **absent — not empty — under Columns layout**, so its presence is
 itself the signal that the row came from a document-mapped Table. It is not a

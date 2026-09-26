@@ -71,7 +71,6 @@ from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
     PageBuilder,
     RootView,
-    read_origin_of,
     wire_roots,
 )
 from parallax.snapshot.materialize import (
@@ -84,6 +83,7 @@ from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from parallax.snapshot.materialize._wire import (
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
+    read_origin_of,
     shared_wire_encoder,
 )
 from tests._support.db_port import (

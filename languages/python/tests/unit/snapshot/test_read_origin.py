@@ -43,10 +43,10 @@ from parallax.core.unit_work import (
     VersionObservation,
 )
 from parallax.core.unit_work.planner import VersionedStateKey
-from parallax.snapshot import InvalidData, WireEntity, connect
+from parallax.snapshot import InvalidData, WireEntity, connect, materialize
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction, WriteEvidenceError
-from parallax.snapshot.materialize import read_origin_of
+from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -116,6 +116,13 @@ def test_a_read_origin_is_an_immutable_value_over_its_complete_claim() -> None:
     assert repr(origin).startswith("ReadOrigin(entity=")
     with pytest.raises(AttributeError, match="immutable"):
         origin.pin = None  # pyright: ignore[reportAttributeAccessIssue] - the refusal is this test's subject
+
+
+def test_no_exported_name_reaches_a_read_origin() -> None:
+    # A Read Origin holds its read's raw evidence by reference, so only the
+    # Snapshot's private reader reaches it.
+    assert "read_origin_of" not in materialize.__all__
+    assert not hasattr(materialize, "read_origin_of")
 
 
 def test_deferred_read_evidence_must_name_the_origins_entity() -> None:

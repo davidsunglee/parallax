@@ -137,7 +137,7 @@ from parallax.snapshot.handle._transaction import (
     buffer_prepared_predicate_write,
     buffer_prepared_wire_keyed_write,
 )
-from parallax.snapshot.materialize import read_origin_of
+from parallax.snapshot.materialize._wire import read_origin_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",

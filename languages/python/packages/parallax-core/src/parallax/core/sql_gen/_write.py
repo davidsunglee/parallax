@@ -614,12 +614,13 @@ def _successor_document(
     raw document is composed from that document, so every key it carries outside
     the members the successor changed survives the close-and-insert — a key a
     newer application version wrote included (`m-document-codec`, `m-unit-work`).
-    A carried successor binds the retained document itself: its state is its
-    predecessor's, unchanged. A changed successor patches it at the members it
-    changed alone: a member it carries forward is already spelled in the retained
-    document, and re-encoding it from its decoded value would rebuild the subtree
-    an occurrence holds and drop the unknown keys inside it — an assignment the
-    author never made.
+    Settlement already made that document recursively immutable (`m-db-port`).
+    A carried successor binds it itself: its state is its predecessor's,
+    unchanged. A changed successor patches it at the members it changed alone: a
+    member it carries forward is already spelled in the retained document, and
+    re-encoding it from its decoded value would rebuild the subtree an occurrence
+    holds and drop the unknown keys inside it — an assignment the author never
+    made.
 
     Without a retained document there is nothing to preserve — a new lineage opens
     no predecessor, and an observation that read no row knows no key this model
