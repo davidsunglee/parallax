@@ -69,10 +69,9 @@ def run_deptry(arguments: Sequence[str]) -> int:
     from deptry.cli import cli
 
     try:
-        cli.main(args=list(arguments), prog_name="deptry", standalone_mode=False)
+        cli.main(args=list(arguments), prog_name="deptry")
     except SystemExit as exit_:
         return 1 if exit_.code else 0
-    return 0
 
 
 def audit(

@@ -32,12 +32,18 @@
 # runtimes other than Docker Desktop.
 
 # ===========================================================================
-# Configuration: the recipe shell, module paths, and the recipe listing.
+# Configuration: the recipe shell, lock resolution, module paths, and the recipe
+# listing.
 # ===========================================================================
 
 # Every recipe body below is POSIX shell. `just` reaches for `sh -cu` by default
 # but for `cmd.exe` here, so this holds the whole file to one dialect.
 set windows-shell := ["sh", "-cu"]
+
+# Every uv command runs from the committed lock. An unfrozen `uv run` re-resolves
+# a lock its manifest no longer matches and rewrites it, so the stale lock a
+# `*-check-lock` recipe exists to reject would be gone before it looked.
+export UV_FROZEN := "1"
 
 # Path to the reference harness module.
 harness := "reference-harness"
