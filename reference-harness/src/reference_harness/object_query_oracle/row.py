@@ -24,32 +24,8 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
         and left == right
     ):
         return True
-
-    def member_equal(left_member: Any, right_member: Any) -> bool:
-        if not isinstance(left_member, Mapping) or not isinstance(right_member, Mapping):
-            return False
-        if left_member.keys() != right_member.keys():
-            return False
-        attributes = {item["name"]: item for item in declaration.get("attributes", [])}
-        nested = {item["name"]: item for item in declaration.get("valueObjects", [])}
-        for key in left_member:
-            if key in nested:
-                if not _value_object_equal(left_member[key], right_member[key], nested[key]):
-                    return False
-            elif left_member[key] is None or right_member[key] is None:
-                if left_member[key] is not None or right_member[key] is not None:
-                    return False
-            elif key in attributes:
-                if not portable_literal.values_equal(
-                    left_member[key], right_member[key], attributes[key]["type"], None
-                ):
-                    return False
-            elif not scalars_equal(left_member[key], right_member[key], None):
-                return False
-        return True
-
     if isinstance(left, Mapping) or isinstance(right, Mapping):
-        return member_equal(left, right)
+        return _value_object_member_equal(left, right, declaration)
     if declaration.get("multiplicity", "one") == "many":
         if (
             not is_structural_sequence(left)
@@ -58,12 +34,44 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
         ):
             return False
         return all(
-            member_equal(left_item, right_item)
+            _value_object_member_equal(left_item, right_item, declaration)
             for left_item, right_item in zip(left, right, strict=True)
         )
     if left is None or right is None:
         return left is None and right is None
-    return member_equal(left, right)
+    return _value_object_member_equal(left, right, declaration)
+
+
+def _value_object_member_equal(
+    left_member: Any, right_member: Any, declaration: dict[str, Any]
+) -> bool:
+    if not isinstance(left_member, Mapping) or not isinstance(right_member, Mapping):
+        return False
+    if left_member.keys() != right_member.keys():
+        return False
+    attributes = {item["name"]: item for item in declaration.get("attributes", [])}
+    nested = {item["name"]: item for item in declaration.get("valueObjects", [])}
+    return all(
+        _value_object_field_equal(
+            left_member[key], right_member[key], nested.get(key), attributes.get(key)
+        )
+        for key in left_member
+    )
+
+
+def _value_object_field_equal(
+    left: Any,
+    right: Any,
+    nested: dict[str, Any] | None,
+    attribute: dict[str, Any] | None,
+) -> bool:
+    if nested is not None:
+        return _value_object_equal(left, right, nested)
+    if left is None or right is None:
+        return left is None and right is None
+    if attribute is not None:
+        return portable_literal.values_equal(left, right, attribute["type"], None)
+    return scalars_equal(left, right, None)
 
 
 def _attribute_for_key(model: Model, entity: Entity, key: str) -> dict[str, Any] | None:
