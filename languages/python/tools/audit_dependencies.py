@@ -39,7 +39,7 @@ PACKAGE_MODULES: Final[Mapping[str, str]] = {
 }
 
 DeptryRunner = Callable[[Sequence[str]], int]
-"""Runs deptry with the given command-line arguments; returns its exit status."""
+"""Runs deptry with the given command-line arguments; returns zero exactly when it passes."""
 
 NativeCheck = tuple[str, Callable[[], int]]
 
@@ -66,12 +66,20 @@ def deptry_arguments(workspace: Workspace, member: Member) -> list[str]:
 
 
 def run_deptry(arguments: Sequence[str]) -> int:
+    from click import Abort, ClickException
     from deptry.cli import cli
 
     try:
-        cli.main(args=list(arguments), prog_name="deptry")
+        status = cli.main(args=list(arguments), prog_name="deptry", standalone_mode=False)
     except SystemExit as exit_:
-        return 1 if exit_.code else 0
+        status = exit_.code
+    except ClickException as error:
+        error.show()
+        return 1
+    except Abort as abort:
+        # Outside standalone mode, Click reports an interrupt as Abort.
+        raise KeyboardInterrupt from abort
+    return 1 if status else 0
 
 
 def audit(
