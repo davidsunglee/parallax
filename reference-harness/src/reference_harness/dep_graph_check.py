@@ -43,7 +43,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 import yaml
@@ -213,29 +213,10 @@ def parse_catalog(modules_markdown: str) -> dict[str, dict[str, str]]:
     under the ``## The module catalog`` heading of ``modules.md``. ``status`` is
     ``active`` or ``deferred``; ``coverage`` is ``cases`` or ``contract``.
     """
-    header: list[str] | None = None
-    in_section = False
+    table = _section_table(modules_markdown, _CATALOG_HEADING)
+    header = [cell.lower() for cell in next(table, [])]
     catalog: dict[str, dict[str, str]] = {}
-    for line in modules_markdown.splitlines():
-        heading = re.match(r"^##\s+(.*?)\s*$", line)
-        if heading:
-            if header is not None:
-                break  # the table's own section has ended
-            in_section = heading.group(1).strip().lower() == _CATALOG_HEADING
-            continue
-        if not in_section:
-            continue
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            if header is not None:
-                break  # a non-table line after the table ends it
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if header is None:
-            header = [cell.lower() for cell in cells]
-            continue
-        if all(set(cell) <= set("-: ") for cell in cells):
-            continue  # separator row
+    for cells in table:
         row = dict(zip(header, cells, strict=False))
         module = row.get("module", "").strip("` ")
         if not _MODULE_RE.match(module):
@@ -258,6 +239,33 @@ def parse_catalog(modules_markdown: str) -> dict[str, dict[str, str]]:
             f"no module catalog table found under the '## {_CATALOG_HEADING}' heading of modules.md"
         )
     return catalog
+
+
+def _section_table(markdown: str, heading: str) -> Iterator[list[str]]:
+    """Each row's stripped cells of the first table under the ``## heading``
+    section (matched case-insensitively): the header row first, then every
+    non-separator row."""
+    in_section = False
+    started = False
+    for line in markdown.splitlines():
+        section = re.match(r"^##\s+(.*?)\s*$", line)
+        if section:
+            if started:
+                return  # the table's own section has ended
+            in_section = section.group(1).strip().lower() == heading
+            continue
+        if not in_section:
+            continue
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if started:
+                return  # a non-table line after the table ends it
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if started and all(set(cell) <= set("-: ") for cell in cells):
+            continue  # separator row
+        started = True
+        yield cells
 
 
 def gated_modules(catalog: dict[str, dict[str, str]]) -> list[str]:
@@ -398,34 +406,14 @@ def _manifest_list(
 
 def _formation_manifest_rows(manifest_markdown: str) -> list[dict[str, str]]:
     """Parse the normative formation manifest table from m-model-formation."""
-    heading_seen = False
-    header: list[str] | None = None
+    table = _section_table(manifest_markdown, "authoritative formation manifest")
+    header = [cell.lower() for cell in next(table, [])]
+    if header and tuple(header) != _FORMATION_MANIFEST_HEADERS:
+        raise DepGraphFailure(
+            "formation manifest columns must be exactly: " + ", ".join(_FORMATION_MANIFEST_HEADERS)
+        )
     rows: list[dict[str, str]] = []
-    for line in manifest_markdown.splitlines():
-        heading = re.match(r"^##\s+(.*?)\s*$", line)
-        if heading:
-            if header is not None:
-                break
-            heading_seen = heading.group(1).strip().lower() == "authoritative formation manifest"
-            continue
-        if not heading_seen:
-            continue
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            if header is not None:
-                break
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if header is None:
-            header = [cell.lower() for cell in cells]
-            if tuple(header) != _FORMATION_MANIFEST_HEADERS:
-                raise DepGraphFailure(
-                    "formation manifest columns must be exactly: "
-                    + ", ".join(_FORMATION_MANIFEST_HEADERS)
-                )
-            continue
-        if all(set(cell) <= set("-: ") for cell in cells):
-            continue
+    for cells in table:
         if len(cells) != len(header):
             raise DepGraphFailure(
                 f"formation manifest row has {len(cells)} cells; expected {len(header)}"
@@ -483,6 +471,15 @@ def formation_manifest_errors(modules_markdown: str, manifest_markdown: str) -> 
             "m-metamodel"
         )
 
+    errors.extend(_required_facet_errors(manifest_entries, facet_owners))
+    return errors
+
+
+def _required_facet_errors(
+    manifest_entries: Sequence[tuple[str, set[str]]], facet_owners: Mapping[str, str]
+) -> list[str]:
+    """Every required facet is declared, and by the module it is named for."""
+    errors: list[str] = []
     for owner, required_facets in manifest_entries:
         for facet_owner in sorted(required_facets):
             declaring_owner = facet_owners.get(facet_owner)
@@ -722,27 +719,32 @@ def _has_postgres_golden(doc: dict, shape: str) -> bool:
 
     if _entries_have_postgres(then.get("statements")):
         return True
+    return any(
+        _entries_have_postgres(step.get("statements")) for step in _golden_steps(when, shape)
+    )
 
+
+# The `when` step sequence each shape carries per-step golden SQL in.
+_GOLDEN_STEP_SEQUENCES = {"scenario": "scenario", "conflict": "attempts"}
+
+
+def _golden_steps(when: dict, shape: str) -> Iterator[dict]:
+    """Each step carrying its own golden SQL: every concurrency-round node, then
+    each step of the shape's own step sequence."""
     concurrency = when.get("concurrency")
-    if isinstance(concurrency, dict):
-        for rnd in concurrency.get("rounds", []):
-            if not isinstance(rnd, dict):
-                continue
-            for node in ("A", "B"):
-                step = rnd.get(node)
-                if isinstance(step, dict) and _entries_have_postgres(step.get("statements")):
-                    return True
-
-    if shape == "scenario":
-        steps = when.get("scenario", [])
-    elif shape == "conflict":
-        steps = when.get("attempts", [])
-    else:
-        steps = []
+    rounds = concurrency.get("rounds", []) if isinstance(concurrency, dict) else []
+    for rnd in rounds:
+        if not isinstance(rnd, dict):
+            continue
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if isinstance(step, dict):
+                yield step
+    sequence = _GOLDEN_STEP_SEQUENCES.get(shape)
+    steps = when.get(sequence, []) if sequence is not None else []
     for step in steps or []:
-        if isinstance(step, dict) and _entries_have_postgres(step.get("statements")):
-            return True
-    return False
+        if isinstance(step, dict):
+            yield step
 
 
 def load_cases(compatibility_root: Path) -> list[tuple[Path, dict]]:
@@ -774,18 +776,10 @@ def _claim_errors(slice_tag: str, capabilities: dict, cases: list[tuple[Path, di
     case_tags = capabilities.get("caseTags", {})
     claim_exclude = {t for t in case_tags.get("exclude", []) if isinstance(t, str)}
 
-    tagged = [
-        (path, doc)
-        for path, doc in cases
-        if slice_tag in [t for t in doc.get("tags", []) if isinstance(t, str)]
-    ]
+    tagged = [(path, doc, tags) for path, doc in cases if slice_tag in (tags := _string_tags(doc))]
 
     # forward: every claimed module is carried by at least one tagged case.
-    covered_modules: set[str] = set()
-    for _path, doc in tagged:
-        for tag in doc.get("tags", []):
-            if isinstance(tag, str) and _MODULE_RE.match(tag):
-                covered_modules.add(tag)
+    covered_modules = {tag for _path, _doc, tags in tagged for tag in tags if _MODULE_RE.match(tag)}
     for module in sorted(claim_modules):
         if module not in covered_modules:
             errors.append(
@@ -793,42 +787,67 @@ def _claim_errors(slice_tag: str, capabilities: dict, cases: list[tuple[Path, di
             )
 
     # reverse: every tagged case stays inside the claim.
-    for path, doc in tagged:
-        name = f"[{slice_tag}] {path.name}"
-        shape = _case_shape(doc)
-        if shape is None:
-            errors.append(f"{name}: tagged case has no recognizable shape")
-        elif shape not in claim_shapes:
-            errors.append(
-                f"{name}: shape {shape!r} is outside the slice claim "
-                f"(allowed: {sorted(claim_shapes)})"
+    for path, doc, tags in tagged:
+        errors.extend(
+            _tagged_case_errors(
+                f"[{slice_tag}] {path.name}",
+                doc,
+                tags,
+                modules=claim_modules,
+                shapes=claim_shapes,
+                exclude=claim_exclude,
             )
+        )
 
-        case_tags_list = [t for t in doc.get("tags", []) if isinstance(t, str)]
-        for tag in case_tags_list:
-            if _MODULE_RE.match(tag) and tag not in claim_modules:
-                errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
+    return errors
 
-        # An api-conformance-lane case (every boundary and edit case, plus the
-        # read-lock matrix reads) is NOT executed by the harness, so it need not carry a
-        # Postgres golden — its observable is proven by the language's API
-        # Conformance Suite. A `rejected` case asserts a pre-SQL refusal (it never
-        # reaches SQL), and an `evolution` case asserts a pure description of two
-        # accepted models, so neither reaches a database and neither carries a
-        # golden. Every other harness-lane case must carry one.
-        if (
-            shape is not None
-            and shape not in _NO_GOLDEN_SHAPES
-            and doc.get("lane") != "api-conformance"
-            and not _has_postgres_golden(doc, shape)
-        ):
-            errors.append(f"{name}: tagged case has no Postgres golden SQL")
 
-        if claim_exclude:
-            offending = sorted(set(case_tags_list) & claim_exclude)
-            if offending:
-                errors.append(f"{name}: carries excluded slice tag(s) {offending}")
+def _string_tags(doc: dict) -> list[str]:
+    return [tag for tag in doc.get("tags", []) if isinstance(tag, str)]
 
+
+def _tagged_case_errors(
+    name: str,
+    doc: dict,
+    tags: list[str],
+    *,
+    modules: set[str],
+    shapes: set[str],
+    exclude: set[str],
+) -> list[str]:
+    """One tagged case's drift outside its slice claim."""
+    errors: list[str] = []
+    shape = _case_shape(doc)
+    if shape is None:
+        errors.append(f"{name}: tagged case has no recognizable shape")
+    elif shape not in shapes:
+        errors.append(
+            f"{name}: shape {shape!r} is outside the slice claim (allowed: {sorted(shapes)})"
+        )
+
+    for tag in tags:
+        if _MODULE_RE.match(tag) and tag not in modules:
+            errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
+
+    # An api-conformance-lane case (every boundary and edit case, plus the
+    # read-lock matrix reads) is NOT executed by the harness, so it need not carry a
+    # Postgres golden — its observable is proven by the language's API
+    # Conformance Suite. A `rejected` case asserts a pre-SQL refusal (it never
+    # reaches SQL), and an `evolution` case asserts a pure description of two
+    # accepted models, so neither reaches a database and neither carries a
+    # golden. Every other harness-lane case must carry one.
+    if (
+        shape is not None
+        and shape not in _NO_GOLDEN_SHAPES
+        and doc.get("lane") != "api-conformance"
+        and not _has_postgres_golden(doc, shape)
+    ):
+        errors.append(f"{name}: tagged case has no Postgres golden SQL")
+
+    if exclude:
+        offending = sorted(set(tags) & exclude)
+        if offending:
+            errors.append(f"{name}: carries excluded slice tag(s) {offending}")
     return errors
 
 

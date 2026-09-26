@@ -215,6 +215,19 @@ def check(
     return errors
 
 
+class _SpecUnreadable(Exception):
+    """A spec markdown input is missing or unreadable."""
+
+
+def _spec_text(path: Path) -> str:
+    if not path.is_file():
+        raise _SpecUnreadable(f"not a file: {path}")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _SpecUnreadable(f"unreadable spec file {path}: {exc}") from exc
+
+
 def main(argv: list[str]) -> int:
     """CLI entry point: parse the four homes under the spec directory *argv[0]*
     (schema location derived via `schemas_dir`) and report agreement on stdout /
@@ -233,20 +246,13 @@ def main(argv: list[str]) -> int:
         )
         return 2
     spec_dir = Path(argv[0])
-    core_path = spec_dir / "m-core.md"
-    descriptor_path = spec_dir / "m-descriptor.md"
-    wire_path = spec_dir / "m-wire.md"
-    texts: list[str] = []
-    for path in (core_path, descriptor_path, wire_path):
-        if not path.is_file():
-            print(f"not a file: {path}", file=sys.stderr)
-            return 2
-        try:
-            texts.append(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError) as exc:
-            print(f"unreadable spec file {path}: {exc}", file=sys.stderr)
-            return 2
-    core_markdown, descriptor_markdown, wire_markdown = texts
+    try:
+        core_markdown, descriptor_markdown, wire_markdown = (
+            _spec_text(spec_dir / name) for name in ("m-core.md", "m-descriptor.md", "m-wire.md")
+        )
+    except _SpecUnreadable as exc:
+        print(exc, file=sys.stderr)
+        return 2
 
     try:
         schema_path = schemas_dir(spec_dir) / "metamodel.schema.json"
