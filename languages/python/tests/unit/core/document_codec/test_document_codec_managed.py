@@ -5,15 +5,18 @@ that an empty effective change set emits no statement, `-014` that per-row
 elimination is scalar equality, `-020` that an undeclared key inside a stored
 occurrence takes no part. What stays here is what no case can reach: the rule
 stated at the operation's own interface, over operands no write path has to
-produce.
+produce, and the prepared positional form of that rule held to the same verdict
+over generated shapes.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import decimal
+import random
 from collections.abc import Iterable, Mapping, Sequence
-from typing import cast
+from dataclasses import dataclass
+from typing import Final, cast
 
 import pytest
 
@@ -22,6 +25,8 @@ from parallax.core.base import (
     BOOLEAN,
     BYTES,
     DATE,
+    INT32,
+    JSON,
     STRING,
     Decimal,
     FrozenMap,
@@ -30,7 +35,15 @@ from parallax.core.base import (
     matches_neutral_type,
     retain_document_value,
 )
-from parallax.core.document_codec import Leaf, MemberShape, Occurrence, classify_effective_change
+from parallax.core.document_codec import (
+    Leaf,
+    MemberShape,
+    Occurrence,
+    classify_effective_change,
+    prepare_effective_change,
+    reduce_declared_members,
+)
+from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
     MAPPING_SOURCE_ACCESS,
@@ -40,7 +53,8 @@ from parallax.core.document_codec._authoring import (
     validate_member_authoring,
 )
 from parallax.core.document_codec._managed import EffectiveChangeSet
-from parallax.core.metamodel import Multiplicity
+from parallax.core.metamodel import DocumentMember, Multiplicity
+from parallax.core.unit_work import EntityStateRow
 
 _GEO = MemberShape(members=(Leaf("lat", STRING, True),))
 _ZONE = MemberShape(members=(Leaf("label", STRING, True),))
@@ -408,3 +422,239 @@ def test_a_tuple_and_a_list_are_both_carriers_of_one_value() -> None:
     assert _classify({"entries": elements}, {"entries": list(elements)}).restored == frozenset(
         {"entries"}
     )
+
+
+# --------------------------------------------------------------------------- #
+# The prepared positional comparison: the same rule over the positional row a  #
+# read materializes, with the assignments normalized once rather than per row. #
+# --------------------------------------------------------------------------- #
+_ABSENT: Final = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _Selected:
+    shape: MemberShape
+
+
+def _row(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
+    """``members`` positional over ``shape``, a name it omits held as ``_ABSENT``."""
+    return tuple(
+        _cell(member, members[member.name]) if member.name in members else _ABSENT
+        for member in shape.members
+    )
+
+
+def _cell(member: DocumentMember, value: object) -> object:
+    if isinstance(member, Leaf) or value is None or value is _ABSENT:
+        return value
+    if member.multiplicity is Multiplicity.MANY:
+        return tuple(
+            _row(member.shape, cast("Mapping[str, object]", item))
+            for item in cast("Sequence[object]", value)
+        )
+    return _row(member.shape, cast("Mapping[str, object]", value))
+
+
+def _classified(
+    shape: MemberShape, assigned: Mapping[str, object], row: tuple[object, ...]
+) -> list[int]:
+    """The positions the keyed rule answers effective, in authored order, after
+    the one normalization a write applies to its assignments: each occurrence
+    reduced, presence preserved, to the document it would store."""
+    normalized: dict[str, object] = {}
+    for name, value in assigned.items():
+        member = shape.member(name)
+        if not isinstance(member, Occurrence):
+            normalized[name] = value
+        elif member.multiplicity is Multiplicity.MANY:
+            normalized[name] = [
+                reduce_declared_members(member.shape, element, preserve_presence=True)
+                for element in cast("Sequence[object]", value)
+            ]
+        else:
+            normalized[name] = reduce_declared_members(member.shape, value, preserve_presence=True)
+    view = EntityStateRow.over_declared_members(_Selected(shape), row, absent=_ABSENT)
+    effective = classify_effective_change(shape, normalized, view).effective
+    return [cast("int", shape.position(name)) for name in assigned if name in effective]
+
+
+def _prepared(
+    shape: MemberShape, assigned: Mapping[str, object], row: tuple[object, ...]
+) -> list[int]:
+    change = prepare_effective_change(shape, assigned, absent=_ABSENT)
+    positions = list(change.effective_positions(row))
+    assert change.any_effective(row) is bool(positions)
+    return positions
+
+
+_LEAF_VALUES: Final[Mapping[NeutralType, tuple[object, ...]]] = {
+    STRING: ("a", "b"),
+    INT32: (1, 2),
+    BOOLEAN: (True, False),
+    JSON: ({"k": 1}, {"k": [1, 2]}, [1, 2], "a"),
+}
+
+
+class _Generated:
+    """Shapes, positional rows, and assignments drawn so that a large share of
+    assignments restore the row they are compared against."""
+
+    def __init__(self, seed: int) -> None:
+        self._random = random.Random(seed)
+
+    def shape(self, depth: int = 0) -> MemberShape:
+        draw = self._random
+        members: list[DocumentMember] = []
+        members.extend(
+            Leaf(f"leaf{index}", draw.choice(tuple(_LEAF_VALUES)), True)
+            for index in range(draw.randint(1, 3))
+        )
+        if depth < 2:
+            members.extend(
+                Occurrence(
+                    f"occurrence{index}",
+                    draw.choice((Multiplicity.ONE, Multiplicity.MANY)),
+                    True,
+                    self.shape(depth + 1),
+                )
+                for index in range(draw.randint(0, 2))
+            )
+        return MemberShape(members=tuple(members))
+
+    def document(self, shape: MemberShape) -> dict[str, object]:
+        return {
+            member.name: self.value(member)
+            for member in shape.members
+            if self._random.random() > 0.2
+        }
+
+    def value(self, member: DocumentMember) -> object:
+        draw = self._random
+        if draw.random() < 0.15:
+            return None
+        if isinstance(member, Leaf):
+            return draw.choice(_LEAF_VALUES[member.type])
+        if member.multiplicity is Multiplicity.MANY:
+            return [self.document(member.shape) for _ in range(draw.randint(0, 2))]
+        return self.document(member.shape)
+
+    def stored(self, shape: MemberShape) -> dict[str, object]:
+        """A row's members; a name left out is the absent marker."""
+        return self.document(shape)
+
+    def assigned(self, shape: MemberShape, stored: Mapping[str, object]) -> dict[str, object]:
+        draw = self._random
+        assigned: dict[str, object] = {}
+        for member in shape.members:
+            if draw.random() < 0.4:
+                continue
+            restoring = member.name in stored and draw.random() < 0.6
+            value = stored[member.name] if restoring else self.value(member)
+            if value is None and _is_many(member):
+                if draw.random() < 0.5:
+                    continue
+                value = cast("object", [])
+            assigned[member.name] = self.perturbed(member, value)
+        if draw.random() < 0.1:
+            assigned["undeclared"] = "a"
+        return assigned
+
+    def perturbed(self, member: DocumentMember, value: object) -> object:
+        """``value`` or, now and then, one member of it changed or omitted, or
+        a JSON array in the other carrier a caller may hand over."""
+        draw = self._random
+        if isinstance(value, list) and isinstance(member, Leaf):
+            items = cast("list[object]", value)
+            return tuple(items) if draw.random() < 0.5 else items
+        if not isinstance(value, dict) or draw.random() < 0.7:
+            return cast("object", value)
+        document = dict(cast("dict[str, object]", value))
+        if document and draw.random() < 0.5:
+            del document[draw.choice(tuple(document))]
+        elif isinstance(member, Occurrence):
+            nested = draw.choice(member.shape.members)
+            document[nested.name] = self.value(nested)
+        return document
+
+
+def test_the_prepared_comparison_answers_the_keyed_rule_over_generated_positional_rows() -> None:
+    generated = _Generated(20260925)
+    restored = effective = 0
+    for _ in range(3000):
+        shape = generated.shape()
+        stored = generated.stored(shape)
+        assigned = generated.assigned(shape, stored)
+        row = _row(shape, stored)
+        expected = _classified(shape, assigned, row)
+        assert _prepared(shape, assigned, row) == expected, (shape, assigned, stored)
+        declared = sum(1 for name in assigned if shape.member(name) is not None)
+        effective += len(expected)
+        restored += declared - len(expected)
+    assert restored > 1000 and effective > 1000
+
+
+def test_a_top_level_absent_position_is_a_change_never_the_observed_null() -> None:
+    # A row a read materialized holds every position; one the read left absent
+    # holds the marker as a value, so even a null assignment changes it.
+    for member in _SHAPE.members:
+        row = _row(_SHAPE, {})
+        assert _prepared(
+            _SHAPE, {member.name: None} if not _is_many(member) else {member.name: []}, row
+        ) == [_SHAPE.members.index(member)]
+    assert _prepared(_SHAPE, {"flag": None}, _row(_SHAPE, {"flag": None})) == []
+
+
+def _is_many(member: DocumentMember) -> bool:
+    return isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+
+
+def test_the_prepared_comparison_reads_only_assigned_positions_and_stops_at_the_first_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+
+    class _Row(tuple[object, ...]):
+        def __getitem__(self, index: object) -> object:  # pyright: ignore[reportIncompatibleMethodOverride] - an index-reading probe
+            reads.append(cast("int", index))
+            return super().__getitem__(cast("int", index))
+
+    stored = _row(_SHAPE, {"flag": True, "amount": decimal.Decimal("1.00"), "day": None})
+    row = _Row(stored)
+    change = prepare_effective_change(
+        _SHAPE, {"day": dt.date(2026, 1, 1), "amount": decimal.Decimal("1.00")}, absent=_ABSENT
+    )
+
+    assert change.any_effective(row)
+    assert reads == [2]
+    reads.clear()
+    assert list(change.effective_positions(row)) == [2]
+    assert reads == [2, 1]
+
+    reductions: list[object] = []
+    reduce = reduce_declared_members
+
+    def counting(shape: MemberShape, document: object, **options: bool) -> object:
+        reductions.append(document)
+        return reduce(shape, document, **options)
+
+    monkeypatch.setattr(managed, "reduce_declared_members", counting)
+    authored = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}, {"kind": "work"}]}
+    prepared = prepare_effective_change(_SHAPE, authored, absent=_ABSENT)
+    for _ in range(5):
+        prepared.any_effective(_row(_SHAPE, {"origin": {"city": "Oslo"}}))
+    assert len(reductions) == 3
+
+
+def test_an_assignment_naming_only_undeclared_members_changes_nothing() -> None:
+    change = prepare_effective_change(_SHAPE, {"unknown": 1}, absent=_ABSENT)
+    assert not change.any_effective(_row(_SHAPE, {}))
+    assert list(change.effective_positions(_row(_SHAPE, {}))) == []
+
+
+def test_an_encoded_occurrence_is_compared_as_the_managed_document_it_decodes_to() -> None:
+    # A nested leaf may arrive in its encoded spelling; preparation decodes it
+    # once, so the row's managed Decimal is the value it is weighed against.
+    stored = {"entries": [{"kind": "home", "price": decimal.Decimal("1.50")}]}
+    row = _row(_SHAPE, stored)
+    assert _prepared(_SHAPE, {"entries": [{"kind": "home", "price": "1.50"}]}, row) == []
+    assert _prepared(_SHAPE, {"entries": [{"kind": "home", "price": "1.51"}]}, row) == [5]

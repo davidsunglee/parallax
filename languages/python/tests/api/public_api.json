@@ -391,6 +391,7 @@
     "NULL",
     "Occurrence",
     "OccurrenceCarrier",
+    "PreparedEffectiveChange",
     "Present",
     "SetLeaf",
     "SetValue",
@@ -405,6 +406,7 @@
     "is_text_compared",
     "locate_raw_entity_member",
     "occurrence_shape",
+    "prepare_effective_change",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
     "shape_of_declaration"
