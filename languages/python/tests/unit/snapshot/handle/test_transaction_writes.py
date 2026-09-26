@@ -40,6 +40,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     instructions,
 )
+from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
@@ -50,6 +51,7 @@ from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteEvidenceError,
 )
+from parallax.snapshot.handle import _keyed_writes as keyed_writes_module
 from parallax.snapshot.handle._keyed_writes import (
     PreparedSourceWrite,
     ResolvedKeyedWriteSource,
@@ -457,6 +459,49 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     account_db(port).transact(fn)
     # The read happened; the write never did.
     assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (1,)), CommitCall()]
+
+
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_a_keyed_update_classifies_its_effective_change_once(
+    monkeypatch: pytest.MonkeyPatch, representation: str
+) -> None:
+    # The verb classifies against the originals its source states and buffers
+    # that answer beside the write, so settlement overlays it rather than
+    # classifying the same members again against the Predecessor Row.
+    classified: list[str] = []
+    for module in (keyed_writes_module, write_settlement_module):
+        classify = module.classify_effective_change
+
+        def counting(
+            *args: Any, _classify: Any = classify, _module: str = module.__name__, **kwargs: Any
+        ) -> Any:
+            classified.append(_module)
+            return _classify(*args, **kwargs)
+
+        monkeypatch.setattr(module, "classify_effective_change", counting)
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        if representation == "typed":
+            fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
+            tx.update(fetched.edit(value=Decimal("150.00")))
+        else:
+            node = tx.wire.find(
+                {
+                    "target": "parallax.compatibility.Balance",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+                    "temporal": {"transaction-time": {"asOf": "latest"}},
+                }
+            ).result()
+            tx.wire.update(node, {"value": "150.00"})
+
+    db_for(BALANCE, port).transact(fn)
+    assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
+    assert classified == [keyed_writes_module.__name__]
 
 
 # --------------------------------------------------------------------------- #

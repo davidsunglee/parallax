@@ -22,11 +22,7 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.unit_work.columns import freeze_retained_value
-from parallax.core.unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedTemporalBounds,
-    derive_keyed_write,
-)
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -322,8 +318,8 @@ def keyed_write(
         family.root, shape, mutation, valid_from, until
     )
     prepared = source.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
-    row, restorations = _effective_row(ctx, resolved, prepared, mutation)
-    if row is None:
+    effective, restorations = _effective_change(ctx, resolved, prepared, mutation)
+    if _is_no_op(ctx, resolved, mutation, effective, restorations):
         return
     evidence: SettledEvidence | None = (
         None
@@ -344,9 +340,10 @@ def keyed_write(
     admit_and_buffer(
         ctx.uow,
         meta,
-        derive_keyed_write(prepared.instruction, (row,)),
+        prepared.instruction,
         evidence,
         restorations=restorations,
+        effective=effective,
     )
     if cancels_pending_insert:
         ctx.inserts.retire(written)
@@ -443,44 +440,52 @@ def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:
     return MappingProxyType({name: freeze_retained_value(value) for name, value in row.items()})
 
 
-def _effective_row(
+def _effective_change(
     ctx: KeyedWriteContext,
     resolved: ResolvedKeyedWriteSource,
     prepared: PreparedSourceWrite,
     mutation: KeyedMutation,
-) -> tuple[Mapping[str, object] | None, frozenset[str]]:
-    """The row this write actually buffers and the members it restored, or
-    ``None`` for the write that buffers nothing.
+) -> tuple[frozenset[str] | None, frozenset[str]]:
+    """This write's effective and restored members against the originals its
+    source states; a verb that assigns nothing classifies nothing.
 
     Effectiveness is the document codec's one rule, asked here rather than in
     either adapter, over values the adapter ran through one producer on both
     sides: a member whose authored value is the original the source states was
-    RESTORED, and what is left is the effective change set. A restoration is not
-    nothing — it is the author's last word on that member — so a wholly restoring
-    chain still buffers its identity row when this transaction already buffered
-    an assignment at the scope it would claim, and the merged write is eliminated
-    instead of writing a value the caller took back.
+    RESTORED, and what is left is the effective change set. The codec answers
+    names alone, so buffering selects the prepared row's own values by them and
+    the comparison never rewrites what will be stored.
 
-    The codec answers names alone, so what buffers is the prepared row's own
-    values selected by them: the comparison never rewrites what will be stored.
-
-    A destructive or close verb names no member and always buffers its identity
-    row: what it says about the row's existence is not a change set to reduce.
+    A destructive or close verb names no member, and what it says about the
+    row's existence is not a change set to reduce.
     """
-    authored = prepared.instruction.rows[0]
-    identity = {name: value for name, value in authored.items() if name not in prepared.originals}
     if mutation not in UPDATE_MUTATIONS:
-        return identity, frozenset()
+        return None, frozenset()
     change = classify_effective_change(
         comparison_shape(ctx.model.meta, resolved.entity),
         prepared.assigned,
         prepared.originals,
     )
-    restorations = change.restored
-    if change.effective:
-        return {**identity, **{name: authored[name] for name in change.effective}}, restorations
-    if not restorations or not cancels_a_pending_assignment(
+    return change.effective, change.restored
+
+
+def _is_no_op(
+    ctx: KeyedWriteContext,
+    resolved: ResolvedKeyedWriteSource,
+    mutation: KeyedMutation,
+    effective: frozenset[str] | None,
+    restorations: frozenset[str],
+) -> bool:
+    """Whether an update changes nothing and cancels nothing, so buffers nothing.
+
+    A restoration is not nothing — it is the author's last word on that member —
+    so a wholly restoring chain still buffers its identity row when this
+    transaction already buffered an assignment at the scope it would claim, and
+    the merged write is eliminated instead of writing a value the caller took
+    back.
+    """
+    if effective is None or effective:
+        return False
+    return not restorations or not cancels_a_pending_assignment(
         ctx.uow, ctx.model.meta, resolved.entity, resolved.hint, mutation
-    ):
-        return None, restorations
-    return identity, restorations
+    )

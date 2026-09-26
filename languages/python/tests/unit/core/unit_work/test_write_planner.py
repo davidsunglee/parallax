@@ -33,7 +33,11 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
+from parallax.core.document_codec import (
+    PreparedEffectiveChange,
+    classify_effective_change,
+    prepare_effective_change,
+)
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
@@ -79,6 +83,7 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlan,
     WritePlanningError,
+    buffered_write,
     object_key,
 )
 from parallax.core.unit_work import planner as planner_module
@@ -358,6 +363,82 @@ def test_a_wholly_restored_merge_leaves_no_step_at_all() -> None:
         observations={key: observation},
     )
     assert list(plan.steps) == []
+
+
+def _classified_balance_update(
+    row: Mapping[str, object],
+    observation: TemporalObservation,
+    *,
+    effective: frozenset[str] | None,
+    restorations: frozenset[str] = frozenset(),
+) -> BufferItem:
+    return buffered_write(
+        _prepared_keyed(KeyedWrite("update", "Balance", (row,)), _BALANCE),
+        observation,
+        restorations=restorations,
+        effective=effective,
+    )
+
+
+def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
+    (entry,) = (
+        entry
+        for step in plan.steps
+        if isinstance(step, PlannedInsert)
+        for entry in step.entries
+        if isinstance(entry.origin, ChangedFrom)
+    )
+    return cast("ChangedFrom", entry.origin), entry.row
+
+
+def test_coalesced_temporal_writes_overlay_what_the_last_word_classified_effective() -> None:
+    # The classification each carrier arrives with merges by the rule its values
+    # do: `value` is effective in the first write and restored by the third, so
+    # the successor overlays `acctNum` alone and carries the predecessor's
+    # `value`.
+    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+    plan = _plan(
+        [
+            _classified_balance_update(
+                {"id": 1, "value": Decimal("9.00")}, observation, effective=frozenset({"value"})
+            ),
+            _classified_balance_update(
+                {"id": 1, "acctNum": "B"}, observation, effective=frozenset({"acctNum"})
+            ),
+            _classified_balance_update(
+                {"id": 1, "value": Decimal("1.00")},
+                observation,
+                effective=frozenset(),
+                restorations=frozenset({"value"}),
+            ),
+        ],
+        _BALANCE,
+    )
+    origin, row = _changed_entry(plan)
+    values = _row_values(row)
+    assert values["acctNum"] == "B"
+    (value,) = (identity for identity in row.attributes if identity.name == "value")
+    assert origin.predecessor.carries(value, row.attributes[value])
+
+
+def test_a_merge_with_an_unclassified_write_is_classified_at_settlement() -> None:
+    # A caller that classified nothing leaves nothing to merge its answer with,
+    # so the merged row is classified against the Predecessor Row: `acctNum`
+    # restates what the milestone holds and is carried.
+    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+    plan = _plan(
+        [
+            _classified_balance_update(
+                {"id": 1, "value": Decimal("9.00")}, observation, effective=frozenset({"value"})
+            ),
+            _classified_balance_update({"id": 1, "acctNum": "A"}, observation, effective=None),
+        ],
+        _BALANCE,
+    )
+    origin, row = _changed_entry(plan)
+    assert _row_values(row)["value"] == Decimal("9.00")
+    (account,) = (identity for identity in row.attributes if identity.name == "acctNum")
+    assert origin.predecessor.carries(account, row.attributes[account])
 
 
 def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
@@ -2255,9 +2336,10 @@ def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_plann
 # multi-assignment group carries the members it restores.                     #
 # --------------------------------------------------------------------------- #
 def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    calls = {"prepared": 0, "compared": 0}
+    calls = {"prepared": 0, "compared": 0, "classified": 0}
     prepare = prepare_effective_change
     effective_positions = PreparedEffectiveChange.effective_positions
+    classify = classify_effective_change
 
     def preparing(*args: Any, **kwargs: Any) -> PreparedEffectiveChange:
         calls["prepared"] += 1
@@ -2267,8 +2349,13 @@ def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["compared"] += 1
         return effective_positions(change, row)
 
+    def classifying(*args: Any, **kwargs: Any) -> Any:
+        calls["classified"] += 1
+        return classify(*args, **kwargs)
+
     monkeypatch.setattr(write_settlement_module, "prepare_effective_change", preparing)
     monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", comparing)
+    monkeypatch.setattr(write_settlement_module, "classify_effective_change", classifying)
     return calls
 
 
@@ -2310,7 +2397,7 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
     )
     assert isinstance(group.evidence, PredecessorRows)
     plan = _plan([group], _POSITION)
-    assert calls == {"prepared": 1, "compared": 0}
+    assert calls == {"prepared": 1, "compared": 0, "classified": 0}
 
     changed = [
         entry
@@ -2320,7 +2407,7 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
         if isinstance(entry.origin, ChangedFrom)
     ]
     assert len(changed) == 2
-    assert calls == {"prepared": 1, "compared": 2}
+    assert calls == {"prepared": 1, "compared": 2, "classified": 0}
     for entry in changed:
         values = _row_values(entry.row)
         account = next(ident for ident in entry.row.attributes if ident.name == "acctNum")
@@ -2330,27 +2417,28 @@ def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
         assert values["value"] == Decimal("9.00")
 
 
-def test_single_assignment_groups_and_keyed_writes_are_not_compared_again_at_settlement(
+def test_single_assignment_groups_and_classified_keyed_writes_are_not_compared_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _comparisons(monkeypatch)
     group = _position_update(WriteAssignment("Position.value", Decimal("9.00")), account="A")
     list(_plan([group], _POSITION).steps)
-    assert calls == {"prepared": 0, "compared": 0}
+    assert calls == {"prepared": 0, "compared": 0, "classified": 0}
 
-    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
-    key_ = object_key(addressed, _BALANCE)
-    assert key_ is not None
-    list(
-        _plan(
-            [addressed],
-            _BALANCE,
-            observations={
-                key_: TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-            },
-        ).steps
+    prepared = _prepared_keyed(
+        KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("9.00")},)),
+        _BALANCE,
     )
-    assert calls == {"prepared": 0, "compared": 0}
+    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+    classified = buffered_write(prepared, observation, effective=frozenset({"value"}))
+    (_close, successor) = _plan([classified], _BALANCE).steps
+    assert calls == {"prepared": 0, "compared": 0, "classified": 0}
+    # The producer's answer is the whole of what the successor overlays.
+    assert _insert_rows(successor)[0]["acctNum"] == "A"
+    assert _insert_rows(successor)[0]["value"] == Decimal("9.00")
+
+    list(_plan([buffered_write(prepared, observation)], _BALANCE).steps)
+    assert calls == {"prepared": 0, "compared": 0, "classified": 1}
 
 
 @pytest.mark.parametrize(
@@ -2453,6 +2541,78 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     assert all(document["charterCode"] == "NB-118" for document in documents)
     assert documents[0] is stored
     assert documents[2] is stored
+
+
+@pytest.mark.parametrize("positional", [False, True], ids=["mapping", "positional"])
+def test_a_directly_buffered_update_carries_a_restated_member_and_its_unknown_keys(
+    positional: bool,
+) -> None:
+    # A caller pairing a keyed update with its evidence through `buffered_write`
+    # classifies nothing itself, and restates `address` as an equal but distinct
+    # value. Settlement classifies it restored against the Predecessor Row, so
+    # the changed successor carries the stored subtree, the key no member
+    # declares included, and patches `title` alone.
+    model = model_of(acquisition_support.MODEL)
+    target = acquisition_support.case_named("acquisition.rows-8.document").prepared.selection.target
+    selection = LayoutCatalog(model).entity(target.identity).member_selection
+    members: dict[str, object] = {
+        "id": 1,
+        "title": "title-1",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}},
+        "tags": [{"label": "a"}],
+        "validStart": acquisition_support.VALID_START,
+        "validEnd": INFINITY,
+        "txStart": acquisition_support.TX_START,
+        "txEnd": INFINITY,
+    }
+    stored: dict[str, object] = {
+        "title": "title-1",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}, "legacyDiscount": 5},
+        "tags": [{"label": "a"}],
+    }
+    predecessor = (
+        PredecessorRow.over_row(
+            selection, positional_row(selection.shape, members, absent=ABSENT), stored, ABSENT
+        )
+        if positional
+        else PredecessorRow(members, document=stored)
+    )
+    prepared = _prepared_keyed(
+        KeyedWrite(
+            "updateUntil",
+            target.identity.canonical,
+            (
+                {
+                    "id": 1,
+                    "title": acquisition_support.ASSIGNED_TITLE,
+                    "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                },
+            ),
+            acquisition_support.INTERIOR_FROM,
+            acquisition_support.INTERIOR_UNTIL,
+        ),
+        model,
+    )
+    plan = _plan([buffered_write(prepared, TemporalObservation(predecessor))], model)
+
+    (changed,) = (
+        step
+        for step in plan.steps
+        if isinstance(step, PlannedInsert) and isinstance(step.entries[0].origin, ChangedFrom)
+    )
+    documents = [
+        cast("Mapping[str, Any]", bind.value)
+        for bind in compile_write_step(changed, model, POSTGRES).binds
+        if isinstance(bind, JsonDocument)
+    ]
+    assert documents == [{**stored, "title": acquisition_support.ASSIGNED_TITLE}]
+    (entry,) = changed.entries
+    (address,) = (
+        identity for identity in entry.row.value_objects if identity.path[-1] == "address"
+    )
+    assert cast("ChangedFrom", entry.origin).predecessor.carries(
+        address, entry.row.value_objects[address]
+    )
 
 
 def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restored_leaf() -> None:

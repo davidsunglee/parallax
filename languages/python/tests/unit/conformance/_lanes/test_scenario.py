@@ -42,8 +42,10 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    JsonDocument,
     MappingRow,
 )
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -1353,6 +1355,54 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
         "/writeSequence/1",
     ]
     assert port.writes[0][0].startswith("insert into unrelated")
+
+
+def test_the_lane_carries_a_restated_occurrence_and_the_unknown_keys_it_stored() -> None:
+    # The lane pairs each keyed instruction with its evidence directly, so no
+    # verb classified what the row assigns. A row restating `manifest` exactly as
+    # the milestone holds it is classified restored against the tracked
+    # Predecessor Row, and the successor carries the stored subtree whole.
+    meta = models.load_models()["document-layout"]
+    stored: dict[str, object] = {
+        "title": "Northbound",
+        "crew": 12,
+        "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
+        "legs": [{"port": "Oslo"}],
+    }
+    tracked = TemporalObservation(
+        predecessor=PredecessorRow(
+            members={
+                "id": 7,
+                "title": "Northbound",
+                "crew": 12,
+                "manifest": {"cargo": "grain"},
+                "legs": [{"port": "Oslo"}],
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
+            },
+            document=stored,
+        )
+    )
+    instruction = instructions.prepare_wire_write(
+        KeyedWrite(
+            "update",
+            "parallax.compatibility.Voyage",
+            ({"id": 7, "title": "Southbound", "manifest": {"cargo": "grain"}},),
+        ),
+        meta,
+    )
+    assert isinstance(instruction, PreparedKeyedWrite)
+
+    _plan, (_close, successor) = scenario._plan_and_lower(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+        meta,
+        POSTGRES,
+        "locking",
+        scenario.INERT_CLOCK_INSTANT,
+        [scenario._buffered(instruction, tracked, meta)],  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helpers directly
+    )
+
+    (document,) = (bind.value for bind in successor.binds if isinstance(bind, JsonDocument))
+    assert document == {**stored, "title": "Southbound"}
 
 
 def test_a_read_step_names_its_own_object_query() -> None:

@@ -8,7 +8,11 @@ from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
-from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
+from parallax.core.document_codec import (
+    PreparedEffectiveChange,
+    classify_effective_change,
+    prepare_effective_change,
+)
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -382,12 +386,14 @@ class WriteSettlement:
                 flush_pending()
                 segments.append(self._settle_group(item, concurrency, transaction_instant))
                 continue
-            instruction, observation = (
-                (item.instruction, item.observation)
+            instruction, observation, effective = (
+                (item.instruction, item.observation, item.effective)
                 if isinstance(item, ObservedKeyedWrite)
-                else (item, None)
+                else (item, None, None)
             )
-            for step in self._settle(instruction, observation, concurrency, transaction_instant):
+            for step in self._settle(
+                instruction, observation, effective, concurrency, transaction_instant
+            ):
                 pending.append(
                     self._audit.decorate(
                         step,
@@ -406,6 +412,7 @@ class WriteSettlement:
         self,
         instruction: PreparedWrite,
         observation: WriteObservation | None,
+        effective: frozenset[str] | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> tuple[PlannedStep, ...]:
@@ -419,6 +426,7 @@ class WriteSettlement:
                 shape,
                 instruction,
                 observation,
+                effective,
                 concurrency,
                 tx_instant,
             )
@@ -597,6 +605,7 @@ class WriteSettlement:
         shape: TransactionTimeOnly | Bitemporal,
         instruction: PreparedKeyedWrite,
         observation: WriteObservation | None,
+        effective: frozenset[str] | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> tuple[PlannedStep, ...]:
@@ -605,6 +614,11 @@ class WriteSettlement:
         Each row of a milestone chain opens its own successors, so a temporal
         keyed instruction carries exactly one row (`m-unit-work`) and reaching
         here with several is a caller wiring defect.
+
+        A changed successor overlays only the members ``effective`` names, which
+        its producer classified against the values its source observed. A write
+        buffered without that classification is classified here, once, against
+        the Predecessor Row it observed.
         """
         if len(instruction.rows) != 1:
             raise WritePlanningError(
@@ -637,6 +651,14 @@ class WriteSettlement:
             # No successor carries this state forward, yet a member the entity
             # does not declare still refuses it.
             _predecessor_maps(facts, predecessor)
+        overlaid = (
+            None
+            if predecessor is None
+            or not any(
+                isinstance(resolved.state, ChangedState) for resolved in facts.resolved_successors
+            )
+            else _effective_positions(facts, row, predecessor, effective)
+        )
         steps: list[PlannedStep] = []
         close = facts.close
         if close is not None:
@@ -663,6 +685,7 @@ class WriteSettlement:
                 authored_attributes,
                 authored_value_objects,
                 predecessor,
+                effective=overlaid,
             )
             for resolved in facts.resolved_successors
         )
@@ -1092,8 +1115,9 @@ def _successor_step(
     A carried or changed successor starts from its predecessor's own cells, so
     every member it does not effectively change is the predecessor's cell
     object — the identity lowering patches by (:class:`ChangedFrom`). A changed
-    successor overlays the authored members, or only those at the ``effective``
-    selection positions when its producer compared them for this row.
+    successor overlays only the authored members at the ``effective`` selection
+    positions, or every authored member when ``effective`` is absent because
+    the row was selected for its one assignment being effective.
     """
     match resolved.state:
         case AuthoredState():
@@ -1126,6 +1150,36 @@ def _successor_step(
         predecessor=predecessor,
     )
     return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
+
+
+def _effective_positions(
+    facts: _TemporalFacts,
+    row: Mapping[str, object],
+    predecessor: PredecessorRow,
+    effective: frozenset[str] | None,
+) -> tuple[int, ...]:
+    """The selection positions of ``row``'s members that a keyed write's
+    changed successor overlays: its key, which addresses the write rather than
+    assigns to it, and its effective members.
+
+    Without a producer's classification, every assigned member — the row less
+    its key — is classified against ``predecessor``'s members. That evidence may
+    be a caller's mapping rather than positional state, so the comparison is the
+    codec's mapping form.
+    """
+    shape = facts.view.member_selection.shape
+    key = facts.view.primary_key.identity.name
+    if effective is None:
+        effective = classify_effective_change(
+            shape,
+            {name: value for name, value in row.items() if name != key},
+            predecessor.members,
+        ).effective
+    return tuple(
+        position
+        for name in row
+        if (name == key or name in effective) and (position := shape.position(name)) is not None
+    )
 
 
 def _predecessor_maps(
