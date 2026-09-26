@@ -277,8 +277,8 @@ def _row_operation(
 ) -> _RowOperation:
     # Key order is observable: kept members in layout order, then renamed
     # Attributes, then publication-key padding, then `familyVariant`. An
-    # Attribute published under both its storage and result keys keeps its
-    # storage key and stays unencoded.
+    # Attribute's own result key wins over its storage key, which may be another
+    # Attribute's result key.
     layout = level.layout
     reads = level.attribute_reads
     published = frozenset(keys)
@@ -291,15 +291,11 @@ def _row_operation(
             continue
         read = reads[position]
         result = read.result_key
-        if storage not in published and result in published:
-            renamed.append((position, result, attribute.type if read.encoded else None, None))
+        encoded = attribute.type if read.encoded else None
+        if result != storage and result in published:
+            renamed.append((position, result, encoded, None))
         else:
-            encoded = (
-                read.encoded
-                and storage in published
-                and (result == storage or result not in published)
-            )
-            kept.append((position, storage, attribute.type if encoded else None, None))
+            kept.append((position, storage, encoded if storage in published else None, None))
     kept.extend(
         (position, occurrence.storage.name, None, occurrence.definition)
         for position, occurrence in enumerate(layout.occurrences, start=len(layout.attributes))

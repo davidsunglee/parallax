@@ -1210,28 +1210,24 @@ def test_row_form_publishes_an_unknown_tag_under_the_family_root_with_no_variant
     ]
 
 
-def test_row_form_leaves_a_member_published_under_both_names_unencoded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def both_names(
-        compiled: CompiledRead, resolved: EntityIdentity, variant: str | None
-    ) -> tuple[str, ...]:
-        del compiled, resolved, variant
-        return ("id", "payload", "payload_hex")
-
-    monkeypatch.setattr(CompiledRead, "publication_keys", both_names)
-    (first,) = _row_form(
-        _encoded_payload_family(),
-        "Root",
-        [{"id": 1, "payload": "00ff", "size": None, "family_variant": "First"}],
+def test_row_form_publishes_a_member_stored_at_another_members_result_key() -> None:
+    blob = DescriptorEntity(
+        name="Blob",
+        table="blob",
+        attributes=(
+            DescriptorAttribute(name="id", type="int64", column="id", primary_key=True),
+            DescriptorAttribute(name="payload", type="bytes", column="payload", nullable=True),
+            DescriptorAttribute(name="shadow", type="bytes", column="payload_hex", nullable=True),
+        ),
     )
 
-    assert _items(first) == [
-        ("id", 1),
-        ("payload", b"\x00\xff"),
-        ("payload_hex", None),
-        ("familyVariant", "First"),
-    ]
+    (row,) = _row_form(
+        formed(DescriptorMetamodel(entities=(blob,))),
+        "Blob",
+        [{"id": 1, "payload_hex": "00ff", "payload_hex_hex": "0102"}],
+    )
+
+    assert _items(row) == [("id", 1), ("payload_hex", "00ff"), ("payload_hex_hex", "0102")]
 
 
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
