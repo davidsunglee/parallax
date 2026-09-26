@@ -163,11 +163,10 @@ def _check_table_shape(
     return table
 
 
-def _check_topologies(
+def _check_source_topology(
     markdown: str,
     template: str,
     capabilities: dict[str, Any],
-    lifecycle: str | None,
     edges: list[tuple[str, str]],
     issues: list[Diagnostic],
 ) -> None:
@@ -204,6 +203,14 @@ def _check_topologies(
                     )
                 )
 
+
+def _check_artifact_topology(
+    markdown: str,
+    template: str,
+    capabilities: dict[str, Any],
+    lifecycle: str | None,
+    issues: list[Diagnostic],
+) -> None:
     artifacts = _check_table_shape(markdown, template, _SECTION_ARTIFACT_TOPOLOGY, issues)
     if artifacts is None:
         return
@@ -213,27 +220,7 @@ def _check_topologies(
             Diagnostic("missing-artifact-role", "artifact topology has no common runtime row")
         )
     if lifecycle is not None:
-        selected_keyword = _LIFECYCLE_PROFILES[lifecycle].artifact_keyword
-        if not any(selected_keyword in row and "lifecycle" in row for row in row_text):
-            issues.append(
-                Diagnostic(
-                    "missing-artifact-role",
-                    f"artifact topology has no {selected_keyword} lifecycle extension row",
-                )
-            )
-        # The completed spec retains only the selected lifecycle extension, so a
-        # row describing the unselected sibling lifecycle must be rejected.
-        for key, sibling in _LIFECYCLE_PROFILES.items():
-            if key == lifecycle:
-                continue
-            if any(sibling.artifact_keyword in row and "lifecycle" in row for row in row_text):
-                issues.append(
-                    Diagnostic(
-                        "unexpected-artifact-role",
-                        f"artifact topology lists a stray {sibling.artifact_keyword} "
-                        "lifecycle extension row",
-                    )
-                )
+        _check_lifecycle_artifact_rows(row_text, lifecycle, issues)
     for dialect in capabilities.get("dialects", []):
         if isinstance(dialect, str) and not any(
             dialect.casefold() in row and "adapter" in row for row in row_text
@@ -252,6 +239,32 @@ def _check_topologies(
                 "missing-artifact-role", "artifact topology has no development-only tooling row"
             )
         )
+
+
+def _check_lifecycle_artifact_rows(
+    row_text: list[str], lifecycle: str, issues: list[Diagnostic]
+) -> None:
+    selected_keyword = _LIFECYCLE_PROFILES[lifecycle].artifact_keyword
+    if not any(selected_keyword in row and "lifecycle" in row for row in row_text):
+        issues.append(
+            Diagnostic(
+                "missing-artifact-role",
+                f"artifact topology has no {selected_keyword} lifecycle extension row",
+            )
+        )
+    # The completed spec retains only the selected lifecycle extension, so a
+    # row describing the unselected sibling lifecycle must be rejected.
+    for key, sibling in _LIFECYCLE_PROFILES.items():
+        if key == lifecycle:
+            continue
+        if any(sibling.artifact_keyword in row and "lifecycle" in row for row in row_text):
+            issues.append(
+                Diagnostic(
+                    "unexpected-artifact-role",
+                    f"artifact topology lists a stray {sibling.artifact_keyword} "
+                    "lifecycle extension row",
+                )
+            )
 
 
 def _unique_binding_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -324,9 +337,8 @@ def validate_language_spec(
                 f"selected slice {selected!r} is not a lifecycle-complete authoring choice",
             )
         )
-    _check_topologies(
-        markdown, template, capabilities, lifecycle, parse_edges(modules_markdown), issues
-    )
+    _check_source_topology(markdown, template, capabilities, parse_edges(modules_markdown), issues)
+    _check_artifact_topology(markdown, template, capabilities, lifecycle, issues)
     return issues, selected, lifecycle
 
 
