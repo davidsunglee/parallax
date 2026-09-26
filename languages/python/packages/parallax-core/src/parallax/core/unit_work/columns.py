@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final
 
 from parallax.core.base import retain_document_value
-from parallax.core.unit_work.observe import PredecessorRow, adopt_predecessor_row
 
 __all__ = [
     "ChunkedColumnBuilder",
     "ColumnSlice",
-    "PredecessorColumns",
-    "PredecessorShape",
     "freeze_retained_value",
     "whole",
 ]
@@ -66,6 +63,9 @@ class ChunkedColumnBuilder[T]:
         self._chunks: list[tuple[T, ...]] = []
         self._current: list[T] = []
         self._length = 0
+
+    def __len__(self) -> int:
+        return self._length
 
     def append(self, value: T) -> None:
         self._current.append(value)
@@ -122,117 +122,3 @@ def whole[T](column: ChunkedColumn[T]) -> ColumnSlice[T]:
 def freeze_retained_value(value: object) -> object:
     """Own mutable containers once and retain already-frozen trees by identity."""
     return retain_document_value(value)
-
-
-def _freeze_column(column: ColumnSlice[object]) -> ColumnSlice[object]:
-    builder: ChunkedColumnBuilder[object] | None = None
-    for index, value in enumerate(column):
-        frozen = freeze_retained_value(value)
-        if builder is None:
-            if frozen is value:
-                continue
-            builder = ChunkedColumnBuilder()
-            for prior in range(index):
-                builder.append(column[prior])
-        builder.append(frozen)
-    return column if builder is None else whole(builder.build())
-
-
-def _retain_document_column(column: ColumnSlice[object]) -> ColumnSlice[object]:
-    builder: ChunkedColumnBuilder[object] | None = None
-    for index, value in enumerate(column):
-        retained = retain_document_value(value)
-        if builder is None:
-            if retained is value:
-                continue
-            builder = ChunkedColumnBuilder()
-            for prior in range(index):
-                builder.append(column[prior])
-        builder.append(retained)
-    return column if builder is None else whole(builder.build())
-
-
-@dataclass(frozen=True, slots=True)
-class PredecessorShape:
-    """The member-name shape one resolving read's Predecessor Rows share.
-
-    One Materialized Write Group's rows come from one resolving read against
-    one Entity, so every row shares the same declared member set; the shape is
-    retained once rather than once per row.
-    """
-
-    attributes: tuple[str, ...]
-    value_objects: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class PredecessorColumns:
-    """Complete predecessor state stored columnarly, one column per member.
-
-    :class:`~parallax.core.unit_work.observe.PredecessorRow` stays the logical
-    complete-state contract; :meth:`row` builds one only when a consumer asks.
-
-    ``documents`` is the aligned raw Structured Column of each resolved row,
-    carried beside the decoded member columns rather than among them, so a
-    logical Predecessor Row view over columnar storage exposes the raw document
-    without a second per-row carrier. It is absent — not a column of nulls —
-    where the resolving read projected no Structured Column.
-    """
-
-    shape: PredecessorShape
-    attribute_columns: tuple[ColumnSlice[object], ...]
-    value_object_columns: tuple[ColumnSlice[object], ...] = ()
-    documents: ColumnSlice[object] | None = None
-    length: int = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        if len(self.attribute_columns) != len(self.shape.attributes):
-            raise ValueError(
-                "Predecessor Columns carries one column per attribute the shape names: "
-                f"expected {len(self.shape.attributes)}, got {len(self.attribute_columns)}"
-            )
-        if len(self.value_object_columns) != len(self.shape.value_objects):
-            raise ValueError(
-                "Predecessor Columns carries one column per value object the shape names: "
-                f"expected {len(self.shape.value_objects)}, got {len(self.value_object_columns)}"
-            )
-        aligned = (
-            *self.attribute_columns,
-            *self.value_object_columns,
-            *(() if self.documents is None else (self.documents,)),
-        )
-        lengths = {len(column) for column in aligned}
-        if len(lengths) > 1:
-            raise ValueError("Predecessor Columns' member columns share one positive row count")
-        length = next(iter(lengths), 0)
-        if length == 0:
-            raise ValueError("Predecessor Columns carries at least one row")
-        object.__setattr__(
-            self,
-            "value_object_columns",
-            tuple(_freeze_column(column) for column in self.value_object_columns),
-        )
-        if self.documents is not None:
-            object.__setattr__(self, "documents", _retain_document_column(self.documents))
-        object.__setattr__(self, "length", length)
-
-    def row(self, index: int) -> PredecessorRow:
-        """The complete Predecessor Row one resolved row's columns compose.
-
-        Building it here rather than handing back a member map is what keeps the
-        retained document aligned with the members it was decoded from: the two
-        leave this class together or not at all.
-        """
-        members: dict[str, object] = {
-            name: column[index]
-            for name, column in zip(self.shape.attributes, self.attribute_columns, strict=True)
-        }
-        members.update(
-            (name, column[index])
-            for name, column in zip(
-                self.shape.value_objects, self.value_object_columns, strict=True
-            )
-        )
-        return adopt_predecessor_row(
-            members, document=None if self.documents is None else self.documents[index]
-        )

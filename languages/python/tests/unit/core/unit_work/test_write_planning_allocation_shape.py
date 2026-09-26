@@ -63,20 +63,15 @@ from parallax.core.metamodel import (
 from parallax.core.predicate import Comparison
 from parallax.core.unit_work import (
     BufferItem,
-    ChunkedColumnBuilder,
     KeyedWrite,
     MaterializedWriteGroup,
     PlanningRequest,
-    PredecessorColumns,
-    PredecessorShape,
     PredicateSelection,
     PredicateWrite,
-    TemporalColumns,
-    VersionColumns,
+    VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlanner,
     object_key,
-    whole,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.snapshot.handle import build_write_planner
@@ -84,6 +79,7 @@ from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit._metamodel_support import instant as timestamp
+from tests.unit._temporal_group_support import temporal_group
 from tests.unit.memory_instruments import (
     REPEATS,
     Seam,
@@ -203,62 +199,43 @@ def _temporal_model() -> Metamodel:
     )
 
 
-_PREDECESSOR_MEMBERS: Final = ("id", "value", "txStart", "txEnd")
-
-
 def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     """A temporal Materialized Write Group of ``rows`` observed predecessors.
 
-    What a materializing terminate buffers: the key columns beside the whole
-    predecessor state each close is derived from, all of it aligned storage the
-    group already owns.
+    What a materializing terminate buffers: each row's whole predecessor state,
+    which each close is derived from, retained as the positional row the
+    resolving read judged.
     """
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    members: dict[str, ChunkedColumnBuilder[object]] = {
-        name: ChunkedColumnBuilder() for name in _PREDECESSOR_MEMBERS
-    }
-    for row in range(rows):
-        keys.append(row + 1)
-        members["id"].append(row + 1)
-        members["value"].append(row)
-        members["txStart"].append("2024-01-01T00:00:00+00:00")
-        members["txEnd"].append("infinity")
-    prepared = prepare_typed_write(
+    return temporal_group(
         PredicateWrite(
             "terminate",
             PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
         ),
         model,
-    )
-    assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(
-        mutation=prepared,
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=PredecessorColumns(
-                shape=PredecessorShape(attributes=_PREDECESSOR_MEMBERS, value_objects=()),
-                attribute_columns=tuple(
-                    whole(members[name].build()) for name in _PREDECESSOR_MEMBERS
-                ),
-                value_object_columns=(),
-            )
-        ),
+        [
+            {
+                "id": row + 1,
+                "value": row,
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
+            }
+            for row in range(rows)
+        ],
     )
 
 
 def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
     """A versioned Materialized Write Group of ``rows`` resolved rows.
 
-    Its key and observation columns are the compact aligned storage a
+    Its key and version columns are the compact aligned storage a
     materializing predicate write buffers, so a plan settled from it reaches
     every per-row value by reference.
     """
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
     for row in range(rows):
-        keys.append(row + 1)
-        versions.append(row + 1)
+        evidence.append((row + 1, row + 1))
+    sealed = evidence.seal()
+    assert sealed is not None
     prepared = prepare_typed_write(
         PredicateWrite(
             "update",
@@ -268,12 +245,7 @@ def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
         model,
     )
     assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(
-        mutation=prepared,
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=VersionColumns(versions=whole(versions.build())),
-    )
+    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[BufferItem]:

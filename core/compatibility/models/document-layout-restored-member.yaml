@@ -1,0 +1,26 @@
+# A Transaction-Time-Only Relational Document Layout Entity whose `route` occurrence
+# nests a `many`. Omission, JSON null, and `[]` are one zero value for that nested
+# `many`, so a stored `route` that omits `stops` and an assigned `route` that omits it
+# too are one logical value even though the stored subtree also carries a key no
+# member declares.
+entity:
+  name: Expedition
+  namespace: parallax.compatibility
+  table: expedition
+  layout:
+    document:
+      column: payload
+  temporality: transaction-time
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: title, type: string, maxLength: 64, nullable: true }
+  valueObjects:
+    - name: route
+      nullable: true
+      attributes:
+        - { name: name, type: string, nullable: true }
+      valueObjects:
+        - name: stops
+          multiplicity: many
+          attributes:
+            - { name: port, type: string, nullable: true }

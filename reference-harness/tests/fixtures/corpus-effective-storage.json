@@ -311,6 +311,26 @@
       }
     }
   },
+  "models/document-layout-restored-member.yaml": {
+    "parallax.compatibility.Expedition": {
+      "attribute": {
+        "id": "id",
+        "title": "title",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {
+        "route": "payload:route",
+        "route.name": "payload:route.name",
+        "route.stops": "payload:route.stops",
+        "route.stops.port": "payload:route.stops.port",
+        "title": "payload:title"
+      },
+      "valueObject": {
+        "route": "route"
+      }
+    }
+  },
   "models/document-layout.yaml": {
     "parallax.compatibility.Beacon": {
       "attribute": {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -253,6 +254,12 @@ class ClaimTable:
         side of :meth:`claim`, for a verb deciding whether it has an earlier
         intent to combine with at all."""
         return self._held.get(key)
+
+    def release(self, keys: Iterable[ClaimScope]) -> None:
+        """Drop the claims at ``keys``, which the caller itself just admitted
+        and is withdrawing before the write that took them is buffered."""
+        for key in keys:
+            del self._held[key]
 
     def clear(self) -> None:
         """Drop every claim — the buffer that held them is gone."""

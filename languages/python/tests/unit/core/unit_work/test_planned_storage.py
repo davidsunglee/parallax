@@ -2,9 +2,9 @@
 
 Covers the compact private storage constructs beneath the finalized Planned
 Write algebra: bounded chunk construction and Column Slice sharing
-(:mod:`parallax.core.unit_work.columns`), Predecessor Columns' aligned member
-lengths, Materialized Write Group's own aligned key/observation columns,
-Planned Steps' segmented backing —
+(:mod:`parallax.core.unit_work.columns`), a Materialized Write Group's aligned
+evidence — retained Predecessor Rows or key/version columns — Planned Steps'
+segmented backing —
 stable view equality with no object-identity promise, and no mutable
 flyweight reused across iterations — and structural sharing carried all the
 way through temporal expansion and lowering. Bounded wrapper allocation is a
@@ -47,16 +47,15 @@ from parallax.core.unit_work import (
     PlannedClose,
     PlannedInsert,
     PlanningRequest,
-    PredecessorColumns,
-    PredecessorShape,
-    PredicateMutation,
+    PredecessorRows,
+    PredecessorRowsBuilder,
     PredicateSelection,
     PredicateWrite,
     SystemClock,
-    TemporalColumns,
     TransactionInstant,
     VersionArithmetic,
-    VersionColumns,
+    VersionedEvidence,
+    VersionedEvidenceBuilder,
     WriteAssignment,
     WritePlan,
     WritePlanner,
@@ -72,7 +71,6 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
-from parallax.core.unit_work.observe import adopt_predecessor_row
 from parallax.core.unit_work.planned import ChangedFrom, PlannedUpdate, adopt_planned_row
 from parallax.core.unit_work.strategy import (
     AuditStrategy,
@@ -187,299 +185,137 @@ def test_a_column_slice_refuses_an_out_of_range_index() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Predecessor Columns: aligned member lengths, on-demand row materialization. #
+# Group evidence: aligned by construction, adopted by reference.              #
 # --------------------------------------------------------------------------- #
-def _predecessor_columns(
-    rows: Sequence[Mapping[str, object]],
-    *,
-    value_objects: tuple[str, ...] = (),
-    documents: Sequence[object] = (),
-) -> PredecessorColumns:
-    attribute_names = tuple(name for name in rows[0] if name not in value_objects)
-    builders = {name: ChunkedColumnBuilder[object]() for name in rows[0]}
-    for row in rows:
-        for name in builders:
-            builders[name].append(row[name])
-    document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for document in documents:
-        document_builder.append(document)
-    return PredecessorColumns(
-        shape=PredecessorShape(attributes=attribute_names, value_objects=value_objects),
-        attribute_columns=tuple(whole(builders[name].build()) for name in attribute_names),
-        value_object_columns=tuple(whole(builders[name].build()) for name in value_objects),
-        documents=whole(document_builder.build()) if documents else None,
+_PERSON = LayoutCatalog(document_model()).entity(PERSON)
+
+
+def _person_row(key: int) -> tuple[object, ...]:
+    return (key, "Ada", ABSENT, None, ("Bergen", ("NO",)), (("founder",), (None,)))
+
+
+def _person_rows(
+    rows: Sequence[tuple[object, ...]], documents: Sequence[object] | None = None
+) -> PredecessorRows:
+    builder = PredecessorRowsBuilder(
+        _PERSON.member_selection,
+        key_position=_PERSON.primary_key[0],
+        absent=ABSENT,
+        documents=documents is not None,
     )
+    for index, row in enumerate(rows):
+        builder.append(row, None if documents is None else documents[index])
+    sealed = builder.seal()
+    assert sealed is not None
+    return sealed
 
 
-def test_predecessor_columns_retain_the_raw_document_against_later_mutation() -> None:
-    # A mutable raw document is frozen once when predecessor columns take ownership;
-    # later row views retain that same immutable tree instead of reconstructing it,
-    # and successor lowering is the boundary that detaches a writable bind value.
-    stored: dict[str, object] = {"title": "Ada", "manifest": {"cargo": "timber"}}
-    predecessors = _predecessor_columns([{"id": 1}], documents=[stored])
-    retained = predecessors.row(0).document
+def test_predecessor_rows_retain_each_judged_row_and_raw_document_by_reference() -> None:
+    first, second = _person_row(1), _person_row(2)
+    stored: list[object] = [{"displayName": "Ada", "unknown": {"kept": True}}, {}]
 
-    cast("dict[str, object]", stored["manifest"])["cargo"] = "ore"
+    evidence = _person_rows([first, second], stored)
+    predecessor = evidence.predecessor(0)
 
-    assert retained == {"title": "Ada", "manifest": {"cargo": "timber"}}
-    assert predecessors.row(0).document is retained
+    assert len(evidence) == 2
+    assert evidence.rows[0] is first
+    assert evidence.rows[1] is second
+    assert [evidence.key(0), evidence.key(1)] == [1, 2]
+    assert evidence.document(0) is stored[0]
+    assert predecessor.document is stored[0]
+    assert predecessor.member("address") == {"city": "Bergen", "geo": {"country": "NO"}}
+    assert predecessor.member("score") is ABSENT
+    assert evidence.predecessor(0) == predecessor
+    assert evidence.predecessor(0) is not predecessor
 
 
-def test_predecessor_columns_reuse_an_owned_document_prefix_before_first_retention() -> None:
-    owned = FrozenMap({"title": "Ada"})
-    mutable = {"title": "Grace"}
-    predecessors = _predecessor_columns(
-        [{"id": 1}, {"id": 2}],
-        documents=[owned, mutable],
+def test_predecessor_rows_without_a_structured_column_answer_no_document() -> None:
+    evidence = _person_rows([_person_row(1)])
+
+    assert evidence.documents is None
+    assert evidence.document(0) is None
+    assert evidence.predecessor(0).document is None
+
+
+def test_predecessor_rows_seal_bounded_chunks_and_keep_documents_aligned() -> None:
+    count = _CHUNK_SIZE * 2 + 3
+    rows = [_person_row(key) for key in range(count)]
+    documents: list[object] = [{"row": key} for key in range(count)]
+
+    evidence = _person_rows(rows, documents)
+
+    assert [len(chunk) for chunk in evidence.rows.column.chunks] == [
+        _CHUNK_SIZE,
+        _CHUNK_SIZE,
+        3,
+    ]
+    for index in (0, _CHUNK_SIZE - 1, _CHUNK_SIZE, count - 1):
+        assert evidence.rows[index] is rows[index]
+        assert evidence.key(index) == index
+        assert evidence.document(index) is documents[index]
+
+
+def test_predecessor_rows_read_an_axis_start_by_its_selection_position() -> None:
+    evidence = _person_rows([_person_row(5)])
+    key = cast("AttributeMetadata", _PERSON.member_selection.bindings[0]).identity
+
+    assert evidence.axis_start(0, key) == 5
+    assert evidence.axis_start(0, dataclasses.replace(key, name="txStart")) is None
+
+
+def test_predecessor_rows_refuse_misaligned_or_empty_evidence() -> None:
+    evidence = _person_rows([_person_row(1)], [{}])
+    two: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    two.append({})
+    two.append({})
+    empty = whole(ChunkedColumnBuilder[tuple[object, ...]]().build())
+
+    with pytest.raises(ValueError, match="one raw document with each row"):
+        dataclasses.replace(evidence, documents=whole(two.build()))
+    with pytest.raises(ValueError, match="at least one row"):
+        dataclasses.replace(evidence, rows=empty, documents=None)
+    with pytest.raises(ValueError, match="key position"):
+        dataclasses.replace(evidence, key_position=len(_PERSON.member_selection.bindings))
+
+
+def test_versioned_evidence_aligns_one_version_with_each_key() -> None:
+    builder = VersionedEvidenceBuilder(key_position=0, version_position=2)
+    builder.append((1, "A", 3))
+    builder.append((2, "B", 5))
+    evidence = builder.seal()
+    assert evidence is not None
+    assert (list(evidence.keys), list(evidence.versions), len(evidence)) == ([1, 2], [3, 5], 2)
+
+    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    versions.append(3)
+    with pytest.raises(ValueError, match="one version with each key"):
+        VersionedEvidence(keys=evidence.keys, versions=whole(versions.build()))
+    with pytest.raises(ValueError, match="at least one row"):
+        VersionedEvidence(
+            keys=whole(ChunkedColumnBuilder[object]().build()),
+            versions=whole(ChunkedColumnBuilder[int]().build()),
+        )
+
+
+def test_an_evidence_builder_that_appended_nothing_seals_to_nothing() -> None:
+    temporal = PredecessorRowsBuilder(
+        _PERSON.member_selection, key_position=0, absent=ABSENT, documents=True
     )
+    versioned = VersionedEvidenceBuilder(key_position=0, version_position=1)
 
-    mutable["title"] = "Hopper"
-
-    assert predecessors.row(0).document is owned
-    assert predecessors.row(1).document == {"title": "Grace"}
-
-
-def test_predecessor_row_adopts_already_owned_occurrence_values_by_identity() -> None:
-    address = FrozenMap({"city": "Oslo", "phones": ()})
-    predecessors = _predecessor_columns([{"id": 1, "address": address}], value_objects=("address",))
-
-    assert predecessors.row(0).member("address") is address
+    assert temporal.seal() is None
+    assert versioned.seal() is None
 
 
 def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
-    with pytest.raises(ValueError, match="complete state"):
-        adopt_predecessor_row({})
     with pytest.raises(TypeError, match="final dict or mapping proxy"):
         adopt_planned_row(cast("Any", FrozenMap({})), {})
 
 
-def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:
-    predecessors = _predecessor_columns(
-        [
-            {"id": 1, "acctNum": "A", "value": 100.00, "txStart": "t0", "txEnd": "infinity"},
-            {"id": 2, "acctNum": "B", "value": 200.00, "txStart": "t1", "txEnd": "infinity"},
-        ]
-    )
-    assert predecessors.length == 2
-    assert predecessors.row(0).members == {
-        "id": 1,
-        "acctNum": "A",
-        "value": 100.00,
-        "txStart": "t0",
-        "txEnd": "infinity",
-    }
-    assert predecessors.row(0).document is None
-    assert predecessors.row(1).member("id") == 2
-    # Materialize-on-demand: two calls for the same index build an equal but
-    # independently allocated view, never a shared mutable flyweight.
-    assert predecessors.row(0) == predecessors.row(0)
-    assert predecessors.row(0) is not predecessors.row(0)
-
-
-def test_predecessor_columns_freezes_nested_documents_after_an_immutable_prefix() -> None:
-    address = {"geo": {"country": "FI"}, "phones": [{"number": "111"}]}
-    predecessors = _predecessor_columns(
-        [{"id": 1, "address": None}, {"id": 2, "address": address}],
-        value_objects=("address",),
-    )
-    planned = cast("Mapping[str, object]", predecessors.row(1).member("address"))
-    geo = cast("Mapping[str, object]", planned["geo"])
-    phones = cast("Sequence[Mapping[str, object]]", planned["phones"])
-
-    cast("dict[str, object]", address["geo"])["country"] = "SE"
-    cast("list[dict[str, object]]", address["phones"])[0]["number"] = "999"
-
-    assert predecessors.row(0).member("address") is None
-    assert geo["country"] == "FI"
-    assert phones[0]["number"] == "111"
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", geo)["country"] = "SE"
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", phones[0])["number"] = "999"
-
-
-def test_predecessor_columns_own_the_state_a_declared_row_view_streams_into_them() -> None:
-    # The items a declared-name row view yields — one per canonical member,
-    # nested occurrences as shape-backed views, an unread slot as the absent
-    # marker — stream straight into the column builders, and the columns take
-    # ownership: every occurrence cell is the frozen document, no row view or
-    # nested view survives in a column, and the row materialized back is the
-    # complete predecessor by declared name with the marker where the read
-    # carried nothing.
-    layout = LayoutCatalog(document_model()).entity(PERSON)
-    values: tuple[object, ...] = (
-        7,
-        "Ada",
-        ABSENT,
-        None,
-        ("Bergen", ("NO",)),
-        (("founder",), (None,)),
-    )
-    view = EntityStateRow.over_declared_members(layout.member_selection, values, absent=ABSENT)
-    builders = {name: ChunkedColumnBuilder[object]() for name in view}
-    for name, value in view.items():
-        builders[name].append(value)
-    attributes = ("id", "displayName", "score", "joinedOn")
-    value_objects = ("address", "tags")
-    predecessors = PredecessorColumns(
-        shape=PredecessorShape(attributes=attributes, value_objects=value_objects),
-        attribute_columns=tuple(whole(builders[name].build()) for name in attributes),
-        value_object_columns=tuple(whole(builders[name].build()) for name in value_objects),
-    )
-
-    predecessor = predecessors.row(0)
-    assert predecessor.members is not view
-    assert dict(predecessor.members) == {
-        "id": 7,
-        "displayName": "Ada",
-        "score": ABSENT,
-        "joinedOn": None,
-        "address": {"city": "Bergen", "geo": {"country": "NO"}},
-        "tags": ({"label": "founder"}, {"label": None}),
-    }
-    address = predecessor.member("address")
-    assert isinstance(address, FrozenMap)
-    assert isinstance(address["geo"], FrozenMap)
-    assert all(
-        isinstance(tag, FrozenMap) for tag in cast("tuple[object, ...]", predecessor.member("tags"))
-    )
-    assert not any(
-        isinstance(cell, EntityStateRow)
-        or (isinstance(cell, Mapping) and not isinstance(cell, FrozenMap))
-        for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
-        for cell in column
-    )
-
-
-def test_predecessor_columns_refuses_misaligned_member_column_lengths() -> None:
-    short: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    short.append(1)
-    long: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    long.append(1)
-    long.append(2)
-    with pytest.raises(ValueError, match="one positive row count"):
-        PredecessorColumns(
-            shape=PredecessorShape(attributes=("id", "value")),
-            attribute_columns=(whole(short.build()), whole(long.build())),
-        )
-
-
-def test_predecessor_columns_refuses_an_attribute_column_count_mismatch() -> None:
-    one: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    one.append(1)
-    with pytest.raises(ValueError, match="one column per attribute"):
-        PredecessorColumns(
-            shape=PredecessorShape(attributes=("id", "value")),
-            attribute_columns=(whole(one.build()),),
-        )
-
-
-def test_predecessor_columns_refuses_a_value_object_column_count_mismatch() -> None:
-    one: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    one.append(1)
-    with pytest.raises(ValueError, match="one column per value object"):
-        PredecessorColumns(
-            shape=PredecessorShape(attributes=("id",), value_objects=("address",)),
-            attribute_columns=(whole(one.build()),),
-            value_object_columns=(),
-        )
-
-
-def test_predecessor_columns_refuses_zero_length_member_columns() -> None:
-    empty = whole(ChunkedColumnBuilder[object]().build())
-    with pytest.raises(ValueError, match="at least one row"):
-        PredecessorColumns(shape=PredecessorShape(attributes=("id",)), attribute_columns=(empty,))
-
-
-# --------------------------------------------------------------------------- #
-# Materialized Write Group: aligned key/observation columns and              #
-# indivisibility.                                                             #
-# --------------------------------------------------------------------------- #
 def _prepared(instruction: PredicateWrite, model: object) -> PreparedPredicateWrite:
     prepared = prepare_typed_write(instruction, cast("Any", model))
     assert isinstance(prepared, PreparedPredicateWrite)
     return prepared
-
-
-def _predicate(entity: str, mutation: PredicateMutation) -> PreparedPredicateWrite:
-    return _prepared(
-        PredicateWrite(
-            mutation,
-            PredicateSelection(
-                entity,
-                predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00"),
-            ),
-        ),
-        _ACCOUNT,
-    )
-
-
-def test_a_materialized_write_group_refuses_no_key_attributes() -> None:
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    versions.append(1)
-    with pytest.raises(ValueError, match="at least one key Attribute"):
-        MaterializedWriteGroup(
-            mutation=_predicate("Account", "delete"),
-            key_attributes=(),
-            key_columns=(),
-            observations=VersionColumns(versions=whole(versions.build())),
-        )
-
-
-def test_a_materialized_write_group_refuses_a_key_column_count_mismatch() -> None:
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(1)
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    versions.append(1)
-    with pytest.raises(ValueError, match="one key column per key Attribute"):
-        MaterializedWriteGroup(
-            mutation=_predicate("Account", "delete"),
-            key_attributes=("id", "region"),
-            key_columns=(whole(keys.build()),),
-            observations=VersionColumns(versions=whole(versions.build())),
-        )
-
-
-def test_a_materialized_write_group_refuses_key_columns_of_differing_lengths() -> None:
-    short: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    short.append(1)
-    long: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    long.append(1)
-    long.append(2)
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    versions.append(1)
-    with pytest.raises(ValueError, match="key columns share one positive row count"):
-        MaterializedWriteGroup(
-            mutation=_predicate("Account", "delete"),
-            key_attributes=("id", "region"),
-            key_columns=(whole(short.build()), whole(long.build())),
-            observations=VersionColumns(versions=whole(versions.build())),
-        )
-
-
-def test_a_materialized_write_group_refuses_a_key_observation_length_mismatch() -> None:
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(1)
-    keys.append(2)
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    versions.append(1)
-    with pytest.raises(ValueError, match="same row count"):
-        MaterializedWriteGroup(
-            mutation=_predicate("Account", "delete"),
-            key_attributes=("id",),
-            key_columns=(whole(keys.build()),),
-            observations=VersionColumns(versions=whole(versions.build())),
-        )
-
-
-def test_a_materialized_write_group_refuses_zero_rows() -> None:
-    with pytest.raises(ValueError, match="at least one row"):
-        MaterializedWriteGroup(
-            mutation=_predicate("Account", "delete"),
-            key_attributes=("id",),
-            key_columns=(whole(ChunkedColumnBuilder[object]().build()),),
-            observations=VersionColumns(versions=whole(ChunkedColumnBuilder[int]().build())),
-        )
 
 
 # --------------------------------------------------------------------------- #
@@ -489,11 +325,12 @@ def test_a_materialized_write_group_refuses_zero_rows() -> None:
 def _version_group(
     entity: str, key_name: str, rows: Sequence[tuple[object, int]], assigned: float
 ) -> MaterializedWriteGroup:
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    del key_name
+    builder = VersionedEvidenceBuilder(key_position=0, version_position=1)
     for key_value, version in rows:
-        keys.append(key_value)
-        versions.append(version)
+        builder.append((key_value, version))
+    evidence = builder.seal()
+    assert evidence is not None
     predicate = _prepared(
         PredicateWrite(
             "update",
@@ -505,12 +342,7 @@ def _version_group(
         ),
         _ACCOUNT,
     )
-    return MaterializedWriteGroup(
-        mutation=predicate,
-        key_attributes=(key_name,),
-        key_columns=(whole(keys.build()),),
-        observations=VersionColumns(versions=whole(versions.build())),
-    )
+    return MaterializedWriteGroup(mutation=predicate, evidence=evidence)
 
 
 def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat_access() -> None:
@@ -551,11 +383,7 @@ def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat
 def _temporal_group(
     entity: str, key_name: str, rows: Sequence[tuple[object, Mapping[str, object]]]
 ) -> MaterializedWriteGroup:
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for key_value, _members in rows:
-        keys.append(key_value)
-    predecessors = _predecessor_columns([members for _key, members in rows])
-    predicate = _prepared(
+    return temporal_group(
         PredicateWrite(
             "terminate",
             PredicateSelection(
@@ -564,12 +392,8 @@ def _temporal_group(
             ),
         ),
         _BALANCE,
-    )
-    return MaterializedWriteGroup(
-        mutation=predicate,
-        key_attributes=(key_name,),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(predecessors=predecessors),
+        [members for _key, members in rows],
+        key_name=key_name,
     )
 
 
@@ -749,8 +573,8 @@ def test_a_versioned_segment_keeps_the_groups_own_version_column_and_no_second_o
     # a second tuple used to be the only way to have the advanced values at step
     # access — one extra integer per resolved row, retained for the whole flush.
     # The arithmetic is now a settled fact, so the advance is an addition
-    # performed when a row's step is asked for, and the group's OWN observation
-    # column is the only field of the segment the row count sizes.
+    # performed when a row's step is asked for, and the group's OWN evidence
+    # columns are the only fields of the segment the row count sizes.
     rows: list[tuple[object, int]] = [(row_id, row_id) for row_id in range(1, 6)]
     group = _version_group("Account", "id", rows, assigned=9.00)
     plan = _account_plan(group)
@@ -762,9 +586,10 @@ def test_a_versioned_segment_keeps_the_groups_own_version_column_and_no_second_o
         for name, value in fields.items()
         if isinstance(value, Sized) and len(value) == len(rows)
     }
-    assert sized == {"versions"}
-    assert isinstance(group.observations, VersionColumns)
-    assert fields["versions"] is group.observations.versions
+    assert sized == {"keys", "versions"}
+    assert isinstance(group.evidence, VersionedEvidence)
+    assert fields["keys"] is group.evidence.keys
+    assert fields["versions"] is group.evidence.versions
     # Advancing at step access answers what the second column used to hold.
     first = plan.steps[0]
     assert isinstance(first, PlannedUpdate)
@@ -1008,44 +833,21 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
 
 
 def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() -> None:
-    # `_MaterializedTemporalSegment.assignments` retains the group's prepared
-    # Metadata-bearing assignments across every resolved row, so a caller reaching
-    # it through `plan.steps.segments` and mutating it in place must never
-    # change what a subsequently retrieved step carries — a Write Plan is
-    # immutable and its views are stable.
+    # `_MaterializedTemporalSegment` retains the group's resolved authored maps
+    # across every resolved row, so a caller reaching them through
+    # `plan.steps.segments` must not be able to change what a subsequently
+    # retrieved step carries — a Write Plan is immutable and its views are
+    # stable.
     rows = [
-        (
-            1,
-            {
-                "id": 1,
-                "acctNum": "A",
-                "value": 1.00,
-                "txStart": "2024-01-01T00:00:00+00:00",
-                "txEnd": "infinity",
-            },
-        )
+        {
+            "id": 1,
+            "acctNum": "A",
+            "value": 1.00,
+            "txStart": "2024-01-01T00:00:00+00:00",
+            "txEnd": "infinity",
+        }
     ]
-    predicate = _prepared(
-        PredicateWrite(
-            "update",
-            PredicateSelection(
-                "Balance",
-                predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00"),
-            ),
-            assignments=(WriteAssignment("Balance.value", Decimal("9.00")),),
-        ),
-        _BALANCE,
-    )
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(1)
-    group = MaterializedWriteGroup(
-        mutation=predicate,
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=_predecessor_columns([members for _key, members in rows])
-        ),
-    )
+    group = temporal_group(_value_update("Balance", None), _BALANCE, rows)
     plan = (
         build_write_planner(_BALANCE)
         .finalize(
@@ -1061,22 +863,19 @@ def test_mutating_a_materialized_groups_assignments_leaves_steps_unaffected() ->
     before = plan.steps[1]
     assert isinstance(before, PlannedInsert)
     segment = cast("Any", plan.steps.segments[0])
+    (value_identity,) = segment.authored_attributes
     with pytest.raises(TypeError):
-        cast("list[object]", segment.assignments)[0] = object()
+        cast("dict[object, object]", segment.authored_attributes)[value_identity] = object()
     after = plan.steps[1]
     assert after == before
     (entry,) = cast("PlannedInsert", after).entries
-    value_attribute = next(a for a in entry.row.attributes if a.name == "value")
-    assert entry.row.attributes[value_attribute] == 9.0
+    assert entry.row.attributes[value_identity] == Decimal("9.00")
 
 
-def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() -> None:
-    prior_address: dict[str, object] = {
-        "street": "10 Old Road",
-        "city": "Helsinki",
-        "geo": {"country": "FI"},
-        "phones": [{"type": "mobile", "number": "111"}],
-    }
+def test_a_materialized_plan_shares_an_assigned_document_and_the_retained_predecessor() -> None:
+    # The changed successor holds the authored document the prepared write
+    # already owns, and its origin views the retained positional row rather
+    # than a copy of it; neither can be mutated through what the step exposes.
     assigned_address: dict[str, object] = {
         "street": "30 New Road",
         "city": "Tampere",
@@ -1091,27 +890,26 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
             "validEnd": "infinity",
             "txStart": "2024-01-01T00:00:00+00:00",
             "txEnd": "infinity",
-            "address": prior_address,
+            "address": {
+                "street": "10 Old Road",
+                "city": "Helsinki",
+                "geo": {"country": "FI"},
+                "phones": [{"type": "mobile", "number": "111"}],
+            },
         }
     ]
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(1)
-    group = MaterializedWriteGroup(
-        mutation=_prepared(
-            PredicateWrite(
-                "update",
-                PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
-                assignments=(WriteAssignment("Branch.address", assigned_address),),
-                valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
-            ),
-            _BRANCH,
+    group = temporal_group(
+        PredicateWrite(
+            "update",
+            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+            assignments=(WriteAssignment("Branch.address", assigned_address),),
+            valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
         ),
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=_predecessor_columns(rows, value_objects=("address",))
-        ),
+        _BRANCH,
+        rows,
     )
+    assert isinstance(group.evidence, PredecessorRows)
+    retained = group.evidence.rows[0]
     plan = (
         build_write_planner(_BRANCH)
         .finalize(
@@ -1132,19 +930,19 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
     assert address is group.mutation.managed_assignments[0].value
     geo = cast("Mapping[str, object]", address["geo"])
     phones = cast("Sequence[Mapping[str, object]]", address["phones"])
-    predecessor_address = cast("Mapping[str, object]", entry.origin.predecessor.member("address"))
-    predecessor_geo = cast("Mapping[str, object]", predecessor_address["geo"])
-    predecessor_phones = cast("Sequence[Mapping[str, object]]", predecessor_address["phones"])
+    predecessor = entry.origin.predecessor
+    predecessor_address = cast("Mapping[str, object]", predecessor.member("address"))
+    assert predecessor.carries(address_identity, entry.row.value_objects[address_identity]) is False
+    assert predecessor.members == EntityStateRow.over_declared_members(
+        group.evidence.selection, retained, absent=ABSENT
+    )
 
     cast("dict[str, object]", assigned_address["geo"])["country"] = "SE"
     cast("list[dict[str, object]]", assigned_address["phones"])[0]["number"] = "999"
-    cast("dict[str, object]", prior_address["geo"])["country"] = "SE"
-    cast("list[dict[str, object]]", prior_address["phones"])[0]["number"] = "999"
 
     assert geo["country"] == "FI"
     assert phones[0]["number"] == "222"
-    assert predecessor_geo["country"] == "FI"
-    assert predecessor_phones[0]["number"] == "111"
+    assert predecessor_address["city"] == "Helsinki"
     with pytest.raises(TypeError):
         cast("dict[str, object]", geo)["country"] = "SE"
     with pytest.raises(TypeError):
@@ -1152,9 +950,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
     with pytest.raises(TypeError):
         cast("list[Mapping[str, object]]", phones)[0] = {"type": "mobile", "number": "999"}
     with pytest.raises(TypeError):
-        cast("dict[str, object]", predecessor_geo)["country"] = "SE"
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", predecessor_phones[0])["number"] = "999"
+        cast("dict[str, object]", predecessor_address)["city"] = "Espoo"
 
     assert plan.steps[2] == changed
     statement = compile_write_step(plan.steps[2], _BRANCH, POSTGRES)

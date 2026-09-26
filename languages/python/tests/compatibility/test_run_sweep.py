@@ -397,6 +397,9 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # `single-connection` run-only rather than query-result-dependent (its `given.apply`
 # writes the key no authored member could), which changes nothing here: this set is
 # the admission clause for every run-only materializing pair whatever its reason.
+# `m-unit-work-042` is its restored-member witness: only the emitted insert binds
+# prove a surviving row carried the assigned occurrence the codec answered as
+# restored rather than replacing its stored subtree.
 _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-003",
@@ -411,6 +414,7 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-bitemp-write-012",
         "m-bitemp-write-013",
         "m-bitemp-write-020",
+        "m-unit-work-042",
         "m-value-object-047",
         "m-value-object-066",
     }

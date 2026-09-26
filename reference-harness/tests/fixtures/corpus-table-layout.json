@@ -782,6 +782,56 @@
       ]
     }
   },
+  "models/document-layout-restored-member.yaml": {
+    "expedition": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Expedition"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Expedition.id",
+          "declaringOwner": "parallax.compatibility.Expedition",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Expedition"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Expedition.txStart",
+          "declaringOwner": "parallax.compatibility.Expedition",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Expedition"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Expedition.txEnd",
+          "declaringOwner": "parallax.compatibility.Expedition",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Expedition"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Expedition",
+          "declaringOwner": "parallax.compatibility.Expedition",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        2
+      ]
+    }
+  },
   "models/document-layout.yaml": {
     "beacon": {
       "columns": [

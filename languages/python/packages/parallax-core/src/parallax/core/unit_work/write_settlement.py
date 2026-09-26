@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
+from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -23,10 +25,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
 from parallax.core.unit_work.clock import TransactionInstant
-from parallax.core.unit_work.columns import (
-    ColumnSlice,
-    PredecessorColumns,
-)
+from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.instructions import (
     PreparedAssignment,
     PreparedKeyedWrite,
@@ -40,8 +39,8 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
     ObservedKeyedWrite,
-    TemporalColumns,
-    VersionColumns,
+    PredecessorRows,
+    VersionedEvidence,
 )
 from parallax.core.unit_work.observe import (
     PredecessorRow,
@@ -356,8 +355,8 @@ class WriteSettlement:
         into that segment before this returns; the segment, and the ``WritePlan``
         it becomes part of, retain no group, concurrency mode, Transaction
         Instant, or strategy object. Only the PER-ROW data stays as the group's
-        own compact columns, and a row's ``PlannedWrite`` is rebuilt from those
-        columns and the already-settled facts one at a time, on demand, so a
+        own compact evidence, and a row's ``PlannedWrite`` is rebuilt from that
+        evidence and the already-settled facts one at a time, on demand, so a
         large materialized run never forces a parallel ``PlannedWrite``-per-row
         object graph merely by being planned.
 
@@ -630,13 +629,37 @@ class WriteSettlement:
         authored_attributes, authored_value_objects = _resolve(
             entity, facts.view, row, context="insert"
         )
-        return _temporal_steps(
-            facts,
-            key_row=row,
-            authored_attributes=authored_attributes,
-            authored_value_objects=authored_value_objects,
-            predecessor=None if observed is None else observed.predecessor,
+        predecessor = None if observed is None else observed.predecessor
+        steps: list[PlannedStep] = []
+        close = facts.close
+        if close is not None:
+            assert predecessor is not None  # a closing topology refuses an unobserved mutation
+            steps.append(
+                _close_step(
+                    facts,
+                    close,
+                    key_values=_key_tuple(entity, close.key_attributes, row),
+                    observed_valid_end=(
+                        predecessor.cell(facts.shape.valid_time.end_attribute)
+                        if isinstance(facts.shape, Bitemporal)
+                        else None
+                    ),
+                    observed_gate_start=(
+                        predecessor.cell(close.gate_start_attribute) if close.gated else None
+                    ),
+                )
+            )
+        steps.extend(
+            _successor_step(
+                facts,
+                resolved,
+                authored_attributes,
+                authored_value_objects,
+                predecessor,
+            )
+            for resolved in facts.resolved_successors
         )
+        return tuple(steps)
 
     def _temporal_facts(
         self,
@@ -758,7 +781,7 @@ class WriteSettlement:
         The returned segment carries none of the group, the concurrency mode,
         the Transaction Instant, or a strategy object: its ``step`` rebuilds
         one row's Planned Write from these already-decided facts and the
-        group's own compact columns alone.
+        group's own compact evidence alone.
         """
         entity = group.mutation.selection.target
         shape = self._temporal_facet.shape(entity.identity)
@@ -784,18 +807,19 @@ class WriteSettlement:
         column, advanced at step access through the arithmetic the update's
         emission carries rather than copied into a second one.
 
-        A group's observation columns are not optional, so an entity this
+        A group's evidence is not optional, so an entity this
         group's own Concurrency Strategy does not recognize as versioned is
-        refused here rather than settled Unversioned with its columns dropped —
+        refused here rather than settled Unversioned with its evidence dropped —
         the same entitlement rule an ordinary keyed write meets in
         :meth:`_observed_version`.
         """
-        assert isinstance(group.observations, VersionColumns)
+        evidence = group.evidence
+        assert isinstance(evidence, VersionedEvidence)
         facts = self._non_temporal_facts(entity, group.mutation.mutation, surface="predicate")
         addressed = self._addressed_facts(facts, concurrency)
         mutation = group.mutation.mutation
         if facts.version_attribute is None:
-            _require_unobserved(entity, mutation, group.observations)
+            _require_unobserved(entity, mutation, evidence)
         emission: _NonTemporalEmission = _DELETION
         if mutation != "delete":
             if facts.version_attribute is not None and any(
@@ -811,9 +835,9 @@ class WriteSettlement:
         return _MaterializedNonTemporalSegment(
             facts=facts,
             addressed=addressed,
-            key_attribute_names=group.key_attributes,
-            key_columns=group.key_columns,
-            versions=group.observations.versions,
+            key_name=addressed.key_attributes[0].name,
+            keys=evidence.keys,
+            versions=evidence.versions,
             emission=emission,
             # One resolved row is one independently gated step, so every row of
             # the group shares this one expectation rather than building its own.
@@ -833,12 +857,22 @@ class WriteSettlement:
         The group's facts are settled through the same
         :meth:`_temporal_facts` an eagerly settled temporal instruction crosses
         — the only clock consultation this group's whole flush makes, however
-        many rows it resolved — and the segment holds them by reference. Only a
-        row's own predecessor and key values remain for
-        :meth:`_MaterializedTemporalSegment.step` to bind, through the same
-        emission :meth:`_settle_temporal` returns from.
+        many rows it resolved — and the segment holds them by reference. The
+        authored assignments resolve here, once, in insert context, so a
+        marker no opened row can express is refused while the plan is made
+        rather than when a step is asked for. Only a row's own retained state
+        remains for :meth:`_MaterializedTemporalSegment.step` to bind, through
+        the same close and successor primitives :meth:`_settle_temporal`
+        composes.
+
+        With two or more assignments a surviving row may still restore some of
+        them, so the codec's effective-change comparison is prepared once here
+        and the changed step overlays only the members it answers as effective
+        for that row (`m-unit-work` "Comparing an assigned member"). A single
+        assignment was already judged effective when the row was selected.
         """
-        assert isinstance(group.observations, TemporalColumns)
+        evidence = group.evidence
+        assert isinstance(evidence, PredecessorRows)
         facts = self._temporal_facts(
             entity,
             shape,
@@ -849,14 +883,40 @@ class WriteSettlement:
             concurrency=concurrency,
             tx_instant=tx_instant,
         )
-        closes = 0 if facts.close is None else 1
+        close = facts.close
+        # Every predicate milestone verb closes what it selected and opens no
+        # new lineage, so each successor reads the row's own retained state.
+        assert close is not None
+        assert not any(
+            isinstance(resolved.state, AuthoredState) for resolved in facts.resolved_successors
+        )
+        assignments = group.mutation.managed_assignments
+        authored_attributes, authored_value_objects = _resolved_assignments(
+            entity, assignments, "insert"
+        )
+        selection = evidence.selection
         return _MaterializedTemporalSegment(
             facts=facts,
-            key_attribute_names=group.key_attributes,
-            key_columns=group.key_columns,
-            predecessors=group.observations.predecessors,
-            assignments=group.mutation.managed_assignments,
-            steps_per_row=closes + len(facts.resolved_successors),
+            close=close,
+            evidence=evidence,
+            authored_attributes=MappingProxyType(authored_attributes),
+            authored_value_objects=MappingProxyType(authored_value_objects),
+            change=(
+                prepare_effective_change(
+                    selection.shape,
+                    {_assigned_name(assignment): assignment.value for assignment in assignments},
+                    absent=evidence.absent,
+                )
+                if len(assignments) >= 2
+                else None
+            ),
+            gate_position=selection.position(close.gate_start_attribute) if close.gated else None,
+            valid_end_position=(
+                selection.position(shape.valid_time.end_attribute)
+                if isinstance(shape, Bitemporal)
+                else None
+            ),
+            steps_per_row=1 + len(facts.resolved_successors),
         )
 
 
@@ -864,7 +924,7 @@ class WriteSettlement:
 class _MaterializedNonTemporalSegment:
     """A versioned Materialized Write Group's rows: one Planned Update or
     Planned Delete per resolved row, assembled on demand from already-decided,
-    group-wide facts and the group's own compact columns alone.
+    group-wide facts and the group's own compact evidence alone.
 
     Every semantic decision the group's authored mutation settles — the
     applicable members and version source (``facts``), the family-effective
@@ -872,10 +932,10 @@ class _MaterializedNonTemporalSegment:
     (``addressed``), and the assignments and version arithmetic an update lays
     over a row (``emission``) — is resolved once, when the segment is built, and
     reached here through those references. ``step`` only binds one row's own key
-    values and observed version into that already-decided shape, through the
+    value and observed version into that already-decided shape, through the
     same :func:`_non_temporal_step` an eagerly settled keyed write emits from.
 
-    ``versions`` is the group's own observation column, held by reference: the
+    ``versions`` is the group's own evidence column, held by reference: the
     advance is an addition performed at step access, so a row's new version is
     never a second column sized by the resolved row count.
 
@@ -887,8 +947,8 @@ class _MaterializedNonTemporalSegment:
 
     facts: _NonTemporalFacts
     addressed: _AddressedFacts
-    key_attribute_names: tuple[str, ...]
-    key_columns: tuple[ColumnSlice[object], ...]
+    key_name: str
+    keys: ColumnSlice[object]
     versions: ColumnSlice[int]
     emission: _NonTemporalEmission
     affected_rows: AffectedRows
@@ -897,18 +957,11 @@ class _MaterializedNonTemporalSegment:
         return len(self.versions)
 
     def step(self, index: int) -> PlannedStep:
-        key_row = dict(
-            zip(
-                self.key_attribute_names,
-                (column[index] for column in self.key_columns),
-                strict=True,
-            )
-        )
         return _non_temporal_step(
             self.facts,
             self.addressed,
             emission=self.emission,
-            key_rows=(key_row,),
+            key_rows=({self.key_name: self.keys[index]},),
             observed_version=self.versions[index],
             affected_rows=self.affected_rows,
         )
@@ -918,17 +971,16 @@ class _MaterializedNonTemporalSegment:
 class _MaterializedTemporalSegment:
     """A temporal Materialized Write Group's rows: one close plus its
     successors per resolved row, assembled on demand from already-decided,
-    group-wide facts and the group's own compact columns alone.
+    group-wide facts and the group's own retained evidence alone.
 
     Every semantic decision the group's authored mutation settles — which
     successors exist, each one's represented-state kind, which Valid-Time
-    bound expression applies, the close's cause, and its gate basis's
-    Attribute — is resolved once, when the segment is built
-    (:meth:`WriteSettlement._temporal_facts`), and reached here through the one
-    ``facts`` reference. ``step`` only binds one row's own predecessor and key
-    values into that already-decided shape, through the same
-    :func:`_temporal_steps` an eagerly settled temporal instruction emits from;
-    it never re-derives a decision a strategy already made.
+    bound expression applies, the close's cause and gate, the authored
+    assignments, and the positions of the cells a close reads — is resolved
+    once, when the segment is built, and reached here by reference. ``step``
+    builds only the one close or successor its index names, through the same
+    primitives an eagerly settled temporal instruction composes; a close reads
+    its row's cells by position and resolves no Predecessor Row.
 
     ``steps_per_row`` is invariant across the group — every row shares the
     same authored mutation and therefore the same topology — so a flat step
@@ -937,112 +989,136 @@ class _MaterializedTemporalSegment:
     """
 
     facts: _TemporalFacts
-    key_attribute_names: tuple[str, ...]
-    key_columns: tuple[ColumnSlice[object], ...]
-    predecessors: PredecessorColumns
-    assignments: tuple[PreparedAssignment, ...]
+    close: _SettledClose
+    evidence: PredecessorRows
+    authored_attributes: Mapping[AttributeIdentity, PlannedValue]
+    authored_value_objects: Mapping[ValueObjectIdentity, object]
+    change: PreparedEffectiveChange | None
+    gate_position: int | None
+    valid_end_position: int | None
     steps_per_row: int
 
     def __len__(self) -> int:
-        return len(self.key_columns[0]) * self.steps_per_row
+        return len(self.evidence) * self.steps_per_row
 
     def step(self, index: int) -> PlannedStep:
-        row, sub_step = divmod(index, self.steps_per_row)
-        key_values = tuple(column[row] for column in self.key_columns)
-        key_row = dict(zip(self.key_attribute_names, key_values, strict=True))
-        close = self.facts.close
-        assert close is not None
-        authored_attributes: dict[AttributeIdentity, PlannedValue] = dict(
-            zip(close.key_attributes, key_values, strict=True)
-        )
-        authored_value_objects: dict[ValueObjectIdentity, object] = {}
-        for assignment in self.assignments:
-            member = assignment.member
-            if isinstance(member, AttributeMetadata):
-                authored_attributes[member.identity] = _cell(
-                    self.facts.entity, member.identity.name, assignment.value, "insert"
-                )
-            else:
-                authored_value_objects[member.identity] = assignment.value
-        return _temporal_steps(
+        row_index, sub_step = divmod(index, self.steps_per_row)
+        evidence = self.evidence
+        row = evidence.rows[row_index]
+        if sub_step == 0:
+            gate_position = self.gate_position
+            valid_end_position = self.valid_end_position
+            return _close_step(
+                self.facts,
+                self.close,
+                key_values=(row[evidence.key_position],),
+                observed_valid_end=None if valid_end_position is None else row[valid_end_position],
+                observed_gate_start=None if gate_position is None else row[gate_position],
+            )
+        resolved = self.facts.resolved_successors[sub_step - 1]
+        change = self.change
+        return _successor_step(
             self.facts,
-            key_row=key_row,
-            authored_attributes=authored_attributes,
-            authored_value_objects=authored_value_objects,
-            predecessor=self.predecessors.row(row),
-        )[sub_step]
+            resolved,
+            self.authored_attributes,
+            self.authored_value_objects,
+            PredecessorRow.over_row(
+                evidence.selection, row, evidence.document(row_index), evidence.absent
+            ),
+            effective=(
+                change.effective_positions(row)
+                if change is not None and isinstance(resolved.state, ChangedState)
+                else None
+            ),
+        )
 
 
-def _temporal_steps(
+def _close_step(
     facts: _TemporalFacts,
+    close: _SettledClose,
     *,
-    key_row: Mapping[str, object],
+    key_values: tuple[object, ...],
+    observed_valid_end: object | None,
+    observed_gate_start: object | None,
+) -> PlannedClose:
+    """One temporal row's close, from the few observed cells it reads.
+
+    ``observed_gate_start`` is read only for a gated close, and
+    ``observed_valid_end`` only for a Bitemporal one.
+    """
+    return _close(
+        facts.entity,
+        facts.shape,
+        key_attributes=close.key_attributes,
+        key_values=key_values,
+        observed_valid_end=observed_valid_end,
+        cause=close.cause,
+        gate=(
+            TemporalGate(
+                start_attribute=close.gate_start_attribute,
+                observed_start=observed_gate_start,
+            )
+            if close.gated
+            else UNGATED
+        ),
+        instant=facts.instant,
+    )
+
+
+def _successor_step(
+    facts: _TemporalFacts,
+    resolved: ResolvedSuccessor,
     authored_attributes: Mapping[AttributeIdentity, PlannedValue],
     authored_value_objects: Mapping[ValueObjectIdentity, object],
     predecessor: PredecessorRow | None,
-) -> tuple[PlannedStep, ...]:
-    """One temporal row's close and its successors, in that order.
+    *,
+    effective: Iterable[int] | None = None,
+) -> PlannedInsert:
+    """One resolved successor of one temporal row, as its own Planned Insert.
 
     Pure in ``facts``: everything it reads was decided by
     :meth:`WriteSettlement._temporal_facts`, so this reaches no clock,
-    strategy, model, or facet and can therefore run either eagerly, while the
-    instruction settles, or lazily, when a Materialized Write Group's segment
-    is asked for a row. It is also the sole composition of the two temporal
-    primitives, :func:`~parallax.core.unit_work.temporal.resolve_successors`
-    (already run, into ``facts``) and
-    :func:`~parallax.core.unit_work.temporal.bind_successor`.
+    strategy, model, or facet and can run either eagerly, while an instruction
+    settles, or lazily, when a Materialized Write Group's segment is asked for
+    one step.
 
-    ``key_row`` addresses the close; the authored maps are already resolved to
-    final member identities. A group therefore never maps prepared Metadata
-    back to authored strings merely to resolve it again.
+    A carried or changed successor starts from its predecessor's own cells, so
+    every member it does not effectively change is the predecessor's cell
+    object — the identity lowering patches by (:class:`ChangedFrom`). A changed
+    successor overlays the authored members, or only those at the ``effective``
+    selection positions when its producer compared them for this row.
     """
-    steps: list[PlannedStep] = []
-    close = facts.close
-    if close is not None:
-        assert predecessor is not None  # a closing topology refuses an unobserved mutation
-        steps.append(
-            _close(
-                facts.entity,
-                facts.shape,
-                key_attributes=close.key_attributes,
-                identity=key_row,
-                observed_valid_end=(
-                    predecessor.member(facts.shape.valid_time.end_attribute.name)
-                    if isinstance(facts.shape, Bitemporal)
-                    else None
-                ),
-                cause=close.cause,
-                gate=_temporal_gate(close.gate_start_attribute, predecessor, close.gated),
-                instant=facts.instant,
-            )
-        )
-    predecessor_attributes: dict[AttributeIdentity, PlannedValue] = {}
-    predecessor_value_objects: dict[ValueObjectIdentity, object] = {}
-    if predecessor is not None:
-        predecessor_attributes, predecessor_value_objects = _resolve(
-            facts.entity, facts.view, predecessor.members, context=None
-        )
-    for resolved in facts.resolved_successors:
-        match resolved.state:
-            case AuthoredState():
-                attributes = dict(authored_attributes)
-                value_objects = dict(authored_value_objects)
-            case CarriedState():
-                attributes = dict(predecessor_attributes)
-                value_objects = dict(predecessor_value_objects)
-            case ChangedState():
-                attributes = {**predecessor_attributes, **authored_attributes}
-                value_objects = {**predecessor_value_objects, **authored_value_objects}
-        entry = bind_successor(
-            resolved,
-            facts.shape,
-            transaction_instant=facts.instant,
-            attributes=attributes,
-            value_objects=value_objects,
-            predecessor=predecessor,
-        )
-        steps.append(PlannedInsert(entity=facts.entity.identity, entries=(entry,)))
-    return tuple(steps)
+    match resolved.state:
+        case AuthoredState():
+            attributes = dict(authored_attributes)
+            value_objects = dict(authored_value_objects)
+        case CarriedState():
+            assert predecessor is not None  # a carried successor observed one
+            attributes, value_objects = predecessor.identity_maps(facts.view.member_selection)
+        case ChangedState():
+            assert predecessor is not None  # a changed successor observed one
+            selection = facts.view.member_selection
+            attributes, value_objects = predecessor.identity_maps(selection)
+            if effective is None:
+                attributes.update(authored_attributes)
+                value_objects.update(authored_value_objects)
+            else:
+                bindings = selection.bindings
+                for position in effective:
+                    binding = bindings[position]
+                    if isinstance(binding, AttributeMetadata):
+                        attributes[binding.identity] = authored_attributes[binding.identity]
+                    else:
+                        value_objects[binding.identity] = authored_value_objects[binding.identity]
+    entry = bind_successor(
+        resolved,
+        facts.shape,
+        transaction_instant=facts.instant,
+        attributes=attributes,
+        value_objects=value_objects,
+        predecessor=predecessor,
+    )
+    return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
 
 
 def _non_temporal_step(
@@ -1144,7 +1220,7 @@ def _non_temporal_concurrency(
 ) -> NonTemporalConcurrency:
     """The settled concurrency decision one addressed non-temporal write
     carries, given the already-decided ``gated`` fact — the version analogue
-    of :func:`_temporal_gate`.
+    of a close's own gate (:func:`_close_step`).
 
     An unversioned target has nothing to gate on. A versioned one binds its
     observation as a gate when gated and records an explicit `Ungated`
@@ -1155,27 +1231,6 @@ def _non_temporal_concurrency(
         return UNVERSIONED
     gate = VersionGate(observed_version=observed_version) if gated else UNGATED
     return Versioned(attribute=version_attr, gate=gate)
-
-
-def _temporal_gate(
-    start_attribute: AttributeIdentity,
-    predecessor: PredecessorRow,
-    gated: bool,
-) -> TemporalConcurrency:
-    """The settled gate decision one close carries, given the already-decided
-    ``gated`` fact and the gate basis's already-resolved Attribute.
-
-    Optimistic mode binds the observed start of the axis the facet names as
-    its gate basis — the version analogue for an entity carrying no version
-    column. Locking mode records the explicit ungated decision, whose shared
-    read lock is what makes the close correct instead.
-    """
-    if not gated:
-        return UNGATED
-    return TemporalGate(
-        start_attribute=start_attribute,
-        observed_start=predecessor.member(start_attribute.name),
-    )
 
 
 def _planned_row(
@@ -1212,17 +1267,32 @@ def _prepared_assignments(
     entity: EntityMetadata, assignments: Sequence[PreparedAssignment]
 ) -> PlannedAssignments:
     """Resolved predicate assignments in their final member-identity maps."""
+    attributes, value_objects = _resolved_assignments(entity, assignments, "update")
+    return adopt_planned_assignments(attributes, value_objects)
+
+
+def _resolved_assignments(
+    entity: EntityMetadata, assignments: Sequence[PreparedAssignment], context: str
+) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
+    """Prepared assignments keyed by member identity, each Attribute cell's
+    marker classified for ``context``."""
     attributes: dict[AttributeIdentity, PlannedValue] = {}
     value_objects: dict[ValueObjectIdentity, object] = {}
     for assignment in assignments:
         member = assignment.member
         if isinstance(member, AttributeMetadata):
             attributes[member.identity] = _cell(
-                entity, member.identity.name, assignment.value, "update"
+                entity, member.identity.name, assignment.value, context
             )
         else:
             value_objects[member.identity] = assignment.value
-    return adopt_planned_assignments(attributes, value_objects)
+    return attributes, value_objects
+
+
+def _assigned_name(assignment: PreparedAssignment) -> str:
+    """The declared member name one prepared assignment writes."""
+    identity = assignment.member.identity
+    return identity.name if isinstance(identity, AttributeIdentity) else identity.path[-1]
 
 
 def _resolve(
@@ -1308,7 +1378,7 @@ def plan_temporal_close(
         entity,
         shape,
         key_attributes=key_attributes,
-        identity=identity,
+        key_values=_key_tuple(entity, key_attributes, identity),
         observed_valid_end=observed_valid_end,
         cause=SUPERSEDED,
         gate=gate,
@@ -1347,13 +1417,13 @@ def _close(
     shape: TransactionTimeOnly | Bitemporal,
     *,
     key_attributes: tuple[AttributeIdentity, ...],
-    identity: Mapping[str, object],
+    key_values: tuple[object, ...],
     observed_valid_end: object | None,
     cause: CloseCause,
     gate: TemporalConcurrency,
     instant: dt.datetime,
 ) -> PlannedClose:
-    """One settled close of the current milestone ``identity`` addresses.
+    """One settled close of the current milestone ``key_values`` addresses.
 
     Its assignments carry the Transaction-Time end alone — a close ends a
     milestone's currency and revises no represented value — and it expects
@@ -1365,7 +1435,7 @@ def _close(
         entity=entity.identity,
         target=MilestoneTarget(
             key_attributes=key_attributes,
-            key_values=_key_tuple(entity, key_attributes, identity),
+            key_values=key_values,
             end_attributes=_end_attributes(shape),
             end_values=_end_values(entity, shape, observed_valid_end),
         ),
@@ -1613,7 +1683,7 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
     model, so the buffered carriers — a keyed
     :class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite` and a
     :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`'s
-    observation columns — can only refuse the instruction-local half and
+    evidence — can only refuse the instruction-local half and
     delegate this half to the model-aware settlement. This is that delegation:
     every carrier that IS settled crosses it, whatever produced it, so a
     producer that resolves evidence a target cannot carry is told rather than

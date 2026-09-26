@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
@@ -30,6 +30,13 @@ import pytest
 from parallax.core import bitemp_write, inheritance, relationship, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import INFINITY
+from parallax.core.db_port import JsonDocument
+from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -46,9 +53,9 @@ from parallax.core.metamodel import (
 )
 from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.relationship import _compile as relationship_compile
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     BufferItem,
-    ChunkedColumnBuilder,
     Concurrency,
     KeyedWrite,
     MaterializedWriteGroup,
@@ -57,24 +64,22 @@ from parallax.core.unit_work import (
     PlannedClose,
     PlannedInsert,
     PlanningRequest,
-    PredecessorColumns,
     PredecessorRow,
-    PredecessorShape,
+    PredecessorRows,
+    PredecessorRowsBuilder,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
-    TemporalColumns,
     TemporalObservation,
     TransactionInstant,
-    VersionColumns,
+    VersionedEvidenceBuilder,
     VersionObservation,
     WriteAssignment,
     WriteObservation,
     WritePlan,
     WritePlanningError,
     object_key,
-    whole,
 )
 from parallax.core.unit_work import planner as planner_module
 from parallax.core.unit_work import write_settlement as write_settlement_module
@@ -94,6 +99,7 @@ from parallax.core.unit_work.planned import (
     STALE_WRITE,
     UNGATED,
     UNVERSIONED,
+    ChangedFrom,
     ExactCount,
     KeyTarget,
     PlannedDelete,
@@ -112,10 +118,12 @@ from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock, inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit._positional_row_support import positional_row
 from tests.unit._temporal_group_support import temporal_group
 
 _MODELS = corpus_records()
@@ -242,11 +250,12 @@ def _version_group(
     Materialized Write Group carries no per-row assigned value, only per-row
     key and observation columns.
     """
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    del key_name
+    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
     for key_value, version in rows:
-        keys.append(key_value)
-        versions.append(version)
+        evidence.append((key_value, version))
+    sealed = evidence.seal()
+    assert sealed is not None
     predicate = PredicateWrite(
         mutation,
         PredicateSelection(
@@ -266,12 +275,7 @@ def _version_group(
         predicate, model if model is not None else (_WALLET if entity == "Wallet" else _ACCOUNT)
     )
     assert isinstance(prepared, PreparedPredicateWrite)
-    return MaterializedWriteGroup(
-        mutation=prepared,
-        key_attributes=(key_name,),
-        key_columns=(whole(keys.build()),),
-        observations=VersionColumns(versions=whole(versions.build())),
-    )
+    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -1524,14 +1528,7 @@ _BALANCE_PREDECESSOR: dict[str, object] = {
 def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
     """A Materialized Write Group resolving the one row
     :data:`_BALANCE_PREDECESSOR` describes, under the same update."""
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(_BALANCE_PREDECESSOR["id"])
-    members: dict[str, ChunkedColumnBuilder[object]] = {}
-    for name, value in _BALANCE_PREDECESSOR.items():
-        column: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-        column.append(value)
-        members[name] = column
-    predicate = prepare_typed_write(
+    return temporal_group(
         PredicateWrite(
             "update",
             PredicateSelection(
@@ -1540,20 +1537,7 @@ def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
             assignments=(WriteAssignment("Balance.value", assigned),),
         ),
         _BALANCE,
-    )
-    assert isinstance(predicate, PreparedPredicateWrite)
-    return MaterializedWriteGroup(
-        mutation=predicate,
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=PredecessorColumns(
-                shape=PredecessorShape(attributes=tuple(_BALANCE_PREDECESSOR)),
-                attribute_columns=tuple(
-                    whole(members[name].build()) for name in _BALANCE_PREDECESSOR
-                ),
-            )
-        ),
+        [_BALANCE_PREDECESSOR],
     )
 
 
@@ -2108,9 +2092,7 @@ def test_a_materialized_group_authoring_the_version_is_refused_at_settlement() -
         mutation=dataclasses.replace(
             group.mutation, managed_assignments=(PreparedAssignment(version, 9),)
         ),
-        key_attributes=group.key_attributes,
-        key_columns=group.key_columns,
-        observations=group.observations,
+        evidence=group.evidence,
     )
     with pytest.raises(CallerAuthoredVersionError, match="framework-owned"):
         _plan([authored], _ACCOUNT)
@@ -2138,3 +2120,361 @@ def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker(
     )
     (step,) = _plan([carried], _WALLET).steps
     assert _insert_rows(step)[0]["owner"] == document
+
+
+# --------------------------------------------------------------------------- #
+# A temporal group's step access builds exactly the one step it names, and    #
+# only a carried or changed successor reads a Predecessor Row.                 #
+# --------------------------------------------------------------------------- #
+_OPENED_AT = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_WINDOW_FROM = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_WINDOW_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+
+def _temporal_topology_group(
+    model: Metamodel, entity: str, mutation: PredicateMutation, rows: int = 3
+) -> MaterializedWriteGroup:
+    bitemporal = entity == "Position"
+    bounded = mutation.endswith("Until")
+    bounds: tuple[dt.datetime, ...] = (
+        (_WINDOW_FROM, _WINDOW_UNTIL) if bounded else (_WINDOW_FROM,) if bitemporal else ()
+    )
+    axes: dict[str, object] = {"validStart": _OPENED_AT, "validEnd": INFINITY} if bitemporal else {}
+    return temporal_group(
+        PredicateWrite(
+            mutation,
+            PredicateSelection(
+                entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", "100.00")
+            ),
+            (WriteAssignment(f"{entity}.value", Decimal("9.00")),)
+            if mutation.startswith("update")
+            else (),
+            *bounds,
+        ),
+        model,
+        [
+            {
+                "id": key,
+                "acctNum": "A",
+                "value": Decimal("1.00"),
+                **axes,
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+            }
+            for key in range(1, rows + 1)
+        ],
+    )
+
+
+class _Constructions:
+    """Counts the planned steps and Predecessor Rows built from now on."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.steps = 0
+        self.predecessors = 0
+        for step_type in (PlannedClose, PlannedInsert):
+            original = step_type.__init__
+
+            def counting(
+                step: object, *args: object, _original: Any = original, **kwargs: object
+            ) -> None:
+                self.steps += 1
+                _original(step, *args, **kwargs)
+
+            monkeypatch.setattr(step_type, "__init__", counting)
+        over_row = PredecessorRow.over_row
+
+        def adopted(*args: Any) -> PredecessorRow:
+            self.predecessors += 1
+            return over_row(*args)
+
+        monkeypatch.setattr(PredecessorRow, "over_row", adopted)
+
+
+@pytest.mark.parametrize(
+    ("entity", "mutation", "steps_per_row"),
+    [
+        ("Balance", "update", 2),
+        ("Balance", "terminate", 1),
+        ("Balance", "updateUntil", 2),
+        ("Balance", "terminateUntil", 1),
+        ("Position", "update", 3),
+        ("Position", "terminate", 2),
+        ("Position", "updateUntil", 4),
+        ("Position", "terminateUntil", 3),
+    ],
+)
+def test_indexing_a_temporal_group_constructs_only_the_requested_step(
+    monkeypatch: pytest.MonkeyPatch, entity: str, mutation: PredicateMutation, steps_per_row: int
+) -> None:
+    model = _BALANCE if entity == "Balance" else _POSITION
+    plan = _plan([_temporal_topology_group(model, entity, mutation)], model)
+    settled = list(plan.steps)
+    assert len(settled) == 3 * steps_per_row
+    constructed = _Constructions(monkeypatch)
+
+    for index in range(len(settled)):
+        assert plan.steps[index] == settled[index]
+    assert constructed.steps == len(settled)
+    assert constructed.predecessors == sum(isinstance(step, PlannedInsert) for step in settled)
+
+    constructed.steps = constructed.predecessors = 0
+    last, first = len(settled) - 1, 0
+    for index in (last, first, last):
+        assert plan.steps[index] == settled[index]
+    assert constructed.steps == 3
+    assert constructed.predecessors == 2 * isinstance(settled[last], PlannedInsert)
+
+
+def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_planning() -> None:
+    group = temporal_group(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+            ),
+            (WriteAssignment("Balance.acctNum", {"increment": 1}),),
+        ),
+        _BALANCE,
+        [
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": Decimal("1.00"),
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+            }
+        ],
+    )
+    with pytest.raises(WritePlanningError, match="not recognized for insert planning"):
+        _plan([group], _BALANCE)
+
+
+# --------------------------------------------------------------------------- #
+# Effective change is established by the producer: a surviving row of a       #
+# multi-assignment group carries the members it restores.                     #
+# --------------------------------------------------------------------------- #
+def _comparisons(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    calls = {"prepared": 0, "compared": 0}
+    prepare = prepare_effective_change
+    effective_positions = PreparedEffectiveChange.effective_positions
+
+    def preparing(*args: Any, **kwargs: Any) -> PreparedEffectiveChange:
+        calls["prepared"] += 1
+        return prepare(*args, **kwargs)
+
+    def comparing(change: PreparedEffectiveChange, row: tuple[object, ...]) -> Any:
+        calls["compared"] += 1
+        return effective_positions(change, row)
+
+    monkeypatch.setattr(write_settlement_module, "prepare_effective_change", preparing)
+    monkeypatch.setattr(PreparedEffectiveChange, "effective_positions", comparing)
+    return calls
+
+
+def _position_update(*assignments: WriteAssignment, account: str) -> MaterializedWriteGroup:
+    return temporal_group(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                "Position", predicate_algebra.Comparison("lessThan", "Position.value", "100.00")
+            ),
+            assignments,
+            _WINDOW_FROM,
+        ),
+        _POSITION,
+        [
+            {
+                "id": key,
+                "acctNum": account,
+                "value": Decimal("1.00"),
+                "validStart": _OPENED_AT,
+                "validEnd": INFINITY,
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+            }
+            for key in (1, 2)
+        ],
+    )
+
+
+def test_a_surviving_multi_assignment_row_carries_the_member_it_restores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _comparisons(monkeypatch)
+    stored_account = "".join(("ACC", "-1"))
+    group = _position_update(
+        WriteAssignment("Position.acctNum", "ACC-1"),
+        WriteAssignment("Position.value", Decimal("9.00")),
+        account=stored_account,
+    )
+    assert isinstance(group.evidence, PredecessorRows)
+    plan = _plan([group], _POSITION)
+    assert calls == {"prepared": 1, "compared": 0}
+
+    changed = [
+        entry
+        for step in plan.steps
+        if isinstance(step, PlannedInsert)
+        for entry in step.entries
+        if isinstance(entry.origin, ChangedFrom)
+    ]
+    assert len(changed) == 2
+    assert calls == {"prepared": 1, "compared": 2}
+    for entry in changed:
+        values = _row_values(entry.row)
+        account = next(ident for ident in entry.row.attributes if ident.name == "acctNum")
+        assert entry.row.attributes[account] is stored_account
+        origin = cast("ChangedFrom", entry.origin)
+        assert origin.predecessor.carries(account, entry.row.attributes[account])
+        assert values["value"] == Decimal("9.00")
+
+
+def test_single_assignment_groups_and_keyed_writes_are_not_compared_again_at_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _comparisons(monkeypatch)
+    group = _position_update(WriteAssignment("Position.value", Decimal("9.00")), account="A")
+    list(_plan([group], _POSITION).steps)
+    assert calls == {"prepared": 0, "compared": 0}
+
+    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+    key_ = object_key(addressed, _BALANCE)
+    assert key_ is not None
+    list(
+        _plan(
+            [addressed],
+            _BALANCE,
+            observations={
+                key_: TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+            },
+        ).steps
+    )
+    assert calls == {"prepared": 0, "compared": 0}
+
+
+def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> None:
+    # One retained Relational Document row changed through each producer: a
+    # keyed `updateUntil` carrying its effective member alone, and a
+    # materializing one over the same judged row and raw document. Both
+    # successors patch the member they change and carry everything else,
+    # unknown keys included, so they lower to identical statements.
+    model = model_of(acquisition_support.MODEL)
+    case = acquisition_support.case_named("acquisition.rows-8.document")
+    target = case.prepared.selection.target
+    layout = LayoutCatalog(model).entity(target.identity)
+    selection = layout.member_selection
+    row = positional_row(
+        selection.shape,
+        {
+            "id": 1,
+            "title": "title-1",
+            "address": {"city": "Oslo", "geo": {"country": "NO"}},
+            "tags": [{"label": "a"}],
+            "validStart": acquisition_support.VALID_START,
+            "validEnd": INFINITY,
+            "txStart": acquisition_support.TX_START,
+            "txEnd": INFINITY,
+        },
+        absent=ABSENT,
+    )
+    stored: dict[str, object] = {
+        "title": "title-1",
+        "charterCode": "NB-118",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
+        "tags": [{"label": "a"}],
+    }
+    evidence = PredecessorRowsBuilder(
+        selection, key_position=layout.primary_key[0], absent=ABSENT, documents=True
+    )
+    evidence.append(row, stored)
+    sealed = evidence.seal()
+    assert sealed is not None
+    keyed = KeyedWrite(
+        "updateUntil",
+        target.identity.canonical,
+        ({"id": 1, "title": acquisition_support.ASSIGNED_TITLE},),
+        acquisition_support.INTERIOR_FROM,
+        acquisition_support.INTERIOR_UNTIL,
+    )
+    key_ = object_key(keyed, model)
+    assert key_ is not None
+    observation = TemporalObservation(
+        predecessor=PredecessorRow.over_row(selection, row, stored, ABSENT)
+    )
+
+    def lowered(plan: WritePlan) -> list[tuple[str, tuple[object, ...]]]:
+        return [
+            (statement.sql, tuple(statement.binds))
+            for statement in (compile_write_step(step, model, POSTGRES) for step in plan.steps)
+        ]
+
+    eager = lowered(_plan([keyed], model, observations={key_: observation}))
+    materialized = lowered(
+        _plan([MaterializedWriteGroup(mutation=case.prepared, evidence=sealed)], model)
+    )
+    assert materialized == eager
+    documents = [
+        cast("Mapping[str, object]", bind.value)
+        for _sql, binds in eager
+        for bind in binds
+        if isinstance(bind, JsonDocument)
+    ]
+    assert [document["title"] for document in documents] == [
+        "title-1",
+        acquisition_support.ASSIGNED_TITLE,
+        "title-1",
+    ]
+    assert all(document["charterCode"] == "NB-118" for document in documents)
+    assert documents[0] is stored
+    assert documents[2] is stored
+
+
+def test_a_surviving_row_overlays_an_effective_value_object_and_carries_a_restored_leaf() -> None:
+    branch = corpus_model("branch")
+    stored_name = "".join(("Central", " Branch"))
+    address = {
+        "street": "10 Old Road",
+        "city": "Helsinki",
+        "geo": {"country": "FI"},
+        "phones": [{"type": "mobile", "number": "111"}],
+    }
+    group = temporal_group(
+        PredicateWrite(
+            "update",
+            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+            (
+                WriteAssignment("Branch.name", "Central Branch"),
+                WriteAssignment("Branch.address", {**address, "city": "Tampere"}),
+            ),
+            _WINDOW_FROM,
+        ),
+        branch,
+        [
+            {
+                "id": 1,
+                "name": stored_name,
+                "validStart": _OPENED_AT,
+                "validEnd": INFINITY,
+                "txStart": _OPENED_AT,
+                "txEnd": INFINITY,
+                "address": address,
+            }
+        ],
+    )
+    assert len(group) == 1
+    (changed,) = (
+        entry
+        for step in _plan([group], branch).steps
+        if isinstance(step, PlannedInsert)
+        for entry in step.entries
+        if isinstance(entry.origin, ChangedFrom)
+    )
+    name = next(ident for ident in changed.row.attributes if ident.name == "name")
+    (address_identity,) = changed.row.value_objects
+    assert changed.row.attributes[name] is stored_name
+    assert changed.row.value_objects[address_identity] is next(
+        assignment.value
+        for assignment in group.mutation.managed_assignments
+        if not isinstance(assignment.member, AttributeMetadata)
+    )

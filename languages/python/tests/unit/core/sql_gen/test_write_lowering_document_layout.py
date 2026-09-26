@@ -16,25 +16,43 @@ suites' claims are about one declaration seen from both sides.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 from collections.abc import Mapping
 from typing import Final, cast
 
 import pytest
 
-from parallax.core.base import retain_document_value
+from parallax.core import storage_layout
+from parallax.core.base import FrozenMap, retain_document_value
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
+from parallax.core.document_codec import _managed as managed
+from parallax.core.entity._construction_input import ABSENT
+from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    Metamodel,
+    ValueObjectIdentity,
+)
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.sql_gen._write import (
+    _successor_patches,  # pyright: ignore[reportPrivateUsage] - patch-selection property only
+    compile_write_step,
+)
+from parallax.core.storage_layout import DocumentResidentSelection
 from parallax.core.unit_work import KeyedWrite, PredecessorRow
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.unit_work.observe import (
+    _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
+)
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
     CarriedFrom,
     ChangedFrom,
     InsertEntry,
+    InsertOrigin,
     PlannedInsert,
     PlannedRow,
 )
@@ -313,49 +331,63 @@ each occurrence from the members the model declares, so `sealNumber` is not amon
 them even though the stored subtree still carries it."""
 
 
-def _successor(
-    members: Mapping[str, object],
-    *,
-    document: object | None,
-    origin: type[CarriedFrom] | type[ChangedFrom] | None,
-    observed: Mapping[str, object] = _DECODED,
-) -> object:
-    """The Structured Column one opened row binds, given the milestone it succeeds.
+_SELECTION = LayoutCatalog(DOCUMENT).entity(PERSON).member_selection
 
-    ``members`` is the successor's own complete row, exactly as temporal expansion
-    composes one: ``observed`` with the mutation's changes overlaid.
-    """
-    person = entity(DOCUMENT, "Person")
-    attributes = {
-        attribute.identity: members[attribute.identity.name]
-        for attribute in person.declared_attributes
-        if attribute.identity.name in members
-    }
-    value_objects = {
-        occurrence.identity: retain_document_value(members[occurrence.identity.path[-1]])
-        for occurrence in person.declared_value_objects
-        if occurrence.identity.path[-1] in members
-    }
-    predecessor = PredecessorRow(observed, document=document)
+
+def _successor_maps(
+    predecessor: PredecessorRow, changes: Mapping[str, object]
+) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
+    """A changed successor's complete row as temporal expansion composes one:
+    the predecessor's own cells, with ``changes`` overlaid as authored values."""
+    attributes, value_objects = predecessor.identity_maps(_SELECTION)
+    for name, value in changes.items():
+        binding = _SELECTION.binding(name)
+        assert binding is not None
+        if isinstance(binding, AttributeMetadata):
+            attributes[binding.identity] = value
+        else:
+            value_objects[binding.identity] = retain_document_value(value)
+    return attributes, value_objects
+
+
+def _opened(
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+    origin: InsertOrigin,
+) -> object:
     step = PlannedInsert(
         entity=PERSON,
         entries=(
             InsertEntry(
                 row=PlannedRow(attributes=attributes, value_objects=value_objects),
-                origin=NEW_LINEAGE if origin is None else origin(predecessor),
+                origin=origin,
             ),
         ),
     )
     return _document(compile_write_step(step, DOCUMENT, POSTGRES))
 
 
+def _successor(
+    changes: Mapping[str, object],
+    *,
+    document: object | None,
+    origin: type[CarriedFrom] | type[ChangedFrom] | None,
+    observed: Mapping[str, object] = _DECODED,
+) -> object:
+    """The Structured Column one opened row binds, given the milestone it succeeds
+    and the members it changed."""
+    predecessor = PredecessorRow(observed, document=document)
+    attributes, value_objects = _successor_maps(predecessor, changes)
+    return _opened(
+        attributes, value_objects, NEW_LINEAGE if origin is None else origin(predecessor)
+    )
+
+
 def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() -> None:
     # The whole reason a successor is patched rather than re-encoded: `charterCode`
     # reaches no member, so a document rebuilt from the members this model declares
     # would have destroyed it.
-    assert _successor(
-        {**_DECODED, "displayName": "Dagny"}, document=_STORED, origin=ChangedFrom
-    ) == {
+    assert _successor({"displayName": "Dagny"}, document=_STORED, origin=ChangedFrom) == {
         "displayName": "Dagny",
         "score": 7,
         "charterCode": "NB-118",
@@ -365,28 +397,36 @@ def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() 
 
 
 def test_a_carried_occurrence_keeps_the_unknown_keys_inside_its_own_subtree() -> None:
-    # A successor's row restates every member, changed or not, so what tells a
-    # carried occurrence from an assigned one is whether its value differs from the
-    # observed one. `address` does not, so its subtree is never rebuilt and
-    # `sealNumber` rides forward with it.
-    successor = _successor({**_DECODED, "score": 21}, document=_STORED, origin=ChangedFrom)
+    # A changed successor carries every member it did not change as its
+    # predecessor's own cell, so `address` is never rebuilt and `sealNumber`
+    # rides forward with it.
+    successor = _successor({"score": 21}, document=_STORED, origin=ChangedFrom)
     assert successor == {**_STORED, "score": 21}
 
 
 def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it() -> None:
     # The two observation paths spell one occurrence differently — a materializing
     # resolve retains the stored subtree, a real find the members materialized out of
-    # it — and a successor's carried half is copied out of whichever map its own
-    # observation held. Carrying is decided against that same map, so `address` is
-    # carried on both paths and `sealNumber` rides forward even where no observed
+    # it — and either way the successor carries the observation's own cell, so
+    # `address` is carried and `sealNumber` rides forward even where no observed
     # member names it.
     successor = _successor(
-        {**_MATERIALIZED, "score": 21},
+        {"score": 21}, document=_STORED, origin=ChangedFrom, observed=_MATERIALIZED
+    )
+    assert successor == {**_STORED, "score": 21}
+
+
+def test_a_restated_equal_value_is_a_change_because_carrying_is_identity() -> None:
+    # Lowering never compares values: a member the successor holds as anything
+    # but its predecessor's own cell was changed by its producer, so an equal
+    # but distinct `address` replaces the stored subtree and `sealNumber` with it.
+    successor = _successor(
+        {"address": {"city": "Oslo", "geo": {"country": "NO"}}},
         document=_STORED,
         origin=ChangedFrom,
         observed=_MATERIALIZED,
     )
-    assert successor == {**_STORED, "score": 21}
+    assert successor == {**_STORED, "address": {"city": "Oslo", "geo": {"country": "NO"}}}
 
 
 def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -> None:
@@ -394,9 +434,7 @@ def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -
     # authored complete, so the omitted `geo` and the undeclared `sealNumber` inside
     # it are both gone — while `charterCode`, which sits OUTSIDE it and was never
     # mentioned, rides forward with the rest of the retained document.
-    successor = _successor(
-        {**_DECODED, "address": {"city": "Alta"}}, document=_STORED, origin=ChangedFrom
-    )
+    successor = _successor({"address": {"city": "Alta"}}, document=_STORED, origin=ChangedFrom)
     assert successor == {
         "displayName": "Ada",
         "score": 7,
@@ -407,22 +445,161 @@ def test_an_assigned_one_replaces_its_subtree_while_the_root_carries_forward() -
 
 
 def test_an_assigned_many_replaces_the_predecessors_array() -> None:
-    successor = _successor(
-        {**_DECODED, "tags": [{"label": "member"}]}, document=_STORED, origin=ChangedFrom
-    )
+    successor = _successor({"tags": [{"label": "member"}]}, document=_STORED, origin=ChangedFrom)
     assert successor == {**_STORED, "tags": [{"label": "member"}]}
 
 
-def test_a_successor_that_changes_nothing_binds_the_retained_document_itself() -> None:
+def test_a_carried_successor_binds_the_retained_document_itself() -> None:
     # A Bitemporal head or tail carries its predecessor's state unchanged, so it has
     # nothing to patch and the document it binds is the one the closed row held.
     retained = retain_document_value(_STORED)
-    assert _successor(_DECODED, document=retained, origin=CarriedFrom) is retained
+    assert _successor({}, document=retained, origin=CarriedFrom) is retained
+
+
+def test_a_changed_successor_that_carries_every_cell_binds_the_retained_document() -> None:
+    retained = retain_document_value(_STORED)
+    assert _successor({}, document=retained, origin=ChangedFrom) is retained
 
 
 def test_a_successor_whose_observation_retained_no_document_composes_from_members() -> None:
     # Without a retained document there is nothing to preserve, so the row's own
     # complete member set composes the document exactly as a new lineage's does.
-    assert _successor(_DECODED, document=None, origin=ChangedFrom) == _successor(
-        _DECODED, document=None, origin=None
+    assert _successor({}, document=None, origin=ChangedFrom) == _successor(
+        {}, document=None, origin=None
     )
+
+
+# --------------------------------------------------------------------------- #
+# Patches over a trusted positional predecessor: shared cells, identity only. #
+# --------------------------------------------------------------------------- #
+_POSITIONAL: Final[tuple[object, ...]] = (
+    1,
+    "Ada",
+    7,
+    ABSENT,
+    ("Oslo", ("NO",)),
+    (("founder",), ("member",)),
+)
+_STORED_ROW: Final[dict[str, object]] = {
+    "displayName": "Ada",
+    "score": 7,
+    "charterCode": "NB-118",
+    "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
+    "tags": [{"label": "founder"}, {"label": "member"}],
+}
+_CHANGES: Final[tuple[tuple[str, object], ...]] = (
+    ("displayName", "Dagny"),
+    ("score", 7),
+    ("score", 8),
+    ("joinedOn", dt.date(2026, 1, 15)),
+    ("joinedOn", None),
+    ("address", {"city": "Oslo", "geo": {"country": "NO"}}),
+    ("address", None),
+    ("tags", ({"label": "founder"}, {"label": "member"})),
+    ("tags", ()),
+)
+
+
+def _residents() -> DocumentResidentSelection:
+    view = storage_layout.view(DOCUMENT).entity(PERSON)
+    assert view is not None
+    resident = view.document_residents
+    assert resident is not None
+    return resident
+
+
+def _positional_predecessor(document: object) -> PredecessorRow:
+    return PredecessorRow.over_row(_SELECTION, _POSITIONAL, document, ABSENT)
+
+
+def _patch_paths(
+    predecessor: PredecessorRow,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> list[tuple[str, ...]]:
+    resident = _residents()
+    return [
+        patch.path for patch in _successor_patches(resident, attributes, value_objects, predecessor)
+    ]
+
+
+def test_patches_are_exactly_the_resident_members_the_predecessor_does_not_carry() -> None:
+    # Every combination of changes, equal restatements included, over both a
+    # trusted positional predecessor and a caller-supplied mapping.
+    for selected in range(1 << len(_CHANGES)):
+        _assert_patches_follow_carrying(
+            dict(change for index, change in enumerate(_CHANGES) if selected & (1 << index))
+        )
+
+
+def _assert_patches_follow_carrying(changes: Mapping[str, object]) -> None:
+    for predecessor in (
+        _positional_predecessor(_STORED_ROW),
+        PredecessorRow(
+            {"id": 1, "displayName": "Ada", "score": 7, "address": {"city": "Oslo"}, "tags": ()},
+            document=_STORED_ROW,
+        ),
+    ):
+        attributes, value_objects = _successor_maps(predecessor, changes)
+        resident = _residents()
+        expected = [
+            placement.path
+            for position, placement in zip(resident.positions, resident.placements, strict=True)
+            for binding in (_SELECTION.bindings[position],)
+            for values in (
+                cast(
+                    "Mapping[object, object]",
+                    attributes if isinstance(binding, AttributeMetadata) else value_objects,
+                ),
+            )
+            if binding.identity in values
+            and not predecessor.carries(binding.identity, values[binding.identity])
+        ]
+        assert _patch_paths(predecessor, attributes, value_objects) == expected
+        assert set(expected) <= {
+            placement.path
+            for placement, name in zip(
+                resident.placements,
+                (_SELECTION.shape.members[position].name for position in resident.positions),
+                strict=True,
+            )
+            if name in changes
+        }
+
+
+def test_lowering_a_changed_successor_compares_no_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A changed successor's patches come from identity alone: lowering calls no
+    # equality between mapping carriers and no codec comparison.
+    def compared(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("lowering compared a successor's values")
+
+    predecessor = _positional_predecessor(_STORED_ROW)
+    attributes, value_objects = _successor_maps(
+        predecessor, {"score": 8, "address": {"city": "Alta"}}
+    )
+    monkeypatch.setattr(FrozenMap, "__eq__", compared)
+    monkeypatch.setattr(_EntityDocumentRowType, "__eq__", compared)
+    monkeypatch.setattr(managed, "_structurally_equal", compared)
+    monkeypatch.setattr(managed, "_canonical_member", compared)
+    monkeypatch.setattr(managed, "classify_effective_change", compared)
+    opened = _opened(attributes, value_objects, ChangedFrom(predecessor))
+    monkeypatch.undo()
+    assert opened == {
+        **_STORED_ROW,
+        "score": 8,
+        "address": {"city": "Alta"},
+    }
+
+
+def test_lowering_leaves_the_retained_document_as_it_found_it() -> None:
+    stored = copy.deepcopy(_STORED_ROW)
+    predecessor = _positional_predecessor(stored)
+    attributes, value_objects = _successor_maps(
+        predecessor, {"score": 8, "tags": [{"label": "member"}], "address": None}
+    )
+    _opened(attributes, value_objects, ChangedFrom(predecessor))
+    _opened(*predecessor.identity_maps(_SELECTION), CarriedFrom(predecessor))
+    assert stored == _STORED_ROW
+    assert predecessor.document is stored

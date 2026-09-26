@@ -47,7 +47,6 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     BufferItem,
-    ChunkedColumnBuilder,
     Concurrency,
     FixedClock,
     KeyedWrite,
@@ -61,7 +60,7 @@ from parallax.core.unit_work import (
     TemporalObservation,
     TransactionSettings,
     UnitOfWork,
-    VersionColumns,
+    VersionedEvidenceBuilder,
     VersionObservation,
     WriteAssignment,
     WriteBatchTrigger,
@@ -69,7 +68,6 @@ from parallax.core.unit_work import (
     WritePlan,
     object_key,
     run_unit_of_work,
-    whole,
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.core.unit_work.planned import (
@@ -191,17 +189,12 @@ def _version_group() -> MaterializedWriteGroup:
         _MODEL,
     )
     assert isinstance(prepared, PreparedPredicateWrite)
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
     for key_value, version in ((20, 1), (21, 4)):
-        keys.append(key_value)
-        versions.append(version)
-    return MaterializedWriteGroup(
-        mutation=prepared,
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=VersionColumns(versions=whole(versions.build())),
-    )
+        evidence.append((key_value, version))
+    sealed = evidence.seal()
+    assert sealed is not None
+    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
 
 
 def _prepared_writes() -> list[BufferItem]:

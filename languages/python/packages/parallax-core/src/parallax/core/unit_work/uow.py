@@ -3,16 +3,28 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import islice
 from types import TracebackType
 from typing import Literal, Protocol
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance
 from parallax.core.metamodel import Metamodel
-from parallax.core.unit_work.claims import ClaimScope, ClaimTable, ClaimVerdict, WriteIntent
+from parallax.core.unit_work.claims import (
+    SELECTION_INTENT,
+    ClaimScope,
+    ClaimTable,
+    ClaimVerdict,
+    WriteIntent,
+)
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import DESTRUCTIVE_MUTATIONS, INSERT_MUTATIONS
-from parallax.core.unit_work.materialized import BufferItem, buffered_instruction
+from parallax.core.unit_work.materialized import (
+    BufferItem,
+    MaterializedWriteGroup,
+    buffered_instruction,
+    group_state_keys,
+)
 from parallax.core.unit_work.plan import WritePlan
 from parallax.core.unit_work.planner import (
     ObjectKey,
@@ -251,14 +263,41 @@ class UnitOfWork:
         through. A write the flush's earlier stages retire takes its claim out
         of that flush with it.
 
+        A Materialized Write Group is buffered together with its selection
+        claim on every state it selected (`m-unit-work` "Observed-State
+        Coalescing"), or not at all: if deriving or installing any of those
+        claims fails, the claims it had admitted are withdrawn and neither the
+        buffer nor any claim held before it changes.
+
         Buffering also maintains :meth:`pending_insert`: an insert records the
         object it opens and a destructive write of that object discards it,
         which is the cancellation the flush will perform, recognized at the
         moment the pair is complete rather than when it is planned.
         """
         self._ensure_open()
+        if isinstance(instruction, MaterializedWriteGroup):
+            self._claim_selection(instruction)
         self._buffer.append(instruction)
         self._track_pending_insert(instruction)
+
+    def _claim_selection(self, group: MaterializedWriteGroup) -> None:
+        # The resolving read force-flushed the buffer, so no pending intent can
+        # hold a state the group selected; a collision is a caller defect, and
+        # rollback re-derives only the admitted prefix rather than retaining
+        # every key on the success path.
+        admitted = 0
+        try:
+            for state in group_state_keys(group, self.meta):
+                verdict = self._claims.claim(state, SELECTION_INTENT)
+                if verdict != "admit":
+                    raise UnitOfWorkError(
+                        f"a Materialized Write Group's selection of {state!r} collides "
+                        f"with a claim this buffer already holds ({verdict})"
+                    )
+                admitted += 1
+        except BaseException:
+            self._claims.release(islice(group_state_keys(group, self.meta), admitted))
+            raise
 
     def pending_insert(self, key: ObjectKey) -> bool:
         """Whether this buffer holds an insert of ``key`` that no destructive

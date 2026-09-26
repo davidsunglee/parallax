@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core.db_port import DatabaseConnection
@@ -30,27 +30,17 @@ from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import NonTemporal, Pin, TemporalShape
 from parallax.core.unit_work import (
-    SELECTION_INTENT,
-    ChunkedColumnBuilder,
-    EntityStateRow,
     MaterializedWriteGroup,
-    ObjectKey,
-    ObservedStateKey,
-    PredecessorColumns,
-    PredecessorRow,
-    PredecessorShape,
+    PredecessorRows,
+    PredecessorRowsBuilder,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
-    TemporalColumns,
-    TemporalObservation,
     UnitOfWork,
-    VersionColumns,
-    VersionObservation,
+    VersionedEvidence,
+    VersionedEvidenceBuilder,
     WriteAssignment,
     instructions,
-    observed_state_key,
-    whole,
 )
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
@@ -353,9 +343,9 @@ def _materialize_predicate_write(
     row-form read on THIS transaction's own connection (never instance-form
     — the resolve constructs no object, though it projects whichever Document
     slots the write's own observation and comparison needs require, below),
-    then stream each matched row's key and observation values directly into
-    bounded column builders — never a per-row keyed-write wrapper, never a
-    parallel pending-observation list — and buffer the sealed result as one
+    then append each matched row's evidence directly to its bounded evidence
+    builder — never a per-row keyed-write wrapper, never a parallel
+    pending-observation list — and buffer the sealed result as one
     compact :class:`~parallax.core.unit_work.MaterializedWriteGroup` (`m-unit-
     work` "Materialized Write Groups") at the call position. Zero resolved
     rows, or every resolved row eliminated as a no-op, means no group is
@@ -404,7 +394,7 @@ def _materialize_predicate_write(
     # EVERY declared document is projected rather than only the assigned
     # ones — a carried row must keep whichever documents the assignments do
     # NOT themselves reassign. Every target's carried state is the resolved
-    # row itself, streamed whole into the group's Predecessor Columns (below);
+    # row itself, retained whole as the group's Predecessor Rows (below);
     # there is no separate audit-only merge.
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
@@ -422,14 +412,9 @@ def _materialize_predicate_write(
     # declared one, matching an ordinary read's own need-driven projection.
     predecessor_need = version_attr is None and not isinstance(family_shape, NonTemporal)
     selection = layout.member_selection
-    key = family_view(meta, entity).primary_key.identity
     acquisition = _Acquisition(
-        instruction=instruction,
-        entity=entity.identity,
         selection=selection,
-        key=key.name,
-        key_position=selection.position(key),
-        family_shape=family_shape,
+        key_position=selection.position(family_view(meta, entity).primary_key.identity),
         change=_effective_change(instruction, selection.shape),
     )
     version_position = None if version_attr is None else selection.position(version_attr)
@@ -456,12 +441,14 @@ def _materialize_predicate_write(
     # values, so a temporal target's Predecessor Row retains it (`m-unit-work`)
     # — which is what lets a successor be patched from the document the row
     # actually held — without a second extraction that could disagree with the
-    # first.
+    # first. The Page is private to this resolve, so its judged rows and the
+    # documents it decoded transfer to the group by reference.
     #
     # Nothing reaches the Unit of Work until every root has been judged and the
-    # group sealed: a root refused later in the traversal leaves only the local
-    # builders, which nothing else reaches.
-    def resolve() -> _Acquired | None:
+    # evidence sealed: a root refused later in the traversal leaves only the
+    # local builder, which nothing else reaches. Buffering the group then
+    # installs its selection claims with it, or neither.
+    def resolve() -> VersionedEvidence | PredecessorRows | None:
         with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
@@ -488,15 +475,9 @@ def _materialize_predicate_write(
                 stage, acquisition, documents=compiled.structured_column is not None
             )
 
-    acquired = uow.read(resolve)
-    if acquired is None:
-        return
-    group, selected = acquired
-    uow.buffer(group)
-    _claim_selected_states(uow, selected)
-
-
-type _Acquired = tuple[MaterializedWriteGroup, list[ObservedStateKey]]
+    evidence = uow.read(resolve)
+    if evidence is not None:
+        uow.buffer(MaterializedWriteGroup(mutation=instruction, evidence=evidence))
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,12 +488,8 @@ class _Acquisition:
     resolved row is retained.
     """
 
-    instruction: PreparedPredicateWrite
-    entity: EntityIdentity
     selection: EntityMemberSelection
-    key: str
     key_position: int
-    family_shape: TemporalShape
     change: PreparedEffectiveChange | None
 
     def selects(self, row: tuple[object, ...]) -> bool:
@@ -520,9 +497,6 @@ class _Acquisition:
         (`m-opt-lock` per-row no-op elimination)."""
         change = self.change
         return change is None or change.any_effective(row)
-
-    def object_key(self, row: tuple[object, ...]) -> ObjectKey:
-        return ObjectKey(self.entity, ((self.key, row[self.key_position]),))
 
 
 def _effective_change(
@@ -562,100 +536,37 @@ def _publishable_member_row(root: RootView, _position: int) -> Iterator[tuple[ob
 
 def _acquire_versioned(
     page: Page, acquisition: _Acquisition, version_position: int
-) -> _Acquired | None:
-    """A versioned target's group: the key and observed version of every row
+) -> VersionedEvidence | None:
+    """A versioned target's evidence: the key and observed version of every row
     that is not a no-op."""
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
-    selected: list[ObservedStateKey] = []
-    for row in _publishable_member_rows(page):
-        if not acquisition.selects(row):
-            continue
-        version = cast("int", row[version_position])
-        keys.append(row[acquisition.key_position])
-        versions.append(version)
-        selected.append(
-            observed_state_key(
-                acquisition.object_key(row),
-                VersionObservation(observed_version=version),
-                acquisition.family_shape,
-            )
-        )
-    if not selected:
-        return None
-    group = MaterializedWriteGroup(
-        mutation=acquisition.instruction,
-        key_attributes=(acquisition.key,),
-        key_columns=(whole(keys.build()),),
-        observations=VersionColumns(versions=whole(versions.build())),
+    evidence = VersionedEvidenceBuilder(
+        key_position=acquisition.key_position, version_position=version_position
     )
-    return group, selected
+    for row in _publishable_member_rows(page):
+        if acquisition.selects(row):
+            evidence.append(row)
+    return evidence.seal()
 
 
 def _acquire_temporal(
     stage: RowPublication, acquisition: _Acquisition, *, documents: bool
-) -> _Acquired | None:
-    """A temporal target's group: the complete Predecessor Row of every row that
-    is not a no-op (`m-unit-work` "A Predecessor Row is the complete, immutable
-    persisted state").
+) -> PredecessorRows | None:
+    """A temporal target's evidence: the complete Predecessor Row of every row
+    that is not a no-op (`m-unit-work` "A Predecessor Row is the complete,
+    immutable persisted state").
 
-    Every member position contributes exactly one cell, an absent marker
-    included, so the columns stay aligned, and the raw Structured Column rides
-    beside them by the row's position in the traversal. The short-lived view
-    over each row exists only to derive its observed-state key and is not
-    retained.
+    Each judged member row is retained whole, the absent marker included at any
+    member it does not hold, and its raw Structured Column rides beside it by
+    the row's position in the traversal.
     """
-    selection = acquisition.selection
-    names = tuple(member.name for member in selection.shape.members)
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    members = tuple(ChunkedColumnBuilder[object]() for _ in names)
-    retained: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    selected: list[ObservedStateKey] = []
+    evidence = PredecessorRowsBuilder(
+        acquisition.selection,
+        key_position=acquisition.key_position,
+        absent=ABSENT,
+        documents=documents,
+    )
+    raw = stage.documents
     for position, row in enumerate(_publishable_member_rows(stage.page)):
-        if not acquisition.selects(row):
-            continue
-        keys.append(row[acquisition.key_position])
-        state = EntityStateRow.over_declared_members(selection, row, absent=ABSENT)
-        for builder, (_name, value) in zip(members, state.items(), strict=True):
-            builder.append(value)
-        if documents:
-            retained.append(stage.documents[position])
-        selected.append(
-            observed_state_key(
-                acquisition.object_key(row),
-                TemporalObservation(predecessor=PredecessorRow(state)),
-                acquisition.family_shape,
-            )
-        )
-    if not selected:
-        return None
-    count = selection.attribute_count
-    columns = tuple(whole(builder.build()) for builder in members)
-    predecessors = PredecessorColumns(
-        shape=PredecessorShape(attributes=names[:count], value_objects=names[count:]),
-        attribute_columns=columns[:count],
-        value_object_columns=columns[count:],
-        documents=whole(retained.build()) if documents else None,
-    )
-    group = MaterializedWriteGroup(
-        mutation=acquisition.instruction,
-        key_attributes=(acquisition.key,),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(predecessors=predecessors),
-    )
-    return group, selected
-
-
-def _claim_selected_states(uow: UnitOfWork, selected: Sequence[ObservedStateKey]) -> None:
-    """Register the group's claim on every state its predicate resolved
-    (`m-unit-work` "Observed-State Coalescing").
-
-    A Materialized Write Group owns those observations outright: it is one
-    compact indivisible unit, so a later keyed write of a state it selected has
-    nothing to join and is refused rather than merged in — which would mean
-    indexing and mutating the group. The reverse order needs no claim at all,
-    because the resolving read force-flushes the buffer first and therefore
-    selects state no pending intent still holds.
-    """
-    for state in selected:
-        uow.claim(state, SELECTION_INTENT)
+        if acquisition.selects(row):
+            evidence.append(row, raw[position] if documents else None)
+    return evidence.seal()

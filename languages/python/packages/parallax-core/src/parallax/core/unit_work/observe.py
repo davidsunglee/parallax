@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, Mapping
-from dataclasses import dataclass
-from typing import Protocol, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Protocol, cast
 
-from parallax.core.base import adopt_frozen_map, retain_document_value
+from parallax.core.base import retain_document_value
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     DocumentMember,
     Leaf,
     MemberShape,
     Multiplicity,
     Occurrence,
+    ValueObjectIdentity,
 )
+
+if TYPE_CHECKING:
+    from parallax.core.inheritance import EntityMemberSelection
 
 __all__ = [
     "EntityStateRow",
@@ -20,7 +25,6 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "WriteObservation",
-    "adopt_predecessor_row",
     "occurrence_value",
 ]
 
@@ -150,6 +154,10 @@ class _EntityDocumentRow(Mapping[str, object]):
     def items(self) -> ItemsView[str, object]:
         return _DocumentItems(self, self._shape.members, self._values, self._absent)
 
+    def views(self, cell: object) -> bool:
+        """Whether this view reads exactly ``cell``, the positional row given."""
+        return self._values is cell
+
 
 class _AlignedItems(ItemsView[str, object]):
     __slots__ = ("_absent", "_aligned", "_members")
@@ -239,17 +247,27 @@ class PredecessorRow:
     ``document`` is the raw Structured Column document the observing read
     returned, retained beside the member state and never as an entry in it, so a
     successor is built by patching what the row actually held rather than by
-    re-encoding the members this model happens to declare. The value is the read's
-    own, unchanged, retained by reference to the immutable provider-normalized
-    carrier. It is **absent** — not empty — under `Columns`
-    layout, where the row has no Structured Column, and absent likewise for an
-    observation whose source read no row; the member map stays purely logical
-    either way, so a consumer iterating members can never surface the document as
-    a result field or an Entity member.
+    re-encoding the members this model happens to declare. It is **absent** — not
+    empty — under `Columns` layout, where the row has no Structured Column, and
+    absent likewise for an observation whose source read no row; the member map
+    stays purely logical either way, so a consumer iterating members can never
+    surface the document as a result field or an Entity member.
+
+    Direct construction owns what its caller supplies: a mapping of members and
+    the document are both retained in frozen form. :meth:`over_row` instead
+    adopts a trusted reader's positional member row and decoded document by
+    reference. That document may be mutable host containers; it stays logically
+    immutable because the reader transferred exclusive ownership, nothing reads
+    it except to copy it (``apply_patches``), and no caller can reach it.
     """
 
     members: EntityStateRow | Mapping[str, object]
     document: object | None = None
+    _selection: EntityMemberSelection | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _row: tuple[object, ...] = field(default=(), init=False, repr=False, compare=False)
+    _absent: object | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         members = self.members
@@ -262,28 +280,111 @@ class PredecessorRow:
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")
 
+    @classmethod
+    def over_row(
+        cls,
+        selection: EntityMemberSelection,
+        row: tuple[object, ...],
+        document: object | None,
+        absent: object,
+    ) -> PredecessorRow:
+        """Adopt one judged positional member row, aligned to ``selection``, and
+        its transferred raw document without copying either."""
+        predecessor = object.__new__(cls)
+        object.__setattr__(
+            predecessor,
+            "members",
+            EntityStateRow.over_declared_members(selection, row, absent=absent),
+        )
+        object.__setattr__(predecessor, "document", document)
+        object.__setattr__(predecessor, "_selection", selection)
+        object.__setattr__(predecessor, "_row", row)
+        object.__setattr__(predecessor, "_absent", absent)
+        return predecessor
+
     def member(self, name: str) -> object:
         """The observed value of one member, by its declared name."""
         return self.members[name]
+
+    def cell(self, member: AttributeIdentity | ValueObjectIdentity) -> object:
+        """The observed value of one member, by its identity."""
+        selection = self._selection
+        if selection is None:
+            return self.members[_member_name(member)]
+        position = selection.index[member]
+        return _member_value(selection.shape.members[position], self._row[position], self._absent)
 
     def axis_start(self, at: None, attribute: AttributeIdentity, /) -> object:
         """The observed value of one As-Of Axis start, or ``None`` when the row
         carries no such member; ``at`` is ``None`` because a Predecessor Row
         holds one milestone."""
         del at
-        return self.members.get(attribute.name)
+        selection = self._selection
+        if selection is None:
+            return self.members.get(attribute.name)
+        position = selection.index.get(attribute)
+        return None if position is None else self._row[position]
+
+    def identity_maps(
+        self, selection: EntityMemberSelection
+    ) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
+        """One fresh pair of this row's members keyed by ``selection``'s
+        identities, each value the row's own cell or a view over it."""
+        attributes: dict[AttributeIdentity, object] = {}
+        value_objects: dict[ValueObjectIdentity, object] = {}
+        if self._selection is selection:
+            row = self._row
+            for attribute, value in zip(selection.attributes, row, strict=False):
+                attributes[attribute.identity] = value
+            members = selection.shape.members
+            absent = self._absent
+            for position, occurrence in enumerate(
+                selection.value_objects, selection.attribute_count
+            ):
+                value_objects[occurrence.identity] = occurrence_value(
+                    row[position], cast("Occurrence", members[position]), absent
+                )
+            return attributes, value_objects
+        for name, value in self.members.items():
+            binding = selection.binding(name)
+            if binding is None:
+                raise ValueError(f"predecessor member {name!r} is not a member of the selection")
+            if isinstance(binding, AttributeMetadata):
+                attributes[binding.identity] = value
+            else:
+                value_objects[binding.identity] = value
+        return attributes, value_objects
+
+    def carries(self, member: AttributeIdentity | ValueObjectIdentity, value: object) -> bool:
+        """Whether ``value`` is this row's own cell for ``member``, or the view
+        :meth:`identity_maps` builds over it — identity, never equality."""
+        selection = self._selection
+        if selection is None:
+            name = _member_name(member)
+            members = self.members
+            return name in members and members[name] is value
+        position = selection.index[member]
+        cell = self._row[position]
+        if value is cell:
+            return True
+        declared = selection.shape.members[position]
+        if isinstance(declared, Leaf) or cell is None or cell is self._absent:
+            return False
+        if declared.multiplicity is not Multiplicity.MANY:
+            return isinstance(value, _EntityDocumentRow) and value.views(cell)
+        items = cast("tuple[object, ...]", cell)
+        return (
+            isinstance(value, tuple)
+            and len(cast("tuple[object, ...]", value)) == len(items)
+            and all(
+                isinstance(view, _EntityDocumentRow) and view.views(item)
+                for view, item in zip(cast("tuple[object, ...]", value), items, strict=True)
+            )
+        )
 
 
-def adopt_predecessor_row(
-    members: dict[str, object], *, document: object | None = None
-) -> PredecessorRow:
-    """Adopt trusted final predecessor storage without another traversal."""
-    row = object.__new__(PredecessorRow)
-    object.__setattr__(row, "members", EntityStateRow(adopt_frozen_map(members)))
-    object.__setattr__(row, "document", retain_document_value(document))
-    if not row.members:
-        raise ValueError("a Predecessor Row carries the observed row's complete state")
-    return row
+def _member_name(member: AttributeIdentity | ValueObjectIdentity) -> str:
+    return member.name if isinstance(member, AttributeIdentity) else member.path[-1]
 
 
 @dataclass(frozen=True, slots=True)

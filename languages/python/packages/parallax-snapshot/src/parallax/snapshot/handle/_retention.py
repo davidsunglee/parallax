@@ -389,15 +389,15 @@ def _observed_state(
     """
     key_member = cast("AttributeIdentity", layout.members[layout.primary_key[0]])
     object_key = ObjectKey(layout.concrete, ((key_member.name, primary_key),))
-    members = EntityStateRow.over_declared_members(
-        layout.member_selection, member_row, absent=ABSENT
-    )
     if isinstance(locator, ExplicitVersion):
+        members = EntityStateRow.over_declared_members(
+            layout.member_selection, member_row, absent=ABSENT
+        )
         observation: WriteObservation = VersionObservation(
             observed_version=cast("int", members[locator.attribute.name])
         )
         return object_key, observation, observed_state_key(object_key, observation, NON_TEMPORAL)
-    observation = _temporal_observation(members, document)
+    observation = _temporal_observation(layout, member_row, document)
     return object_key, observation, observed_state_key(object_key, observation, locator)
 
 
@@ -463,12 +463,12 @@ class _DeferredEvidence:
 
 
 def _temporal_observation(
-    members: EntityStateRow, document: object | None = None
+    layout: EntityLayout, member_row: tuple[object, ...], document: object | None
 ) -> TemporalObservation:
     """The :class:`TemporalObservation` a materialized TEMPORAL row licenses: its
     complete Predecessor Row.
 
-    The Predecessor Row retains EVERY applicable member ``members`` carries —
+    The Predecessor Row retains EVERY applicable member ``member_row`` carries —
     scalars, value-object documents, the primary key, and both axis intervals —
     because temporal expansion carries members the authored mutation never
     mentioned, and because the close's own address and gate are read off the same
@@ -478,10 +478,11 @@ def _temporal_observation(
     values"; `m-value-object` "the document rides every chained/split row
     whole").
 
-    ``members`` is the judged positional state viewed by DECLARED member name,
-    and it is retained as that view: nothing here copies, renders, or re-keys
-    it. Every value passes through EXACTLY as the row carries it, which
-    for a scalar or interval column is exactly what the port returned (a real
+    ``member_row`` is the judged positional state, aligned to ``layout``'s
+    member selection, and it is retained by reference: nothing here copies,
+    renders, or re-keys it. Every value passes through EXACTLY as the row
+    carries it, which for a scalar or interval column is exactly what the port
+    returned (a real
     ``timestamptz`` column may be a driver-native ``datetime.datetime`` or the
     native-infinity sentinel, never pre-rendered to a wire string here) — the
     SAME driver-native-passthrough contract every other temporal bind already
@@ -494,4 +495,6 @@ def _temporal_observation(
     members, so a successor built from it keeps keys no member declares. It is
     absent under `Columns` layout, where the row has no such column.
     """
-    return TemporalObservation(predecessor=PredecessorRow(members, document=document))
+    return TemporalObservation(
+        predecessor=PredecessorRow.over_row(layout.member_selection, member_row, document, ABSENT)
+    )

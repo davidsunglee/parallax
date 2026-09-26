@@ -1,0 +1,99 @@
+# A materializing predicate update assigns two document-resident members of one
+# Transaction-Time row. `title` changes, so the row survives no-op elimination; the
+# assigned `route` is restored, because its stored and assigned subtrees reduce to one
+# declared value although the stored one also carries `sealNumber` and a `berth` in
+# its `stops` element. The restored member contributes nothing: the successor patches
+# `title` alone and carries `route` exactly as stored rather than replacing it.
+model: models/document-layout-restored-member.yaml
+tags: [m-unit-work, m-txtime-write, m-opt-lock, m-storage-layout, m-document-codec, m-sql, materialize, predicate-write, temporal, audit-only, json, document-layout, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "out-of-band given.apply seeds a Structured Column key no authored member can produce"
+given:
+  apply:
+    - sql: >-
+        insert into expedition(id, in_z, out_z, payload) values (?, ?, ?,
+        '{"title":"Coastal Run","charterCode":"NB-118","route":{"name":"Coastal","sealNumber":"S-4021","stops":[{"port":"Oslo","berth":"B7"}]}}')
+      binds: [7, "2026-01-01T00:00:00.000000Z", infinity]
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Expedition
+        predicate:
+          eq:
+            attr: parallax.compatibility.Expedition.id
+            value: 7
+        temporal:
+          transaction-time:
+            asOf: latest
+      roundTrips: 1
+      note: the materializing read retains the stored document and reads `route` as its declared members
+      statements:
+        - sql:
+            postgres: select t0.id, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from expedition t0 where t0.id = ? and t0.out_z = ?
+            mariadb: select t0.id, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from expedition t0 where t0.id = ? and t0.out_z = ?
+          binds: [7, infinity]
+      expectRows:
+        - { id: 7, title: Coastal Run, route: { name: Coastal, stops: [{ port: Oslo }] }, in_z: "2026-01-01T00:00:00.000000Z", out_z: infinity }
+    - write:
+        mutation: update
+        target:
+          entity: parallax.compatibility.Expedition
+          predicate:
+            eq: { attr: parallax.compatibility.Expedition.id, value: 7 }
+        assignments:
+          - { attr: parallax.compatibility.Expedition.title, value: Coastal Return }
+          - attr: parallax.compatibility.Expedition.route
+            value: { name: Coastal, stops: [{ port: Oslo }] }
+        at: "2026-06-01T00:00:00.000000Z"
+      roundTrips: 2
+      note: the successor patches the changed title into the retained document and carries the restored route
+      statements:
+        - sql:
+            postgres: update expedition set out_z = ? where id = ? and out_z = ? and in_z = ?
+            mariadb: update expedition set out_z = ? where id = ? and out_z = ? and in_z = ?
+          binds: ["2026-06-01T00:00:00.000000Z", 7, infinity, "2026-01-01T00:00:00.000000Z"]
+        - sql:
+            postgres: insert into expedition(id, in_z, out_z, payload) values (?, ?, ?, ?)
+            mariadb: insert into expedition(id, in_z, out_z, payload) values (?, ?, ?, ?)
+          binds:
+            - 7
+            - "2026-06-01T00:00:00.000000Z"
+            - infinity
+            - title: Coastal Return
+              charterCode: NB-118
+              route:
+                name: Coastal
+                sealNumber: S-4021
+                stops:
+                  - { port: Oslo, berth: B7 }
+then:
+  roundTrips: 3
+  tableState:
+    expedition:
+      - id: 7
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-06-01T00:00:00.000000Z"
+        payload:
+          title: Coastal Run
+          charterCode: NB-118
+          route:
+            name: Coastal
+            sealNumber: S-4021
+            stops:
+              - { port: Oslo, berth: B7 }
+      - id: 7
+        in_z: "2026-06-01T00:00:00.000000Z"
+        out_z: infinity
+        payload:
+          title: Coastal Return
+          charterCode: NB-118
+          route:
+            name: Coastal
+            sealNumber: S-4021
+            stops:
+              - { port: Oslo, berth: B7 }
