@@ -47,6 +47,7 @@ from parallax.core.unit_work import (
     PlannedClose,
     PlannedInsert,
     PlanningRequest,
+    PredecessorRow,
     PredecessorRows,
     PredecessorRowsBuilder,
     PredicateSelection,
@@ -215,7 +216,9 @@ def test_predecessor_rows_retain_each_judged_row_and_raw_document_by_reference()
     stored: list[object] = [{"displayName": "Ada", "unknown": {"kept": True}}, {}]
 
     evidence = _person_rows([first, second], stored)
-    predecessor = evidence.predecessor(0)
+    predecessor = PredecessorRow.over_row(
+        evidence.selection, evidence.rows[0], evidence.document(0), evidence.absent
+    )
 
     assert len(evidence) == 2
     assert evidence.rows[0] is first
@@ -225,8 +228,6 @@ def test_predecessor_rows_retain_each_judged_row_and_raw_document_by_reference()
     assert predecessor.document is stored[0]
     assert predecessor.member("address") == {"city": "Bergen", "geo": {"country": "NO"}}
     assert predecessor.member("score") is ABSENT
-    assert evidence.predecessor(0) == predecessor
-    assert evidence.predecessor(0) is not predecessor
 
 
 def test_predecessor_rows_without_a_structured_column_answer_no_document() -> None:
@@ -234,7 +235,6 @@ def test_predecessor_rows_without_a_structured_column_answer_no_document() -> No
 
     assert evidence.documents is None
     assert evidence.document(0) is None
-    assert evidence.predecessor(0).document is None
 
 
 def test_predecessor_rows_seal_bounded_chunks_and_keep_documents_aligned() -> None:
