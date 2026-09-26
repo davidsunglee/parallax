@@ -8,8 +8,8 @@ from parallax.core.metamodel import (
     Cardinality,
     CompiledMetadata,
     DefiningRelationshipDeclaration,
-    EntityIdentity,
     FacetKey,
+    RelationshipDeclaration,
     RelationshipIdentity,
     RelationshipJoin,
     ReverseRelationshipDeclaration,
@@ -32,7 +32,6 @@ def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:
     """Compile every accepted declaration of ``metadata`` into one directional
     value, and every Entity into its referential rank."""
     position = {entity.identity: index for index, entity in enumerate(metadata.entities)}
-    defining: dict[RelationshipIdentity, DefiningRelationshipDeclaration] = {}
     reverse_of: dict[RelationshipIdentity, RelationshipIdentity] = {}
     # Only a defining declaration contributes a foreign-key edge: a reverse one
     # denotes the same association, and a one-to-one's cardinality does not say
@@ -42,7 +41,6 @@ def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:
         for declaration in entity.declared_relationships:
             match declaration:
                 case DefiningRelationshipDeclaration():
-                    defining[declaration.identity] = declaration
                     target = position[declaration.join.target.entity]
                     if declaration.cardinality is Cardinality.MANY_TO_ONE:
                         dependents[target].append(index)
@@ -52,27 +50,18 @@ def compile_facet(metadata: CompiledMetadata) -> RelationshipFacet:
                     reverse_of[declaration.reverse_of] = declaration.identity
     ranks = _referential_ranks(dependents)
 
-    by_entity: dict[EntityIdentity, EntityRelationships] = {}
-    for index, entity in enumerate(metadata.entities):
-        directions: list[RelationshipMetadata] = []
-        for declaration in entity.declared_relationships:
-            match declaration:
-                case DefiningRelationshipDeclaration():
-                    peer = reverse_of.get(declaration.identity)
-                    directions.append(
-                        RelationshipMetadata(
-                            identity=declaration.identity,
-                            cardinality=declaration.cardinality,
-                            join=declaration.join,
-                            reverse=None if peer is None else peer.name,
-                            dependent=declaration.dependent,
-                            order_by=declaration.order_by,
-                        )
-                    )
-                case ReverseRelationshipDeclaration():
-                    directions.append(_reverse_direction(declaration, defining))
-        by_entity[entity.identity] = EntityRelationships(tuple(directions), ranks[index])
-    return relationship_facet(by_entity)
+    return relationship_facet(
+        {
+            entity.identity: EntityRelationships(
+                tuple(
+                    _direction(declaration, metadata, reverse_of)
+                    for declaration in entity.declared_relationships
+                ),
+                ranks[index],
+            )
+            for index, entity in enumerate(metadata.entities)
+        }
+    )
 
 
 def _referential_ranks(dependents: Sequence[Sequence[int]]) -> list[int]:
@@ -106,9 +95,33 @@ def _referential_ranks(dependents: Sequence[Sequence[int]]) -> list[int]:
     return ranks
 
 
+def _direction(
+    declaration: RelationshipDeclaration,
+    metadata: CompiledMetadata,
+    reverse_of: Mapping[RelationshipIdentity, RelationshipIdentity],
+) -> RelationshipMetadata:
+    """The direction one accepted declaration names.
+
+    ``reverse_of`` maps each defining declaration to the reverse declaration
+    naming it, which only the reverse side records.
+    """
+    match declaration:
+        case DefiningRelationshipDeclaration():
+            peer = reverse_of.get(declaration.identity)
+            return RelationshipMetadata(
+                identity=declaration.identity,
+                cardinality=declaration.cardinality,
+                join=declaration.join,
+                reverse=None if peer is None else peer.name,
+                dependent=declaration.dependent,
+                order_by=declaration.order_by,
+            )
+        case ReverseRelationshipDeclaration():
+            return _reverse_direction(declaration, metadata)
+
+
 def _reverse_direction(
-    declaration: ReverseRelationshipDeclaration,
-    defining: Mapping[RelationshipIdentity, DefiningRelationshipDeclaration],
+    declaration: ReverseRelationshipDeclaration, metadata: CompiledMetadata
 ) -> RelationshipMetadata:
     """The direction a reverse declaration names, derived from its defining peer.
 
@@ -117,8 +130,9 @@ def _reverse_direction(
     Only the ordering is the reverse declaration's own, because it orders the
     Entities this direction reaches rather than the ones the peer reaches.
     """
-    peer = defining.get(declaration.reverse_of)
-    if peer is None:
+    owner = metadata.entity(declaration.reverse_of.source_entity)
+    peer = None if owner is None else owner.relationship(declaration.reverse_of.name)
+    if not isinstance(peer, DefiningRelationshipDeclaration):
         raise RuntimeError(
             f"relationship {declaration.identity.source_entity.canonical}."
             f"{declaration.identity.name} reverses "
