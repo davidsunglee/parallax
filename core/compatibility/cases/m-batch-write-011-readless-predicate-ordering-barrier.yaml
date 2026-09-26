@@ -1,9 +1,3 @@
-# A readless predicate write is an ordering barrier (m-unit-work, m-batch-write,
-# ADR 0043): buffered in one unit of work between keyed writes, it keeps its
-# authored position in the flush. The delete before it is not moved after it,
-# and the inserts after it are not moved before it, although insert-before-delete
-# and foreign-key ordering would otherwise reorder all three; foreign-key ordering
-# still applies within the region after it.
 model: models/orders.yaml
 tags: [m-batch-write, m-unit-work, m-sql, predicate-write, readless, fk-ordering, scenario, slice-snapshot-1]
 shape: scenario
