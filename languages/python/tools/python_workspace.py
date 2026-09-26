@@ -1,5 +1,5 @@
 """The Python workspace's members, the namespace scope each owns, and the
-modules a source file statically imports.
+modules a source file imports.
 
 Every workspace member is a distribution under ``packages/`` that ships exactly
 one package beneath the shared PEP 420 ``parallax`` namespace:
@@ -210,8 +210,9 @@ def _relative(root: Path, path: Path) -> str:
 
 
 def python_files(directory: Path) -> Iterator[Path]:
-    for path in sorted(directory.rglob("*.py")):
-        if "__pycache__" not in path.parts:
+    """Every Python source and stub file under ``directory``."""
+    for path in sorted(directory.rglob("*.py*")):
+        if path.suffix in {".py", ".pyi"} and "__pycache__" not in path.parts:
             yield path
 
 
@@ -224,13 +225,15 @@ def module_name(path: Path, source_root: Path) -> str:
 
 
 def imported_modules(path: Path, module: str | None = None) -> dict[str, int]:
-    """Every module ``path`` statically imports, absolute, mapped to the first
-    line importing it.
+    """Every module ``path`` imports, absolute, mapped to the first line
+    importing it.
 
     Imports anywhere count — in a function body or under ``TYPE_CHECKING`` alike.
     ``from package import name`` records both ``package`` and ``package.name``,
     since the name may be a submodule. A relative import resolves against
-    ``module``, the file's own dotted name, and is skipped without it.
+    ``module``, the file's own dotted name, and is skipped without it. An
+    absolute module name written as a string literal to ``import_module`` or
+    ``__import__`` counts as an import; a computed one cannot be seen.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     package = _package_of(path, module)
@@ -239,13 +242,31 @@ def imported_modules(path: Path, module: str | None = None) -> dict[str, int]:
         if isinstance(node, ast.Import | ast.ImportFrom):
             for name in _import_targets(node, package):
                 found.setdefault(name, node.lineno)
+        elif isinstance(node, ast.Call) and (literal := _literal_import(node)) is not None:
+            found.setdefault(literal, node.lineno)
     return found
+
+
+_IMPORT_FUNCTIONS = frozenset({"import_module", "__import__"})
+
+
+def _literal_import(call: ast.Call) -> str | None:
+    match call.func:
+        case ast.Attribute(attr=name) | ast.Name(id=name) if name in _IMPORT_FUNCTIONS:
+            pass
+        case _:
+            return None
+    match call.args:
+        case [ast.Constant(value=str(module)), *_] if module and not module.startswith("."):
+            return module
+        case _:
+            return None
 
 
 def _package_of(path: Path, module: str | None) -> str | None:
     if module is None:
         return None
-    return module if path.name == "__init__.py" else module.rpartition(".")[0]
+    return module if path.stem == "__init__" else module.rpartition(".")[0]
 
 
 def _import_targets(node: ast.Import | ast.ImportFrom, package: str | None) -> list[str]:

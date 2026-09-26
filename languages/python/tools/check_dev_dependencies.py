@@ -11,11 +11,11 @@ environment rather than asserted:
   a metapackage release of a library is recognized.
 * **invoked** — a ``uv run`` command the root ``justfile`` or a GitHub workflow
   runs in the Python workspace names a console script or installed script the
-  distribution provides, or runs ``python -m`` on a module it provides. A
-  justfile line is in the workspace when it changes into ``languages/python``
-  (literally or through a variable holding that path); a workflow command is
-  when its step or job runs there, or it passes ``--project``/``--directory``
-  naming it.
+  distribution provides, or runs ``python -m`` on a module it provides. Where
+  a command runs follows the shell: a justfile line starts at the repository
+  root with its string variables substituted, a workflow step in its
+  ``working-directory`` or the job's or workflow's default, and each ``cd``
+  and ``--project``/``--directory`` moves it from there. Comments run nothing.
 * **type stubs** — every package the distribution installs is a PEP 561
   ``<module>-stubs`` package, and ``packages/*/src``, ``tests/`` or ``tools/``
   imports one of those modules.
@@ -37,6 +37,7 @@ non-zero on any finding.
 from __future__ import annotations
 
 import importlib.metadata
+import posixpath
 import re
 import shlex
 import sys
@@ -329,28 +330,55 @@ _UV_RUN_VALUE_OPTIONS: Final = frozenset(
 )
 
 
-def uv_run_commands(text: str, in_workspace: bool, origin: str) -> list[Command]:
-    """Each ``uv run`` command in one line of shell, if it runs in the workspace."""
+_SHELL_OPERATORS: Final = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
+_JUST_LINE_PREFIXES: Final = "@-"
+
+
+def uv_run_commands(script: str, start: PurePosixPath, origin: str) -> list[Command]:
+    """Each ``uv run`` command in a shell script that runs in the workspace.
+
+    The script starts in ``start``, relative to the repository root, and each
+    ``cd`` moves the commands after it; a ``--project`` or ``--directory``
+    option resolves against where the command runs. A command runs in the
+    workspace when that place is the workspace or beneath it, as uv discovers
+    the project upward from there. Shell comments are not commands.
+    """
     commands: list[Command] = []
-    for segment in re.split(r"&&|\|\||[;|]", text):
-        words = _words(segment)
-        if words[:2] != ["uv", "run"]:
-            continue
-        argv, directory = _uv_run_argv(words[2:])
-        if argv and (in_workspace or directory == WORKSPACE_PATH):
-            commands.append(Command(tuple(argv), origin))
+    directory = start
+    for words in _simple_commands(script):
+        if words[0] == "cd" and len(words) == 2:
+            directory = _join(directory, words[1])
+        elif words[:2] == ["uv", "run"]:
+            argv, project = _uv_run_argv(words[2:])
+            place = directory if project is None else _join(directory, project)
+            if argv and place.is_relative_to(WORKSPACE_PATH):
+                commands.append(Command(tuple(argv), origin))
     return commands
 
 
-def _words(segment: str) -> list[str]:
-    try:
-        return shlex.split(segment)
-    except ValueError:
-        return segment.split()
+def _simple_commands(script: str) -> Iterator[list[str]]:
+    for line in script.replace("\\\n", " ").splitlines():
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            words = list(lexer)
+        except ValueError:
+            continue
+        command: list[str] = []
+        for word in [*words, ";"]:
+            if word not in _SHELL_OPERATORS:
+                command.append(word)
+            elif command:
+                yield command
+                command = []
 
 
-def _uv_run_argv(words: list[str]) -> tuple[list[str], PurePosixPath | None]:
-    directory: PurePosixPath | None = None
+def _join(directory: PurePosixPath, target: str) -> PurePosixPath:
+    return PurePosixPath(posixpath.normpath(posixpath.join(directory, target)))
+
+
+def _uv_run_argv(words: list[str]) -> tuple[list[str], str | None]:
+    project: str | None = None
     index = 0
     while index < len(words) and words[index].startswith("-"):
         option, _, value = words[index].partition("=")
@@ -358,27 +386,30 @@ def _uv_run_argv(words: list[str]) -> tuple[list[str], PurePosixPath | None]:
             index += 1
             value = words[index]
         if option in {"--project", "--directory"}:
-            directory = PurePosixPath(value)
+            project = value
         index += 1
-    return words[index:], directory
+    return words[index:], project
 
 
 def _justfile_commands(justfile: Path) -> list[Command]:
+    """Each recipe line runs in its own shell from the justfile's directory,
+    with every ``{{name}}`` a string variable assignment names substituted."""
     if not justfile.is_file():
         return []
     lines = justfile.read_text(encoding="utf-8").splitlines()
-    variables = [
-        match.group(1)
+    variables = {
+        match.group(1): match.group(2)
         for line in lines
-        if (match := re.fullmatch(rf'(\w+)\s*:=\s*"{WORKSPACE_PATH}/?"\s*', line))
-    ]
-    places = [re.escape(str(WORKSPACE_PATH))] + [rf"\{{\{{\s*{name}\s*\}}\}}" for name in variables]
-    enters = re.compile(rf"\bcd\s+(?:{'|'.join(places)})/?\s*(?:&&|;|$)")
+        if (match := re.fullmatch(r'(\w+)\s*:=\s*"([^"]*)"\s*', line))
+    }
+
+    def expand(match: re.Match[str]) -> str:
+        return variables.get(match.group(1), match.group(0))
+
     commands: list[Command] = []
     for number, line in enumerate(lines, start=1):
-        if line.lstrip().startswith("#"):
-            continue
-        commands += uv_run_commands(line, bool(enters.search(line)), f"justfile:{number}")
+        script = re.sub(r"\{\{\s*(\w+)\s*\}\}", expand, line).lstrip().lstrip(_JUST_LINE_PREFIXES)
+        commands += uv_run_commands(script, PurePosixPath("."), f"justfile:{number}")
     return commands
 
 
@@ -388,16 +419,22 @@ def _workflow_commands(repo_root: Path) -> list[Command]:
         return []
     commands: list[Command] = []
     for path in sorted([*directory.glob("*.yml"), *directory.glob("*.yaml")]):
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = cast("Mapping[str, Any]", yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         origin = path.relative_to(repo_root).as_posix()
-        jobs = table(cast("Mapping[str, Any]", document or {}), "jobs")
+        default = _working_directory(document, ".")
+        jobs = table(document, "jobs")
         for job_name in jobs:
-            commands += _job_commands(table(jobs, job_name), f"{origin} {job_name}")
+            commands += _job_commands(table(jobs, job_name), default, f"{origin} {job_name}")
     return commands
 
 
-def _job_commands(job: Mapping[str, Any], origin: str) -> list[Command]:
-    default = table(job, "defaults", "run").get("working-directory")
+def _working_directory(scope: Mapping[str, Any], inherited: str) -> str:
+    place = table(scope, "defaults", "run").get("working-directory", inherited)
+    return place if isinstance(place, str) else inherited
+
+
+def _job_commands(job: Mapping[str, Any], inherited: str, origin: str) -> list[Command]:
+    default = _working_directory(job, inherited)
     commands: list[Command] = []
     steps = job.get("steps", [])
     for step in cast("list[Any]", steps) if isinstance(steps, list) else []:
@@ -408,9 +445,8 @@ def _job_commands(job: Mapping[str, Any], origin: str) -> list[Command]:
         if not isinstance(run, str):
             continue
         place = step_map.get("working-directory", default)
-        in_workspace = isinstance(place, str) and PurePosixPath(place) == WORKSPACE_PATH
-        for line in run.splitlines():
-            commands += uv_run_commands(line, in_workspace, origin)
+        start = PurePosixPath(posixpath.normpath(place if isinstance(place, str) else default))
+        commands += uv_run_commands(run, start, origin)
     return commands
 
 

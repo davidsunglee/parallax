@@ -95,13 +95,27 @@ def test_a_member_declaring_itself_fails(tmp_path: Path) -> None:
         "if TYPE_CHECKING:\n    from parallax.core.model import VALUE\n",
         "def load():\n    import parallax.core\n",
         "from parallax import core\n",
+        "import importlib\nimportlib.import_module('parallax.core.model')\n",
+        "from importlib import import_module\nimport_module('parallax.core')\n",
+        "__import__('parallax.core.model')\n",
     ],
-    ids=["type-checking", "function-body", "namespace-from"],
+    ids=["type-checking", "function-body", "namespace-from", "import-module", "bare", "dunder"],
 )
-def test_every_static_import_spelling_needs_its_sibling(tmp_path: Path, source: str) -> None:
+def test_every_import_spelling_needs_its_sibling(tmp_path: Path, source: str) -> None:
     snapshot = {"parallax/snapshot/__init__.py": source}
     [finding] = _findings(tmp_path, _siblings(snapshot, dependencies=()))
     assert finding.startswith("parallax-snapshot: imports parallax-core ")
+
+
+def test_an_import_in_a_stub_file_needs_its_sibling(tmp_path: Path) -> None:
+    snapshot = {
+        "parallax/snapshot/__init__.py": "",
+        "parallax/snapshot/handle.pyi": "from parallax.core.model import VALUE\n",
+    }
+    assert _findings(tmp_path, _siblings(snapshot, dependencies=())) == [
+        "parallax-snapshot: imports parallax-core (src/parallax/snapshot/handle.pyi:1) "
+        "but [project].dependencies does not declare it"
+    ]
 
 
 def test_imports_resolve_to_the_member_owning_each_namespace_scope(tmp_path: Path) -> None:

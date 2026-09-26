@@ -6,7 +6,7 @@ from __future__ import annotations
 import importlib.metadata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -101,6 +101,9 @@ lint:
     cd {{harness}} && uv run harness-only
     cd {{python}} && uv run --with 'pydantic==2' python -m checker --strict
     # cd {{python}} && uv run commented-out
+    cd {{python}} && true # ; uv run after-comment | uv run piped-comment
+    cd {{harness}} && uv run harness-only && cd .. && cd {{python}} && uv run moved-in
+    cd {{python}} && uv run --project ../../{{harness}} harness-project
 """
 
 
@@ -108,16 +111,15 @@ def test_a_command_the_justfile_runs_in_the_workspace_classifies_its_script(
     tmp_path: Path,
 ) -> None:
     write_file(tmp_path, "justfile", _JUSTFILE)
-    metadata = _Metadata(
-        imports={"checker-dist": ["checker"]},
-        scripts={"ruff": ["ruff"], "harness-tool": ["harness-only"], "old": ["commented-out"]},
-    )
-    report = _report(tmp_path, ["ruff", "checker-dist", "harness-tool", "old"], metadata)
+    unused = ("harness-only", "commented-out", "after-comment", "piped-comment", "harness-project")
+    scripts = {name: [name] for name in ("ruff", "moved-in", *unused)}
+    metadata = _Metadata(imports={"checker-dist": ["checker"]}, scripts=scripts)
+    report = _report(tmp_path, ["checker-dist", *scripts], metadata)
     assert _reasons(report) == {
         "ruff": ("invoked by `uv run ruff` (justfile:5)",),
         "checker-dist": ("invoked by `uv run python -m checker` (justfile:7)",),
-        "harness-tool": (),
-        "old": (),
+        "moved-in": ("invoked by `uv run moved-in` (justfile:10)",),
+        **dict.fromkeys(unused, ()),
     }
 
 
@@ -131,12 +133,32 @@ jobs:
       - run: uv run first-tool --check
       - working-directory: reference-harness
         run: uv run harness-tool
+      - run: echo done # ; uv run commented-tool
   elsewhere:
     steps:
       - run: |
           echo start
           uv run --project languages/python second-tool | tee out
       - run: uv run third-tool
+      - run: |
+          cd languages/python
+          uv run fourth-tool
+"""
+
+_DEFAULTED_WORKFLOW = """name: defaulted
+defaults:
+  run:
+    working-directory: languages/python
+jobs:
+  inherits:
+    steps:
+      - run: uv run fifth-tool
+  overrides:
+    defaults:
+      run:
+        working-directory: reference-harness
+    steps:
+      - run: uv run sixth-tool
 """
 
 
@@ -144,13 +166,19 @@ def test_a_command_a_workflow_runs_in_the_workspace_classifies_its_script(
     tmp_path: Path,
 ) -> None:
     write_file(tmp_path, ".github/workflows/ci.yml", _WORKFLOW)
-    scripts = {name: [name] for name in ("first-tool", "second-tool", "harness-tool", "third-tool")}
+    write_file(tmp_path, ".github/workflows/defaulted.yml", _DEFAULTED_WORKFLOW)
+    unused = ("harness-tool", "third-tool", "commented-tool", "sixth-tool")
+    used = ("first-tool", "second-tool", "fourth-tool", "fifth-tool")
+    scripts = {name: [name] for name in (*used, *unused)}
     report = _report(tmp_path, list(scripts), _Metadata(scripts=scripts))
     assert _reasons(report) == {
         "first-tool": ("invoked by `uv run first-tool` (.github/workflows/ci.yml python)",),
         "second-tool": ("invoked by `uv run second-tool` (.github/workflows/ci.yml elsewhere)",),
-        "harness-tool": (),
-        "third-tool": (),
+        "fourth-tool": ("invoked by `uv run fourth-tool` (.github/workflows/ci.yml elsewhere)",),
+        "fifth-tool": (
+            "invoked by `uv run fifth-tool` (.github/workflows/defaulted.yml inherits)",
+        ),
+        **dict.fromkeys(unused, ()),
     }
 
 
@@ -252,13 +280,16 @@ def test_main_exits_non_zero_on_a_finding(
 
 
 @pytest.mark.parametrize(
-    ("line", "argv"),
+    ("start", "line", "argv"),
     [
-        ("uv run --frozen --with 'x==1' tool --flag", ("tool", "--flag")),
-        ("uv run --project=languages/python tool", ("tool",)),
-        ("cd languages/python && uv run -p 3.13 tool | tee log", ("tool",)),
+        ("languages/python", "uv run --frozen --with 'x==1' tool --flag", ("tool", "--flag")),
+        (".", "uv run --project=languages/python tool", ("tool",)),
+        (".", "cd languages/python && uv run -p 3.13 tool | tee log", ("tool",)),
+        ("languages/python/tests", "uv run tool", ("tool",)),
     ],
 )
-def test_uv_run_options_are_skipped_before_the_executable(line: str, argv: tuple[str, ...]) -> None:
-    [command] = inventory.uv_run_commands(line, True, "origin")
+def test_uv_run_options_are_skipped_before_the_executable(
+    start: str, line: str, argv: tuple[str, ...]
+) -> None:
+    [command] = inventory.uv_run_commands(line, PurePosixPath(start), "origin")
     assert command.argv == argv

@@ -268,7 +268,7 @@ def test_core_snapshot_postgres_and_aws_postgres(tmp_path: Path, wheelhouse: Whe
     assert _dist_installed(python, "parallax-postgres")
     assert _dist_installed(python, "psycopg")
     assert _dist_installed(python, "botocore")
-    # Selecting an extra selects one requirement, not a wider install.
+    # Selecting the extra installs only its own requirements, not a wider install.
     assert not _import_ok(python, "parallax.descriptor")
     assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.conformance")
