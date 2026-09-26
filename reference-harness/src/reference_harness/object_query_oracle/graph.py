@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from functools import partial
-from typing import Any
+from typing import Any, NamedTuple
 
 from .. import portable_literal
 from ..case import Case, Entity, Model
@@ -210,26 +210,126 @@ def graphs_equal(
     ``None``. Null equals null and nothing else, which is what keeps
     loaded-null distinct from a node.
     """
-
-    def equal_value(a: Any, b: Any) -> bool:
-        if isinstance(a, dict) or isinstance(b, dict):
-            if not isinstance(a, dict) or not isinstance(b, dict):
-                return False
-            if a.keys() != b.keys():
-                return False
-            return all(equal_value(a[key], b[key]) for key in a)
-
-        if isinstance(a, list) or isinstance(b, list):
-            if not isinstance(a, list) or not isinstance(b, list):
-                return False
-            return multiset_matches(a, b, equal_value)
-
-        return scalars_equal(a, b, None)
-
     if model is None:
-        return equal_value(left, right)
+        return _generic_values_equal(left, right)
+    if left.keys() != right.keys():
+        return False
+    comparison = _ModelGraphComparison(model)
+    return all(
+        multiset_matches(
+            left[entity_name],
+            right[entity_name],
+            partial(comparison.node_or_null, entity=model.entity(entity_name)),
+        )
+        for entity_name in left
+    )
 
-    def equal_value_object_member(a: Any, b: Any, declaration: dict[str, Any]) -> bool:
+
+def _generic_values_equal(a: Any, b: Any) -> bool:
+    if isinstance(a, dict) or isinstance(b, dict):
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return False
+        if a.keys() != b.keys():
+            return False
+        return all(_generic_values_equal(a[key], b[key]) for key in a)
+
+    if isinstance(a, list) or isinstance(b, list):
+        if not isinstance(a, list) or not isinstance(b, list):
+            return False
+        return multiset_matches(a, b, _generic_values_equal)
+
+    return scalars_equal(a, b, None)
+
+
+def _member_values_equal(
+    a: Any, b: Any, attribute: dict[str, Any] | None, *, temporal_end: bool = False
+) -> bool:
+    """Compare one non-structural member value under its declared type, if any.
+
+    An open temporal end compares ``infinity`` exactly rather than as a timestamp.
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    if temporal_end and (a == "infinity" or b == "infinity"):
+        return a == b
+    if attribute is not None:
+        return portable_literal.values_equal(a, b, attribute["type"], None)
+    return scalars_equal(a, b, None)
+
+
+class _NodeShape(NamedTuple):
+    value_objects: dict[str, dict[str, Any]]
+    relationships: dict[str, dict[str, Any]]
+    attributes: dict[str, dict[str, Any]]
+    temporal_end_members: set[str]
+
+
+def _node_shape(entity: Entity) -> _NodeShape:
+    temporal_end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
+    return _NodeShape(
+        value_objects={value_object["name"]: value_object for value_object in entity.value_objects},
+        relationships={
+            relationship["name"]: relationship for relationship in entity.relationship_metadata
+        },
+        attributes={attribute["name"]: attribute for attribute in entity.attributes},
+        temporal_end_members={
+            attribute["name"]
+            for attribute in entity.attributes
+            if attribute["column"] in temporal_end_columns
+        },
+    )
+
+
+class _ModelGraphComparison:
+    """Node equality under a model's declared member kinds and types."""
+
+    def __init__(self, model: Model) -> None:
+        self._model = model
+
+    def node_or_null(self, a: Any, b: Any, entity: Entity) -> bool:
+        if a is None or b is None:
+            return a is None and b is None
+        return self._entity_node(a, b, entity)
+
+    def _entity_node(self, a: Any, b: Any, entity: Entity) -> bool:
+        if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
+            return False
+        shape = _node_shape(materialize.variant_entity(self._model, entity, a))
+        return all(self._entity_member(key, a[key], b[key], shape) for key in a)
+
+    def _entity_member(self, key: str, a: Any, b: Any, shape: _NodeShape) -> bool:
+        if key in shape.value_objects:
+            return self._value_object(a, b, shape.value_objects[key])
+        relationship = shape.relationships.get(key.split("[", 1)[0])
+        if relationship is None:
+            return _member_values_equal(
+                a,
+                b,
+                shape.attributes.get(key),
+                temporal_end=key in shape.temporal_end_members,
+            )
+        target = self._model.entity(relationship["join"]["target"]["entity"])
+        if relationship["cardinality"] == "one-to-many":
+            return (
+                isinstance(a, list)
+                and isinstance(b, list)
+                and multiset_matches(a, b, partial(self._entity_node, entity=target))
+            )
+        return self.node_or_null(a, b, target)
+
+    def _value_object(self, a: Any, b: Any, declaration: dict[str, Any]) -> bool:
+        if declaration.get("multiplicity", "one") == "many":
+            if not isinstance(a, list) or not isinstance(b, list) or len(a) != len(b):
+                return False
+            return all(
+                self._value_object_member(left_item, right_item, declaration)
+                for left_item, right_item in zip(a, b, strict=True)
+            )
+        if a is None or b is None:
+            return a is None and b is None
+        return self._value_object_member(a, b, declaration)
+
+    def _value_object_member(self, a: Any, b: Any, declaration: dict[str, Any]) -> bool:
         if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
             return False
         nested_by_name = {nested["name"]: nested for nested in declaration.get("valueObjects", [])}
@@ -237,100 +337,11 @@ def graphs_equal(
             attribute["name"]: attribute for attribute in declaration.get("attributes", [])
         }
         return all(
-            equal_value_object(a[key], b[key], nested_by_name[key])
+            self._value_object(a[key], b[key], nested_by_name[key])
             if key in nested_by_name
-            else a[key] is None and b[key] is None
-            if a[key] is None or b[key] is None
-            else portable_literal.values_equal(
-                a[key], b[key], attributes_by_name[key]["type"], None
-            )
-            if key in attributes_by_name
-            else scalars_equal(a[key], b[key], None)
+            else _member_values_equal(a[key], b[key], attributes_by_name.get(key))
             for key in a
         )
-
-    def equal_value_object(a: Any, b: Any, declaration: dict[str, Any]) -> bool:
-        if declaration.get("multiplicity", "one") == "many":
-            if not isinstance(a, list) or not isinstance(b, list) or len(a) != len(b):
-                return False
-            return all(
-                equal_value_object_member(left_item, right_item, declaration)
-                for left_item, right_item in zip(a, b, strict=True)
-            )
-        if a is None or b is None:
-            return a is None and b is None
-        return equal_value_object_member(a, b, declaration)
-
-    def equal_entity_node(a: Any, b: Any, entity: Entity) -> bool:
-        if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
-            return False
-        concrete = materialize.variant_entity(model, entity, a)
-        value_objects = {
-            value_object["name"]: value_object for value_object in concrete.value_objects
-        }
-        relationships = {
-            relationship["name"]: relationship for relationship in concrete.relationship_metadata
-        }
-        attributes = {attribute["name"]: attribute for attribute in concrete.attributes}
-        temporal_end_columns = {axis["end_column"] for axis in concrete.temporal_runtime_axes}
-        temporal_end_members = {
-            attribute["name"]
-            for attribute in concrete.attributes
-            if attribute["column"] in temporal_end_columns
-        }
-        for key in a:
-            if key in value_objects:
-                if not equal_value_object(a[key], b[key], value_objects[key]):
-                    return False
-                continue
-
-            relationship_name = key.split("[", 1)[0]
-            relationship = relationships.get(relationship_name)
-            if relationship is None:
-                attribute = attributes.get(key)
-                equal = (
-                    a[key] is None and b[key] is None
-                    if a[key] is None or b[key] is None
-                    else a[key] == b[key]
-                    if key in temporal_end_members
-                    and (a[key] == "infinity" or b[key] == "infinity")
-                    else portable_literal.values_equal(a[key], b[key], attribute["type"], None)
-                    if attribute is not None
-                    else scalars_equal(a[key], b[key], None)
-                )
-                if not equal:
-                    return False
-                continue
-
-            target = model.entity(relationship["join"]["target"]["entity"])
-            if relationship["cardinality"] == "one-to-many":
-                if not isinstance(a[key], list) or not isinstance(b[key], list):
-                    return False
-                if not multiset_matches(a[key], b[key], partial(equal_entity_node, entity=target)):
-                    return False
-                continue
-
-            if a[key] is None or b[key] is None:
-                if a[key] is not None or b[key] is not None:
-                    return False
-            elif not equal_entity_node(a[key], b[key], target):
-                return False
-        return True
-
-    def equal_node_or_null(a: Any, b: Any, entity: Entity) -> bool:
-        if a is None or b is None:
-            return a is None and b is None
-        return equal_entity_node(a, b, entity)
-
-    if left.keys() != right.keys():
-        return False
-    for entity_name in left:
-        entity = model.entity(entity_name)
-        if not multiset_matches(
-            left[entity_name], right[entity_name], partial(equal_node_or_null, entity=entity)
-        ):
-            return False
-    return True
 
 
 # --- milestone sets ----------------------------------------------------------
