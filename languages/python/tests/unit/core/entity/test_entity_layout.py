@@ -49,6 +49,7 @@ from parallax.core.metamodel import (
     MemberShape,
     Metamodel,
     Multiplicity,
+    OccurrenceMetadata,
     PrimaryKey,
     RelationshipIdentity,
     ValueObjectMetadata,
@@ -246,7 +247,7 @@ def _declared_occurrence(
     return occurrence
 
 
-def _assert_bound(declared: ValueObjectMetadata | Any) -> None:
+def _assert_bound(declared: OccurrenceMetadata) -> None:
     assert len(declared.members) == len(declared.document_shape.members)
     for binding, definition in zip(declared.members, declared.document_shape.members, strict=True):
         assert binding.definition is definition
@@ -263,7 +264,7 @@ def test_every_corpus_occurrence_reuses_definitions_at_both_multiplicities() -> 
     assert reached == {Multiplicity.ONE, Multiplicity.MANY}
 
 
-def _multiplicities(occurrence: ValueObjectMetadata | Any) -> set[Multiplicity]:
+def _multiplicities(occurrence: OccurrenceMetadata) -> set[Multiplicity]:
     """Every multiplicity ``occurrence``'s own subtree carries, itself included."""
     found = {occurrence.multiplicity}
     for nested in occurrence.value_objects:
