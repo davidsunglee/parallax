@@ -238,7 +238,7 @@ def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_se
     with pytest.raises(ValueError, match="aligns every shape member"):
         EntityMemberSelection(MemberShape(()), selection.bindings, selection.attribute_count)
     for count in (-1, len(selection.bindings) + 1):
-        with pytest.raises(ValueError, match="counts its attributes within its bindings"):
+        with pytest.raises(ValueError, match="counts its leaves within its bindings"):
             EntityMemberSelection(selection.shape, selection.bindings, count)
 
 
@@ -260,6 +260,17 @@ def _member_ranges() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
     ]
 
 
+def test_member_windows_compare_by_content_across_backing_and_offset() -> None:
+    customer = _view(_corpus("customer"), "Customer").member_selection
+    rebased = EntityMemberSelection(
+        MemberShape.of((), customer.value_objects), tuple(customer.value_objects), 0
+    )
+    assert rebased.bindings is not customer.bindings
+    assert rebased.value_objects == customer.value_objects
+    assert hash(rebased.value_objects) == hash(customer.value_objects)
+    assert rebased.attributes != customer.attributes
+
+
 def test_every_member_window_iterates_its_own_bindings_in_order_by_identity() -> None:
     for shape, window, expected in _member_ranges():
         assert len(window) == len(expected), shape
@@ -274,6 +285,10 @@ def test_every_member_window_iterates_its_own_bindings_in_order_by_identity() ->
         assert interleaved == [binding for binding in expected for _ in (first, second)], shape
         assert next(first, None) is None and next(second, None) is None, shape
         assert window == expected, shape
+        assert hash(window) == hash(expected), shape
+        for outside in (len(expected), -len(expected) - 1):
+            with pytest.raises(IndexError):
+                window[outside]
 
 
 def test_iterating_a_member_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:
