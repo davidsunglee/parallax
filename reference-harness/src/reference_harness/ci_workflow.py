@@ -3,7 +3,8 @@
 `core/spec/language-testing.md` §9 judges CI by its job identifiers and by the
 shell commands its steps execute; everything else a workflow declares — runners,
 caches, permissions, triggers — is outside that contract. This module reduces the
-YAML to those two facts so the rules reading it never touch the workflow format.
+YAML to those facts, together with the directory each command starts in, so the
+rules reading it never touch the workflow format.
 """
 
 from __future__ import annotations
@@ -16,9 +17,18 @@ from typing import Any
 
 import yaml
 
-__all__ = ["Job", "jobs"]
+__all__ = ["Job", "RunStep", "jobs"]
 
 _JUST_INVOCATION_RE = re.compile(r"\bjust\s+(?P<recipe>[a-z][a-z0-9-]*)")
+
+
+@dataclass(frozen=True)
+class RunStep:
+    """One ``run`` step: its shell script, and the directory GitHub starts it in
+    relative to the repository root — ``None`` for the root itself."""
+
+    command: str
+    working_directory: str | None
 
 
 @dataclass(frozen=True)
@@ -27,15 +37,32 @@ class Job:
 
     identifier: str
     invoked: tuple[str, ...]
-    commands: tuple[str, ...]
+    steps: tuple[RunStep, ...]
+
+    @property
+    def commands(self) -> tuple[str, ...]:
+        return tuple(step.command for step in self.steps)
 
 
-def _run_commands(definition: Any) -> tuple[str, ...]:
+def _default_working_directory(owner: Any, inherited: str | None) -> str | None:
+    defaults: Any = owner.get("defaults") if isinstance(owner, Mapping) else None
+    run: Any = defaults.get("run") if isinstance(defaults, Mapping) else None
+    directory: Any = run.get("working-directory") if isinstance(run, Mapping) else None
+    return inherited if directory is None else str(directory)
+
+
+def _run_steps(definition: Any, workflow_directory: str | None) -> tuple[RunStep, ...]:
     steps: Any = definition.get("steps", []) if isinstance(definition, Mapping) else []
     if not isinstance(steps, Sequence) or isinstance(steps, str):
         return ()
     listed: Sequence[Any] = steps
-    return tuple(str(step["run"]) for step in listed if isinstance(step, Mapping) and "run" in step)
+    job_directory = _default_working_directory(definition, workflow_directory)
+    found: list[RunStep] = []
+    for step in listed:
+        if isinstance(step, Mapping) and "run" in step:
+            directory: Any = step.get("working-directory", job_directory)
+            found.append(RunStep(str(step["run"]), None if directory is None else str(directory)))
+    return tuple(found)
 
 
 def jobs(workflow: Path) -> list[Job] | None:
@@ -51,18 +78,19 @@ def jobs(workflow: Path) -> list[Job] | None:
     if not isinstance(declared, Mapping):
         return []
     entries: Mapping[str, Any] = declared
+    workflow_directory = _default_working_directory(parsed, None)
     found: list[Job] = []
     for identifier, definition in entries.items():
-        commands = _run_commands(definition)
+        steps = _run_steps(definition, workflow_directory)
         found.append(
             Job(
                 identifier=str(identifier),
                 invoked=tuple(
                     match.group("recipe")
-                    for command in commands
-                    for match in _JUST_INVOCATION_RE.finditer(command)
+                    for step in steps
+                    for match in _JUST_INVOCATION_RE.finditer(step.command)
                 ),
-                commands=commands,
+                steps=steps,
             )
         )
     return found
