@@ -180,9 +180,11 @@ class _BindingIdentities(Sequence[MemberIdentity]):
         )
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False, match_args=False)
 class EntityMemberSelection:
     """One Entity's complete inheritance-effective member selection."""
+
+    __match_args__ = ("shape", "bindings", "attribute_count")
 
     _members: BoundShape[AttributeMetadata, ValueObjectMetadata]
     _position_by_identity: Mapping[MemberIdentity, int] = field(repr=False, compare=False)
@@ -200,6 +202,12 @@ class EntityMemberSelection:
         object.__setattr__(self, "_members", members)
         object.__setattr__(self, "_position_by_identity", MappingProxyType(positions))
         object.__setattr__(self, "_identities", _BindingIdentities(bindings))
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__qualname__}(shape={self.shape!r}, bindings={self.bindings!r}, "
+            f"attribute_count={self.attribute_count!r})"
+        )
 
     @property
     def shape(self) -> MemberShape:

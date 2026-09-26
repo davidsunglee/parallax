@@ -242,6 +242,19 @@ def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_se
             EntityMemberSelection(selection.shape, selection.bindings, count)
 
 
+def test_a_member_selection_matches_and_prints_through_its_constructor_arguments() -> None:
+    selection = _view(_corpus("customer"), "Customer").member_selection
+    match selection:
+        case EntityMemberSelection(shape, bindings, attribute_count):
+            assert shape is selection.shape
+            assert bindings is selection.bindings
+            assert attribute_count == selection.attribute_count
+    assert repr(selection) == (
+        f"EntityMemberSelection(shape={selection.shape!r}, bindings={selection.bindings!r}, "
+        f"attribute_count={selection.attribute_count!r})"
+    )
+
+
 def _member_ranges() -> list[tuple[str, Sequence[object], tuple[object, ...]]]:
     customer = _view(_corpus("customer"), "Customer").member_selection
     dog = _view(_corpus("animal"), "Dog").member_selection
