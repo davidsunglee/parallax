@@ -179,6 +179,9 @@ class _BindingIdentities(Sequence[MemberIdentity]):
             left == right for left, right in zip(self, compared, strict=True)
         )
 
+    def __hash__(self) -> int:
+        return hash(tuple(self))
+
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, match_args=False)
 class EntityMemberSelection:
