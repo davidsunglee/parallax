@@ -552,11 +552,13 @@ def _value_object_contributor(
     return ValueObjectContributor(_identity(definition), value_object["name"])
 
 
-def _group_value_objects(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
-    """Every ``(owner, top-level occurrence)`` contributing to this group's Table."""
+def _declared_value_objects(
+    declarations: Sequence[dict[str, Any]],
+) -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Every ``(owner, top-level occurrence)`` *declarations* contribute, in order."""
     return tuple(
         (_identity(definition), value_object)
-        for definition in group.declarations
+        for definition in declarations
         for value_object in definition.get("valueObjects", []) or []
         if isinstance(value_object, dict)
     )
@@ -641,11 +643,13 @@ def _layout_column(definition: Mapping[str, Any]) -> str | None:
     return column if isinstance(column, str) and column else None
 
 
-def _group_attributes(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
-    """Every ``(owner, attribute)`` contributing to this group's Table."""
+def _declared_attributes(
+    declarations: Sequence[dict[str, Any]],
+) -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Every ``(owner, attribute)`` *declarations* contribute, in order."""
     return tuple(
         (_identity(definition), attribute)
-        for definition in group.declarations
+        for definition in declarations
         for attribute in definition.get("attributes", []) or []
         if isinstance(attribute, dict)
     )
@@ -767,7 +771,7 @@ def _validate_document_members(
         members: tuple[tuple[str, str, str], ...] = (
             *(
                 (owner, attribute["name"], effective_column(attribute))
-                for owner, attribute in _group_attributes(group)
+                for owner, attribute in _declared_attributes(group.declarations)
                 if not roles.covers(owner, attribute)
             ),
             *(
@@ -776,7 +780,7 @@ def _validate_document_members(
                     value_object["name"],
                     value_object.get("column", default_column_name(value_object["name"])),
                 )
-                for owner, value_object in _group_value_objects(group)
+                for owner, value_object in _declared_value_objects(group.declarations)
             ),
         )
         for owner, name, column in members:
@@ -798,7 +802,7 @@ def _validate_document_indices(
         roles = roles_of_group.get(group.table)
         if roles is None:
             continue
-        for owner, attribute in _group_attributes(group):
+        for owner, attribute in _declared_attributes(group.declarations):
             if not roles.covers(owner, attribute):
                 resident.setdefault((owner, attribute["name"]), group.root)
     for definition in index.definitions:
@@ -968,7 +972,7 @@ def _compile_placements(
         None if group.document_column is None else by_contributor[RelationalDocument(group.root)]
     )
     placements: dict[MemberAddress, MemberPlacement] = {}
-    for owner, attribute in _group_attributes(group):
+    for owner, attribute in _declared_attributes(group.declarations):
         address = MemberAddress(owner, (attribute["name"],))
         if document_slot is None or (roles is not None and roles.covers(owner, attribute)):
             placements[address] = DirectColumn(
@@ -976,7 +980,7 @@ def _compile_placements(
             )
             continue
         placements[address] = DocumentPath(document_slot, (attribute["name"],))
-    for owner, value_object in _group_value_objects(group):
+    for owner, value_object in _declared_value_objects(group.declarations):
         name = value_object["name"]
         if document_slot is None:
             occurrence_slot = by_contributor[ValueObjectContributor(owner, name)]
@@ -1013,28 +1017,23 @@ def _compile_layout(
     key_set = frozenset(key_contributors)
 
     drafts: list[_Draft] = []
-    for definition in group.declarations:
-        for attribute in definition.get("attributes", []) or []:
-            if not isinstance(attribute, dict):
-                continue
-            if roles is not None and not roles.covers(_identity(definition), attribute):
-                continue
-            contributor = _attribute_contributor(definition, attribute)
-            drafts.append(
-                _Draft(
-                    column=effective_column(attribute),
-                    tier=classify_attribute_tier(
-                        contributor, attribute, temporal, audit_designations
-                    ),
-                    contributor=contributor,
-                    declaring_owner=contributor.owner,
-                    declared_nullable=bool(attribute.get("nullable", False)),
-                    applicable_entities=_interned(
-                        attribute_applicability.get(contributor, set()),
-                        applicability_intern,
-                    ),
-                )
+    for owner, attribute in _declared_attributes(group.declarations):
+        if roles is not None and not roles.covers(owner, attribute):
+            continue
+        contributor = AttributeContributor(owner, attribute["name"])
+        drafts.append(
+            _Draft(
+                column=effective_column(attribute),
+                tier=classify_attribute_tier(contributor, attribute, temporal, audit_designations),
+                contributor=contributor,
+                declaring_owner=contributor.owner,
+                declared_nullable=bool(attribute.get("nullable", False)),
+                applicable_entities=_interned(
+                    attribute_applicability.get(contributor, set()),
+                    applicability_intern,
+                ),
             )
+        )
     if group.tag_column is not None:
         drafts.append(
             _Draft(
@@ -1047,26 +1046,21 @@ def _compile_layout(
             )
         )
     if group.document_column is None:
-        for definition in group.declarations:
-            for value_object in definition.get("valueObjects", []) or []:
-                if not isinstance(value_object, dict):
-                    continue
-                contributor = _value_object_contributor(definition, value_object)
-                drafts.append(
-                    _Draft(
-                        column=value_object.get(
-                            "column", default_column_name(value_object["name"])
-                        ),
-                        tier=ColumnTier.DOCUMENT,
-                        contributor=contributor,
-                        declaring_owner=contributor.owner,
-                        declared_nullable=bool(value_object.get("nullable", False)),
-                        applicable_entities=_interned(
-                            value_object_applicability.get(contributor, set()),
-                            applicability_intern,
-                        ),
-                    )
+        for owner, value_object in _declared_value_objects(group.declarations):
+            contributor = ValueObjectContributor(owner, value_object["name"])
+            drafts.append(
+                _Draft(
+                    column=value_object.get("column", default_column_name(value_object["name"])),
+                    tier=ColumnTier.DOCUMENT,
+                    contributor=contributor,
+                    declaring_owner=contributor.owner,
+                    declared_nullable=bool(value_object.get("nullable", False)),
+                    applicable_entities=_interned(
+                        value_object_applicability.get(contributor, set()),
+                        applicability_intern,
+                    ),
                 )
+            )
     else:
         drafts.append(
             _Draft(
@@ -1304,61 +1298,53 @@ def _compile_family_facts(
         attribute_applicability, value_object_applicability = _applicability(family, concretes)
         drafts: list[_PositionFacts] = []
         member_facts: list[_MemberFacts] = []
-        for definition in declarations:
-            owner = _identity(definition)
-            for attribute in definition.get("attributes", []) or []:
-                if not isinstance(attribute, dict):
-                    continue
-                contributor = _attribute_contributor(definition, attribute)
-                applicable = _interned(
-                    attribute_applicability.get(contributor, set()),
-                    applicability_intern,
-                )
-                member_facts.append(
-                    _MemberFacts(MemberAddress(owner, (attribute["name"],)), applicable)
-                )
-                if roles is not None and not roles.covers(owner, attribute):
-                    continue
-                drafts.append(
-                    _PositionFacts(
-                        PositionColumn(
-                            contributor=contributor,
-                            tier=classify_attribute_tier(
-                                contributor,
-                                attribute,
-                                temporal,
-                                audit_designations,
-                            ),
-                            declaring_owner=contributor.owner,
+        for owner, attribute in _declared_attributes(declarations):
+            contributor = AttributeContributor(owner, attribute["name"])
+            applicable = _interned(
+                attribute_applicability.get(contributor, set()),
+                applicability_intern,
+            )
+            member_facts.append(
+                _MemberFacts(MemberAddress(owner, (attribute["name"],)), applicable)
+            )
+            if roles is not None and not roles.covers(owner, attribute):
+                continue
+            drafts.append(
+                _PositionFacts(
+                    PositionColumn(
+                        contributor=contributor,
+                        tier=classify_attribute_tier(
+                            contributor,
+                            attribute,
+                            temporal,
+                            audit_designations,
                         ),
-                        applicable,
-                    )
+                        declaring_owner=contributor.owner,
+                    ),
+                    applicable,
                 )
-        for definition in declarations:
-            owner = _identity(definition)
-            for value_object in definition.get("valueObjects", []) or []:
-                if not isinstance(value_object, dict):
-                    continue
-                contributor = _value_object_contributor(definition, value_object)
-                applicable = _interned(
-                    value_object_applicability.get(contributor, set()),
-                    applicability_intern,
+            )
+        for owner, value_object in _declared_value_objects(declarations):
+            contributor = ValueObjectContributor(owner, value_object["name"])
+            applicable = _interned(
+                value_object_applicability.get(contributor, set()),
+                applicability_intern,
+            )
+            member_facts.append(
+                _MemberFacts(MemberAddress(owner, (value_object["name"],)), applicable)
+            )
+            if roles is not None:
+                continue
+            drafts.append(
+                _PositionFacts(
+                    PositionColumn(
+                        contributor=contributor,
+                        tier=ColumnTier.DOCUMENT,
+                        declaring_owner=contributor.owner,
+                    ),
+                    applicable,
                 )
-                member_facts.append(
-                    _MemberFacts(MemberAddress(owner, (value_object["name"],)), applicable)
-                )
-                if roles is not None:
-                    continue
-                drafts.append(
-                    _PositionFacts(
-                        PositionColumn(
-                            contributor=contributor,
-                            tier=ColumnTier.DOCUMENT,
-                            declaring_owner=contributor.owner,
-                        ),
-                        applicable,
-                    )
-                )
+            )
         document_column = _layout_column(family.defs[root])
         if document_column is not None:
             drafts.append(

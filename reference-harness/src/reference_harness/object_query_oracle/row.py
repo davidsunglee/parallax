@@ -110,27 +110,34 @@ def _row_matches(
     temporal_end_columns = {axis["end_column"] for axis in concrete.temporal_runtime_axes}
     for key in left:
         if key in value_objects:
-            if not _value_object_equal(left[key], right[key], value_objects[key]):
-                return False
-            continue
-        if left[key] is None or right[key] is None:
-            if left[key] is not None or right[key] is not None:
-                return False
-            continue
-        attribute = _attribute_for_key(model, concrete, key)
-        if attribute is None:
-            if not scalars_equal(left[key], right[key], tolerance):
-                return False
-            continue
-        if attribute["column"] in temporal_end_columns and (
-            left[key] == "infinity" or right[key] == "infinity"
-        ):
-            if left[key] != right[key]:
-                return False
-            continue
-        if not portable_literal.values_equal(left[key], right[key], attribute["type"], tolerance):
+            equal = _value_object_equal(left[key], right[key], value_objects[key])
+        else:
+            equal = _cell_equal(
+                left[key], right[key], model, concrete, key, temporal_end_columns, tolerance
+            )
+        if not equal:
             return False
     return True
+
+
+def _cell_equal(
+    left: Any,
+    right: Any,
+    model: Model,
+    entity: Entity,
+    key: str,
+    temporal_end_columns: set[str],
+    tolerance: Decimal | None,
+) -> bool:
+    """One non-Value-Object cell, compared through the attribute its key names."""
+    if left is None or right is None:
+        return left is None and right is None
+    attribute = _attribute_for_key(model, entity, key)
+    if attribute is None:
+        return scalars_equal(left, right, tolerance)
+    if attribute["column"] in temporal_end_columns and (left == "infinity" or right == "infinity"):
+        return left == right
+    return portable_literal.values_equal(left, right, attribute["type"], tolerance)
 
 
 def rows_equal(

@@ -94,49 +94,57 @@ def lint_tree(compatibility_root: Path) -> list[str]:
         # canonical, but each must parse — and its ? count must match its binds.
         _lint_golden(given.get("apply"), "given.apply", name, errors)
 
-        # The per-step golden SQL of a scenario / coherence / conflict-retry case.
-        for step_key in ("scenario", "coherence", "attempts"):
-            steps = when.get(step_key)
-            if isinstance(steps, list):
-                for index, step in enumerate(steps):
-                    if isinstance(step, dict):
-                        _lint_golden(
-                            step.get("statements"),
-                            f"when.{step_key}[{index}].statements",
-                            name,
-                            errors,
-                        )
-                        if step_key == "scenario":
-                            _lint_reference_sql(
-                                step.get("referenceSql"),
-                                step.get("statements"),
-                                f"when.scenario[{index}].referenceSql",
-                                name,
-                                errors,
-                            )
-
-        # An error case (m-db-error) or read-lock case may carry its golden SQL inside
-        # a two-connection `concurrency` choreography; lint each node step's.
-        concurrency = when.get("concurrency")
-        if isinstance(concurrency, dict):
-            for r_index, rnd in enumerate(concurrency.get("rounds", [])):
-                if not isinstance(rnd, dict):
-                    continue
-                for node in ("A", "B"):
-                    step = rnd.get(node)
-                    if isinstance(step, dict):
-                        _lint_golden(
-                            step.get("statements"),
-                            f"when.concurrency.rounds[{r_index}].{node}.statements",
-                            name,
-                            errors,
-                        )
+        _lint_step_sequences(when, name, errors)
+        _lint_concurrency_rounds(when, name, errors)
 
         _lint_reference_sql(
             then.get("referenceSql"), then.get("statements"), "referenceSql", name, errors
         )
 
     return errors
+
+
+def _lint_step_sequences(when: dict[str, Any], name: str, errors: list[str]) -> None:
+    """The per-step golden SQL of a scenario / coherence / conflict-retry case,
+    and each scenario read's own naive oracle."""
+    for step_key in ("scenario", "coherence", "attempts"):
+        steps = when.get(step_key)
+        if not isinstance(steps, list):
+            continue
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            _lint_golden(
+                step.get("statements"), f"when.{step_key}[{index}].statements", name, errors
+            )
+            if step_key == "scenario":
+                _lint_reference_sql(
+                    step.get("referenceSql"),
+                    step.get("statements"),
+                    f"when.scenario[{index}].referenceSql",
+                    name,
+                    errors,
+                )
+
+
+def _lint_concurrency_rounds(when: dict[str, Any], name: str, errors: list[str]) -> None:
+    """An error case (m-db-error) or read-lock case may carry its golden SQL inside
+    a two-connection `concurrency` choreography; lint each node step's."""
+    concurrency = when.get("concurrency")
+    if not isinstance(concurrency, dict):
+        return
+    for r_index, rnd in enumerate(concurrency.get("rounds", [])):
+        if not isinstance(rnd, dict):
+            continue
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if isinstance(step, dict):
+                _lint_golden(
+                    step.get("statements"),
+                    f"when.concurrency.rounds[{r_index}].{node}.statements",
+                    name,
+                    errors,
+                )
 
 
 def _first_golden_dialect(entries: Any) -> str:
@@ -191,51 +199,78 @@ def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
-        sql = entry.get("sql")
         binds = entry.get("binds", [])
-        # A naive entry's sql is a plain string (parse-only); a golden entry's is a
-        # dialect-keyed map, each text of which must be canonical.
-        if isinstance(sql, str):
-            texts: list[tuple[str, str, bool]] = [("postgres", sql, False)]
-        elif isinstance(sql, dict):
-            texts = [(d, t, True) for d, t in sql.items() if isinstance(t, str)]
-        else:
-            continue
-        for dialect, text, canonical_required in texts:
+        for dialect, text, canonical_required in _entry_texts(entry.get("sql")):
             label = f"{where}[{index}]"
             if canonical_required:
                 label += f".{dialect}"
-            try:
-                sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
-            except Exception as exc:  # noqa: BLE001 - report parse errors as lint
-                errors.append(f"case {name}: {label} does not parse: {exc}")
-                continue
-            if canonical_required:
-                try:
-                    canonical = normalize(text, dialect)
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"case {name}: {label} could not be normalized: {exc}")
-                    continue
-                if canonical != text:
-                    errors.append(
-                        f"case {name}: {label} is not canonical.\n"
-                        f"      stored:     {text!r}\n"
-                        f"      normalized: {canonical!r}"
-                    )
-            # A dialect-keyed binds map carries a per-dialect list (Postgres
-            # per-segment JSON keys vs a MariaDB single '$.a.b' path bind), so the
-            # ? count is checked against THIS dialect's binds; a flat list is shared.
-            if isinstance(binds, dict):
-                dialect_binds = binds.get(dialect, [])
-                bind_count = len(dialect_binds) if isinstance(dialect_binds, list) else 0
-            else:
-                bind_count = len(binds) if isinstance(binds, list) else 0
-            placeholders = text.count("?")
-            if placeholders != bind_count:
-                errors.append(
-                    f"case {name}: {label} has {placeholders} ? placeholder(s) "
-                    f"but {bind_count} bind(s)"
-                )
+            _lint_statement(
+                f"case {name}: {label}",
+                text,
+                dialect,
+                canonical_required=canonical_required,
+                bind_count=_bind_count(binds, dialect),
+                errors=errors,
+            )
+
+
+def _entry_texts(sql: Any) -> list[tuple[str, str, bool]]:
+    """Each ``(dialect, text, canonical_required)`` one entry's ``sql`` states.
+
+    A naive entry's sql is a plain string (parse-only); a golden entry's is a
+    dialect-keyed map, each text of which must be canonical.
+    """
+    if isinstance(sql, str):
+        return [("postgres", sql, False)]
+    if isinstance(sql, dict):
+        return [(d, t, True) for d, t in sql.items() if isinstance(t, str)]
+    return []
+
+
+def _bind_count(binds: Any, dialect: str) -> int:
+    """How many binds an entry supplies *dialect*'s statement.
+
+    A dialect-keyed binds map carries a per-dialect list (Postgres per-segment JSON
+    keys vs a MariaDB single '$.a.b' path bind), so the ? count is checked against
+    THIS dialect's binds; a flat list is shared.
+    """
+    if isinstance(binds, dict):
+        dialect_binds = binds.get(dialect, [])
+        return len(dialect_binds) if isinstance(dialect_binds, list) else 0
+    return len(binds) if isinstance(binds, list) else 0
+
+
+def _lint_statement(
+    subject: str,
+    text: str,
+    dialect: str,
+    *,
+    canonical_required: bool,
+    bind_count: int,
+    errors: list[str],
+) -> None:
+    """One statement text parses, is canonical where required, and carries one
+    ``?`` placeholder per bind."""
+    try:
+        sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
+    except Exception as exc:  # noqa: BLE001 - report parse errors as lint
+        errors.append(f"{subject} does not parse: {exc}")
+        return
+    if canonical_required:
+        try:
+            canonical = normalize(text, dialect)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{subject} could not be normalized: {exc}")
+            return
+        if canonical != text:
+            errors.append(
+                f"{subject} is not canonical.\n"
+                f"      stored:     {text!r}\n"
+                f"      normalized: {canonical!r}"
+            )
+    placeholders = text.count("?")
+    if placeholders != bind_count:
+        errors.append(f"{subject} has {placeholders} ? placeholder(s) but {bind_count} bind(s)")
 
 
 def main(argv: list[str]) -> int:

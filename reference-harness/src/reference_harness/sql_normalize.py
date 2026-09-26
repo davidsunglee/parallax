@@ -30,6 +30,9 @@ are lowercased on the AST before rendering; quoted identifiers are left intact.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect
@@ -254,9 +257,12 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
             text = text.lower()
         token_type = _FUNCTION_NAME if (is_function_name or is_paren_type) else token.token_type
         parts.append((token_type, text))
+    return _join_rendered(parts)
 
-    # Join with spaces, but keep punctuation tight (no space before ``,`` ``.``
-    # ``)`` and no space after ``(`` ``.`` and a function name).
+
+def _join_rendered(parts: list[tuple[_RenderTokenType, str]]) -> str:
+    """Join rendered tokens with spaces, but keep punctuation tight (no space
+    before ``,`` ``.`` ``)`` and no space after ``(`` ``.`` and a function name)."""
     out: list[str] = []
     no_space_before = {TokenType.COMMA, TokenType.DOT, TokenType.R_PAREN}
     no_space_after: set[_RenderTokenType] = {TokenType.L_PAREN, TokenType.DOT, _FUNCTION_NAME}
@@ -277,30 +283,51 @@ def _inline_parameter_literal(tree: Expr) -> Expr | None:
     ``1 = 0`` none-identity and the ``select 1`` EXISTS probe — are not
     parameters and are left alone."""
 
-    def col_vs_lit(a: Expr, b: Expr) -> bool:
-        return isinstance(a, exp.Column) and isinstance(b, exp.Literal)
-
-    for node in tree.find_all(exp.Binary):
-        if col_vs_lit(node.left, node.right) or col_vs_lit(node.right, node.left):
-            return node
-    for node in tree.find_all(exp.In):
-        if isinstance(node.this, exp.Column) and any(
-            isinstance(value, exp.Literal) for value in node.expressions
-        ):
-            return node
-    for node in tree.find_all(exp.Between):
-        if isinstance(node.this, exp.Column) and any(
-            isinstance(node.args.get(bound), exp.Literal) for bound in ("low", "high")
-        ):
-            return node
-    for node in tree.find_all(exp.Limit):
-        if isinstance(node.expression, exp.Literal):
-            return node
+    for kind, is_parameter in _PARAMETER_LITERAL_RULES:
+        found = next((node for node in tree.find_all(kind) if is_parameter(node)), None)
+        if found is not None:
+            return found
     if isinstance(tree, exp.Insert):
         values = tree.args.get("expression")
         if isinstance(values, exp.Values):
             return next(values.find_all(exp.Literal), None)
     return None
+
+
+def _column_against_literal(a: Expr, b: Expr) -> bool:
+    return isinstance(a, exp.Column) and isinstance(b, exp.Literal)
+
+
+def _compared_parameter(node: exp.Binary) -> bool:
+    return _column_against_literal(node.left, node.right) or _column_against_literal(
+        node.right, node.left
+    )
+
+
+def _listed_parameter(node: exp.In) -> bool:
+    return isinstance(node.this, exp.Column) and any(
+        isinstance(value, exp.Literal) for value in node.expressions
+    )
+
+
+def _bound_parameter(node: exp.Between) -> bool:
+    return isinstance(node.this, exp.Column) and any(
+        isinstance(node.args.get(bound), exp.Literal) for bound in ("low", "high")
+    )
+
+
+def _limit_parameter(node: exp.Limit) -> bool:
+    return isinstance(node.expression, exp.Literal)
+
+
+# Each node kind whose literal operand is a parameter, searched kind by kind in
+# this order.
+_PARAMETER_LITERAL_RULES: tuple[tuple[type[Expr], Callable[[Any], bool]], ...] = (
+    (exp.Binary, _compared_parameter),
+    (exp.In, _listed_parameter),
+    (exp.Between, _bound_parameter),
+    (exp.Limit, _limit_parameter),
+)
 
 
 def is_union_all(node: exp.SetOperation) -> bool:

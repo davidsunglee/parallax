@@ -31,7 +31,7 @@ that statement must say is a property of the layout rather than of any row.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
@@ -1162,21 +1162,13 @@ def _materialize_tpcs_document_row(
     for candidate in case.model.storage_layout.tables:
         if candidate.contribution(slot.contributor) is None:
             continue
-        for address, placement in candidate.placements.items():
-            if len(address.path) != 1 or not isinstance(placement, DocumentPath):
-                continue
-            declaration = entities[address.owner]
-            name = address.path[0]
+        for declaration, name, _placement in _top_level_document_members(candidate, entities):
             attribute = next(
                 (item for item in declaration.attributes if item["name"] == name), None
             )
             if attribute is not None:
                 materialized.setdefault(attribute["column"], None)
-    for address, placement in layout.placements.items():
-        if len(address.path) != 1 or not isinstance(placement, DocumentPath):
-            continue
-        entity = entities[address.owner]
-        name = address.path[0]
+    for entity, name, placement in _top_level_document_members(layout, entities):
         attribute = next((item for item in entity.attributes if item["name"] == name), None)
         occurrence = next((item for item in entity.value_objects if item["name"] == name), None)
         stored = _document_value(document, placement.path)
@@ -1185,3 +1177,13 @@ def _materialize_tpcs_document_row(
         elif occurrence is not None:
             materialized[occurrence["column"]] = stored
     return materialized
+
+
+def _top_level_document_members(
+    layout: TableLayout, entities: dict[str, Entity]
+) -> Iterator[tuple[Entity, str, DocumentPath]]:
+    """Each top-level member *layout* places in its document: the declaring
+    Entity, the member name, and its placement."""
+    for address, placement in layout.placements.items():
+        if len(address.path) == 1 and isinstance(placement, DocumentPath):
+            yield entities[address.owner], address.path[0], placement

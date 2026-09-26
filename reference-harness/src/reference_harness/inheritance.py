@@ -639,10 +639,8 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
 
     family = Family(entity_defs)
     key = family.key_of(definition)
-    merged = _merge_ancestry_attributes(family, key)
-
     resolved = copy.deepcopy(definition)
-    resolved["attributes"] = merged
+    resolved["attributes"] = _merge_ancestry_attributes(family, key)
     resolved["valueObjects"] = _merge_ancestry_value_objects(family, key)
 
     # Inherit the Temporality Profile from
@@ -656,30 +654,35 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     # the milestone-owning row it is. A per-entity metamodel reader (which does
     # not flatten inheritance) still classifies the concrete non-temporal from
     # its own absent profile — this is the inheritance-aware view.
-    if "temporality" not in resolved:
-        root_name = family.root_of(key)
-        root_def = family.defs.get(root_name, {}) if root_name is not None else {}
-        if "temporality" in root_def:
-            resolved["temporality"] = root_def["temporality"]
+    root_name = family.root_of(key)
+    root_def = family.defs.get(root_name, {}) if root_name is not None else {}
+    if "temporality" not in resolved and "temporality" in root_def:
+        resolved["temporality"] = root_def["temporality"]
 
-    role = role_of(definition)
-    strategy = family.strategy_of(key)
-    if role == ROLE_CONCRETE and strategy == STRATEGY_TPH:
-        root_name = family.root_of(key)
-        root_def = family.defs.get(root_name, {}) if root_name is not None else {}
-        if "table" in root_def:
-            resolved["table"] = root_def["table"]
-        tag_column = family.tag_column_of(key)
-        if tag_column is not None and all(effective_column(a) != tag_column for a in merged):
-            last_pk = -1
-            for index, attribute in enumerate(merged):
-                if attribute.get("primaryKey"):
-                    last_pk = index
-            merged.insert(last_pk + 1, _synthesize_tag_attribute(tag_column))
-            block = inheritance_of(resolved)
-            if block is not None:
-                block["tag"] = {"column": tag_column}
+    if role_of(definition) == ROLE_CONCRETE and family.strategy_of(key) == STRATEGY_TPH:
+        _place_in_hierarchy_table(resolved, root_def, family.tag_column_of(key))
     return resolved
+
+
+def _place_in_hierarchy_table(
+    resolved: dict[str, Any], root_def: dict[str, Any], tag_column: str | None
+) -> None:
+    """Move a table-per-hierarchy concrete subtype into its root's shared table,
+    slotting the synthesized tag column just after its last primary-key attribute
+    unless one of its attributes already occupies that column."""
+    if "table" in root_def:
+        resolved["table"] = root_def["table"]
+    merged = resolved["attributes"]
+    if tag_column is None or any(effective_column(a) == tag_column for a in merged):
+        return
+    last_pk = -1
+    for index, attribute in enumerate(merged):
+        if attribute.get("primaryKey"):
+            last_pk = index
+    merged.insert(last_pk + 1, _synthesize_tag_attribute(tag_column))
+    block = inheritance_of(resolved)
+    if block is not None:
+        block["tag"] = {"column": tag_column}
 
 
 # --- semantic family validation (raises RejectionError) --------------------
@@ -740,23 +743,26 @@ def _validate_materialization_keys(
     attributes: list[tuple[str, str]] = []
     for definition in definitions:
         entity = definition["name"]
-        for attribute in definition.get("attributes", []) or []:
-            if isinstance(attribute, dict):
-                attributes.append(
-                    (effective_column(attribute), f"Attribute {entity}.{attribute['name']}")
-                )
-        for value_object in definition.get("valueObjects", []) or []:
-            if isinstance(value_object, dict):
-                claims.claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
-        for relationship in definition.get("relationships", []) or []:
-            if isinstance(relationship, dict):
-                pair = (relationship["name"], f"Relationship {entity}.{relationship['name']}")
-                relationships.append(pair)
+        attributes.extend(
+            (effective_column(attribute), f"Attribute {entity}.{attribute['name']}")
+            for attribute in _declared(definition, "attributes")
+        )
+        for value_object in _declared(definition, "valueObjects"):
+            claims.claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
+        relationships.extend(
+            (relationship["name"], f"Relationship {entity}.{relationship['name']}")
+            for relationship in _declared(definition, "relationships")
+        )
     for key, contributor in attributes:
         claims.claim(key, contributor)
     for key, contributor in relationships:
         claims.claim(key, contributor)
     _reject_narrowed_view_occupants(attributes, relationships)
+
+
+def _declared(definition: dict[str, Any], member: str) -> list[dict[str, Any]]:
+    """The well-formed declarations under one member list of a raw definition."""
+    return [item for item in definition.get(member, []) or [] if isinstance(item, dict)]
 
 
 def _reject_narrowed_view_occupants(
