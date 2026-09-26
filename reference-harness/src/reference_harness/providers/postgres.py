@@ -385,12 +385,6 @@ class _PgTxSession:
         self._conn = conn
 
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
-        """Run DML on the HELD transaction; return the affected-row count.
-
-        The count is what makes an optimistic-lock conflict observable inside a
-        buffered unit of work (m-opt-lock): a stale-version gate matches 0 rows.
-        The two-node lock-contention callers ignore the return.
-        """
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(_trusted_query(sql.replace("?", "%s")), _statement_binds(sql, binds))
@@ -399,14 +393,6 @@ class _PgTxSession:
             return cur.rowcount
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        """Fetch rows INSIDE the held transaction (concurrency-success `expectRows`).
-
-        Mirrors the provider's ``query`` but runs on the HELD session connection so a
-        locking SELECT (``for share of t0``) both acquires the shared lock and returns
-        its rows inside the open unit of work. The provider's ``_query_rows`` runs on
-        the AUTOCOMMIT connection and so cannot read inside the session's open
-        transaction — this method can.
-        """
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(
