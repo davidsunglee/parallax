@@ -235,6 +235,9 @@ def test_effective_member_views_delegate_slices_equality_and_alignment_to_one_se
     assert tuple(selection.attributes[:]) == tuple(view.applicable_attributes)
     assert selection.attributes != object()
     assert selection.identities != object()
+    identities = tuple(binding.identity for binding in selection.bindings)
+    assert selection.identities == identities
+    assert hash(selection.identities) == hash(identities)
     with pytest.raises(ValueError, match="aligns every shape member"):
         EntityMemberSelection(MemberShape(()), selection.bindings, selection.attribute_count)
     for count in (-1, len(selection.bindings) + 1):
