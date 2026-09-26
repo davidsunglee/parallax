@@ -5,7 +5,8 @@ human reads it, not the way a line-oriented pattern happens to. Markdown wraps
 freely, and prose in this repository is wrapped by convention, so a rule that
 consumes one physical line silently stops seeing whatever a later edit pushes
 onto the next one — passing rather than failing. These readers work in the units
-Markdown actually has: an inline code span, and a whole list item.
+Markdown actually has: an inline code span, a whole list item, and the body
+under a heading.
 
 The module is neutral: it knows nothing about what the facts mean, so tooling
 that checks a spec and tooling that checks a command graph can share it.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["CODE_SPAN_RE", "code_spans", "list_items"]
+__all__ = ["CODE_SPAN_RE", "code_spans", "heading_section", "list_items"]
 
 CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 """One inline code span's content. A span does not span lines, so a citation
@@ -23,10 +24,28 @@ broken across a wrap is not a citation."""
 
 _LIST_MARKER_RE = re.compile(r"(?P<indent>[ \t]*)[-*+][ \t]+")
 
+_HEADING_RE = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
+
 
 def code_spans(text: str) -> frozenset[str]:
     """Every distinct inline code span in *text*."""
     return frozenset(CODE_SPAN_RE.findall(text))
+
+
+def heading_section(markdown: str, heading_contains: str) -> str | None:
+    """The body under the first heading whose line contains *heading_contains*,
+    or ``None`` when no heading does.
+
+    The body ends at the next heading of any level, so a subsection closes its
+    parent's body. Any line opening with one to six ``#`` and whitespace counts
+    as a heading, including one inside a fenced block.
+    """
+    headings = list(_HEADING_RE.finditer(markdown))
+    for index, heading in enumerate(headings):
+        if heading_contains in heading.group(0):
+            end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
+            return markdown[heading.end() : end]
+    return None
 
 
 def list_items(text: str) -> list[str]:

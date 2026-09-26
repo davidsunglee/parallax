@@ -34,6 +34,7 @@ import re
 import sys
 from pathlib import Path
 
+from .markdown_read import heading_section
 from .paths import schemas_dir
 from .schemas import load_json
 
@@ -52,7 +53,6 @@ class VocabMismatch(ValueError):
     """A neutral-type home is missing, malformed, or disagrees with the others."""
 
 
-_HEADING = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 _TEXT_FENCE = re.compile(r"```text\n(.*?)```", re.DOTALL)
 
 # A PascalCase variant name inside the algebra block. Lowercase parameter names
@@ -73,15 +73,10 @@ _WIRE_CODEC_MARKER = "Neutral Wire Codec matrix"
 
 
 def _section(markdown: str, heading_contains: str, source: str) -> str:
-    """The body text between the first heading containing *heading_contains*
-    and the next heading of any level (or end of document)."""
-    headings = list(_HEADING.finditer(markdown))
-    for index, heading in enumerate(headings):
-        if heading_contains in heading.group(0):
-            start = heading.end()
-            end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
-            return markdown[start:end]
-    raise VocabMismatch(f"no heading containing {heading_contains!r} found in {source}")
+    section = heading_section(markdown, heading_contains)
+    if section is None:
+        raise VocabMismatch(f"no heading containing {heading_contains!r} found in {source}")
+    return section
 
 
 def core_algebra_variants(core_markdown: str) -> set[str]:
