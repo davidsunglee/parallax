@@ -98,16 +98,11 @@ no construction call, so both its sides are the same quantity — the marginal c
 of one additional node, with each arm's per-call cost printed beside it rather
 than inside it.
 
-**Where a reading is taken, and where it is not.** This module IMPORTS no
-instrument, so there is no name in it that reaches one — not bare, not through a
-module attribute, and not through an alias. Every reading is taken in a child, by
-``tools/instance_state_reading.py``, which is the script a child runs and the one
-place ``memory_instruments`` is reached from; this module spawns the children,
-decodes what they answer, and judges only whether the matrix is complete. That is
-what `core/spec/language-testing.md` §5 asks of it structurally rather than by
-inspection: the `dbfree` suite that grades what this computes imports this module
-whole, so an instrument imported here would be one that suite reaches — and an
-import that does not exist is a route no guard has to answer for.
+**Where a reading is taken.** Every reading is taken in a child, by
+``tools/instance_state_reading.py``, the script a child runs and the one place
+this report reaches ``memory_instruments`` from. This module spawns the children
+and decodes what they answer, and every whole-interpreter reader refuses to run
+outside a child interpreter.
 
 **How decoded payload leaves are excluded — structurally, not by filtering.**
 Every scenario's input row and every leaf in it is allocated at import time,
