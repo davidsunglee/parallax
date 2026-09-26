@@ -833,10 +833,11 @@ scalar, whole occurrence, and undeclared key alike — is the codec's and is not
 restated here.
 
 An assigned member the classification answers as **restored** contributes nothing
-to the write, and a write every assigned member of which is restored is
-**eliminated**: it issues no DML, advances no version, consults no clock, and for
-a temporal entity performs no close and chains no row. That holds however the
-codec reached the answer.
+to the write, and a write every assigned member of which a classification made
+before Write Settlement answers as restored is **eliminated**: it issues no DML,
+advances no version, consults no clock, and for a temporal entity performs no
+close and chains no row. That holds however the codec reached the answer. A
+classification made during settlement, as below, never eliminates a write.
 
 The same holds member by member inside a Materialized Write Group row that
 survives because another of its assigned members is effective. Planning decides
@@ -853,11 +854,13 @@ Record states — and buffers that answer with the write, so planning overlays t
 members it answers as effective without comparing them again. A keyed write
 buffered with its Temporal Observation but without that answer, as a caller
 pairing an instruction with its evidence directly buffers one, is classified
-during planning against that observation's Predecessor Row instead. Either way
+during settlement against that observation's Predecessor Row instead. Either way
 every member the successor does not effectively change carries its persisted
-state. That planning-time classification decides only what the successor
-carries: eliminating a write whose every assigned member is restored remains the
-no-op elimination that precedes planning.
+state. That settlement-time classification decides only what the successor
+carries, because it runs after no-op elimination and Transaction Instant
+resolution: such a write whose every assigned member it answers as restored is
+not eliminated, and still closes its predecessor and chains a successor carrying
+that predecessor's persisted state.
 
 Elimination is deliberately the conservative direction wherever that answer makes
 equal two documents a store spells differently: eliminating the write leaves the
