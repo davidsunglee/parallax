@@ -124,29 +124,6 @@ def prepare_authoring(
     return PreparedAuthoring(value=value, failures=failures)
 
 
-def validate_authoring(
-    shape: MemberShape,
-    source: object,
-    *,
-    source_access: SourceAccess,
-    normalize_leaf: LeafNormalizer,
-    path: str = "",
-    allow_root_markers: bool = False,
-) -> Mapping[int, VoDocumentViolation]:
-    """Validate one authored document without constructing managed occurrence output."""
-    _value, failures, _present, _nulls = _author_document(
-        shape,
-        source,
-        source_access=source_access,
-        normalize_leaf=normalize_leaf,
-        path=path,
-        produce=False,
-        fill_missing_many=False,
-        allow_markers=allow_root_markers,
-    )
-    return failures
-
-
 def prepare_member_authoring(
     member: Leaf | Occurrence,
     source: object,

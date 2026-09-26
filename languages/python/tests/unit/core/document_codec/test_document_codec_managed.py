@@ -49,7 +49,6 @@ from parallax.core.document_codec._authoring import (
     MAPPING_SOURCE_ACCESS,
     prepare_authoring,
     prepare_member_authoring,
-    validate_authoring,
     validate_member_authoring,
 )
 from parallax.core.document_codec._managed import EffectiveChangeSet
@@ -121,8 +120,8 @@ def test_authoring_prepares_borrowed_and_mapping_sources_into_one_owned_tree() -
     assert cast("Sequence[Mapping[str, object]]", value["entries"])[0]["kind"] == "home"
 
 
-def test_validation_only_reports_sparse_canonical_failures_without_output_construction() -> None:
-    failures = validate_authoring(
+def test_authoring_reports_sparse_canonical_failures() -> None:
+    failures = prepare_authoring(
         _SHAPE,
         {
             "flag": "not-bool",
@@ -131,7 +130,7 @@ def test_validation_only_reports_sparse_canonical_failures_without_output_constr
         },
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_normalize,
-    )
+    ).failures
 
     assert tuple(failures) == (0, 4)
     assert failures[0].reason == "type-mismatch"
@@ -139,7 +138,7 @@ def test_validation_only_reports_sparse_canonical_failures_without_output_constr
     assert failures[4].path == "zones"
 
 
-def test_validation_only_never_adopts_a_success_document(
+def test_occurrence_validation_never_adopts_a_success_document(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def reject_adoption(_values: object) -> object:
@@ -147,14 +146,14 @@ def test_validation_only_never_adopts_a_success_document(
 
     monkeypatch.setattr(authoring, "adopt_frozen_map", reject_adoption)
 
-    failures = validate_authoring(
-        _SHAPE,
-        {"flag": True, "origin": {"city": "Oslo"}, "entries": []},
+    failure = validate_member_authoring(
+        Occurrence("document", Multiplicity.ONE, False, _SHAPE),
+        {"flag": True, "origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]},
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_normalize,
     )
 
-    assert failures == {}
+    assert failure is None
 
 
 def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None:
