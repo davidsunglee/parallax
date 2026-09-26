@@ -42,6 +42,13 @@ _AMBIGUOUS_REFERENCE_RULE = "reference-ambiguous-entity-name"
 # all of them.
 _OPERAND_MEMBERS = ("operand", "op", "where")
 
+# The one member each reference-bearing predicate tag names its reference in.
+_REFERENCE_MEMBER = {
+    **dict.fromkeys(ATTRIBUTE_REFERENCE_TAGS, "attr"),
+    **dict.fromkeys(PATH_REFERENCE_TAGS, "path"),
+    **dict.fromkeys(("navigate", "exists", "notExists"), "rel"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class _Declarations:
@@ -175,12 +182,9 @@ def _walk_predicate(node: Any, where: str, report: _Report, declarations: _Decla
     at = f"{where}.{tag}"
     if not isinstance(body, Mapping):
         return
-    if tag in ATTRIBUTE_REFERENCE_TAGS:
-        report.member(body.get("attr"), f"{at}.attr", declarations)
-    elif tag in PATH_REFERENCE_TAGS:
-        report.member(body.get("path"), f"{at}.path", declarations)
-    elif tag in ("navigate", "exists", "notExists"):
-        report.member(body.get("rel"), f"{at}.rel", declarations)
+    reference = _REFERENCE_MEMBER.get(tag)
+    if reference is not None:
+        report.member(body.get(reference), f"{at}.{reference}", declarations)
     elif tag in ("and", "or"):
         for index, operand in enumerate(_items(body.get("operands"))):
             _walk_predicate(operand, f"{at}.operands[{index}]", report, declarations)
@@ -238,30 +242,29 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
     # `when` member; its spellings are the authored negative and never move.
     if "model" in when:
         return
-    _walk_query(when.get("objectQuery"), "when.objectQuery", report, declarations)
-    for index, encoding in enumerate(_items(when.get("equivalentEncodings"))):
-        _walk_query(encoding, f"when.equivalentEncodings[{index}]", report, declarations)
-    _walk_write(when.get("write"), "when.write", report, declarations)
+    _walk_read_and_write(when, "when", report, declarations)
     for index, instruction in enumerate(_items(when.get("writeSequence"))):
         _walk_keyed_write(instruction, f"when.writeSequence[{index}]", report, declarations)
     for index, step in enumerate(_items(when.get("scenario"))):
         if not isinstance(step, Mapping):
             continue
-        at = f"when.scenario[{index}]"
-        _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
-        for encoding_index, encoding in enumerate(_items(step.get("equivalentEncodings"))):
-            _walk_query(
-                encoding,
-                f"{at}.equivalentEncodings[{encoding_index}]",
-                report,
-                declarations,
-            )
-        _walk_write(step.get("write"), f"{at}.write", report, declarations)
+        _walk_read_and_write(step, f"when.scenario[{index}]", report, declarations)
     for index, step in enumerate(_items(when.get("coherence"))):
         if not isinstance(step, Mapping):
             continue
         at = f"when.coherence[{index}]"
         _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
+
+
+def _walk_read_and_write(
+    step: Mapping[str, Any], at: str, report: _Report, declarations: _Declarations
+) -> None:
+    """A ``when`` or scenario step's Object Query, its equivalent encodings, and
+    its write, in that order."""
+    _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
+    for index, encoding in enumerate(_items(step.get("equivalentEncodings"))):
+        _walk_query(encoding, f"{at}.equivalentEncodings[{index}]", report, declarations)
+    _walk_write(step.get("write"), f"{at}.write", report, declarations)
 
 
 def _walk_write(node: Any, at: str, report: _Report, declarations: _Declarations) -> None:
@@ -323,20 +326,22 @@ def _walk_model(document: Any, report: _Report) -> None:
                 inheritance.get("parent"), f"{at}.inheritance.parent", owner, report
             )
         for position, relationship in enumerate(_items(definition.get("relationships"))):
-            if not isinstance(relationship, Mapping):
-                continue
-            spot = f"{at}.relationships[{position}]"
-            join = relationship.get("join")
-            if isinstance(join, Mapping):
-                target = join.get("target")
-                if isinstance(target, Mapping):
-                    _declaration_reference(
-                        target.get("entity"), f"{spot}.join.target.entity", owner, report
-                    )
-            reverse_of = relationship.get("reverseOf")
-            if isinstance(reverse_of, str):
-                peer, _, member = reverse_of.rpartition(".")
-                _declaration_reference(peer, f"{spot}.reverseOf", owner, report, suffix=(member,))
+            if isinstance(relationship, Mapping):
+                _walk_relationship(relationship, f"{at}.relationships[{position}]", owner, report)
+
+
+def _walk_relationship(
+    relationship: Mapping[str, Any], spot: str, owner: str | None, report: _Report
+) -> None:
+    """A relationship's join target and reverse peer."""
+    join = relationship.get("join")
+    target = join.get("target") if isinstance(join, Mapping) else None
+    if isinstance(target, Mapping):
+        _declaration_reference(target.get("entity"), f"{spot}.join.target.entity", owner, report)
+    reverse_of = relationship.get("reverseOf")
+    if isinstance(reverse_of, str):
+        peer, _, member = reverse_of.rpartition(".")
+        _declaration_reference(peer, f"{spot}.reverseOf", owner, report, suffix=(member,))
 
 
 def _declaration_reference(
@@ -362,39 +367,23 @@ def check(root: Path) -> list[str]:
     fixtures, and benchmarks — empty when the whole corpus is canonical."""
     findings: list[str] = []
     models: dict[str, _Declarations] = {}
-    for path in sorted((root / "models").glob("*.yaml")):
-        document, error = _read(path)
-        if error is not None:
-            findings.append(error)
-            continue
+    for path, document in _documents(root / "models", findings):
         models[f"models/{path.name}"] = _declarations(document)
         report = _Report(path=path)
         _walk_model(document, report)
         findings.extend(report.findings)
 
-    for path in sorted((root / "fixtures").glob("*.yaml")):
-        document, error = _read(path)
-        if error is not None:
-            findings.append(error)
-            continue
+    for path, document in _documents(root / "fixtures", findings):
         declarations = models.get(f"models/{path.name}")
         if declarations is None:
             findings.append(f"{path}: <root>: no models/{path.name} declares these rows")
             continue
         findings.extend(_fixture_findings(path, document, declarations, "<root>"))
 
-    for path in sorted((root / "benchmarks").glob("*.yaml")):
-        document, error = _read(path)
-        if error is not None:
-            findings.append(error)
-            continue
+    for path, document in _documents(root / "benchmarks", findings):
         findings.extend(_benchmark_findings(path, document, models))
 
-    for path in sorted((root / "cases").glob("*.yaml")):
-        document, error = _read(path)
-        if error is not None:
-            findings.append(error)
-            continue
+    for path, document in _documents(root / "cases", findings):
         declarations = _case_declarations(path, document, models, findings)
         if declarations is None:
             continue
@@ -404,11 +393,18 @@ def check(root: Path) -> list[str]:
     return findings
 
 
-def _read(path: Path) -> tuple[Any, str | None]:
-    try:
-        return read_corpus_yaml(path), None
-    except Exception as error:  # noqa: BLE001 - a malformed document is a finding, not a crash
-        return None, f"{path}: <root>: unreadable document ({error.__class__.__name__}: {error})"
+def _documents(directory: Path, findings: list[str]) -> Iterator[tuple[Path, Any]]:
+    """Each readable ``*.yaml`` document of ``directory`` in path order; an
+    unreadable one is recorded in ``findings`` in its place."""
+    for path in sorted(directory.glob("*.yaml")):
+        try:
+            document = read_corpus_yaml(path)
+        except Exception as error:  # noqa: BLE001 - a malformed document is a finding, not a crash
+            findings.append(
+                f"{path}: <root>: unreadable document ({error.__class__.__name__}: {error})"
+            )
+            continue
+        yield path, document
 
 
 def _case_declarations(

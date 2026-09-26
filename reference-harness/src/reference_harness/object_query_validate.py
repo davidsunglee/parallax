@@ -93,6 +93,14 @@ _NESTED_STRING_TAGS = frozenset(
     {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
 )
 _STRING_TAGS = frozenset({"like", "notLike", "startsWith", "endsWith", "contains"})
+# Every nested predicate over one leaf member, judged alike at the queried
+# entity's scope and inside a scoped element `where`.
+_NESTED_LEAF_TAGS = (
+    _NESTED_COMPARISON_TAGS
+    | _NESTED_MEMBERSHIP_TAGS
+    | _NESTED_STRING_TAGS
+    | {"nestedBetween", "nestedIsNull", "nestedIsNotNull"}
+)
 
 
 def validate_object_query(entity: Entity, query: Any) -> None:
@@ -133,22 +141,11 @@ def _walk(entity: Entity, node: Any) -> None:
     if not isinstance(node, dict) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
-    if tag in _NESTED_COMPARISON_TAGS:
-        _check_nested_comparison(entity, body)
-    elif tag == "nestedBetween":
-        _check_range_predicate(
-            resolve_nested_ref(entity, body["path"]),
-            body,
-            subject=body["path"],
+    if tag in _NESTED_LEAF_TAGS:
+        path = body["path"]
+        _check_nested_leaf(
+            tag, body, resolve_nested_ref(entity, path), subject=path, label=repr(path)
         )
-    elif tag in _NESTED_MEMBERSHIP_TAGS:
-        _check_nested_membership(entity, body)
-    elif tag in _NESTED_STRING_TAGS:
-        _check_string_predicate(
-            resolve_nested_ref(entity, body["path"]), body, subject=body["path"]
-        )
-    elif tag in ("nestedIsNull", "nestedIsNotNull"):
-        _check_null_check(resolve_nested_ref(entity, body["path"]), body["path"])
     elif tag in ("nestedExists", "nestedNotExists"):
         _check_nested_exists(entity, body)
     elif tag == "between":
@@ -201,9 +198,25 @@ def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
         )
 
 
-def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
-    attribute = resolve_nested_ref(entity, body["path"])
-    decode_typed_literal(body.get("value"), attribute.get("type"), repr(body["path"]))
+def _check_nested_leaf(
+    tag: str, body: dict[str, Any], attribute: dict[str, Any], *, subject: str, label: str
+) -> None:
+    """One nested leaf predicate's rules against its resolved leaf ``attribute``.
+
+    ``subject`` names the path in a range or string rule's diagnostic, and
+    ``label`` names it in a comparison or membership literal's.
+    """
+    if tag in _NESTED_COMPARISON_TAGS:
+        decode_typed_literal(body.get("value"), attribute.get("type"), label)
+    elif tag == "nestedBetween":
+        _check_range_predicate(attribute, body, subject=subject)
+    elif tag in _NESTED_MEMBERSHIP_TAGS:
+        for value in body.get("values", []):
+            decode_typed_literal(value, attribute.get("type"), label)
+    elif tag in _NESTED_STRING_TAGS:
+        _check_string_predicate(attribute, body, subject=subject)
+    else:
+        _check_null_check(attribute, body["path"])
 
 
 def _check_null_check(attribute: dict[str, Any], subject: str) -> None:
@@ -231,12 +244,6 @@ def _check_range_predicate(
         body.get("upper"), attribute.get("type"), f"{subject!r} upper bound"
     )
     _check_bound_ordering(subject, lower, upper)
-
-
-def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
-    attribute = resolve_nested_ref(entity, body["path"])
-    for value in body.get("values", []):
-        decode_typed_literal(value, attribute.get("type"), repr(body["path"]))
 
 
 def _check_string_predicate(
@@ -272,27 +279,15 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
     if not isinstance(node, dict) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
-    if tag in _NESTED_COMPARISON_TAGS:
-        attribute = resolve_element_ref(value_object, body["path"])
-        decode_typed_literal(body.get("value"), attribute.get("type"), f"element {body['path']!r}")
-    elif tag == "nestedBetween":
-        _check_range_predicate(
-            resolve_element_ref(value_object, body["path"]),
+    if tag in _NESTED_LEAF_TAGS:
+        path = body["path"]
+        _check_nested_leaf(
+            tag,
             body,
-            subject=f"element {body['path']}",
+            resolve_element_ref(value_object, path),
+            subject=f"element {path}",
+            label=f"element {path!r}",
         )
-    elif tag in _NESTED_MEMBERSHIP_TAGS:
-        attribute = resolve_element_ref(value_object, body["path"])
-        for value in body.get("values", []):
-            decode_typed_literal(value, attribute.get("type"), f"element {body['path']!r}")
-    elif tag in _NESTED_STRING_TAGS:
-        _check_string_predicate(
-            resolve_element_ref(value_object, body["path"]),
-            body,
-            subject=f"element {body['path']}",
-        )
-    elif tag in ("nestedIsNull", "nestedIsNotNull"):
-        _check_null_check(resolve_element_ref(value_object, body["path"]), body["path"])
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk_element(value_object, operand)

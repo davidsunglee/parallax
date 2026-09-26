@@ -370,26 +370,8 @@ def _validate_buffered_write(
                 instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
             continue
-        entity_name = instruction.get("entity")
-        if not isinstance(entity_name, str):
-            continue  # the case schema owns the missing/malformed entity error
-        entity = _effective_entity(entity_defs, entity_name)
-        if entity is None:
-            errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
-            continue
-        unknown = undeclared_row_members(entity, instruction)
-        if unknown:
-            errors.append(
-                f"{entry_label}: keyed write row names {unknown} which are not "
-                f"attributes or value objects of {entity_name}"
-            )
-            continue
-        try:
-            validate_keyed_write(entity, instruction)
-        except RejectionError as exc:
-            errors.append(f"{entry_label}: {exc.detail}")
-            continue
-        if states_framework_marker(entity, instruction):
+        entity = _valid_keyed_entry_entity(instruction, entity_defs, entry_label, errors)
+        if entity is not None and states_framework_marker(entity, instruction):
             framework.append(position)
     if not framework:
         return
@@ -405,6 +387,37 @@ def _validate_buffered_write(
             f"{len(instructions)} entries. Such an entry states the framework's own bookkeeping "
             f"and is a choreography unit of its own, so it is the buffer's only entry"
         )
+
+
+def _valid_keyed_entry_entity(
+    instruction: dict[str, Any],
+    entity_defs: list[dict[str, Any]],
+    entry_label: str,
+    errors: list[str],
+) -> Entity | None:
+    """The Entity a keyed buffered entry writes once its members and its
+    instruction rules hold; ``None`` when they do not, or when the case schema
+    owns the entry's malformed Entity."""
+    entity_name = instruction.get("entity")
+    if not isinstance(entity_name, str):
+        return None  # the case schema owns the missing/malformed entity error
+    entity = _effective_entity(entity_defs, entity_name)
+    if entity is None:
+        errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
+        return None
+    unknown = undeclared_row_members(entity, instruction)
+    if unknown:
+        errors.append(
+            f"{entry_label}: keyed write row names {unknown} which are not "
+            f"attributes or value objects of {entity_name}"
+        )
+        return None
+    try:
+        validate_keyed_write(entity, instruction)
+    except RejectionError as exc:
+        errors.append(f"{entry_label}: {exc.detail}")
+        return None
+    return entity
 
 
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----
@@ -1137,16 +1150,20 @@ def _validate_case(
         for index, step in enumerate(when["scenario"]):
             if isinstance(step, dict):  # the case schema owns a malformed step
                 _validate_scenario_step(when["scenario"], index, step, scope, errors)
-    # A coherence case likewise carries read-step queries under
-    # `when.coherence[].objectQuery`.
     if isinstance(when.get("coherence"), list):
-        for index, step in enumerate(when["coherence"]):
-            if isinstance(step, dict) and "objectQuery" in step:
-                scope.check_object_query(
-                    step["objectQuery"], f"{scope.label} coherence[{index}].objectQuery", errors
-                )
+        _validate_coherence_queries(when["coherence"], scope, errors)
     if isinstance(case, dict):
         _validate_case_model_references(compatibility_root, case, scope, errors)
+
+
+def _validate_coherence_queries(coherence: list[Any], scope: _CaseScope, errors: list[str]) -> None:
+    """A coherence case's read-step queries, each under
+    ``when.coherence[].objectQuery``."""
+    for index, step in enumerate(coherence):
+        if isinstance(step, dict) and "objectQuery" in step:
+            scope.check_object_query(
+                step["objectQuery"], f"{scope.label} coherence[{index}].objectQuery", errors
+            )
 
 
 def _validate_case_edit(edit: dict[str, Any], scope: _CaseScope, errors: list[str]) -> None:

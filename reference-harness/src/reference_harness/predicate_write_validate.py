@@ -330,18 +330,25 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
                 ) from exc
             _assert_value_object_assignment(ref, value_object, assignment.get("value"))
             continue
-        if (
-            attribute.get("primaryKey")
-            or attribute.get("optimisticLocking")
-            or attribute.get("column") in temporal_columns
-        ):
-            raise PredicateWriteValidationError(
-                f"assignment {ref!r} targets a framework-owned attribute"
-            )
-        if not literal_matches_type(assignment.get("value"), attribute.get("type")):
-            raise PredicateWriteValidationError(
-                f"assignment {ref!r} value does not match declared type {attribute.get('type')!r}"
-            )
+        _assert_attribute_assignment(ref, attribute, assignment.get("value"), temporal_columns)
+
+
+def _assert_attribute_assignment(
+    ref: str, attribute: dict[str, Any], value: Any, temporal_columns: set[str]
+) -> None:
+    """Validate a scalar attribute assignment: user-owned, and typed as declared."""
+    if (
+        attribute.get("primaryKey")
+        or attribute.get("optimisticLocking")
+        or attribute.get("column") in temporal_columns
+    ):
+        raise PredicateWriteValidationError(
+            f"assignment {ref!r} targets a framework-owned attribute"
+        )
+    if not literal_matches_type(value, attribute.get("type")):
+        raise PredicateWriteValidationError(
+            f"assignment {ref!r} value does not match declared type {attribute.get('type')!r}"
+        )
 
 
 def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], value: Any) -> None:
