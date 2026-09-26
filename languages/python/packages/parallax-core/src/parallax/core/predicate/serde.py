@@ -473,12 +473,8 @@ def serialize(op: PredicateNode) -> dict[str, object]:
             return {"nestedExists": {"path": path, **_emit_where(where)}}
         case NestedNotExists(path=path, where=where):
             return {"nestedNotExists": {"path": path, **_emit_where(where)}}
-        case Navigate(rel=rel, op=inner):
-            return {"navigate": _emit_nav(rel, inner)}
-        case Exists(rel=rel, op=inner):
-            return {"exists": _emit_nav(rel, inner)}
-        case NotExists(rel=rel, op=inner):
-            return {"notExists": _emit_nav(rel, inner)}
+        case Navigate() | Exists() | NotExists():
+            return _emit_navigation(op)
 
 
 def _emit_attribute_leaf(
@@ -523,6 +519,16 @@ def _emit_combinator(op: And | Or | Not | Group) -> dict[str, object]:
             return {"not": {"operand": serialize(operand)}}
         case Group(operand=operand):
             return {"group": {"operand": serialize(operand)}}
+
+
+def _emit_navigation(op: Navigate | Exists | NotExists) -> dict[str, object]:
+    match op:
+        case Navigate(rel=rel, op=inner):
+            return {"navigate": _emit_nav(rel, inner)}
+        case Exists(rel=rel, op=inner):
+            return {"exists": _emit_nav(rel, inner)}
+        case NotExists(rel=rel, op=inner):
+            return {"notExists": _emit_nav(rel, inner)}
 
 
 def _emit_string_body(body: dict[str, object], case_insensitive: bool | None) -> dict[str, object]:

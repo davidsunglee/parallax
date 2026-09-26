@@ -233,66 +233,11 @@ def _document_layout(index: _CompilationIndex, root: EntityIdentity) -> Document
 
 
 def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
-    groups: list[_LayoutGroup] = []
-    for entity in index.entities:
-        view = index.views_by_identity[entity.identity]
-        strategy = view.strategy
-        if strategy is None:
-            if entity.declared_container is None:
-                continue
-            groups.append(
-                _LayoutGroup(
-                    table=entity.declared_container,
-                    mapping_owner=entity.identity,
-                    root=entity.identity,
-                    row_owners=(entity.identity,),
-                    attributes=tuple(entity.declared_attributes),
-                    value_objects=tuple(entity.declared_value_objects),
-                    tag_column=None,
-                    document=_document_layout(index, entity.identity),
-                )
-            )
-            continue
-        if isinstance(strategy, TablePerHierarchy):
-            if entity.identity != view.root:
-                continue
-            if entity.declared_container is None:
-                raise RuntimeError(
-                    f"TPH root {entity.identity.canonical!r} has no Table after validation"
-                )
-            attributes, value_objects = _family_members(index, view.root)
-            groups.append(
-                _LayoutGroup(
-                    table=entity.declared_container,
-                    mapping_owner=entity.identity,
-                    root=view.root,
-                    row_owners=tuple(view.concrete_subtypes),
-                    attributes=attributes,
-                    value_objects=value_objects,
-                    tag_column=Column(strategy.tag_column),
-                    document=_document_layout(index, view.root),
-                )
-            )
-            continue
-        if not isinstance(entity.inheritance, ConcreteSubtype):
-            continue
-        if entity.declared_container is None:
-            raise RuntimeError(
-                f"TPCS concrete {entity.identity.canonical!r} has no Table after validation"
-            )
-        groups.append(
-            _LayoutGroup(
-                table=entity.declared_container,
-                mapping_owner=entity.identity,
-                root=view.root,
-                row_owners=(entity.identity,),
-                attributes=tuple(view.applicable_attributes),
-                value_objects=tuple(view.applicable_value_objects),
-                tag_column=None,
-                document=_document_layout(index, view.root),
-            )
-        )
-    groups.sort(key=lambda group: group.mapping_owner.sort_key)
+    owned = (_owned_group(index, entity) for entity in index.entities)
+    groups = sorted(
+        (group for group in owned if group is not None),
+        key=lambda group: group.mapping_owner.sort_key,
+    )
     seen: set[Table] = set()
     for group in groups:
         if group.table in seen:
@@ -301,6 +246,64 @@ def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
             )
         seen.add(group.table)
     return tuple(groups)
+
+
+def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGroup | None:
+    """The Table mapping ``entity`` owns, or absence where it owns none.
+
+    A standalone Entity owns its declared Table, a table-per-hierarchy root owns
+    its family's shared one, and a table-per-concrete-subtype concrete owns its
+    own; no other family position owns a mapping.
+    """
+    view = index.views_by_identity[entity.identity]
+    strategy = view.strategy
+    if strategy is None:
+        if entity.declared_container is None:
+            return None
+        return _LayoutGroup(
+            table=entity.declared_container,
+            mapping_owner=entity.identity,
+            root=entity.identity,
+            row_owners=(entity.identity,),
+            attributes=tuple(entity.declared_attributes),
+            value_objects=tuple(entity.declared_value_objects),
+            tag_column=None,
+            document=_document_layout(index, entity.identity),
+        )
+    if isinstance(strategy, TablePerHierarchy):
+        if entity.identity != view.root:
+            return None
+        if entity.declared_container is None:
+            raise RuntimeError(
+                f"TPH root {entity.identity.canonical!r} has no Table after validation"
+            )
+        attributes, value_objects = _family_members(index, view.root)
+        return _LayoutGroup(
+            table=entity.declared_container,
+            mapping_owner=entity.identity,
+            root=view.root,
+            row_owners=tuple(view.concrete_subtypes),
+            attributes=attributes,
+            value_objects=value_objects,
+            tag_column=Column(strategy.tag_column),
+            document=_document_layout(index, view.root),
+        )
+    if not isinstance(entity.inheritance, ConcreteSubtype):
+        return None
+    if entity.declared_container is None:
+        raise RuntimeError(
+            f"TPCS concrete {entity.identity.canonical!r} has no Table after validation"
+        )
+    return _LayoutGroup(
+        table=entity.declared_container,
+        mapping_owner=entity.identity,
+        root=view.root,
+        row_owners=(entity.identity,),
+        attributes=tuple(view.applicable_attributes),
+        value_objects=tuple(view.applicable_value_objects),
+        tag_column=None,
+        document=_document_layout(index, view.root),
+    )
 
 
 def _temporal_designations(root: EntityMetadata) -> frozenset[AttributeIdentity]:

@@ -251,10 +251,28 @@ def _local_members(declaration: EntityDeclaration) -> Iterator[tuple[str, ModelL
     for relationship in declaration.relationships:
         yield relationship.identity.name, RelationshipLocation(relationship.identity)
     for occurrence in declaration.value_objects:
-        yield (
-            occurrence.name,
-            ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
-        )
+        yield occurrence.name, _occurrence_location(declaration, occurrence.name)
+
+
+def _rendered_keys(
+    declarations: Sequence[EntityDeclaration], *, family_root: EntityIdentity | None
+) -> Iterator[tuple[str, ModelLocation]]:
+    """Every field key one rendered node claims, in the order it claims them."""
+    if family_root is not None:
+        yield "familyVariant", EntityLocation(family_root)
+    for declaration in declarations:
+        for attribute in declaration.attributes:
+            yield attribute.storage.name, AttributeLocation(attribute.identity)
+    for declaration in declarations:
+        for occurrence in declaration.value_objects:
+            yield occurrence.name, _occurrence_location(declaration, occurrence.name)
+    for declaration in declarations:
+        for relationship in declaration.relationships:
+            yield relationship.identity.name, RelationshipLocation(relationship.identity)
+
+
+def _occurrence_location(declaration: EntityDeclaration, name: str) -> ValueObjectLocation:
+    return ValueObjectLocation(ValueObjectIdentity(declaration.identity, (name,)))
 
 
 def _materialization_key_issues(
@@ -270,12 +288,11 @@ def _materialization_key_issues(
     """
     claimed: dict[str, ModelLocation] = {}
     issues: list[MetamodelIssue] = []
-
-    def claim(key: str, location: ModelLocation) -> None:
+    for key, location in _rendered_keys(declarations, family_root=family_root):
         existing = claimed.get(key)
         if existing is None:
             claimed[key] = location
-            return
+            continue
         issues.append(
             MetamodelIssue(
                 MATERIALIZATION_KEY_COLLISION,
@@ -285,23 +302,10 @@ def _materialization_key_issues(
             )
         )
 
-    if family_root is not None:
-        claim("familyVariant", EntityLocation(family_root))
     attributes = [attribute for declaration in declarations for attribute in declaration.attributes]
     relationships = [
         relationship for declaration in declarations for relationship in declaration.relationships
     ]
-    for attribute in attributes:
-        claim(attribute.storage.name, AttributeLocation(attribute.identity))
-    for declaration in declarations:
-        for occurrence in declaration.value_objects:
-            claim(
-                occurrence.name,
-                ValueObjectLocation(ValueObjectIdentity(declaration.identity, (occurrence.name,))),
-            )
-    for relationship in relationships:
-        claim(relationship.identity.name, RelationshipLocation(relationship.identity))
-
     for attribute in attributes:
         for relationship in relationships:
             prefix = f"{relationship.identity.name}["
@@ -561,16 +565,30 @@ def _family_issues(
             return _concrete_subtype_issues(root, members)
 
 
+type _IssueKey = tuple[ModelLocation, tuple[ModelLocation, ...]]
+
+
+def _record_materialization_issues(
+    recorded: dict[_IssueKey, MetamodelIssue],
+    declarations: Sequence[EntityDeclaration],
+    *,
+    family_root: EntityIdentity | None,
+) -> None:
+    """Record one rendered node's key collisions, once per location and related set.
+
+    A collision among shared ancestors recurs under every concrete descendant
+    whose chain they head, and is one defect.
+    """
+    for issue in _materialization_key_issues(declarations, family_root=family_root):
+        recorded.setdefault((issue.location, issue.related), issue)
+
+
 def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
     """Every family or materialization-key defect, reported rather than the first."""
-    materialization_issues: dict[
-        tuple[ModelLocation, tuple[ModelLocation, ...]], MetamodelIssue
-    ] = {}
+    materialization_issues: dict[_IssueKey, MetamodelIssue] = {}
     for declaration in candidate.entities:
-        if declaration.inheritance is not None:
-            continue
-        for issue in _materialization_key_issues((declaration,), family_root=None):
-            materialization_issues.setdefault((issue.location, issue.related), issue)
+        if declaration.inheritance is None:
+            _record_materialization_issues(materialization_issues, (declaration,), family_root=None)
 
     topology = project_topology(candidate)
     participants = topology.participants
@@ -598,8 +616,9 @@ def validate_inheritance(candidate: CandidateMetamodel) -> tuple[MetamodelIssue,
             issues.append(leaf)
         if isinstance(participant.inheritance, ConcreteSubtype):
             declarations = tuple(participants[identity].declaration for identity in chain)
-            for issue in _materialization_key_issues(declarations, family_root=chain[0]):
-                materialization_issues.setdefault((issue.location, issue.related), issue)
+            _record_materialization_issues(
+                materialization_issues, declarations, family_root=chain[0]
+            )
     for family in topology.families:
         missing_concrete = _missing_concrete_issue(family.root, family.members)
         if missing_concrete is not None:
