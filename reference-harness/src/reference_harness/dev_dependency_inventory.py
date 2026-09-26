@@ -8,8 +8,9 @@ still needed, so every development dependency is classified here from what its
 installed distribution provides, matched against what the repository does with
 it:
 
-- ``imported`` — one of its top-level modules is imported by a Python source
-  under the project;
+- ``imported`` — one of its top-level modules is imported by a Python source or
+  stub under the project, by an import statement or by a string literal passed
+  to ``import_module`` or ``__import__``;
 - ``invoked`` — one of its executables, or ``python -m`` one of its modules, is
   run through ``uv run`` against the project by a ``justfile`` recipe or a
   ``.github/workflows`` step;
@@ -59,6 +60,7 @@ _JUST_LINE_PREFIXES = "@-"
 _WORKFLOWS = Path(".github") / "workflows"
 _WORKFLOW_SUFFIXES = (".yml", ".yaml")
 _STUBS_SUFFIX = "-stubs"
+_IMPORT_FUNCTIONS = frozenset({"import_module", "__import__"})
 _SCRIPT_ENTRY_POINT_GROUPS = frozenset({"console_scripts", "gui_scripts"})
 _SCRIPT_DIRECTORIES = frozenset({"bin", "Scripts"})
 _SHELL_SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
@@ -214,17 +216,38 @@ def _python_sources(project: Path) -> Iterator[Path]:
             name for name in subdirectories if not name.startswith(".") and name != "__pycache__"
         )
         for name in sorted(files):
-            if name.endswith(".py"):
+            if name.endswith((".py", ".pyi")):
                 yield Path(directory, name)
 
 
 def _top_level_imports(tree: ast.AST) -> Iterator[str]:
+    """Each top-level module *tree* imports, counting an absolute module name
+    passed as a string literal to ``import_module`` or ``__import__``."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield alias.name.partition(".")[0]
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             yield node.module.partition(".")[0]
+        elif isinstance(node, ast.Call) and (literal := _literal_import(node)) is not None:
+            yield literal.partition(".")[0]
+
+
+def _literal_import(call: ast.Call) -> str | None:
+    function = call.func
+    if isinstance(function, ast.Attribute):
+        name = function.attr
+    elif isinstance(function, ast.Name):
+        name = function.id
+    else:
+        return None
+    if name not in _IMPORT_FUNCTIONS or not call.args:
+        return None
+    match call.args[0]:
+        case ast.Constant(value=str(module)) if module and not module.startswith("."):
+            return module
+        case _:
+            return None
 
 
 def _imported_modules(project: Path) -> dict[str, str]:

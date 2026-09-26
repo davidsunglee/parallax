@@ -143,6 +143,25 @@ def test_a_module_imported_by_a_test_classifies_its_distribution(tree: _Tree) ->
     assert _evidence(inventory, "helper-lib") == {"imported"}
 
 
+@pytest.mark.parametrize(
+    ("relative", "text"),
+    [
+        ("tests/test_plugin.py", "import importlib\nimportlib.import_module('plugin_lib.hooks')\n"),
+        ("tests/test_plugin.py", "__import__('plugin_lib')\n"),
+        ("src/typed.pyi", "from plugin_lib import Hook\n"),
+    ],
+    ids=["import-module", "dunder-import", "stub-file"],
+)
+def test_a_literal_dynamic_import_or_a_stub_import_classifies_its_distribution(
+    tree: _Tree, relative: str, text: str
+) -> None:
+    tree.declare("plugin-lib")
+    tree.install("plugin-lib", ["plugin_lib/__init__.py"])
+    tree.source(relative, text)
+
+    assert _evidence(tree.audit(), "plugin-lib") == {"imported"}
+
+
 def test_a_console_script_run_by_a_recipe_is_invoked(tree: _Tree) -> None:
     tree.declare("cli-tool")
     tree.install("cli-tool", ["cli_tool/__init__.py"], console_scripts=["cli-tool"])

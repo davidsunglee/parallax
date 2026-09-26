@@ -9,11 +9,12 @@ for it. Third-party requirements are not this check's concern.
 
 The contract, per member:
 
-* **Every static import counts.** An import under ``TYPE_CHECKING`` or inside a
-  function body needs its sibling as much as a module-level one: every
-  distribution ships ``py.typed``, so a consumer's type checker resolves the
-  published annotations, and runtime introspection of them does too. Dynamic
-  imports by string are not seen.
+* **Every import counts.** An import under ``TYPE_CHECKING``, inside a function
+  body, or in a ``.pyi`` stub needs its sibling as much as a module-level one:
+  every distribution ships ``py.typed``, so a consumer's type checker resolves
+  the published annotations, and runtime introspection of them does too. A
+  literal module name given to ``import_module`` or ``__import__`` is an import
+  as well; a computed one cannot be seen.
 * **An extra gates the slice it names.** An extra ``<name>`` covers exactly the
   ``parallax.<scope>.<name>`` module or package. An import made only inside
   that slice is satisfied by the extra's requirements, and any import outside
