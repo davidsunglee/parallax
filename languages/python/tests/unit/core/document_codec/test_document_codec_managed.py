@@ -55,6 +55,7 @@ from parallax.core.document_codec._authoring import (
 from parallax.core.document_codec._managed import EffectiveChangeSet
 from parallax.core.metamodel import DocumentMember, Multiplicity
 from parallax.core.unit_work import EntityStateRow
+from tests.unit._positional_row_support import positional_row
 
 _GEO = MemberShape(members=(Leaf("lat", STRING, True),))
 _ZONE = MemberShape(members=(Leaf("label", STRING, True),))
@@ -437,22 +438,7 @@ class _Selected:
 
 
 def _row(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
-    """``members`` positional over ``shape``, a name it omits held as ``_ABSENT``."""
-    return tuple(
-        _cell(member, members[member.name]) if member.name in members else _ABSENT
-        for member in shape.members
-    )
-
-
-def _cell(member: DocumentMember, value: object) -> object:
-    if isinstance(member, Leaf) or value is None or value is _ABSENT:
-        return value
-    if member.multiplicity is Multiplicity.MANY:
-        return tuple(
-            _row(member.shape, cast("Mapping[str, object]", item))
-            for item in cast("Sequence[object]", value)
-        )
-    return _row(member.shape, cast("Mapping[str, object]", value))
+    return positional_row(shape, members, absent=_ABSENT)
 
 
 def _classified(

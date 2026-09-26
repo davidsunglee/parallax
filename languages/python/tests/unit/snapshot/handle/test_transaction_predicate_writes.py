@@ -61,7 +61,6 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
-    Leaf,
     MemberShape,
     PreparedEffectiveChange,
     prepare_effective_change,
@@ -75,7 +74,6 @@ from parallax.core.execution_lifecycle import (
     ReadFailed,
     ReadFinished,
 )
-from parallax.core.metamodel import DocumentMember, Multiplicity
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
@@ -116,6 +114,7 @@ from tests._support.root_ownership import own_root
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
+from tests.unit._positional_row_support import positional_row
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -1488,27 +1487,6 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
-def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
-    """``members`` as the positional row a resolving read materializes over
-    ``shape``: a member it does not name is the absent marker, and each
-    occurrence is positional over its own shape."""
-    return tuple(
-        _positional_cell(member, members[member.name]) if member.name in members else ABSENT
-        for member in shape.members
-    )
-
-
-def _positional_cell(member: DocumentMember, value: object) -> object:
-    if isinstance(member, Leaf) or value is None:
-        return value
-    if member.multiplicity is Multiplicity.MANY:
-        return tuple(
-            _positional(member.shape, cast("Mapping[str, object]", element))
-            for element in cast("Sequence[object]", value)
-        )
-    return _positional(member.shape, cast("Mapping[str, object]", value))
-
-
 def _managed_subscriber_shape() -> MemberShape:
     meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
     entity = next(
@@ -1546,10 +1524,12 @@ def test_an_encoded_occurrence_assignment_is_compared_as_the_managed_document_a_
         "token": UUID("12345678-1234-5678-1234-567812345678"),
     }
     shape = _managed_subscriber_shape()
-    row = _positional(shape, {"details": managed, "entries": [managed]})
+    row = positional_row(shape, {"details": managed, "entries": [managed]}, absent=ABSENT)
 
     assert _no_op(shape, {"details": encoded, "entries": [encoded]}, row)
-    changed = _positional(shape, {"details": {**managed, "amount": Decimal("19.96")}})
+    changed = positional_row(
+        shape, {"details": {**managed, "amount": Decimal("19.96")}}, absent=ABSENT
+    )
     assert not _no_op(shape, {"details": encoded}, changed)
 
 
@@ -1563,13 +1543,13 @@ def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds()
     # compared rather than refused, and the assignment correcting it is a change.
     shape = _managed_subscriber_shape()
     stored = {"amount": Decimal("19.95"), "day": dt.date(2026, 8, 13), "payload": b"\x0a\x1b"}
-    row = _positional(shape, stored)
+    row = positional_row(shape, stored, absent=ABSENT)
 
     assert _no_op(shape, stored, row)
     assert not _no_op(shape, {"payload": b"\x0a\x1c"}, row)
     assert not _no_op(shape, {"day": dt.date(2026, 8, 14)}, row)
 
-    out_of_scale = _positional(shape, {"amount": Decimal("19.9501")})
+    out_of_scale = positional_row(shape, {"amount": Decimal("19.9501")}, absent=ABSENT)
     assert not _no_op(shape, {"amount": Decimal("19.95")}, out_of_scale)
 
 
@@ -1583,12 +1563,13 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
     model = document_model()
     person = document_layout_entity(model, "Person")
     shape = comparison_shape(model, person)
-    row = _positional(
+    row = positional_row(
         shape,
         {
             "address": {"city": "Bergen", "geo": {"country": "NO"}},
             "tags": [{"label": "founder"}],
         },
+        absent=ABSENT,
     )
 
     assert _no_op(

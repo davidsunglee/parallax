@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
 
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
-from parallax.core.metamodel import EntityIdentity, Leaf, MemberShape, Metamodel, Multiplicity
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
@@ -16,6 +15,7 @@ from parallax.snapshot.handle._retention import (
     ReadSources,
     deferred_read_sources,
 )
+from tests.unit._positional_row_support import positional_row
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,24 +87,4 @@ def _member_row(layout: EntityLayout, columns: Mapping[str, object]) -> tuple[ob
         )
         if binding.storage.name in columns
     }
-    return _positional(layout.member_selection.shape, by_declared_name)
-
-
-def _positional(shape: MemberShape, document: Mapping[str, object]) -> tuple[object, ...]:
-    """``document`` as a Page holds it: one slot per canonical member, absent where
-    the document carries no key, nested occurrences positional in turn."""
-    row: list[object] = []
-    for member in shape.members:
-        value = document.get(member.name, ABSENT)
-        if isinstance(member, Leaf) or value is None or value is ABSENT:
-            row.append(value)
-        elif member.multiplicity is Multiplicity.MANY:
-            row.append(
-                tuple(
-                    _positional(member.shape, cast("Mapping[str, object]", element))
-                    for element in cast("Sequence[object]", value)
-                )
-            )
-        else:
-            row.append(_positional(member.shape, cast("Mapping[str, object]", value)))
-    return tuple(row)
+    return positional_row(layout.member_selection.shape, by_declared_name, absent=ABSENT)
