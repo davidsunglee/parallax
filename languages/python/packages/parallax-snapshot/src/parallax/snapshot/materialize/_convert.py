@@ -401,14 +401,52 @@ def _decode_row(
             )
         )
     members: list[object] | None = None
-    reads = level.attribute_reads
-    host_checked = level.host_checked_set
     identity_positions = level.identity_positions
     for position, value in zip(identity_positions, identity_values, strict=True):
         if value is not raw_values[position]:
             if members is None:
                 members = list(raw_values)
             members[position] = value
+    if level.attribute_judgment_positions:
+        members = _judge_attributes(raw_values, level, classified_members, issues, members)
+    for occurrence_position, (occurrence, projected) in enumerate(
+        zip(layout.occurrences, level.projected_by_position, strict=True),
+        start=layout.attribute_count,
+    ):
+        if not projected:
+            continue
+        raw = raw_values[occurrence_position]
+        if raw is ABSENT:
+            continue
+        value, occurrence_findings = _occurrence(
+            raw,
+            occurrence,
+            outer_classified=occurrence.storage.name in classified_members,
+        )
+        issues.extend(
+            _occurrence_issue(finding, occurrence, level.concrete_entity)
+            for finding in occurrence_findings
+        )
+        if value is not raw_values[occurrence_position]:
+            if members is None:
+                members = list(raw_values)
+            members[occurrence_position] = value
+    return raw_values if members is None else tuple(members), tuple(issues)
+
+
+def _judge_attributes(
+    raw_values: tuple[object, ...],
+    level: LevelContext,
+    classified_members: frozenset[str],
+    issues: list[StoredDataIssueInput],
+    members: list[object] | None,
+) -> list[object] | None:
+    """Judge each stored scalar the level judges, appending its issues and
+    answering ``members`` with every replaced value written into it, copied from
+    ``raw_values`` on the first replacement."""
+    layout = level.layout
+    reads = level.attribute_reads
+    host_checked = level.host_checked_set
     for position in level.attribute_judgment_positions:
         attribute = layout.attributes[position]
         contract = reads[position] if reads else None
@@ -452,29 +490,7 @@ def _decode_row(
             if members is None:
                 members = list(raw_values)
             members[position] = value
-    for occurrence_position, (occurrence, projected) in enumerate(
-        zip(layout.occurrences, level.projected_by_position, strict=True),
-        start=layout.attribute_count,
-    ):
-        if not projected:
-            continue
-        raw = raw_values[occurrence_position]
-        if raw is ABSENT:
-            continue
-        value, occurrence_findings = _occurrence(
-            raw,
-            occurrence,
-            outer_classified=occurrence.storage.name in classified_members,
-        )
-        issues.extend(
-            _occurrence_issue(finding, occurrence, level.concrete_entity)
-            for finding in occurrence_findings
-        )
-        if value is not raw_values[occurrence_position]:
-            if members is None:
-                members = list(raw_values)
-            members[occurrence_position] = value
-    return raw_values if members is None else tuple(members), tuple(issues)
+    return members
 
 
 def _attribute_issue(

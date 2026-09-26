@@ -99,32 +99,7 @@ class RootView:
         self._layouts: list[EntityLayout] = []
         self._states: list[EntityState] = []
         self._view_layouts: list[RootViewLayout] = []
-        if root_position is not None:
-            root = rows.roots[root_position]
-            if rows.keys[root] is None and any(
-                issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
-            ):
-                invalid_entries: Sequence[tuple[int, int]] = ((root_position, root),)
-                root_indices: Sequence[int | None] = (None,)
-                valid_roots: Sequence[int] = ()
-            else:
-                invalid_entries = ()
-                root_indices = (root,)
-                valid_roots = (root,)
-        else:
-            invalid_entries = []
-            root_indices = []
-            valid_roots = []
-            for ordinal, root in enumerate(rows.roots):
-                if rows.keys[root] is None and any(
-                    issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
-                ):
-                    invalid_entries.append((ordinal, root))
-                    root_indices.append(None)
-                else:
-                    valid_roots.append(root)
-                    root_indices.append(root)
-
+        invalid_entries, root_indices, valid_roots = _partition_roots(rows, root_position)
         reached: set[int] | None = set() if len(valid_roots) > 1 else None
         single_reached: tuple[int, ...] = ()
         winners: list[list[object] | None] = []
@@ -139,83 +114,9 @@ class RootView:
                 len(reachable) == 1
                 or len({rows.logical_ids[projection] for projection in reachable}) == len(reachable)
             ):
-                for projection in reachable:
-                    state = None if defer_states else self._state(projection)
-                    index = len(self._winner)
-                    self._winner.append(projection)
-                    self._layouts.append(rows.layouts[projection])
-                    if state is not None:
-                        self._states.append(state)
-                    root_view_layout = rows.schema.root_view(rows.layouts[projection])
-                    self._view_layouts.append(root_view_layout)
-                    carried_views: list[object] | None = (
-                        [cast("object", ABSENT)] * len(root_view_layout.slots)
-                        if root_view_layout.slots
-                        else None
-                    )
-                    winners.append(carried_views)
-                    self._resolved[projection] = index
-                for projection in reachable:
-                    index = self._resolved[projection]
-                    values = rows.view_rows[projection]
-                    carried_views = winners[index]
-                    if carried_views is None:
-                        continue
-                    to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
-                    for slot, value in enumerate(values):
-                        root_view_slot = to_root_view[slot]
-                        if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                            carried_views[root_view_slot] = value
-                continue
-            local_claims: dict[int, int | list[int]] = {}
-            for projection in reachable:
-                logical = rows.logical_ids[projection]
-                claimed = local_claims.get(logical)
-                if claimed is None:
-                    local_claims[logical] = projection
-                    continue
-                if isinstance(claimed, int):
-                    local_claims[logical] = [claimed, projection]
-                else:
-                    claimed.append(projection)
-            canonical_by_logical = {
-                logical: claimed if isinstance(claimed, int) else self._canonical(claimed)
-                for logical, claimed in local_claims.items()
-            }
-            root_states: dict[int, tuple[int, int]] = {}
-            for logical, winner in canonical_by_logical.items():
-                state = None if defer_states else self._state(winner)
-                index = None if state is None or state_nodes is None else state_nodes.get(id(state))
-                if index is None:
-                    index = len(self._winner)
-                    if state is not None and state_nodes is not None:
-                        state_nodes[id(state)] = index
-                    self._winner.append(winner)
-                    self._layouts.append(rows.layouts[winner])
-                    if state is not None:
-                        self._states.append(state)
-                    root_view_layout = rows.schema.root_view(rows.layouts[winner])
-                    self._view_layouts.append(root_view_layout)
-                    carried_views = (
-                        [cast("object", ABSENT)] * len(root_view_layout.slots)
-                        if root_view_layout.slots
-                        else None
-                    )
-                    winners.append(carried_views)
-                root_states[logical] = winner, index
-            for projection in reachable:
-                logical = rows.logical_ids[projection]
-                _winner, index = root_states[logical]
-                self._resolved[projection] = index
-                values = rows.view_rows[projection]
-                carried_views = winners[index]
-                if carried_views is None:
-                    continue
-                to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
-                for slot, value in enumerate(values):
-                    root_view_slot = to_root_view[slot]
-                    if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
-                        carried_views[root_view_slot] = value
+                self._allocate_distinct(rows, reachable, winners, defer_states)
+            else:
+                self._allocate_claimed(rows, reachable, winners, state_nodes, defer_states)
 
         self._pending_invalid = tuple(invalid_entries)
         self._invalid_roots = ()
@@ -406,6 +307,105 @@ class RootView:
         """
         return self._view_rows[node][slot]
 
+    def _allocate_distinct(
+        self,
+        rows: PageRows,
+        reachable: tuple[int, ...],
+        winners: list[list[object] | None],
+        defer_states: bool,
+    ) -> None:
+        """Allocate one node per reached projection, each the only claimant of
+        its logical occurrence, and carry its view values into that node."""
+        for projection in reachable:
+            state = None if defer_states else self._state(projection)
+            index = len(self._winner)
+            self._winner.append(projection)
+            self._layouts.append(rows.layouts[projection])
+            if state is not None:
+                self._states.append(state)
+            root_view_layout = rows.schema.root_view(rows.layouts[projection])
+            self._view_layouts.append(root_view_layout)
+            carried_views: list[object] | None = (
+                [cast("object", ABSENT)] * len(root_view_layout.slots)
+                if root_view_layout.slots
+                else None
+            )
+            winners.append(carried_views)
+            self._resolved[projection] = index
+        for projection in reachable:
+            index = self._resolved[projection]
+            values = rows.view_rows[projection]
+            carried_views = winners[index]
+            if carried_views is None:
+                continue
+            to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+            for slot, value in enumerate(values):
+                root_view_slot = to_root_view[slot]
+                if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
+                    carried_views[root_view_slot] = value
+
+    def _allocate_claimed(
+        self,
+        rows: PageRows,
+        reachable: tuple[int, ...],
+        winners: list[list[object] | None],
+        state_nodes: dict[int, int] | None,
+        defer_states: bool,
+    ) -> None:
+        """Allocate one node per logical occurrence the reached projections
+        claim, won by its canonical claimant, reusing the node another root
+        already allocated for the same judged state, and carry every claimant's
+        view values into that node."""
+        local_claims: dict[int, int | list[int]] = {}
+        for projection in reachable:
+            logical = rows.logical_ids[projection]
+            claimed = local_claims.get(logical)
+            if claimed is None:
+                local_claims[logical] = projection
+                continue
+            if isinstance(claimed, int):
+                local_claims[logical] = [claimed, projection]
+            else:
+                claimed.append(projection)
+        canonical_by_logical = {
+            logical: claimed if isinstance(claimed, int) else self._canonical(claimed)
+            for logical, claimed in local_claims.items()
+        }
+        root_states: dict[int, tuple[int, int]] = {}
+        for logical, winner in canonical_by_logical.items():
+            state = None if defer_states else self._state(winner)
+            index = None if state is None or state_nodes is None else state_nodes.get(id(state))
+            if index is None:
+                index = len(self._winner)
+                if state is not None and state_nodes is not None:
+                    state_nodes[id(state)] = index
+                self._winner.append(winner)
+                self._layouts.append(rows.layouts[winner])
+                if state is not None:
+                    self._states.append(state)
+                root_view_layout = rows.schema.root_view(rows.layouts[winner])
+                self._view_layouts.append(root_view_layout)
+                carried_views = (
+                    [cast("object", ABSENT)] * len(root_view_layout.slots)
+                    if root_view_layout.slots
+                    else None
+                )
+                winners.append(carried_views)
+            root_states[logical] = winner, index
+        for projection in reachable:
+            logical = rows.logical_ids[projection]
+            _winner, index = root_states[logical]
+            self._resolved[projection] = index
+            values = rows.view_rows[projection]
+            carried_views = winners[index]
+            if carried_views is None:
+                continue
+            to_root_view = self._view_layouts[index].to_root_view[rows.sources[projection]]
+            for slot, value in enumerate(values):
+                root_view_slot = to_root_view[slot]
+                if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
+                    carried_views[root_view_slot] = value
+
     def _reachable(self, roots: list[int]) -> tuple[int, ...]:
         """Projection preorder from the roots through every reached logical
         occurrence."""
@@ -572,6 +572,34 @@ def _member_order(
         member.value_object.path,
         member.name,
     )
+
+
+def _partition_roots(
+    rows: PageRows, root_position: int | None
+) -> tuple[Sequence[tuple[int, int]], Sequence[int | None], Sequence[int]]:
+    """The requested roots split into those whose stored primary key could not
+    be read, as (ordinal, projection) entries, and the valid ones, beside every
+    requested root's projection in order with ``None`` for an invalid one."""
+    if root_position is not None:
+        root = rows.roots[root_position]
+        if rows.keys[root] is None and any(
+            issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
+        ):
+            return ((root_position, root),), (None,), ()
+        return (), (root,), (root,)
+    invalid_entries: list[tuple[int, int]] = []
+    root_indices: list[int | None] = []
+    valid_roots: list[int] = []
+    for ordinal, root in enumerate(rows.roots):
+        if rows.keys[root] is None and any(
+            issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
+        ):
+            invalid_entries.append((ordinal, root))
+            root_indices.append(None)
+        else:
+            valid_roots.append(root)
+            root_indices.append(root)
+    return invalid_entries, root_indices, valid_roots
 
 
 def _notify(observer: object | None, name: str, *args: object) -> None:
