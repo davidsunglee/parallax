@@ -570,6 +570,19 @@ def _check_scheduling_guard(
 def _check_repository_aggregates(repository: _Repository) -> Iterator[Diagnostic]:
     """§7's repository level: one aggregate per class over the scopes, and one
     complete aggregate over the classes."""
+    yield from _check_class_aggregates(repository)
+    for name in (MERGE_AGGREGATE, COMPLETE_AGGREGATE):
+        if not repository.declares(name):
+            yield Diagnostic(
+                "missing-aggregate",
+                f"the repository exposes no `{name}` aggregate over its scheduling classes",
+            )
+            return
+    yield from _check_top_level_aggregates(repository)
+    yield from _check_class_aggregate_overlap(repository)
+
+
+def _check_class_aggregates(repository: _Repository) -> Iterator[Diagnostic]:
     graph = repository.graph
     missing = [
         scheduling_class
@@ -582,58 +595,55 @@ def _check_repository_aggregates(repository: _Repository) -> Iterator[Diagnostic
             f"the repository declares the scheduling class `{scheduling_class}` but no "
             f"`check-{scheduling_class}` aggregate over the scopes that run it",
         )
-    present = [
-        scheduling_class
-        for scheduling_class in repository.scheduling_classes
-        if scheduling_class not in missing
-    ]
     composed = {
         scheduling_class: set(graph.recipe(f"check-{scheduling_class}").dependencies)
-        for scheduling_class in present
+        for scheduling_class in repository.scheduling_classes
+        if scheduling_class not in missing
     }
     for scope in repository.scopes:
-        classes = repository.scope_classes(scope)
-        for scheduling_class in classes:
-            aggregate = f"{scope}-check-{scheduling_class}"
-            if (
-                scheduling_class in composed
-                and repository.declares(aggregate)
-                and aggregate not in composed[scheduling_class]
-            ):
-                yield Diagnostic(
-                    "incomplete-aggregate",
-                    f"`check-{scheduling_class}` does not compose `{aggregate}`, so it gates "
-                    f"less than its name claims",
-                )
-        # A scope with no class of its own belongs to exactly one class aggregate:
-        # omitted it is ungated, and composed twice it runs once per CI lane.
-        if classes or not repository.declares(f"{scope}-check"):
-            continue
-        carriers = [
-            scheduling_class
-            for scheduling_class in present
-            if f"{scope}-check" in composed[scheduling_class]
-        ]
-        if len(carriers) != 1:
-            yield Diagnostic(
-                "ambiguous-class-ownership",
-                f"`{scope}-check` declares no scheduling class and is composed by "
-                f"{len(carriers)} class aggregate(s); exactly one must run it",
-            )
+        yield from _check_scope_class_ownership(repository, scope, composed)
 
-    for name in (MERGE_AGGREGATE, COMPLETE_AGGREGATE):
-        if not repository.declares(name):
+
+def _check_scope_class_ownership(
+    repository: _Repository, scope: str, composed: Mapping[str, set[str]]
+) -> Iterator[Diagnostic]:
+    classes = repository.scope_classes(scope)
+    for scheduling_class in classes:
+        aggregate = f"{scope}-check-{scheduling_class}"
+        if (
+            scheduling_class in composed
+            and repository.declares(aggregate)
+            and aggregate not in composed[scheduling_class]
+        ):
             yield Diagnostic(
-                "missing-aggregate",
-                f"the repository exposes no `{name}` aggregate over its scheduling classes",
+                "incomplete-aggregate",
+                f"`check-{scheduling_class}` does not compose `{aggregate}`, so it gates "
+                f"less than its name claims",
             )
-            return
+    # A scope with no class of its own belongs to exactly one class aggregate:
+    # omitted it is ungated, and composed twice it runs once per CI lane.
+    if classes or not repository.declares(f"{scope}-check"):
+        return
+    carriers = [
+        scheduling_class
+        for scheduling_class, dependencies in composed.items()
+        if f"{scope}-check" in dependencies
+    ]
+    if len(carriers) != 1:
+        yield Diagnostic(
+            "ambiguous-class-ownership",
+            f"`{scope}-check` declares no scheduling class and is composed by "
+            f"{len(carriers)} class aggregate(s); exactly one must run it",
+        )
+
+
+def _check_top_level_aggregates(repository: _Repository) -> Iterator[Diagnostic]:
     # Both are read through the closure rather than the direct dependencies: §7
     # fixes what each must reach, not the shape of the composition reaching it,
     # and the complete aggregate reaches most of its classes through the merge
     # gate it composes.
-    complete = {recipe.name for recipe in graph.closure(COMPLETE_AGGREGATE)}
-    merge = {recipe.name for recipe in graph.closure(MERGE_AGGREGATE)}
+    complete = {recipe.name for recipe in repository.graph.closure(COMPLETE_AGGREGATE)}
+    merge = {recipe.name for recipe in repository.graph.closure(MERGE_AGGREGATE)}
     for scheduling_class in repository.scheduling_classes:
         aggregate = f"check-{scheduling_class}"
         if not repository.declares(aggregate):
@@ -658,6 +668,8 @@ def _check_repository_aggregates(repository: _Repository) -> Iterator[Diagnostic
                 f"merge gate is what a reader runs after every change",
             )
 
+
+def _check_class_aggregate_overlap(repository: _Repository) -> Iterator[Diagnostic]:
     owners: dict[str, set[str]] = {}
     for scheduling_class in repository.scheduling_classes:
         aggregate = f"check-{scheduling_class}"
