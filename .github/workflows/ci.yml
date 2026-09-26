@@ -155,13 +155,7 @@ jobs:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just harness-check-db
 
-  # Every Python check that needs no live database on the latest CPython: ruff
-  # (lint + format check), Pyright strict, the generated import-linter
-  # forbidden-edge complement (DAG-sync check) + lint-imports, the database-free
-  # test selection + branch coverage + diff-cover, the database-access guard,
-  # dead-code scan, build + distribution metadata, the dependency-declaration
-  # audit, and the supply-chain audit.
-  # The previous CPython minor runs the database-free tests only. No Docker.
+  # Every Python check that needs no live database. No Docker.
   python-check-dbfree:
     runs-on: ubuntu-latest
     strategy:

@@ -127,6 +127,27 @@ def test_deptry_passes_a_declared_import_under_the_shared_module_map(tmp_path: P
     assert run_deptry(deptry_arguments(workspace, workspace.members[0])) == 0
 
 
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        'pep621_dev_dependency_groups = ["dev"]\noptional_dependencies_dev_groups = ["dev"]\n',
+        "unknown_option = true\n",
+    ],
+    ids=["conflicting-options", "unknown-option"],
+)
+def test_deptry_fails_a_member_whose_configuration_it_rejects(
+    tmp_path: Path, configuration: str
+) -> None:
+    workspace = _probe(tmp_path, ["pyyaml"])
+    manifest = workspace.members[0].directory / "pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + f"\n[tool.deptry]\n{configuration}",
+        encoding="utf-8",
+    )
+
+    assert run_deptry(deptry_arguments(workspace, workspace.members[0])) == 1
+
+
 @pytest.mark.parametrize(("failed", "status"), [([], 0), (["deptry parallax-core"], 1)])
 def test_main_exits_non_zero_exactly_when_a_part_failed(
     monkeypatch: pytest.MonkeyPatch,
