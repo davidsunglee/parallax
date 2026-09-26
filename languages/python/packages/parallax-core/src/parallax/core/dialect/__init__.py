@@ -545,7 +545,6 @@ class Dialect:
         return self.error_codes.get(code)
 
 
-# The column type of every Neutral Type whose spelling takes no parameter.
 _FIXED_COLUMN_TYPES: Final[Mapping[type, str]] = {
     Boolean: "boolean",
     Int32: "integer",

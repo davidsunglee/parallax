@@ -1302,7 +1302,6 @@ class _BodyMember(NamedTuple):
     canonical: str
 
 
-# The member annotations each declaration admits, and the refusal naming them.
 _ADMITTED_MEMBERS: Final[Mapping[DeclarationKind, tuple[frozenset[str], str]]] = {
     DeclarationKind.ENTITY: (
         frozenset({"attr", "rel"}),
