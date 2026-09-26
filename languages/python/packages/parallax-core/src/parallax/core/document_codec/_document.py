@@ -636,43 +636,31 @@ def reduce_declared_members(
     for member in shape.members:
         if preserve_presence and member.name not in source and not _is_many(member):
             continue
-        raw = source.get(member.name)
-        if isinstance(member, Leaf):
-            if raw is None:
-                reduced[member.name] = None
-            else:
-                try:
-                    reduced[member.name] = decode_leaf(member.type, raw)
-                except LeafEncodingError as exc:
-                    raise exc.under(member.name) from exc
-        elif member.multiplicity is Multiplicity.MANY:
-            if raw is None:
-                values: Sequence[object] = ()
-            elif isinstance(raw, (list, tuple)):
-                values = cast("Sequence[object]", raw)
-            else:
-                raise LeafEncodingError(
-                    f"expected array, got {type(raw).__name__}", path=(member.name,)
-                )
-            try:
-                reduced[member.name] = [
-                    reduce_declared_members(
-                        member.shape, value, preserve_presence=preserve_presence
-                    )
-                    for value in values
-                ]
-            except LeafEncodingError as exc:
-                raise exc.under(member.name) from exc
-        else:
-            try:
-                reduced[member.name] = reduce_declared_members(
-                    member.shape,
-                    cast("object", raw),
-                    preserve_presence=preserve_presence,
-                )
-            except LeafEncodingError as exc:
-                raise exc.under(member.name) from exc
+        try:
+            reduced[member.name] = _reduced_member(
+                member, source.get(member.name), preserve_presence=preserve_presence
+            )
+        except LeafEncodingError as exc:
+            raise exc.under(member.name) from exc
     return reduced
+
+
+def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence: bool) -> object:
+    """``raw`` reduced as ``member`` declares it, failing relative to the member."""
+    if isinstance(member, Leaf):
+        return None if raw is None else decode_leaf(member.type, raw)
+    if member.multiplicity is not Multiplicity.MANY:
+        return reduce_declared_members(member.shape, raw, preserve_presence=preserve_presence)
+    if raw is None:
+        values: Sequence[object] = ()
+    elif isinstance(raw, (list, tuple)):
+        values = cast("Sequence[object]", raw)
+    else:
+        raise LeafEncodingError(f"expected array, got {type(raw).__name__}")
+    return [
+        reduce_declared_members(member.shape, value, preserve_presence=preserve_presence)
+        for value in values
+    ]
 
 
 def _is_many(member: Leaf | Occurrence) -> bool:
