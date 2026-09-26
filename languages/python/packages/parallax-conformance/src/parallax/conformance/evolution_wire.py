@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Final, cast
+from typing import Any, Final, assert_never, cast
 
 from parallax.core.base import (
     Boolean,
@@ -315,42 +315,38 @@ def _scope(identity: object) -> dict[str, str]:
 
 def _operation(operation: EvolutionOperation) -> dict[str, Any]:
     match operation:
-        case EntityAdded() | EntityRemoved() | ConcreteSubtypeAdded() | ConcreteSubtypeRemoved():
-            return {"kind": type(operation).__name__, "entity": _entity(operation.entity)}
-        case EntityAltered():
-            return _altered(operation, "entity", _entity(operation.entity))
-        case AttributeAdded() | AttributeRemoved():
-            return {
-                "kind": type(operation).__name__,
-                "attribute": _attribute(operation.attribute),
-            }
-        case AttributeAltered():
-            return _altered(operation, "attribute", _attribute(operation.attribute))
-        case ValueObjectOccurrenceAdded() | ValueObjectOccurrenceRemoved():
-            return {
-                "kind": type(operation).__name__,
-                "valueObject": _value_object(operation.value_object),
-            }
-        case ValueObjectOccurrenceAltered():
-            return _altered(operation, "valueObject", _value_object(operation.value_object))
-        case ValueObjectAttributeAdded() | ValueObjectAttributeRemoved():
-            return {
-                "kind": type(operation).__name__,
-                "valueObjectAttribute": _value_object_attribute(operation.value_object_attribute),
-            }
-        case ValueObjectAttributeAltered():
-            return _altered(
+        case (
+            EntityAdded()
+            | EntityRemoved()
+            | EntityAltered()
+            | ConcreteSubtypeAdded()
+            | ConcreteSubtypeRemoved()
+        ):
+            return _subject_operation(operation, "entity", _entity(operation.entity))
+        case AttributeAdded() | AttributeRemoved() | AttributeAltered():
+            return _subject_operation(operation, "attribute", _attribute(operation.attribute))
+        case (
+            ValueObjectOccurrenceAdded()
+            | ValueObjectOccurrenceRemoved()
+            | ValueObjectOccurrenceAltered()
+        ):
+            return _subject_operation(
+                operation, "valueObject", _value_object(operation.value_object)
+            )
+        case (
+            ValueObjectAttributeAdded()
+            | ValueObjectAttributeRemoved()
+            | ValueObjectAttributeAltered()
+        ):
+            return _subject_operation(
                 operation,
                 "valueObjectAttribute",
                 _value_object_attribute(operation.value_object_attribute),
             )
-        case RelationshipAdded() | RelationshipRemoved():
-            return {
-                "kind": type(operation).__name__,
-                "relationship": _relationship(operation.relationship),
-            }
-        case RelationshipAltered():
-            return _altered(operation, "relationship", _relationship(operation.relationship))
+        case RelationshipAdded() | RelationshipRemoved() | RelationshipAltered():
+            return _subject_operation(
+                operation, "relationship", _relationship(operation.relationship)
+            )
         case AsOfAxisAdded() | AsOfAxisRemoved():
             return {
                 "kind": type(operation).__name__,
@@ -364,10 +360,8 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
                 "dimension": _DIMENSIONS[operation.dimension],
                 "deltas": [_delta(delta) for delta in operation.deltas],
             }
-        case IndexAdded() | IndexRemoved():
-            return {"kind": type(operation).__name__, "index": _index(operation.index)}
-        case IndexAltered():
-            return _altered(operation, "index", _index(operation.index))
+        case IndexAdded() | IndexRemoved() | IndexAltered():
+            return _subject_operation(operation, "index", _index(operation.index))
         case DeclarationOrderChanged():
             return {
                 "kind": type(operation).__name__,
@@ -380,12 +374,23 @@ def _operation(operation: EvolutionOperation) -> dict[str, Any]:
             }
 
 
-def _altered(operation: Any, member: str, spelling: str) -> dict[str, Any]:
-    return {
-        "kind": type(operation).__name__,
-        member: spelling,
-        "deltas": [_delta(delta) for delta in operation.deltas],
-    }
+_SUBJECT_ALTERATIONS: Final = (
+    EntityAltered,
+    AttributeAltered,
+    ValueObjectOccurrenceAltered,
+    ValueObjectAttributeAltered,
+    RelationshipAltered,
+    IndexAltered,
+)
+
+
+def _subject_operation(operation: EvolutionOperation, member: str, spelling: str) -> dict[str, Any]:
+    """An operation on one declaration: its kind and subject, and the deltas an
+    alteration carries."""
+    spelled: dict[str, Any] = {"kind": type(operation).__name__, member: spelling}
+    if isinstance(operation, _SUBJECT_ALTERATIONS):
+        spelled["deltas"] = [_delta(delta) for delta in operation.deltas]
+    return spelled
 
 
 def _delta(delta: Any) -> dict[str, Any]:
@@ -425,14 +430,62 @@ def _fact(value: object) -> Any:
             return value
         case tuple():
             return [_fact(item) for item in cast("tuple[object, ...]", value)]
-        case Table() | Column():
-            return value.name
         case EntityIdentity():
             return _entity(value)
         case AttributeIdentity():
             return _attribute(value)
         case RelationshipIdentity():
             return _relationship(value)
+        case (
+            Table()
+            | Column()
+            | Columns()
+            | Document()
+            | NotPrimaryKey()
+            | PrimaryKey()
+            | AbstractRoot()
+            | RelationshipJoin()
+            | RelationshipOrder()
+            | DefiningRelationshipDeclaration()
+            | ReverseRelationshipDeclaration()
+        ):
+            return _metamodel_fact(value)
+        case AbstractSubtype() | ConcreteSubtype():
+            return _descendant(cast("Inheritance[EntityIdentity]", value))
+        case (
+            UniqueTuple()
+            | ScalarAdmissibility()
+            | OccurrenceAdmissibility()
+            | LockingFallback()
+            | VersionGated()
+            | TransactionTimeGated()
+            | TemporalAxisFacts()
+            | EntitySelectionFacts()
+            | RelationshipSelectionFacts()
+            | WritesDisabled()
+            | WritesEnabled()
+        ):
+            return _impact_fact(value)
+        case _:
+            return _enumerated(value)
+
+
+def _metamodel_fact(
+    value: Table
+    | Column
+    | Columns
+    | Document
+    | NotPrimaryKey
+    | PrimaryKey
+    | AbstractRoot
+    | RelationshipJoin
+    | RelationshipOrder
+    | DefiningRelationshipDeclaration
+    | ReverseRelationshipDeclaration,
+) -> Any:
+    match value:
+        case Table() | Column():
+            return value.name
         case Columns():
             return "columns"
         case Document():
@@ -443,8 +496,6 @@ def _fact(value: object) -> Any:
             return {"generation": _generation(value.generation)}
         case AbstractRoot():
             return {"role": "root", **_strategy(value.strategy)}
-        case AbstractSubtype() | ConcreteSubtype():
-            return _descendant(cast("Inheritance[EntityIdentity]", value))
         case RelationshipJoin():
             return {"source": _attribute(value.source), "target": _attribute(value.target)}
         case RelationshipOrder():
@@ -467,6 +518,24 @@ def _fact(value: object) -> Any:
                 "reverseOf": _relationship(value.reverse_of),
                 "orderBy": _fact(value.order_by),
             }
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _impact_fact(
+    value: UniqueTuple
+    | ScalarAdmissibility
+    | OccurrenceAdmissibility
+    | LockingFallback
+    | VersionGated
+    | TransactionTimeGated
+    | TemporalAxisFacts
+    | EntitySelectionFacts
+    | RelationshipSelectionFacts
+    | WritesDisabled
+    | WritesEnabled,
+) -> Any:
+    match value:
         case UniqueTuple():
             return [_attribute(component) for component in value.attributes]
         case ScalarAdmissibility():
@@ -503,8 +572,8 @@ def _fact(value: object) -> Any:
             return {"writes": "Disabled"}
         case WritesEnabled():
             return {"writes": "Enabled", "shape": _WRITE_SHAPES[value.shape]}
-        case _:
-            return _enumerated(value)
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
 
 
 def _enumerated(value: object) -> Any:

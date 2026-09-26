@@ -134,44 +134,56 @@ def run_rejected_case(case: case_format.Case) -> str:
     kind = _rejected_when_kind(case, when)
     model = load_case_metamodel(case)
     if kind == "objectQuery":
-        try:
-            query = deserialize_query(when["objectQuery"])
-        except CanonicalDocumentError as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        query = _case_ingress.normalize_case_query(query, model)
-        try:
-            gate_read(query, model)
-        except ModelRejectedError as exc:
-            return exc.rule
-        raise EngineError(
-            f"{case.path.name}: the model-aware validator accepted an Object Query the case "
-            "expects rejected pre-SQL"
-        )
+        return _rejected_object_query(case, when["objectQuery"], model)
     if kind == "model":
-        inline_model = cast("Mapping[str, object]", when["model"])
-        try:
-            validate_inheritance_families(inline_model)
-        except inheritance.InheritanceError as exc:
-            return exc.rule
-        except DescriptorError as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        try:
-            domain_model_from_document(inline_model)
-        except DescriptorError as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        except MetamodelValidationError as exc:
-            codes = tuple(issue.code for issue in exc.issues)
-            if len(codes) != 1:
-                raise EngineError(
-                    f"{case.path.name}: inline model produced {len(codes)} formation issues "
-                    f"{codes!r}; a rejected case must isolate exactly one rule"
-                ) from exc
-            return codes[0]
-        raise EngineError(
-            f"{case.path.name}: the model-aware validator accepted an inline model the case "
-            "expects rejected pre-SQL"
-        )
-    raw_write = when["write"]
+        return _rejected_model(case, cast("Mapping[str, object]", when["model"]))
+    return _rejected_write(case, when["write"], model)
+
+
+def _rejected_object_query(
+    case: case_format.Case, authored: object, model: AcceptedMetamodel
+) -> str:
+    try:
+        query = deserialize_query(authored)
+    except CanonicalDocumentError as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    query = _case_ingress.normalize_case_query(query, model)
+    try:
+        gate_read(query, model)
+    except ModelRejectedError as exc:
+        return exc.rule
+    raise EngineError(
+        f"{case.path.name}: the model-aware validator accepted an Object Query the case "
+        "expects rejected pre-SQL"
+    )
+
+
+def _rejected_model(case: case_format.Case, inline_model: Mapping[str, object]) -> str:
+    try:
+        validate_inheritance_families(inline_model)
+    except inheritance.InheritanceError as exc:
+        return exc.rule
+    except DescriptorError as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    try:
+        domain_model_from_document(inline_model)
+    except DescriptorError as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    except MetamodelValidationError as exc:
+        codes = tuple(issue.code for issue in exc.issues)
+        if len(codes) != 1:
+            raise EngineError(
+                f"{case.path.name}: inline model produced {len(codes)} formation issues "
+                f"{codes!r}; a rejected case must isolate exactly one rule"
+            ) from exc
+        return codes[0]
+    raise EngineError(
+        f"{case.path.name}: the model-aware validator accepted an inline model the case "
+        "expects rejected pre-SQL"
+    )
+
+
+def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMetamodel) -> str:
     if not isinstance(raw_write, Mapping):
         raise EngineError(
             f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
@@ -182,29 +194,37 @@ def run_rejected_case(case: case_format.Case) -> str:
         )
     row = cast("Mapping[str, object]", raw_write)
     if "target" in row:
-        try:
-            instruction = instructions.deserialize(case_document.canonical_predicate_doc(row))
-        except (
-            WritePlanningError
-        ) as exc:  # pragma: no cover - schema validation owns malformed writes
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        if not isinstance(
-            instruction, PredicateWrite
-        ):  # pragma: no cover - target implies predicate
-            raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
-        try:
-            prepared = _case_ingress.prepare_case_write(instruction, model)
-            assert isinstance(prepared, PreparedPredicateWrite)
-            target = case_entity(model, prepared.selection.target.identity.canonical)
-            reject_readless_document_many(target, prepared)
-        except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
-            return exc.rule
-        raise EngineError(  # pragma: no cover - rejected cases must classify
-            f"{case.path.name}: the model-aware validator accepted a predicate write the "
-            "case expects rejected pre-SQL"
-        )
+        return _rejected_predicate_write(case, row, model)
     if "rows" in row:
         return _rejected_keyed_write(case, row, model)
+    return _rejected_bare_row(case, row, model)
+
+
+def _rejected_predicate_write(
+    case: case_format.Case, row: Mapping[str, object], model: AcceptedMetamodel
+) -> str:
+    try:
+        instruction = instructions.deserialize(case_document.canonical_predicate_doc(row))
+    except WritePlanningError as exc:  # pragma: no cover - schema validation owns malformed writes
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    if not isinstance(instruction, PredicateWrite):  # pragma: no cover - target implies predicate
+        raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
+    try:
+        prepared = _case_ingress.prepare_case_write(instruction, model)
+        assert isinstance(prepared, PreparedPredicateWrite)
+        target = case_entity(model, prepared.selection.target.identity.canonical)
+        reject_readless_document_many(target, prepared)
+    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
+        return exc.rule
+    raise EngineError(  # pragma: no cover - rejected cases must classify
+        f"{case.path.name}: the model-aware validator accepted a predicate write the "
+        "case expects rejected pre-SQL"
+    )
+
+
+def _rejected_bare_row(
+    case: case_format.Case, row: Mapping[str, object], model: AcceptedMetamodel
+) -> str:
     target = case_entity(model, _rejected_target(case, model))
     try:
         durable_row = {name: value for name, value in row.items() if name != "observedVersion"}
