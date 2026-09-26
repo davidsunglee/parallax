@@ -29,6 +29,7 @@ import json
 import sys
 import time
 import tracemalloc
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -234,6 +235,23 @@ def _generate_materialization_stress(rows: int, fanout: int) -> dict[str, list[d
     }
 
 
+def _fanout(generate: dict[str, Any]) -> int:
+    return int(generate.get("fanout", 1))
+
+
+_DATASET_RECIPES: dict[str, Callable[[int, dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {
+    "accounts-sequential": lambda count, _: _generate_accounts_sequential(count),
+    "orders-tree": lambda count, generate: _generate_orders_tree(count, _fanout(generate)),
+    "document-milestones": lambda count, _: _generate_document_milestones(count),
+    "travelers-tree": lambda count, generate: _generate_travelers_tree(count, _fanout(generate)),
+    "versioned-documents": lambda count, _: _generate_versioned_documents(count),
+    "bitemporal-current": lambda count, _: _generate_bitemporal_current(count),
+    "materialization-stress": lambda count, generate: _generate_materialization_stress(
+        count, _fanout(generate)
+    ),
+}
+
+
 def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return the rows the benchmark loads, per its ``dataset``.
 
@@ -250,22 +268,10 @@ def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         return {}
     recipe = generate.get("recipe")
     count = int(generate.get("rows", 0))
-    if recipe == "accounts-sequential":
-        return _generate_accounts_sequential(count)
-    if recipe == "orders-tree":
-        fanout = int(generate.get("fanout", 1))
-        return _generate_orders_tree(count, fanout)
-    if recipe == "document-milestones":
-        return _generate_document_milestones(count)
-    if recipe == "travelers-tree":
-        return _generate_travelers_tree(count, int(generate.get("fanout", 1)))
-    if recipe == "versioned-documents":
-        return _generate_versioned_documents(count)
-    if recipe == "bitemporal-current":
-        return _generate_bitemporal_current(count)
-    if recipe == "materialization-stress":
-        return _generate_materialization_stress(count, int(generate.get("fanout", 1)))
-    raise BenchmarkError(f"unknown dataset generator recipe {recipe!r}")
+    build = _DATASET_RECIPES.get(recipe) if isinstance(recipe, str) else None
+    if build is None:
+        raise BenchmarkError(f"unknown dataset generator recipe {recipe!r}")
+    return build(count, generate)
 
 
 def _dataset_row_count(rows: dict[str, list[dict[str, Any]]]) -> int:
