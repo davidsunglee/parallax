@@ -1,9 +1,3 @@
-# A materializing predicate update assigns two document-resident members of one
-# Transaction-Time row. `title` changes, so the row survives no-op elimination; the
-# assigned `route` is restored, because its stored and assigned subtrees reduce to one
-# declared value although the stored one also carries `sealNumber` and a `berth` in
-# its `stops` element. The restored member contributes nothing: the successor patches
-# `title` alone and carries `route` exactly as stored rather than replacing it.
 model: models/document-layout-restored-member.yaml
 tags: [m-unit-work, m-txtime-write, m-opt-lock, m-storage-layout, m-document-codec, m-sql, materialize, predicate-write, temporal, audit-only, json, document-layout, scenario, slice-snapshot-1]
 shape: scenario

@@ -1094,11 +1094,11 @@ def _successor_step(
             value_objects = dict(authored_value_objects)
         case CarriedState():
             assert predecessor is not None  # a carried successor observed one
-            attributes, value_objects = predecessor.identity_maps(facts.view.member_selection)
+            attributes, value_objects = _predecessor_maps(facts, predecessor)
         case ChangedState():
             assert predecessor is not None  # a changed successor observed one
             selection = facts.view.member_selection
-            attributes, value_objects = predecessor.identity_maps(selection)
+            attributes, value_objects = _predecessor_maps(facts, predecessor)
             if effective is None:
                 attributes.update(authored_attributes)
                 value_objects.update(authored_value_objects)
@@ -1119,6 +1119,15 @@ def _successor_step(
         predecessor=predecessor,
     )
     return PlannedInsert(entity=facts.entity.identity, entries=(entry,))
+
+
+def _predecessor_maps(
+    facts: _TemporalFacts, predecessor: PredecessorRow
+) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
+    try:
+        return predecessor.identity_maps(facts.view.member_selection)
+    except ValueError as refusal:
+        raise WritePlanningError(f"{facts.entity.identity.name!r}: {refusal}") from refusal
 
 
 def _non_temporal_step(

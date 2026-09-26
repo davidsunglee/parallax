@@ -270,12 +270,10 @@ class PredecessorRow:
     _absent: object | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        members = self.members
-        if not isinstance(members, EntityStateRow):
-            owned = retain_document_value(members)
-            if not isinstance(owned, Mapping):  # pragma: no cover - mappings stay mappings
-                raise TypeError("predecessor members must be a mapping")
-            object.__setattr__(self, "members", EntityStateRow(cast("Mapping[str, object]", owned)))
+        owned = retain_document_value(self.members)
+        if not isinstance(owned, Mapping):  # pragma: no cover - mappings stay mappings
+            raise TypeError("predecessor members must be a mapping")
+        object.__setattr__(self, "members", EntityStateRow(cast("Mapping[str, object]", owned)))
         object.__setattr__(self, "document", retain_document_value(self.document))
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")

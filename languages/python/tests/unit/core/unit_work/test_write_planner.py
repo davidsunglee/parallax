@@ -2353,6 +2353,22 @@ def test_single_assignment_groups_and_keyed_writes_are_not_compared_again_at_set
     assert calls == {"prepared": 0, "compared": 0}
 
 
+def test_a_keyed_predecessor_naming_a_non_member_is_refused_as_a_planning_error() -> None:
+    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+    key_ = object_key(addressed, _BALANCE)
+    assert key_ is not None
+    predecessor = PredecessorRow(members={**_BALANCE_PREDECESSOR, "nickname": "Ada"})
+
+    with pytest.raises(WritePlanningError, match="'Balance': predecessor member 'nickname'"):
+        list(
+            _plan(
+                [addressed],
+                _BALANCE,
+                observations={key_: TemporalObservation(predecessor=predecessor)},
+            ).steps
+        )
+
+
 def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> None:
     # One retained Relational Document row changed through each producer: a
     # keyed `updateUntil` carrying its effective member alone, and a
