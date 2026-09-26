@@ -80,6 +80,7 @@ from parallax.core.unit_work import (
     FixedClock,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
+    PredecessorRow,
     PredecessorRows,
     PredecessorRowsBuilder,
     PredicateWrite,
@@ -2519,7 +2520,9 @@ def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_refer
         key = index + 1
         row = evidence.rows[index]
         assert type(row) is tuple
-        predecessor = evidence.predecessor(index)
+        predecessor = PredecessorRow.over_row(
+            evidence.selection, row, evidence.document(index), evidence.absent
+        )
         stored = acquisition_support.stored_row(layout, key)
         members = (
             cast("Mapping[str, object]", stored["payload"]) if layout == "document" else stored

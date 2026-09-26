@@ -16,7 +16,7 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
     derive_keyed_write,
 )
-from parallax.core.unit_work.observe import PredecessorRow, WriteObservation
+from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import (
     ObjectKey,
     ObservedStateKey,
@@ -108,13 +108,6 @@ class PredecessorRows:
     def axis_start(self, at: int, attribute: AttributeIdentity, /) -> object:
         position = self.selection.index.get(attribute)
         return None if position is None else self.rows[at][position]
-
-    def predecessor(self, index: int) -> PredecessorRow:
-        """Row ``index`` as its Predecessor Row, sharing the retained row and
-        document rather than copying them."""
-        return PredecessorRow.over_row(
-            self.selection, self.rows[index], self.document(index), self.absent
-        )
 
 
 type GroupEvidence = VersionedEvidence | PredecessorRows
