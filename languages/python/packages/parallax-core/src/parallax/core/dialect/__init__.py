@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -469,28 +469,8 @@ class Dialect:
                 return f"varchar({max_length})" if max_length is not None else "text"
             case Decimal(precision, scale):
                 return f"numeric({precision}, {scale})"
-            case Boolean():
-                return "boolean"
-            case Int32():
-                return "integer"
-            case Int64():
-                return "bigint"
-            case Float32():
-                return "real"
-            case Float64():
-                return "double precision"
-            case Bytes():
-                return "bytea"
-            case Date():
-                return "date"
-            case Time():
-                return "time"
-            case Timestamp():
-                return "timestamptz"
-            case Uuid():
-                return "uuid"
-            case Json():
-                return "jsonb"
+            case _:
+                return _FIXED_COLUMN_TYPES[type(neutral_type)]
 
     # -- DDL statements ---------------------------------------------------- #
     def create_table(
@@ -564,6 +544,21 @@ class Dialect:
         """The neutral m-db-error category for a native code, or ``None``."""
         return self.error_codes.get(code)
 
+
+# The column type of every Neutral Type whose spelling takes no parameter.
+_FIXED_COLUMN_TYPES: Final[Mapping[type, str]] = {
+    Boolean: "boolean",
+    Int32: "integer",
+    Int64: "bigint",
+    Float32: "real",
+    Float64: "double precision",
+    Bytes: "bytea",
+    Date: "date",
+    Time: "time",
+    Timestamp: "timestamptz",
+    Uuid: "uuid",
+    Json: "jsonb",
+}
 
 # Postgres reserved words that appear as declared columns in the corpus and so
 # must be quoted (m-descriptor-001 witnesses the shared-reserved `order`).
