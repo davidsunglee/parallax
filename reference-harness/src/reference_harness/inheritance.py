@@ -36,8 +36,9 @@ DDL and write derivation.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .naming import default_column_name
 from .query_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
@@ -712,23 +713,29 @@ def validate_family(descriptor: dict[str, Any]) -> None:
     validate_family_defs(defs)
 
 
-def _validate_materialization_keys(
-    definitions: list[dict[str, Any]], *, family_variant: bool
-) -> None:
-    """Reject provenance-distinct contributors that render one node key."""
-    claimed: dict[str, str] = {}
+class _MaterializedKeyClaims:
+    """The node keys claimed so far, each by its first contributor."""
 
-    def claim(key: str, contributor: str) -> None:
-        existing = claimed.get(key)
+    def __init__(self) -> None:
+        self._claimed: dict[str, str] = {}
+
+    def claim(self, key: str, contributor: str) -> None:
+        existing = self._claimed.get(key)
         if existing is not None:
             raise RejectionError(
                 INHERITANCE_MATERIALIZATION_KEY_COLLISION,
                 f"materialized key {key!r} is claimed by both {existing} and {contributor}",
             )
-        claimed[key] = contributor
+        self._claimed[key] = contributor
 
+
+def _validate_materialization_keys(
+    definitions: list[dict[str, Any]], *, family_variant: bool
+) -> None:
+    """Reject provenance-distinct contributors that render one node key."""
+    claims = _MaterializedKeyClaims()
     if family_variant:
-        claim("familyVariant", "polymorphic family variant")
+        claims.claim("familyVariant", "polymorphic family variant")
     relationships: list[tuple[str, str]] = []
     attributes: list[tuple[str, str]] = []
     for definition in definitions:
@@ -740,15 +747,21 @@ def _validate_materialization_keys(
                 )
         for value_object in definition.get("valueObjects", []) or []:
             if isinstance(value_object, dict):
-                claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
+                claims.claim(value_object["name"], f"Value Object {entity}.{value_object['name']}")
         for relationship in definition.get("relationships", []) or []:
             if isinstance(relationship, dict):
                 pair = (relationship["name"], f"Relationship {entity}.{relationship['name']}")
                 relationships.append(pair)
     for key, contributor in attributes:
-        claim(key, contributor)
+        claims.claim(key, contributor)
     for key, contributor in relationships:
-        claim(key, contributor)
+        claims.claim(key, contributor)
+    _reject_narrowed_view_occupants(attributes, relationships)
+
+
+def _reject_narrowed_view_occupants(
+    attributes: list[tuple[str, str]], relationships: list[tuple[str, str]]
+) -> None:
     for key, contributor in attributes:
         for relationship, relationship_contributor in relationships:
             if key.startswith(f"{relationship}["):
@@ -782,8 +795,8 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     """The list-of-definitions form of :func:`validate_family`.
 
     A descriptor may declare several independent families; the root-scoped and
-    strategy-scoped checks below are therefore asked once per family, so one
-    family's root never answers for another's.
+    strategy-scoped checks are therefore asked once per family, so one family's
+    root never answers for another's.
     """
     for definition in entity_defs:
         if inheritance_of(definition) is None:
@@ -794,8 +807,28 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
         return
 
     family = Family(entity_defs)
+    _check_parents_declared(family, participants)
+    _check_parents_acyclic(family, participants)
+    _check_root_owned_declarations(participants)
+    _check_concrete_root_ancestry(family, participants)
+    families = _independent_families(participants, family)
+    _check_family_roots(family, families)
+    _check_family_concrete_subtypes(family, families)
+    _check_concrete_leaves(family, participants)
 
-    # 1. Every declared parent resolves to an entity in the descriptor.
+    # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
+    for top, members in families:
+        root_definition = family.defs[top]
+        root_block = inheritance_of(root_definition)
+        strategy = root_block.get("strategy") if root_block else None
+        if strategy == STRATEGY_TPCS:
+            _check_table_per_concrete_subtype_family(family, members)
+        if strategy == STRATEGY_TPH:
+            _check_table_per_hierarchy_family(family, root_definition, members)
+
+
+def _check_parents_declared(family: Family, participants: list[dict[str, Any]]) -> None:
+    """1. Every declared parent resolves to an entity in the descriptor."""
     for definition in participants:
         key = family.key_of(definition)
         parent = family.parents[key]
@@ -806,7 +839,9 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"does not declare",
             )
 
-    # 2. Parent links are acyclic.
+
+def _check_parents_acyclic(family: Family, participants: list[dict[str, Any]]) -> None:
+    """2. Parent links are acyclic."""
     for definition in participants:
         seen: set[str] = set()
         current: str | None = family.key_of(definition)
@@ -819,27 +854,39 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             seen.add(current)
             current = family.parents[current] if current in family.defs else None
 
-    # 4. A non-root participant MUST NOT redeclare the family strategy.
-    for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "strategy" in inheritance_of(definition):  # type: ignore[operator]
-            raise RejectionError(
-                INHERITANCE_STRATEGY_REDECLARED,
-                f"non-root {definition['name']!r} redeclares the family strategy; only the "
-                f"root declares it",
-            )
 
+def _declares_version_attribute(definition: dict[str, Any]) -> bool:
+    attributes = definition.get("attributes", []) or []
+    return any(
+        isinstance(attribute, dict) and attribute.get("optimisticLocking")
+        for attribute in attributes
+    )
+
+
+class _RootOwnedDeclaration(NamedTuple):
+    rule: str
+    declares: Callable[[dict[str, Any]], bool]
+    message: str
+
+
+# Each rule is asked of every non-root participant before the next rule is asked.
+_ROOT_OWNED_DECLARATIONS = (
+    # 4. A non-root participant MUST NOT redeclare the family strategy.
+    _RootOwnedDeclaration(
+        INHERITANCE_STRATEGY_REDECLARED,
+        lambda definition: "strategy" in inheritance_of(definition),  # type: ignore[operator]
+        "non-root {name!r} redeclares the family strategy; only the root declares it",
+    ),
     # 4a. A non-root participant MUST NOT declare its own Temporality Profile
     #     (the binding root-ownership decision): temporality is family-wide, so
     #     only the root may declare `temporality`, regardless of whether the root
     #     itself is temporal.
-    for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "temporality" in definition:
-            raise RejectionError(
-                INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
-                f"non-root {definition['name']!r} declares its own temporality; the "
-                f"Temporality Profile is family-wide and MUST be declared only on the root",
-            )
-
+    _RootOwnedDeclaration(
+        INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
+        lambda definition: "temporality" in definition,
+        "non-root {name!r} declares its own temporality; the Temporality Profile is "
+        "family-wide and MUST be declared only on the root",
+    ),
     # 4b. A non-root participant MUST NOT declare its own `optimisticLocking`
     #     attribute: the version attribute is family-wide, so
     #     only the root may declare one, regardless of whether the root itself
@@ -847,40 +894,40 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
     #     with a version-declaring descendant, and a versioned root whose
     #     descendant redeclares or adds a second version attribute) — the check
     #     is structural per-entity and does not care what the root declares.
-    for definition in participants:
-        if role_of(definition) == ROLE_ROOT:
-            continue
-        attributes = definition.get("attributes", []) or []
-        if any(
-            isinstance(attribute, dict) and attribute.get("optimisticLocking")
-            for attribute in attributes
-        ):
-            raise RejectionError(
-                INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
-                f"non-root {definition['name']!r} declares its own optimisticLocking "
-                f"attribute; the version attribute is family-wide and MUST be declared "
-                f"only on the root",
-            )
-
+    _RootOwnedDeclaration(
+        INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
+        _declares_version_attribute,
+        "non-root {name!r} declares its own optimisticLocking attribute; the version "
+        "attribute is family-wide and MUST be declared only on the root",
+    ),
     # 4c. Persistence is family-wide and root-owned.
-    for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "persistence" in definition:
-            raise RejectionError(
-                INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
-                f"non-root {definition['name']!r} declares persistence; persistence is "
-                f"family-wide and MUST be declared only on the root",
-            )
-
+    _RootOwnedDeclaration(
+        INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
+        lambda definition: "persistence" in definition,
+        "non-root {name!r} declares persistence; persistence is family-wide and MUST be "
+        "declared only on the root",
+    ),
     # 4d. Storage Layout is family-wide and root-owned.
-    for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "layout" in definition:
-            raise RejectionError(
-                INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
-                f"non-root {definition['name']!r} declares layout; the Storage Layout is "
-                f"family-wide and MUST be declared only on the root",
-            )
+    _RootOwnedDeclaration(
+        INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
+        lambda definition: "layout" in definition,
+        "non-root {name!r} declares layout; the Storage Layout is family-wide and MUST be "
+        "declared only on the root",
+    ),
+)
 
-    # 6. Every concrete subtype reaches an abstract root through its ancestry.
+
+def _check_root_owned_declarations(participants: list[dict[str, Any]]) -> None:
+    for declaration in _ROOT_OWNED_DECLARATIONS:
+        for definition in participants:
+            if role_of(definition) != ROLE_ROOT and declaration.declares(definition):
+                raise RejectionError(
+                    declaration.rule, declaration.message.format(name=definition["name"])
+                )
+
+
+def _check_concrete_root_ancestry(family: Family, participants: list[dict[str, Any]]) -> None:
+    """6. Every concrete subtype reaches an abstract root through its ancestry."""
     for definition in participants:
         if role_of(definition) != ROLE_CONCRETE:
             continue
@@ -893,15 +940,17 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"(ancestry top is {top!r})",
             )
 
-    families = _independent_families(participants, family)
 
-    # 7. Every family reaches exactly one root. Its members share one ancestry, so
-    #    "more than one" is unrepresentable and only the zero-root shape remains.
-    #    A family with a CONCRETE participant and no root is already caught by check
-    #    #6 (concrete-without-abstract-root), which runs first, so reaching this
-    #    point rootless means every member is an abstract orphan whose ancestry never
-    #    tops out at a `root` — a family that can never be instantiated or
-    #    discriminated.
+def _check_family_roots(family: Family, families: list[tuple[str, list[dict[str, Any]]]]) -> None:
+    """7. Every family reaches exactly one root.
+
+    Its members share one ancestry, so "more than one" is unrepresentable and only
+    the zero-root shape remains. A family with a CONCRETE participant and no root
+    is already caught by check #6 (concrete-without-abstract-root), which runs
+    first, so reaching this point rootless means every member is an abstract orphan
+    whose ancestry never tops out at a `root` — a family that can never be
+    instantiated or discriminated.
+    """
     for top, members in families:
         if role_of(family.defs.get(top, {})) != ROLE_ROOT:
             raise RejectionError(
@@ -911,13 +960,19 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"family has exactly one root",
             )
 
-    # 7a. Every family contains at least one concrete subtype. Only concrete
-    #     subtypes own rows, so a family of a root and abstract subtypes alone
-    #     resolves every one of its positions to the EMPTY effective concrete set:
-    #     no read selects a row and no write names a target. Asked after the root
-    #     rules (a rootless family has no position to ask this of) and before the
-    #     strategy-scoped mapping rules (this is a question about the family's
-    #     membership, not about how that membership maps to storage).
+
+def _check_family_concrete_subtypes(
+    family: Family, families: list[tuple[str, list[dict[str, Any]]]]
+) -> None:
+    """7a. Every family contains at least one concrete subtype.
+
+    Only concrete subtypes own rows, so a family of a root and abstract subtypes
+    alone resolves every one of its positions to the EMPTY effective concrete set:
+    no read selects a row and no write names a target. Asked after the root rules
+    (a rootless family has no position to ask this of) and before the
+    strategy-scoped mapping rules (this is a question about the family's
+    membership, not about how that membership maps to storage).
+    """
     for top, members in families:
         if any(role_of(member) == ROLE_CONCRETE for member in members):
             continue
@@ -927,12 +982,16 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             f"subtype, so every position in it owns no rows",
         )
 
-    # 7b. Every concrete subtype is a leaf. A concrete position's effective set
-    #     is itself and a parent's is its concrete descendants, so a concrete
-    #     subtype with a child would have to be both. Asked after 7a (a family
-    #     with no concrete has no concrete to ask) and before the strategy-scoped
-    #     checks (this is a question about the tree, not about how it maps to
-    #     storage).
+
+def _check_concrete_leaves(family: Family, participants: list[dict[str, Any]]) -> None:
+    """7b. Every concrete subtype is a leaf.
+
+    A concrete position's effective set is itself and a parent's is its concrete
+    descendants, so a concrete subtype with a child would have to be both. Asked
+    after 7a (a family with no concrete has no concrete to ask) and before the
+    strategy-scoped checks (this is a question about the tree, not about how it
+    maps to storage).
+    """
     for definition in participants:
         if role_of(definition) != ROLE_CONCRETE:
             continue
@@ -945,86 +1004,83 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"may be concrete",
             )
 
-    # Strategy-scoped checks, asked of each family under ITS OWN root's strategy.
-    for top, members in families:
-        root_definition = family.defs[top]
-        root_block = inheritance_of(root_definition)
-        strategy = root_block.get("strategy") if root_block else None
 
-        if strategy == STRATEGY_TPCS:
-            # 8. Abstract positions are tableless; every concrete owns one table.
-            for definition in members:
-                if role_of(definition) in ABSTRACT_ROLES and "table" in definition:
-                    raise RejectionError(
-                        INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
-                        f"table-per-concrete-subtype abstract position "
-                        f"{definition['name']!r} declares a table",
-                    )
-                if role_of(definition) == ROLE_CONCRETE and "table" not in definition:
-                    raise RejectionError(
-                        INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
-                        f"table-per-concrete-subtype concrete {definition['name']!r} "
-                        f"declares no table",
-                    )
-            # 8. A table-per-concrete-subtype family declares no tag / tagValue anywhere.
-            for definition in members:
-                block = inheritance_of(definition)
-                if block is not None and ("tag" in block or "tagValue" in block):
-                    raise RejectionError(
-                        INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
-                        f"table-per-concrete-subtype family carries a tag/tagValue on "
-                        f"{definition['name']!r}; only table-per-hierarchy uses a tag",
-                    )
-            for definition in members:
-                if role_of(definition) != ROLE_CONCRETE:
-                    continue
-                chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
-                _validate_materialization_keys(chain, family_variant=True)
+def _check_concrete_materialization_keys(family: Family, concretes: list[dict[str, Any]]) -> None:
+    for definition in concretes:
+        chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
+        _validate_materialization_keys(chain, family_variant=True)
 
-        if strategy == STRATEGY_TPH:
-            concretes = [d for d in members if role_of(d) == ROLE_CONCRETE]
-            if "table" not in root_definition:
-                raise RejectionError(
-                    INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
-                    f"table-per-hierarchy root {root_definition['name']!r} declares no "
-                    f"shared table",
-                )
-            for definition in members:
-                if role_of(definition) != ROLE_ROOT and "table" in definition:
-                    raise RejectionError(
-                        INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
-                        f"table-per-hierarchy descendant {definition['name']!r} repeats "
-                        f"the root-owned shared table",
-                    )
-            # 9. Every concrete subtype declares a tagValue: table-per-hierarchy rows share
-            #    one table and are told apart ONLY by the tag column, so a concrete subtype
-            #    with no tagValue would be indistinguishable in the shared table. The
-            #    per-entity metamodel schema leaves tagValue optional (its presence is a
-            #    cross-entity rule the root's strategy owns), so it is enforced here, before
-            #    the family-wide uniqueness check below (which then sees only real values).
-            tagged: list[tuple[str, str]] = []
-            for definition in concretes:
-                value = inheritance_of(definition).get("tagValue")  # type: ignore[union-attr]
-                if value is None:
-                    raise RejectionError(
-                        INHERITANCE_MISSING_TAG_VALUE,
-                        f"table-per-hierarchy concrete subtype {definition['name']!r} declares "
-                        f"no tagValue; the shared table cannot discriminate its rows without one",
-                    )
-                tagged.append((definition["name"], value))
-            # 10. tagValue values are unique across the whole family (presence is #9).
-            seen_values: dict[str, str] = {}
-            for name, value in tagged:
-                if value in seen_values:
-                    raise RejectionError(
-                        INHERITANCE_DUPLICATE_TAG_VALUE,
-                        f"concrete subtypes {seen_values[value]!r} and {name!r} "
-                        f"share tagValue {value!r}",
-                    )
-                seen_values[value] = name
-            for definition in concretes:
-                chain = [family.defs[name] for name in family.ancestry(family.key_of(definition))]
-                _validate_materialization_keys(chain, family_variant=True)
+
+def _check_table_per_concrete_subtype_family(family: Family, members: list[dict[str, Any]]) -> None:
+    # 8. Abstract positions are tableless; every concrete owns one table.
+    for definition in members:
+        if role_of(definition) in ABSTRACT_ROLES and "table" in definition:
+            raise RejectionError(
+                INHERITANCE_TPCS_ABSTRACT_TABLE_FORBIDDEN,
+                f"table-per-concrete-subtype abstract position "
+                f"{definition['name']!r} declares a table",
+            )
+        if role_of(definition) == ROLE_CONCRETE and "table" not in definition:
+            raise RejectionError(
+                INHERITANCE_TPCS_CONCRETE_TABLE_REQUIRED,
+                f"table-per-concrete-subtype concrete {definition['name']!r} declares no table",
+            )
+    # 8. A table-per-concrete-subtype family declares no tag / tagValue anywhere.
+    for definition in members:
+        block = inheritance_of(definition)
+        if block is not None and ("tag" in block or "tagValue" in block):
+            raise RejectionError(
+                INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
+                f"table-per-concrete-subtype family carries a tag/tagValue on "
+                f"{definition['name']!r}; only table-per-hierarchy uses a tag",
+            )
+    _check_concrete_materialization_keys(
+        family, [d for d in members if role_of(d) == ROLE_CONCRETE]
+    )
+
+
+def _check_table_per_hierarchy_family(
+    family: Family, root_definition: dict[str, Any], members: list[dict[str, Any]]
+) -> None:
+    concretes = [d for d in members if role_of(d) == ROLE_CONCRETE]
+    if "table" not in root_definition:
+        raise RejectionError(
+            INHERITANCE_TPH_ROOT_TABLE_REQUIRED,
+            f"table-per-hierarchy root {root_definition['name']!r} declares no shared table",
+        )
+    for definition in members:
+        if role_of(definition) != ROLE_ROOT and "table" in definition:
+            raise RejectionError(
+                INHERITANCE_TPH_DESCENDANT_TABLE_FORBIDDEN,
+                f"table-per-hierarchy descendant {definition['name']!r} repeats "
+                f"the root-owned shared table",
+            )
+    # 9. Every concrete subtype declares a tagValue: table-per-hierarchy rows share
+    #    one table and are told apart ONLY by the tag column, so a concrete subtype
+    #    with no tagValue would be indistinguishable in the shared table. The
+    #    per-entity metamodel schema leaves tagValue optional (its presence is a
+    #    cross-entity rule the root's strategy owns), so it is enforced here, before
+    #    the family-wide uniqueness check below (which then sees only real values).
+    tagged: list[tuple[str, str]] = []
+    for definition in concretes:
+        value = inheritance_of(definition).get("tagValue")  # type: ignore[union-attr]
+        if value is None:
+            raise RejectionError(
+                INHERITANCE_MISSING_TAG_VALUE,
+                f"table-per-hierarchy concrete subtype {definition['name']!r} declares "
+                f"no tagValue; the shared table cannot discriminate its rows without one",
+            )
+        tagged.append((definition["name"], value))
+    # 10. tagValue values are unique across the whole family (presence is #9).
+    seen_values: dict[str, str] = {}
+    for name, value in tagged:
+        if value in seen_values:
+            raise RejectionError(
+                INHERITANCE_DUPLICATE_TAG_VALUE,
+                f"concrete subtypes {seen_values[value]!r} and {name!r} share tagValue {value!r}",
+            )
+        seen_values[value] = name
+    _check_concrete_materialization_keys(family, concretes)
 
 
 # --- query-level selection / attribute-position validation (RejectionError) ----
