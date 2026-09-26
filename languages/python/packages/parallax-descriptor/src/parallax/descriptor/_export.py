@@ -107,16 +107,7 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
         out["namespace"] = identity.namespace
     if entity.declared_container is not None:
         out["table"] = entity.declared_container.name
-    if entity.declared_persistence is PersistenceMode.READ_ONLY and not _is_family_descendant(
-        entity
-    ):
-        out["persistence"] = "read-only"
-    layout = entity.declared_layout
-    if isinstance(layout, Document) and not _is_family_descendant(entity):
-        out["layout"] = {"document": {"column": layout.column.name}}
-    temporality = _temporality(entity)
-    if temporality is not None and not _is_family_descendant(entity):
-        out["temporality"] = temporality
+    out.update(_family_policies(entity))
     attributes = _authored_attributes(entity)
     if attributes:
         out["attributes"] = [_attribute(a) for a in attributes]
@@ -129,6 +120,27 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
         out["valueObjects"] = [_value_object(v) for v in entity.declared_value_objects]
     if entity.inheritance is not None:
         out["inheritance"] = _inheritance(entity.inheritance)
+    return out
+
+
+def _family_policies(entity: EntityMetadata) -> dict[str, object]:
+    """The authored Persistence Mode, Storage Layout, and Temporality Profile.
+
+    All three are family-wide and root-owned, so a descendant never spells any of
+    them in canonical form even when its own metadata carries one — absence there
+    means inherit, and only the root ever writes the family fact.
+    """
+    if isinstance(entity.inheritance, (AbstractSubtype, ConcreteSubtype)):
+        return {}
+    out: dict[str, object] = {}
+    if entity.declared_persistence is PersistenceMode.READ_ONLY:
+        out["persistence"] = "read-only"
+    layout = entity.declared_layout
+    if isinstance(layout, Document):
+        out["layout"] = {"document": {"column": layout.column.name}}
+    temporality = _temporality(entity)
+    if temporality is not None:
+        out["temporality"] = temporality
     return out
 
 
@@ -186,17 +198,6 @@ def _authored_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
     if derived is None:
         return tuple(entity.indices)
     return tuple(index for index in entity.indices if index.identity != derived.identity)
-
-
-def _is_family_descendant(entity: EntityMetadata) -> bool:
-    """Whether ``entity`` occupies a non-root family position.
-
-    Persistence, Storage Layout, and the Temporality Profile are family-wide and
-    root-owned, so a descendant never spells any of them in canonical form even
-    when its own metadata carries one — absence there means inherit, and only the
-    root ever writes the family fact.
-    """
-    return isinstance(entity.inheritance, (AbstractSubtype, ConcreteSubtype))
 
 
 def _attribute(attribute: AttributeMetadata) -> dict[str, object]:

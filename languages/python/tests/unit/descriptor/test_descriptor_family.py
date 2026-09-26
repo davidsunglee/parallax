@@ -117,6 +117,14 @@ def test_independent_families_in_one_descriptor_pass_validation() -> None:
     validate_families(_MODELS["workshop"])  # no raise
 
 
+def test_a_table_per_hierarchy_root_without_a_shared_table_is_rejected() -> None:
+    root, concrete, *_other_family = _INDEPENDENT_FAMILIES["entities"]
+    tableless_root = {key: value for key, value in root.items() if key != "table"}
+    with pytest.raises(InheritanceError) as caught:
+        validate_inheritance_families({"entities": [tableless_root, concrete]})
+    assert caught.value.rule == "inheritance-tph-root-table-required"
+
+
 def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
     # A rooted family does not answer for its neighbour: the abstract-orphan chain
     # reaches no root of its own and is still rejected.
