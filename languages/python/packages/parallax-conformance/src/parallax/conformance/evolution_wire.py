@@ -385,8 +385,6 @@ _SUBJECT_ALTERATIONS: Final = (
 
 
 def _subject_operation(operation: EvolutionOperation, member: str, spelling: str) -> dict[str, Any]:
-    """An operation on one declaration: its kind and subject, and the deltas an
-    alteration carries."""
     spelled: dict[str, Any] = {"kind": type(operation).__name__, member: spelling}
     if isinstance(operation, _SUBJECT_ALTERATIONS):
         spelled["deltas"] = [_delta(delta) for delta in operation.deltas]

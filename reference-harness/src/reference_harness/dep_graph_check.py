@@ -513,7 +513,6 @@ def _manifest_owner_catalog_errors(
 
 
 def _manifest_rule_set(owner: str, rule_set: str) -> tuple[str, list[str]]:
-    """Classify a Rule Set cell as ``required``, ``none``, or the fixed resolver."""
     errors: list[str] = []
     rule_set_kind = "none" if rule_set == "none" or rule_set.startswith("none; ") else rule_set
     if rule_set_kind not in {"required", "none", _FIXED_RESOLVER_DECLARATION}:
