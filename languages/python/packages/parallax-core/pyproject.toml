@@ -8,6 +8,10 @@ license = "Apache-2.0"
 authors = [{ name = "Parallax" }]
 dependencies = [
     "pydantic>=2.13",
+    # Imported directly for Pydantic's own missing-value sentinel. Every Pydantic
+    # release pins one pydantic-core, so this floor is the one `pydantic>=2.13`
+    # itself requires.
+    "pydantic-core>=2.46",
 ]
 
 [build-system]

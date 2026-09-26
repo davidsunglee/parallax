@@ -1,7 +1,7 @@
 # parallax-postgres
 
-Parallax's Postgres database adapter: the sole declarer of `psycopg` and its
-companion `psycopg-pool`. See `languages/python/spec/python.md`.
+Parallax's Postgres database adapter over `psycopg` and its companion
+`psycopg-pool`. See `languages/python/spec/python.md`.
 
 ## Connecting
 

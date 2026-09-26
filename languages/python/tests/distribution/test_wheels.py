@@ -248,7 +248,8 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
     # assertion reads the declaration of. The adapter the engine-specific slice
     # composes is reachable only behind the `postgres` extra, which is the
     # artifact-level statement that one module of this distribution needs it and
-    # the rest does not.
+    # the rest does not; the slice imports the driver too, so the extra declares
+    # it beside the adapter.
     with zipfile.ZipFile(wheelhouse.wheels["parallax-aws"]) as archive:
         metadata = next(n for n in archive.namelist() if n.endswith(".dist-info/METADATA"))
         declared = archive.read(metadata).decode()
@@ -260,7 +261,10 @@ def test_the_aws_wheel_declares_the_credential_chain_and_nothing_else(
     unconditional = {line for line in requires if ";" not in line}
     gated = requires - unconditional
     assert unconditional == {"parallax-core", "botocore>=1.43.99"}
-    assert {line.partition(";")[0].strip() for line in gated} == {"parallax-postgres"}
+    assert {line.partition(";")[0].strip() for line in gated} == {
+        "parallax-postgres",
+        "psycopg>=3.3.5",
+    }
     assert all('extra == "postgres"' in line.replace("'", '"') for line in gated), gated
     assert "Provides-Extra: postgres" in declared
 
