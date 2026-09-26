@@ -836,8 +836,7 @@ An assigned member the classification answers as **restored** contributes nothin
 to the write, and a write every assigned member of which a classification made
 before Write Settlement answers as restored is **eliminated**: it issues no DML,
 advances no version, consults no clock, and for a temporal entity performs no
-close and chains no row. That holds however the codec reached the answer. A
-classification made during settlement, as below, never eliminates a write.
+close and chains no row. That holds however the codec reached the answer.
 
 The same holds member by member inside a Materialized Write Group row that
 survives because another of its assigned members is effective. Planning decides
