@@ -151,38 +151,12 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
         return [f"not a directory: {compatibility_root}"]
 
     descriptor_pairs = _descriptor_pairs(compatibility_root, errors)
-    descriptor_documents: dict[tuple[str, str], dict[str, Any]] = {}
     fixtures = compatibility_root / "fixtures"
     for proof, members in descriptor_pairs.items():
         if any(arm not in members for arm in _ARMS):
             continue
-        for arm in _ARMS:
-            path = members[arm]
-            document = mapping_document(path, "model descriptor", errors)
-            if document is None:
-                continue
-            descriptor_documents[(proof, arm)] = document
-            errors.extend(_layout_errors(path, arm, document))
-        columns = descriptor_documents.get((proof, "columns"))
-        document = descriptor_documents.get((proof, "document"))
-        if columns is not None and document is not None:
-            if _logical_descriptor(columns) != _logical_descriptor(document):
-                errors.append(
-                    f"descriptor twin {proof!r} differs after root-owned layout blocks are removed"
-                )
-
-        fixture_documents: dict[str, dict[str, Any]] = {}
-        for arm in _ARMS:
-            fixture_path = fixtures / f"{proof}-layout-twin-{arm}.yaml"
-            if not fixture_path.is_file():
-                errors.append(f"descriptor twin {proof!r} is missing fixture {fixture_path.name}")
-                continue
-            fixture = mapping_document(fixture_path, "fixture", errors)
-            if fixture is not None:
-                fixture_documents[arm] = fixture
-        if all(arm in fixture_documents for arm in _ARMS):
-            if fixture_documents["columns"] != fixture_documents["document"]:
-                errors.append(f"fixture twin {proof!r} does not author equal logical rows")
+        _check_descriptor_twin(proof, members, errors)
+        _check_fixture_twin(fixtures, proof, errors)
 
     cases = compatibility_root / "cases"
     modules = module_ids(compatibility_root, errors)
@@ -191,50 +165,122 @@ def twin_layout_errors(compatibility_root: Path) -> list[str]:
     for key, members in case_pairs.items():
         if any(arm not in members for arm in _ARMS):
             continue
-        documents: dict[str, dict[str, Any]] = {}
-        model_proofs: dict[str, str] = {}
-        for arm in _ARMS:
-            path = members[arm]
-            case = mapping_document(path, "compatibility case", errors)
-            if case is None:
-                continue
-            documents[arm] = case
-            module_tag = primary_module(case, _is_module_tag)
-            if module_tag is not None and module_tag not in modules:
-                errors.append(
-                    f"{path.name}: first module tag {module_tag!r} is not in the "
-                    "canonical module catalog"
-                )
-            elif module_tag != key[0]:
-                errors.append(
-                    f"{path.name}: filename module {key[0]!r} does not match first "
-                    f"module tag {module_tag!r}"
-                )
-            model = case.get("model")
-            model_name = Path(model).name if isinstance(model, str) else ""
-            model_match = _MODEL_RE.match(model_name)
-            if model_match is None:
-                errors.append(f"{path.name}: twin case must reference a twin model descriptor")
-                continue
-            model_arm = model_match.group("arm")
-            model_proof = model_match.group("proof")
-            if model_arm != arm:
-                errors.append(f"{path.name}: {arm} case references the {model_arm} descriptor arm")
-            if model_proof not in descriptor_pairs:
-                errors.append(f"{path.name}: references unknown descriptor twin {model_proof!r}")
-            model_proofs[arm] = model_proof
-        if all(arm in model_proofs for arm in _ARMS):
-            if model_proofs["columns"] != model_proofs["document"]:
-                errors.append(f"case twin {key!r} references two different descriptor twins")
-            else:
-                used_descriptors.add(model_proofs["columns"])
-        if all(arm in documents for arm in _ARMS):
-            if _logical_case(documents["columns"]) != _logical_case(documents["document"]):
-                errors.append(f"case twin {key!r} differs in layout-invariant authored behavior")
+        used = _check_case_twin(key, members, modules, set(descriptor_pairs), errors)
+        if used is not None:
+            used_descriptors.add(used)
 
     for proof in sorted(set(descriptor_pairs) - used_descriptors):
         errors.append(f"descriptor twin {proof!r} is not used by a complete case twin")
     return errors
+
+
+def _check_descriptor_twin(proof: str, members: dict[str, Path], errors: list[str]) -> None:
+    documents: dict[str, dict[str, Any]] = {}
+    for arm in _ARMS:
+        path = members[arm]
+        document = mapping_document(path, "model descriptor", errors)
+        if document is None:
+            continue
+        documents[arm] = document
+        errors.extend(_layout_errors(path, arm, document))
+    if all(arm in documents for arm in _ARMS) and _logical_descriptor(
+        documents["columns"]
+    ) != _logical_descriptor(documents["document"]):
+        errors.append(
+            f"descriptor twin {proof!r} differs after root-owned layout blocks are removed"
+        )
+
+
+def _check_fixture_twin(fixtures: Path, proof: str, errors: list[str]) -> None:
+    fixture_documents: dict[str, dict[str, Any]] = {}
+    for arm in _ARMS:
+        fixture_path = fixtures / f"{proof}-layout-twin-{arm}.yaml"
+        if not fixture_path.is_file():
+            errors.append(f"descriptor twin {proof!r} is missing fixture {fixture_path.name}")
+            continue
+        fixture = mapping_document(fixture_path, "fixture", errors)
+        if fixture is not None:
+            fixture_documents[arm] = fixture
+    if (
+        all(arm in fixture_documents for arm in _ARMS)
+        and fixture_documents["columns"] != fixture_documents["document"]
+    ):
+        errors.append(f"fixture twin {proof!r} does not author equal logical rows")
+
+
+def _check_case_twin(
+    key: tuple[str, str],
+    members: dict[str, Path],
+    modules: frozenset[str],
+    descriptor_proofs: set[str],
+    errors: list[str],
+) -> str | None:
+    """Check one complete case twin; return the descriptor twin both arms reference."""
+    documents: dict[str, dict[str, Any]] = {}
+    model_proofs: dict[str, str] = {}
+    for arm in _ARMS:
+        path = members[arm]
+        case = mapping_document(path, "compatibility case", errors)
+        if case is None:
+            continue
+        documents[arm] = case
+        _check_case_module_tag(path, case, key[0], modules, errors)
+        model_proof = _case_model_proof(path, arm, case, descriptor_proofs, errors)
+        if model_proof is not None:
+            model_proofs[arm] = model_proof
+    used: str | None = None
+    if all(arm in model_proofs for arm in _ARMS):
+        if model_proofs["columns"] != model_proofs["document"]:
+            errors.append(f"case twin {key!r} references two different descriptor twins")
+        else:
+            used = model_proofs["columns"]
+    if all(arm in documents for arm in _ARMS) and _logical_case(
+        documents["columns"]
+    ) != _logical_case(documents["document"]):
+        errors.append(f"case twin {key!r} differs in layout-invariant authored behavior")
+    return used
+
+
+def _check_case_module_tag(
+    path: Path,
+    case: Mapping[str, Any],
+    filename_module: str,
+    modules: frozenset[str],
+    errors: list[str],
+) -> None:
+    module_tag = primary_module(case, _is_module_tag)
+    if module_tag is not None and module_tag not in modules:
+        errors.append(
+            f"{path.name}: first module tag {module_tag!r} is not in the canonical module catalog"
+        )
+    elif module_tag != filename_module:
+        errors.append(
+            f"{path.name}: filename module {filename_module!r} does not match first "
+            f"module tag {module_tag!r}"
+        )
+
+
+def _case_model_proof(
+    path: Path,
+    arm: str,
+    case: Mapping[str, Any],
+    descriptor_proofs: set[str],
+    errors: list[str],
+) -> str | None:
+    """The descriptor twin a case arm references, or ``None`` when it names no twin."""
+    model = case.get("model")
+    model_name = Path(model).name if isinstance(model, str) else ""
+    model_match = _MODEL_RE.match(model_name)
+    if model_match is None:
+        errors.append(f"{path.name}: twin case must reference a twin model descriptor")
+        return None
+    model_arm = model_match.group("arm")
+    model_proof = model_match.group("proof")
+    if model_arm != arm:
+        errors.append(f"{path.name}: {arm} case references the {model_arm} descriptor arm")
+    if model_proof not in descriptor_proofs:
+        errors.append(f"{path.name}: references unknown descriptor twin {model_proof!r}")
+    return model_proof
 
 
 def run(compatibility_root: Path) -> int:
