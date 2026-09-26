@@ -269,7 +269,8 @@ def test_every_occurrence_window_iterates_its_own_bound_members_in_order() -> No
         interleaved = [next(iterator) for _ in expected for iterator in (first, second)]
         assert interleaved == [member for member in expected for _ in (first, second)], shape
         assert next(first, None) is None and next(second, None) is None, shape
-        assert window != expected, shape
+        assert window == expected, shape
+        assert hash(window) == hash(expected), shape
 
 
 def test_iterating_an_occurrence_window_never_indexes_it(monkeypatch: pytest.MonkeyPatch) -> None:

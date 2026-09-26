@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from itertools import islice
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard, cast, overload
 
@@ -12,7 +11,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     FacetKey,
     InheritanceStrategy,
-    Leaf,
     MemberIdentity,
     MemberShape,
     Metamodel,
@@ -21,6 +19,7 @@ from parallax.core.metamodel import (
     StorageContainer,
     ValueObjectMetadata,
 )
+from parallax.core.metamodel._shape import BoundShape
 
 __all__ = [
     "FACET_KEY",
@@ -155,49 +154,6 @@ type _EntityBinding = AttributeMetadata | ValueObjectMetadata
 
 
 @dataclass(frozen=True, slots=True)
-class _BindingRange[T](Sequence[T]):
-    bindings: tuple[_EntityBinding, ...]
-    start: int
-    stop: int
-
-    def __len__(self) -> int:
-        return self.stop - self.start
-
-    @overload
-    def __getitem__(self, index: int) -> T: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> Sequence[T]: ...
-
-    def __getitem__(self, index: int | slice) -> T | Sequence[T]:
-        if isinstance(index, slice):
-            return cast("Sequence[T]", self.bindings[self.start : self.stop][index])
-        position = index if index >= 0 else len(self) + index
-        if position < 0 or position >= len(self):
-            raise IndexError(index)
-        return cast("T", self.bindings[self.start + position])
-
-    def __iter__(self) -> Iterator[T]:
-        # The Sequence mixin would index every element through Python-level
-        # `__getitem__`; each case below walks the shared tuple in C without
-        # copying the window.
-        if self.start == self.stop:
-            return iter(())
-        bindings = cast("tuple[T, ...]", self.bindings)
-        if self.start == 0 and self.stop == len(bindings):
-            return iter(bindings)
-        return islice(bindings, self.start, self.stop)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Sequence):
-            return False
-        compared = cast("Sequence[object]", other)
-        return len(self) == len(compared) and all(
-            left == right for left, right in zip(self, compared, strict=True)
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class _BindingIdentities(Sequence[MemberIdentity]):
     bindings: tuple[_EntityBinding, ...]
 
@@ -224,50 +180,46 @@ class _BindingIdentities(Sequence[MemberIdentity]):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class EntityMemberSelection:
     """One Entity's complete inheritance-effective member selection."""
 
-    shape: MemberShape
-    bindings: tuple[_EntityBinding, ...]
-    attribute_count: int
-    _position_by_identity: Mapping[MemberIdentity, int] = field(
-        init=False, repr=False, compare=False
-    )
-    _attributes: _BindingRange[AttributeMetadata] = field(init=False, repr=False, compare=False)
-    _value_objects: _BindingRange[ValueObjectMetadata] = field(
-        init=False, repr=False, compare=False
-    )
-    _identities: _BindingIdentities = field(init=False, repr=False, compare=False)
+    _members: BoundShape[AttributeMetadata, ValueObjectMetadata]
+    _position_by_identity: Mapping[MemberIdentity, int] = field(repr=False, compare=False)
+    _identities: _BindingIdentities = field(repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        if len(self.shape.members) != len(self.bindings):
-            raise ValueError("an Entity member selection aligns every shape member to one binding")
-        positions = {binding.identity: position for position, binding in enumerate(self.bindings)}
-        if len(positions) != len(self.bindings):
+    def __init__(
+        self, shape: MemberShape, bindings: tuple[_EntityBinding, ...], attribute_count: int
+    ) -> None:
+        members: BoundShape[AttributeMetadata, ValueObjectMetadata] = BoundShape(
+            shape, bindings, attribute_count
+        )
+        positions = {binding.identity: position for position, binding in enumerate(bindings)}
+        if len(positions) != len(bindings):
             raise ValueError("an Entity member selection assigns each identity one position")
-        if not 0 <= self.attribute_count <= len(self.bindings):
-            raise ValueError("an Entity member selection counts its attributes within its bindings")
+        object.__setattr__(self, "_members", members)
         object.__setattr__(self, "_position_by_identity", MappingProxyType(positions))
-        object.__setattr__(self, "_identities", _BindingIdentities(self.bindings))
-        object.__setattr__(
-            self,
-            "_attributes",
-            _BindingRange(self.bindings, 0, self.attribute_count),
-        )
-        object.__setattr__(
-            self,
-            "_value_objects",
-            _BindingRange(self.bindings, self.attribute_count, len(self.bindings)),
-        )
+        object.__setattr__(self, "_identities", _BindingIdentities(bindings))
+
+    @property
+    def shape(self) -> MemberShape:
+        return self._members.shape
+
+    @property
+    def bindings(self) -> tuple[_EntityBinding, ...]:
+        return self._members.bindings
+
+    @property
+    def attribute_count(self) -> int:
+        return self._members.leaf_count
 
     @property
     def attributes(self) -> Sequence[AttributeMetadata]:
-        return self._attributes
+        return self._members.leaves
 
     @property
     def value_objects(self) -> Sequence[ValueObjectMetadata]:
-        return self._value_objects
+        return self._members.occurrences
 
     @property
     def identities(self) -> Sequence[MemberIdentity]:
@@ -281,8 +233,13 @@ class EntityMemberSelection:
         return self._position_by_identity[member]
 
     def binding(self, name: str) -> _EntityBinding | None:
-        position = self.shape.position(name)
-        return None if position is None else self.bindings[position]
+        return self._members.binding(name)
+
+    def attribute(self, name: str) -> AttributeMetadata | None:
+        return self._members.leaf(name)
+
+    def value_object(self, name: str) -> ValueObjectMetadata | None:
+        return self._members.occurrence(name)
 
 
 def member_selection(
@@ -335,18 +292,10 @@ class _InheritanceEntityView:
         return self.member_selection.shape
 
     def applicable_attribute(self, name: str) -> AttributeMetadata | None:
-        binding = self.member_selection.binding(name)
-        position = self.member_selection.shape.position(name)
-        if position is None or not isinstance(self.member_selection.shape.members[position], Leaf):
-            return None
-        return cast("AttributeMetadata", binding)
+        return self.member_selection.attribute(name)
 
     def applicable_value_object(self, name: str) -> ValueObjectMetadata | None:
-        binding = self.member_selection.binding(name)
-        position = self.member_selection.shape.position(name)
-        if position is None or isinstance(self.member_selection.shape.members[position], Leaf):
-            return None
-        return cast("ValueObjectMetadata", binding)
+        return self.member_selection.value_object(name)
 
 
 def _project(
