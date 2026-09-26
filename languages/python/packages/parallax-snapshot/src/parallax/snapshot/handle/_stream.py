@@ -6,8 +6,7 @@ from typing import Any, Final, Literal, Protocol, cast, overload
 
 from parallax.core import continuation, deep_fetch
 from parallax.core.base import ManagedValue, NeutralType
-from parallax.core.entity import Entity, RelationshipPath
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity import Entity, EntityGraphConstruction, RelationshipPath
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -253,10 +252,12 @@ class SnapshotStreamContinuationError(RuntimeError):
 
 
 class _StreamWireProjection:
-    __slots__ = ("_encoder", "_includes", "_model", "_reader", "_walk")
+    __slots__ = ("_construction", "_encoder", "_includes", "_reader", "_walk")
 
-    def __init__(self, model: CatalogedModel, includes: deep_fetch.IncludeTree) -> None:
-        self._model = model
+    def __init__(
+        self, construction: EntityGraphConstruction, includes: deep_fetch.IncludeTree
+    ) -> None:
+        self._construction = construction
         self._includes = includes
         self._reader: EntityReader | None = None
         self._walk: WireWalk[object] | None = None
@@ -281,11 +282,11 @@ class _StreamWireProjection:
         reader = self._reader
         if node is not None:
             if reader is None:
-                reader = EntityReader(self._model, operation="SnapshotStream.wire")
+                reader = EntityReader(self._construction, operation="SnapshotStream.wire")
             concrete = projection_concrete(reader, node, operation="SnapshotStream.wire")
         position = wire_position(
             self._includes,
-            self._model,
+            self._construction.cataloged,
             at,
             operation="SnapshotStream.wire",
         )
@@ -361,8 +362,8 @@ class SnapshotStream[T]:
         "_page_plan",
         "_pages",
         "_pin",
+        "_projection_construction",
         "_projection_includes",
-        "_projection_model",
         "_projection_state",
         "_publication",
         "_read",
@@ -385,7 +386,7 @@ class SnapshotStream[T]:
         self._state: _State = _CREATED
         self._read: StreamRead | None = None
         self._publication: ResultPublication | None = None
-        self._projection_model: CatalogedModel | None = None
+        self._projection_construction: EntityGraphConstruction | None = None
         self._projection_includes: deep_fetch.IncludeTree | None = None
         self._projection_state: _StreamWireProjection | None = None
         self._page_plan: DeliveryPlan | None = None
@@ -434,7 +435,7 @@ class SnapshotStream[T]:
         except BaseException:
             self._release_publication()
             raise
-        self._projection_model = publication.projection_model
+        self._projection_construction = publication.construction
         self._state = _OPEN
         return self
 
@@ -513,8 +514,8 @@ class SnapshotStream[T]:
         at: RelationshipPath[Entity, Any] | None = None,
     ) -> WireEntity | InvalidData[WireEntity]:
         """Publish one eligible node under the current delivery Page's request shape."""
-        model = self._projection_model
-        if model is None:
+        construction = self._projection_construction
+        if construction is None:
             if self._state != _CREATED:
                 from parallax.snapshot._inspection import SnapshotInspectionError
 
@@ -529,7 +530,7 @@ class SnapshotStream[T]:
             raise SnapshotStreamStateError(_CURRENT_PROJECTION_PAGE)
         projection = self._projection_state
         if projection is None:
-            projection = _StreamWireProjection(model, includes)
+            projection = _StreamWireProjection(construction, includes)
             self._projection_state = projection
         return projection.project(value, at)
 
@@ -714,7 +715,7 @@ class SnapshotStream[T]:
                 sources=page.sources,
                 milestones=self._milestones,
             )
-            if self._projection_model is not None:
+            if self._projection_construction is not None:
                 roots = self._projection_roots(roots, page.includes)
             for root in roots:
                 if not checked and isinstance(root, InvalidData):

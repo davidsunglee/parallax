@@ -607,6 +607,15 @@ def test_the_pair_that_agrees_is_not_refused() -> None:
     assert (cast("_Doc", corr.doc).first, cast("_Doc", corr.doc).second) == ("head", "tail")
 
 
+def test_a_construction_proves_only_the_class_it_composed_for_an_entity() -> None:
+    construction = graph_construction_for(DomainModel(_Composed, CorrPeer))
+
+    assert construction.proves(_Composed, _CORR)
+    assert not construction.proves(_ReorderedMembers, _CORR)
+    assert not construction.proves(_Composed, CorrPeer.identity)
+    assert not construction.proves(_ScalarNote, _ScalarNote.identity)
+
+
 def test_a_member_row_the_class_lays_out_differently_is_refused() -> None:
     refusal = _disagreeing(_Composed, _ReorderedMembers)
     assert "'id', 'note', 'label'" in refusal.message

@@ -534,11 +534,12 @@ class EntityGraphConstruction:
     catalog that did not produce it is unconstructible rather than checked.
     """
 
-    __slots__ = ("_facts",)
+    __slots__ = ("_cataloged", "_facts")
 
     def __init__(self, cataloged: CatalogedModel, classes: ClassIndex) -> None:
         """Derive every Entity's construction facts, or raise
         :class:`GraphConstructionError`."""
+        self._cataloged = cataloged
         self._facts: Mapping[EntityIdentity, _EntityFacts] = MappingProxyType(
             {
                 entity.identity: _entity_facts(cataloged, classes, entity.identity)
@@ -576,6 +577,18 @@ class EntityGraphConstruction:
         for index, state in enumerate(states):
             attach_lifecycle_state(cast("BaseModel", scope.instances[index]), state)
         return tuple(scope.instances[index] for index in published)
+
+    @property
+    def cataloged(self) -> CatalogedModel:
+        """The cataloged model whose layouts every Entity's facts were proved against."""
+        return self._cataloged
+
+    def proves(self, cls: type, entity: EntityIdentity) -> bool:
+        """Whether ``cls`` is the class this model composed for ``entity``, and so
+        already passed :func:`require_correspondence` against ``entity``'s layout
+        in :attr:`cataloged`."""
+        facts = self._facts.get(entity)
+        return facts is not None and facts.cls is cls
 
     def facts_for(self, entity: EntityIdentity) -> _EntityFacts:
         """``entity``'s construction facts, refusing an Entity this model does
