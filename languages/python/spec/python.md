@@ -798,19 +798,27 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContextSource`, `ConnectionContext`, `InvalidAuthorizationError`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `ReleaseUnconfirmed`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic`, `pydantic-core` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContextSource`, `ConnectionContext`, `InvalidAuthorizationError`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `ReleaseUnconfirmed`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `DatabaseOptions`, `Principal`, `ScopedDatabase`, `InvalidPrincipalError`, `TransactionAuthorityError`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `RowsResult`, `WireEntity`, `WireDatabaseView`, `WireTransactionView`, `WireQuery`, `WireChanges`, `WirePredicateTarget`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotConsistencyError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
-| `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
-| `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source), `parallax.aws.postgres` (its engine-specific slice, behind the `postgres` extra) | `botocore` (sole declarer) | `parallax-core`; `parallax-postgres` under the `postgres` extra | `parallax.aws`: `RdsIamCredentials`; `parallax.aws.postgres`: `rds_postgres` |
-| `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
+| `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PostgresRole`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
+| `parallax-aws` (AWS credential providers) | production, optional | `parallax.aws` (the RDS IAM Credential Source), `parallax.aws.postgres` (its engine-specific slice, behind the `postgres` extra) | `botocore` (sole declarer); `psycopg` under the `postgres` extra | `parallax-core`; `parallax-postgres` under the `postgres` extra | `parallax.aws`: `RdsIamCredentials`; `parallax.aws.postgres`: `rds_postgres` |
+| `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `pydantic`, `psycopg`, `pyyaml`, `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
+- **Direct declaration.** A distribution directly declares every third-party
+  distribution its source imports, even one a sibling it depends on already
+  installs, and every sibling distribution it imports; it declares nothing it
+  does not import. A dependency needed only by a slice behind an extra is
+  declared in that extra, so the base installation stays as narrow as the
+  slices it always ships. The declaration grants no source permission (§7):
+  manifests say what is installed, and the contracts say who may import it.
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
-  `pydantic`; the clean-install check installs it alone and proves
-  `parallax-descriptor`, `pyyaml`, `jsonschema`, `psycopg`,
-  `parallax.snapshot`, testcontainers, and conformance modules are absent from
-  both the installed distribution list and the import space.
+  `pydantic` and the `pydantic-core` it imports directly; the clean-install
+  check installs it alone and proves `parallax-descriptor`, `pyyaml`,
+  `jsonschema`, `psycopg`, `parallax.snapshot`, testcontainers, and conformance
+  modules are absent from both the installed distribution list and the import
+  space.
 - **Descriptor manifest and schema-resource proof.** `parallax-descriptor`
   directly declares `parallax-core`, `pyyaml`, and `jsonschema`, so every
   installed Descriptor Frontend can execute all three ingestion phases without
@@ -837,20 +845,24 @@ hatchling.
   `parallax-core`; the clean-install check proves no sibling lifecycle
   artifact, Descriptor Frontend, descriptor parser, schema validator, or
   concrete driver is present.
-- **Adapter manifest proof.** `parallax-postgres` alone declares the driver,
-  and it declares `psycopg[binary]`: the `binary` extra bundles a self-contained
+- **Adapter manifest proof.** `parallax-postgres` is the only production
+  artifact whose base installation brings the driver, and it declares
+  `psycopg[binary]`: the `binary` extra bundles a self-contained
   `libpq` in the wheel, so the adapter — and the clean-install topology proof
   below — installs and imports with **no system `libpq`** present. The accepted
   trade-off is the pre-built binary build over compiling `psycopg[c]`/pure
   `psycopg` against a system `libpq` (the binary build is discouraged only for
   large-scale production connection tuning, out of scope for this slice), so the
   self-contained deployment the topology proof relies on is the deliberate
-  default. The driver-free dialect strategy ships inside `parallax-core`
-  (explicitly permitted by core), keeping `compile` Docker- and driver-free.
+  default. The adapter owns that capability, so a distribution that imports
+  psycopg beside it declares the plain driver and receives the binary build
+  through the adapter. The driver-free dialect strategy ships inside
+  `parallax-core` (explicitly permitted by core), keeping `compile` Docker- and
+  driver-free.
 - **Credential-provider manifest proof.** `parallax-aws` declares `parallax-core`
   and `botocore` unconditionally and nothing else, and it is the sole botocore
   declarer: the built wheel's `Requires-Dist` is asserted to be exactly those
-  two beside the one requirement its `postgres` extra gates, and every other
+  two beside the adapter and driver its `postgres` extra gates, and every other
   clean-install fixture proves botocore absent. A credential provider is a leaf
   beside the adapters rather than a layer above them — it produces
   configuration the composition root hands to whichever adapter it selected — so

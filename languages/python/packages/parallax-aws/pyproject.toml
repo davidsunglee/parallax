@@ -20,10 +20,11 @@ dependencies = [
 # The engine-specific slice `parallax.aws.postgres` composes a
 # `PostgresAdapter`, and this extra is what keeps the rest of the distribution
 # free of one: a deployment on another engine installs the credential provider
-# and no database driver arrives with it. psycopg reaches that slice through
-# `parallax-postgres`, which stays the sole declarer of the driver.
+# and no database driver arrives with it. The slice also imports psycopg
+# directly, so the extra declares the driver beside the adapter that brings its
+# binary build.
 [project.optional-dependencies]
-postgres = ["parallax-postgres"]
+postgres = ["parallax-postgres", "psycopg>=3.3.5"]
 
 [build-system]
 requires = ["hatchling"]

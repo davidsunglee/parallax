@@ -79,7 +79,7 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert _import_ok(python, "parallax.core.sql_gen")
     # Unselected interchange, lifecycle, adapter, driver, and dev tooling are all
     # absent — the Descriptor Frontend and both of the dependencies it alone
-    # declares included, so `parallax-core`'s manifest really is `pydantic` only.
+    # declares included, so `parallax-core`'s manifest really is Pydantic only.
     assert not _import_ok(python, "parallax.descriptor")
     assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.snapshot")
