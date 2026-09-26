@@ -51,6 +51,7 @@ import re
 import sys
 from pathlib import Path
 
+from .markdown_read import heading_section
 from .paths import schemas_dir
 from .schemas import load_json
 
@@ -83,8 +84,6 @@ _NESTED_BULLET_CODE = re.compile(r"^\s+-\s*`([a-z][a-z0-9-]*)`", re.MULTILINE)
 
 # The start of the bullet FOLLOWING a top-level bullet's whole body.
 _TOP_LEVEL_BULLET = re.compile(r"^-\s", re.MULTILINE)
-
-_HEADING = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 
 _REJECTED_HEADING_MARKER = "Rejected cases"
 _MODEL_RULES_MARKER = "**Model** rules"
@@ -121,15 +120,10 @@ class VocabMismatch(ValueError):
 
 
 def _section(markdown: str, heading_contains: str) -> str:
-    """The body text between the first heading containing *heading_contains*
-    and the next heading of any level (or end of document)."""
-    headings = list(_HEADING.finditer(markdown))
-    for index, heading in enumerate(headings):
-        if heading_contains in heading.group(0):
-            start = heading.end()
-            end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
-            return markdown[start:end]
-    raise VocabMismatch(f"no heading containing {heading_contains!r} found in m-case-format.md")
+    section = heading_section(markdown, heading_contains)
+    if section is None:
+        raise VocabMismatch(f"no heading containing {heading_contains!r} found in m-case-format.md")
+    return section
 
 
 def _bulleted_rules(section: str) -> set[str]:

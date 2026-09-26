@@ -41,6 +41,7 @@ import re
 import sys
 from pathlib import Path
 
+from .markdown_read import heading_section
 from .paths import schemas_dir
 from .schemas import load_json
 
@@ -53,8 +54,6 @@ __all__ = [
     "schema_null_placements",
     "schema_temporal_selection_variants",
 ]
-
-_HEADING = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 
 # A table body row's own leading inline-code span: the first cell's code, after
 # the opening pipe. The header (`| Selection | ...`) and the delimiter row
@@ -73,17 +72,12 @@ class ObjectQueryVocabMismatch(ValueError):
 
 
 def _section(markdown: str, heading_contains: str) -> str:
-    """The body text between the first heading containing *heading_contains*
-    and the next heading of any level (or end of document)."""
-    headings = list(_HEADING.finditer(markdown))
-    for index, heading in enumerate(headings):
-        if heading_contains in heading.group(0):
-            start = heading.end()
-            end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
-            return markdown[start:end]
-    raise ObjectQueryVocabMismatch(
-        f"no heading containing {heading_contains!r} found in m-object-query.md"
-    )
+    section = heading_section(markdown, heading_contains)
+    if section is None:
+        raise ObjectQueryVocabMismatch(
+            f"no heading containing {heading_contains!r} found in m-object-query.md"
+        )
+    return section
 
 
 def prose_temporal_selection_variants(markdown: str) -> set[str]:
