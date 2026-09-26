@@ -71,7 +71,7 @@ from parallax.snapshot.handle import (
 )
 from parallax.snapshot.handle import _stream as stream_module
 from parallax.snapshot.materialize import _wire as wire_materialize
-from parallax.snapshot.materialize import read_origin_of
+from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,

@@ -258,8 +258,9 @@ class PredecessorRow:
     adopts a trusted reader's positional member row and decoded document by
     reference. That document may be mutable host containers; it stays logically
     immutable because the reader transferred exclusive ownership and no consumer
-    mutates it: a carried successor binds it unchanged, and a changed successor
-    patches a copy (``apply_patches``).
+    mutates it. No successor binds it as adopted: settlement makes one
+    recursively immutable copy per row before any successor binds or patches it,
+    the form in which a bind crosses the port (`m-db-port`).
     """
 
     members: EntityStateRow | Mapping[str, object]
@@ -300,6 +301,22 @@ class PredecessorRow:
         object.__setattr__(predecessor, "_row", row)
         object.__setattr__(predecessor, "_absent", absent)
         return predecessor
+
+    def with_bindable_document(self) -> PredecessorRow:
+        """This row with its document recursively immutable, the form every
+        successor binds and patches.
+
+        A row whose document is absent or already immutable answers itself.
+        Otherwise the answer views the same member row, so the cells a successor
+        carries stay this row's own (:meth:`carries`).
+        """
+        document = self.document
+        owned = retain_document_value(document)
+        if owned is document:
+            return self
+        selection = self._selection
+        assert selection is not None  # direct construction already retained its document
+        return PredecessorRow.over_row(selection, self._row, owned, self._absent)
 
     def member(self, name: str) -> object:
         """The observed value of one member, by its declared name."""

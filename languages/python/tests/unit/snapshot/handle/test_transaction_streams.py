@@ -38,7 +38,7 @@ from parallax.core.unit_work import FixedClock, instructions
 from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, KeyedWriteValueError, Transaction
-from parallax.snapshot.materialize import read_origin_of
+from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (

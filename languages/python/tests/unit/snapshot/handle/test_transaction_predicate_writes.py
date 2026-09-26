@@ -51,6 +51,7 @@ from parallax.core.base import (
     INFINITY,
     SQL_NULL,
     DocumentValue,
+    FrozenMap,
     InstantError,
     PresentDocument,
 )
@@ -129,6 +130,7 @@ from tests.unit._transact_support import (
     RATE,
     WHERE_POSITION_META,
     WherePosition,
+    WriteDocumentBinds,
     account_db,
 )
 
@@ -1092,9 +1094,9 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
 
 def test_materializing_terminate_where_document_layout_binds_a_carried_document_as_json() -> None:
     # A rectangle split's head CARRIES its predecessor's document with nothing
-    # patched into it, so the value the insert binds is the retained document
-    # itself: the raw document the resolving read decoded and transferred to the
-    # group, bound without being frozen, copied, or rebuilt.
+    # patched into it. The resolving read transferred that raw document to the
+    # group unfrozen, so the insert binds it only as the recursively immutable
+    # copy settlement makes, and a Handler can mutate nothing the bind reaches.
     stored: DocumentValue = {
         "route": "Oslo-Bergen",
         "charterCode": "NB-118",
@@ -1123,16 +1125,21 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     def fn(tx: Transaction) -> None:
         tx.terminate_where(WhereCharter.where(WhereCharter.id == 1), valid_from=valid_from)
 
+    handler = WriteDocumentBinds()
     own_root(
-        Database.connect(port, _WHERE_CHARTER_META, clock=FixedClock(FIXED))
+        Database.connect(
+            port, _WHERE_CHARTER_META, clock=FixedClock(FIXED), lifecycle_provider=handler
+        )
     ).using_database_login().transact(fn)
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 2  # close + head only (no tail)
     head_binds = writes[1].binds
     carried = cast("JsonDocument", head_binds[-1]).value
     assert carried == stored
-    assert type(carried) is dict
-    assert type(cast("dict[str, object]", carried)["stops"]) is list
+    assert type(carried) is FrozenMap
+    assert type(cast("FrozenMap[str, object]", carried)["stops"]) is tuple
+    assert handler.documents == [carried]
+    assert handler.mutated == []
 
 
 def _position_row() -> MappingRow:

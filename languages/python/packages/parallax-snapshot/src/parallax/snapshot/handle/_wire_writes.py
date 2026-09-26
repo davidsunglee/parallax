@@ -49,7 +49,8 @@ from parallax.snapshot.handle._write_inputs import (
     reject_temporal_delete,
     validate_window,
 )
-from parallax.snapshot.materialize import WireEntity, opened_wire_entity, read_origin_of
+from parallax.snapshot.materialize import WireEntity, opened_wire_entity
+from parallax.snapshot.materialize._wire import read_origin_of
 
 __all__ = [
     "PreparedWireKeyedWriteSource",

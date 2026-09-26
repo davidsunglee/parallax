@@ -30,7 +30,7 @@ import pytest
 from parallax.core import bitemp_write, inheritance, relationship, temporal_read, txtime_write
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, FrozenMap
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
@@ -2297,14 +2297,18 @@ def test_indexing_a_temporal_group_constructs_only_the_requested_step(
     for index in range(len(settled)):
         assert plan.steps[index] == settled[index]
     assert constructed.steps == len(settled)
-    assert constructed.predecessors == sum(isinstance(step, PlannedInsert) for step in settled)
+    # A row's successors, asked for in turn, share one Predecessor Row.
+    opens_successors = steps_per_row > 1
+    assert constructed.predecessors == 3 * opens_successors
 
     constructed.steps = constructed.predecessors = 0
     last, first = len(settled) - 1, 0
     for index in (last, first, last):
         assert plan.steps[index] == settled[index]
     assert constructed.steps == 3
-    assert constructed.predecessors == 2 * isinstance(settled[last], PlannedInsert)
+    # A row's Predecessor Row is kept only while more of its successors follow,
+    # so the last row's is still there when that row opens several.
+    assert constructed.predecessors == 2 * (steps_per_row == 2)
 
 
 def test_a_temporal_groups_marker_no_opened_row_expresses_is_refused_while_planning() -> None:
@@ -2471,7 +2475,10 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
     # keyed `updateUntil` carrying its effective member alone, and a
     # materializing one over the same judged row and raw document. Both
     # successors patch the member they change and carry everything else,
-    # unknown keys included, so they lower to identical statements.
+    # unknown keys included, so they lower to identical statements. Each
+    # producer freezes the raw document once for the row: the head and tail
+    # bind that one immutable copy, and the changed successor's patch reuses
+    # its subtrees.
     model = model_of(acquisition_support.MODEL)
     case = acquisition_support.case_named("acquisition.rows-8.document")
     target = case.prepared.selection.target
@@ -2527,20 +2534,25 @@ def test_a_keyed_and_a_materialized_successor_lower_to_the_same_statements() -> 
         _plan([MaterializedWriteGroup(mutation=case.prepared, evidence=sealed)], model)
     )
     assert materialized == eager
-    documents = [
-        cast("Mapping[str, object]", bind.value)
-        for _sql, binds in eager
-        for bind in binds
-        if isinstance(bind, JsonDocument)
-    ]
-    assert [document["title"] for document in documents] == [
-        "title-1",
-        acquisition_support.ASSIGNED_TITLE,
-        "title-1",
-    ]
-    assert all(document["charterCode"] == "NB-118" for document in documents)
-    assert documents[0] is stored
-    assert documents[2] is stored
+    for statements in (eager, materialized):
+        head, changed, tail = (
+            cast("Mapping[str, object]", bind.value)
+            for _sql, binds in statements
+            for bind in binds
+            if isinstance(bind, JsonDocument)
+        )
+        assert [head["title"], changed["title"], tail["title"]] == [
+            "title-1",
+            acquisition_support.ASSIGNED_TITLE,
+            "title-1",
+        ]
+        assert all(document["charterCode"] == "NB-118" for document in (head, changed, tail))
+        assert type(head) is FrozenMap
+        assert head == stored
+        assert tail is head
+        assert changed["address"] is head["address"]
+    assert observation.predecessor.document is stored
+    assert sealed.document(0) is stored
 
 
 @pytest.mark.parametrize("positional", [False, True], ids=["mapping", "positional"])

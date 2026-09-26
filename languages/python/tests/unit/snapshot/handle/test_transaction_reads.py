@@ -34,7 +34,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
 from parallax.core.db_port import DatabaseConnection, JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -61,7 +61,8 @@ from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._retention import ObservationLedger
-from parallax.snapshot.materialize import WireEntity, read_origin_of
+from parallax.snapshot.materialize import WireEntity
+from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -86,6 +87,7 @@ from tests.unit._transact_support import (
     INSERT_SQL,
     NEW_ROW,
     PAYMENT,
+    WriteDocumentBinds,
     account_db,
     balance_row,
     db_for,
@@ -715,10 +717,11 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     # reference, unfrozen, so that ownership must hold through everything the
     # read publishes. Every container a caller can reach is mutated before the
     # write, a standalone read's evidence outliving the read that produced it.
-    # The carried head then binds the retained document itself and the changed
-    # tail patches only `title` into a copy, both keeping the unknown keys the
-    # model declares nowhere. Under Columns layout the retained document stays
-    # absent and each successor encodes the observed members.
+    # The carried head then binds one recursively immutable copy of the retained
+    # document and the changed tail patches only `title` into another, both
+    # keeping the unknown keys the model declares nowhere; a Handler can mutate
+    # nothing either bind reaches. Under Columns layout the retained document
+    # stays absent and each successor encodes the observed members.
     entity = OwnedDocumentCharter if layout == "document" else OwnedColumnsCharter
     table = "owned_document_charter" if layout == "document" else "owned_columns_charter"
     row = _owned_row(layout)
@@ -727,7 +730,8 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
         if standalone
         else ScriptedAdapter(Transact(Read(rows=[row]), Write(times=3)))
     )
-    db = db_for(DomainModel(entity), port)
+    handler = WriteDocumentBinds()
+    db = db_for(DomainModel(entity), port, lifecycle_provider=handler)
     target = f"parallax.compatibility.{entity.__name__}"
     wire_query: dict[str, object] = {
         "target": target,
@@ -768,13 +772,17 @@ def test_what_a_read_publishes_never_reaches_its_retained_evidence(
     retained = observation.predecessor.document
     close, head, tail = (op for op in port.calls if isinstance(op, WriteCall))
     assert close.sql.startswith(f"update {table} set out_z")
+    assert handler.documents
+    assert handler.mutated == []
     if layout == "document":
         assert retained is cast("PresentDocument", row["payload"]).document
         assert retained == _OWNED_DOCUMENT
         carried = cast("JsonDocument", head.binds[-1]).value
-        assert carried is retained
+        assert type(carried) is FrozenMap
+        assert carried == retained
         changed = cast("JsonDocument", tail.binds[-1]).value
         assert _as_json(changed) == {**_OWNED_DOCUMENT, "title": "Southbound"}
+        assert handler.documents == [carried, changed]
         return
     assert retained is None
     declared_route = {"name": "Coastal", "geo": {"country": "NO"}, "stops": [{"port": "Oslo"}]}

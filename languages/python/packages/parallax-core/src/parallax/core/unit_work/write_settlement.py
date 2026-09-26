@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, cast
 
 from parallax.core import inheritance, temporal_read
-from parallax.core.base import INFINITY_LITERAL, TemporalBound
+from parallax.core.base import INFINITY_LITERAL, TemporalBound, retain_document_value
 from parallax.core.document_codec import (
     PreparedEffectiveChange,
     classify_effective_change,
@@ -644,13 +644,16 @@ class WriteSettlement:
             entity, facts.view, row, context="insert"
         )
         predecessor = None if observed is None else observed.predecessor
-        if predecessor is not None and not any(
-            isinstance(resolved.state, CarriedState | ChangedState)
-            for resolved in facts.resolved_successors
-        ):
-            # No successor carries this state forward, yet a member the entity
-            # does not declare still refuses it.
-            _predecessor_maps(facts, predecessor)
+        if predecessor is not None:
+            if any(
+                isinstance(resolved.state, CarriedState | ChangedState)
+                for resolved in facts.resolved_successors
+            ):
+                predecessor = predecessor.with_bindable_document()
+            else:
+                # No successor carries this state forward, yet a member the entity
+                # does not declare still refuses it.
+                _predecessor_maps(facts, predecessor)
         overlaid = (
             None
             if predecessor is None
@@ -1014,8 +1017,10 @@ class _MaterializedTemporalSegment:
 
     ``steps_per_row`` is invariant across the group — every row shares the
     same authored mutation and therefore the same topology — so a flat step
-    index maps to (row, sub-step) by simple division, and nothing here is
-    cached between accesses.
+    index maps to (row, sub-step) by simple division. The one thing kept
+    between accesses is a row's Predecessor Row while more of its successors
+    follow, so the successors of a row, asked for in turn, share the one
+    recursively immutable copy of its document they bind and patch.
     """
 
     facts: _TemporalFacts
@@ -1027,6 +1032,9 @@ class _MaterializedTemporalSegment:
     gate_position: int | None
     valid_end_position: int | None
     steps_per_row: int
+    _bound: tuple[int, PredecessorRow] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __len__(self) -> int:
         return len(self.evidence) * self.steps_per_row
@@ -1045,6 +1053,19 @@ class _MaterializedTemporalSegment:
                 observed_valid_end=None if valid_end_position is None else row[valid_end_position],
                 observed_gate_start=None if gate_position is None else row[gate_position],
             )
+        bound = self._bound
+        if bound is not None and bound[0] == row_index:
+            predecessor = bound[1]
+        else:
+            document = evidence.document(row_index)
+            predecessor = PredecessorRow.over_row(
+                evidence.selection,
+                row,
+                None if document is None else retain_document_value(document),
+                evidence.absent,
+            )
+            if sub_step < self.steps_per_row - 1:
+                object.__setattr__(self, "_bound", (row_index, predecessor))
         resolved = self.facts.resolved_successors[sub_step - 1]
         change = self.change
         return _successor_step(
@@ -1052,9 +1073,7 @@ class _MaterializedTemporalSegment:
             resolved,
             self.authored_attributes,
             self.authored_value_objects,
-            PredecessorRow.over_row(
-                evidence.selection, row, evidence.document(row_index), evidence.absent
-            ),
+            predecessor,
             effective=(
                 change.effective_positions(row)
                 if change is not None and isinstance(resolved.state, ChangedState)

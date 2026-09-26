@@ -384,8 +384,9 @@ managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
 driver used one host sentinel for both raw values. No consumer may reconstruct
 the tag from the raw document cell after the adapter boundary. A freshly parsed
 document transfers to the read consumer as owned input; the adapter does not
-freeze every ordinary read. A later predecessor or evidence owner establishes
-recursive immutable retention only when its longer lifetime requires it.
+freeze every ordinary read. A predecessor or evidence owner MAY retain the
+transferred document by reference while no public path reaches it, and makes it
+recursively immutable before it crosses the port again as a bind.
 
 ## The portable isolation vocabulary
 

@@ -15,22 +15,32 @@ carried by this MODULE's underscore — the same convention the private
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Final, cast
+from typing import Any, Final, cast
 
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DatabaseAdapter,
+    JsonDocument,
     MappingRow,
 )
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution_lifecycle import (
+    DatabaseCallStarted,
+    ExecutionEvent,
+    ExecutionLifecycleHandler,
+    ExecutionLifecycleHandlerError,
+    ExecutionLifecycleProvider,
+    RootExecution,
+)
 from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import ScopedDatabase, Snapshot
-from parallax.snapshot.materialize import WireEntity, read_origin_of
+from parallax.snapshot.materialize import WireEntity
+from parallax.snapshot.materialize._wire import read_origin_of
 from tests._support import mirrored_models as mm
 from tests._support.root_ownership import own_root
 
@@ -51,6 +61,7 @@ __all__ = [
     "SHIPMENT",
     "WHERE_POSITION_META",
     "WherePosition",
+    "WriteDocumentBinds",
     "account_db",
     "balance_row",
     "db_for",
@@ -142,8 +153,67 @@ def account_db(adapter: DatabaseAdapter) -> ScopedDatabase:
     return own_root(connect(adapter, ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
 
 
-def db_for(meta: DomainModel, adapter: DatabaseAdapter) -> ScopedDatabase:
-    return own_root(connect(adapter, meta, clock=FixedClock(FIXED))).using_database_login()
+def db_for(
+    meta: DomainModel,
+    adapter: DatabaseAdapter,
+    *,
+    lifecycle_provider: ExecutionLifecycleProvider | None = None,
+) -> ScopedDatabase:
+    return own_root(
+        connect(adapter, meta, clock=FixedClock(FIXED), lifecycle_provider=lifecycle_provider)
+    ).using_database_login()
+
+
+class WriteDocumentBinds:
+    """A lifecycle Provider whose Handler receives every write statement's
+    document binds and tries to mutate each container reachable from them, as
+    they are delivered.
+
+    ``documents`` holds each document bind's value in delivery order, and
+    ``mutated`` every container a mutation got through, through the instance or
+    through the ``dict`` or ``list`` base type's own mutators.
+    """
+
+    def __init__(self) -> None:
+        self.documents: list[object] = []
+        self.mutated: list[object] = []
+
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler:
+        del execution
+        return self
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        raise AssertionError(error)
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if not isinstance(event, DatabaseCallStarted) or event.kind != "write":
+            return
+        for bind in event.statement.binds:
+            if isinstance(bind, JsonDocument):
+                self.documents.append(bind.value)
+                self._mutate(bind.value)
+
+    def _mutate(self, value: object) -> None:
+        if isinstance(value, Mapping):
+            items: Sequence[object] = list(cast("Mapping[str, object]", value).values())
+        elif isinstance(value, tuple | list):
+            items = list(cast("Sequence[object]", value))
+        else:
+            return
+        for item in items:
+            self._mutate(item)
+        container = cast("Any", value)
+        attempts: tuple[Callable[[], object], ...] = (
+            lambda: container.__setitem__("hijacked", True),
+            lambda: dict[str, object].__setitem__(container, "hijacked", True),
+            lambda: list[object].append(container, "hijacked"),
+        )
+        for attempt in attempts:
+            try:
+                attempt()
+            except (AttributeError, TypeError):
+                continue
+            self.mutated.append(container)
 
 
 def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservation, ...]:
