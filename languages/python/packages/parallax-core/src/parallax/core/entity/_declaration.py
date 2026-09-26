@@ -5,10 +5,21 @@ import decimal as _decimal
 import enum
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType, NoneType, UnionType
-from typing import Any, ClassVar, Final, ForwardRef, Never, Union, cast, get_args, get_origin
+from typing import (
+    Any,
+    ClassVar,
+    Final,
+    ForwardRef,
+    NamedTuple,
+    Never,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import ConfigDict, field_validator
 from pydantic._internal._model_construction import ModelMetaclass
@@ -1031,37 +1042,15 @@ def _build_value_object(
             message=f"{cls_name}: a Value Object Class extends exactly one ValueObject base",
         )
     annotations = _class_body_annotations(ns)
-    globalns = _module_globals(ns)
     attributes: list[ValueObjectAttributeDeclaration] = []
     nested: list[NestedValueObjectOccurrenceDeclaration] = []
     py_to_name: dict[str, str] = {}
-    canonical_seen: set[str] = set()
     nested_classes: dict[str, type] = {}
-    many_py: set[str] = set()
     shapes: dict[str, _Shape] = {}
 
-    for py_name, annotation in list(annotations.items()):
-        where = f"{cls_name}.{py_name}"
-        _reject_reserved(where, py_name, DeclarationKind.VALUE_OBJECT)
-        classified = _classify(annotation, globalns, ns)
-        if classified is not None and classified[0] == "class_var":
-            continue
-        if classified is None or classified[0] != "attr":
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a Value Object member is annotated Attr[...]",
-            )
-        spec = cast("AttrSpec", _member_spec(ns.get(py_name), where, expect="attr"))
-        shape = _shape_of_annotation(
-            classified[1], where=where, globalns=globalns, localns=ns, relationship_target=False
-        )
-        canonical = _declared_name(spec, py_name)
-        if canonical in canonical_seen:
-            raise EntityDefinitionError(
-                code="entity-canonical-name-collision",
-                message=f"{cls_name}: two members resolve to the canonical name {canonical!r}",
-            )
-        canonical_seen.add(canonical)
+    body = _body_members(cls_name, annotations, ns, DeclarationKind.VALUE_OBJECT)
+    for py_name, where, _kind, declared_spec, shape, canonical in body:
+        spec = cast("AttrSpec", declared_spec)
         py_to_name[py_name] = canonical
         shapes[py_name] = shape
         _reject_entity_only_options(spec, where, allow_column=False)
@@ -1074,8 +1063,6 @@ def _build_value_object(
                 )
             nested_class = cast("type", shape.base)
             nested_classes[py_name] = nested_class
-            if shape.multiplicity is Multiplicity.MANY:
-                many_py.add(py_name)
             nested.append(
                 NestedValueObjectOccurrenceDeclaration(
                     name=canonical,
@@ -1098,7 +1085,7 @@ def _build_value_object(
             )
         )
 
-    _install_fields(annotations, ns, shapes, nested_classes, many_py, framework_owned=frozenset())
+    _install_fields(annotations, ns, shapes, nested_classes, framework_owned=frozenset())
     declared_attributes = tuple(attributes)
     declared_nested = tuple(nested)
     ns[_SHAPE] = ValueObjectShape(
@@ -1112,7 +1099,11 @@ def _build_value_object(
         ),
         py_to_name=MappingProxyType(py_to_name),
         nested_classes=MappingProxyType(nested_classes),
-        many_py=frozenset(many_py),
+        many_py=frozenset(
+            py_name
+            for py_name in nested_classes
+            if shapes[py_name].multiplicity is Multiplicity.MANY
+        ),
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
     plan = install_publication_plan(
@@ -1146,12 +1137,9 @@ def _build_entity(
     shape_owner = parent is None and bool(axes)
 
     annotations = _class_body_annotations(ns)
-    globalns = _module_globals(ns)
     if axes:
         _reject_temporal_redeclaration(cls_name, annotations, ns)
-    if shape_owner:
-        _inject_temporal_members(annotations, ns, axes)
-    axis_members = _axis_metadata(identity, axes) if shape_owner else ()
+    axis_members = _declare_temporal_members(identity, annotations, ns, axes) if shape_owner else ()
 
     attributes: list[AttributeMetadata] = []
     relationships: list[UnresolvedRelationshipDeclaration] = []
@@ -1168,38 +1156,10 @@ def _build_entity(
     relationship_shapes: dict[str, RelationshipAnnotation] = {}
     pk_py: set[str] = set()
     vo_classes: dict[str, type] = {}
-    many_py: set[str] = set()
     shapes: dict[str, _Shape] = {}
-    canonical_seen: set[str] = set()
 
-    for py_name, annotation in list(annotations.items()):
-        where = f"{cls_name}.{py_name}"
-        _reject_reserved(where, py_name, DeclarationKind.ENTITY)
-        classified = _classify(annotation, globalns, ns)
-        if classified is None:
-            raise EntityDefinitionError(
-                code="entity-annotation-invalid",
-                message=f"{where}: a member is annotated Attr[...] or Rel[...]",
-            )
-        member_kind, inner = classified
-        if member_kind == "class_var":
-            continue
-        spec = _member_spec(ns.get(py_name), where, expect=member_kind)
-        shape = _shape_of_annotation(
-            inner,
-            where=where,
-            globalns=globalns,
-            localns=ns,
-            relationship_target=member_kind == "rel",
-        )
-        canonical = _declared_name(spec, py_name)
-        if canonical in canonical_seen:
-            raise EntityDefinitionError(
-                code="entity-canonical-name-collision",
-                message=f"{cls_name}: two members resolve to the canonical name {canonical!r}",
-            )
-        canonical_seen.add(canonical)
-
+    body = _body_members(cls_name, annotations, ns, DeclarationKind.ENTITY)
+    for py_name, where, member_kind, spec, shape, canonical in body:
         if member_kind == "rel":
             del annotations[py_name]  # a relationship is never a stored Pydantic field
             ns.pop(py_name, None)
@@ -1229,8 +1189,6 @@ def _build_entity(
                 )
             vo_class = cast("type", shape.base)
             vo_classes[py_name] = vo_class
-            if shape.multiplicity is Multiplicity.MANY:
-                many_py.add(py_name)
             occurrence = ValueObjectOccurrenceDeclaration(
                 name=canonical,
                 storage=Column(column),
@@ -1264,9 +1222,7 @@ def _build_entity(
         for attribute in declared_attributes
         if attribute.framework_owned
     )
-    _install_fields(
-        annotations, ns, shapes, vo_classes, many_py, framework_owned=framework_owned_py
-    )
+    _install_fields(annotations, ns, shapes, vo_classes, framework_owned=framework_owned_py)
     container = _container(cls_name, header)
     ns[_DECLARATION] = EntityDeclaration(
         identity=identity,
@@ -1330,6 +1286,76 @@ def _build_entity(
         )
     _install_inherited_descriptors(cls, plan, own=set(py_to_name) | set(relationship_py.values()))
     return cls
+
+
+# Class body members
+
+
+class _BodyMember(NamedTuple):
+    """One member a class body declares, resolved and named but not yet built."""
+
+    py_name: str
+    where: str
+    kind: str
+    spec: AttrSpec | RelSpec
+    shape: _Shape
+    canonical: str
+
+
+# The member annotations each declaration admits, and the refusal naming them.
+_ADMITTED_MEMBERS: Final[Mapping[DeclarationKind, tuple[frozenset[str], str]]] = {
+    DeclarationKind.ENTITY: (
+        frozenset({"attr", "rel"}),
+        "a member is annotated Attr[...] or Rel[...]",
+    ),
+    DeclarationKind.VALUE_OBJECT: (
+        frozenset({"attr"}),
+        "a Value Object member is annotated Attr[...]",
+    ),
+}
+
+
+def _body_members(
+    cls_name: str, annotations: dict[str, object], ns: dict[str, object], kind: DeclarationKind
+) -> Iterator[_BodyMember]:
+    """Each member the class body declares, in body order; a class variable declares none.
+
+    A member is refused here for a reserved name, an annotation ``kind`` does not
+    admit, a declaration value its annotation does not take, or a canonical name
+    an earlier member already resolved to. The annotations are read from a
+    snapshot taken when iteration starts, so the caller may rewrite them while it
+    iterates.
+    """
+    admitted, refusal = _ADMITTED_MEMBERS[kind]
+    globalns = _module_globals(ns)
+    canonical_seen: set[str] = set()
+    for py_name, annotation in list(annotations.items()):
+        where = f"{cls_name}.{py_name}"
+        _reject_reserved(where, py_name, kind)
+        classified = _classify(annotation, globalns, ns)
+        if classified is not None and classified[0] == "class_var":
+            continue
+        if classified is None or classified[0] not in admitted:
+            raise EntityDefinitionError(
+                code="entity-annotation-invalid", message=f"{where}: {refusal}"
+            )
+        member_kind, inner = classified
+        spec = _member_spec(ns.get(py_name), where, expect=member_kind)
+        shape = _shape_of_annotation(
+            inner,
+            where=where,
+            globalns=globalns,
+            localns=ns,
+            relationship_target=member_kind == "rel",
+        )
+        canonical = _declared_name(spec, py_name)
+        if canonical in canonical_seen:
+            raise EntityDefinitionError(
+                code="entity-canonical-name-collision",
+                message=f"{cls_name}: two members resolve to the canonical name {canonical!r}",
+            )
+        canonical_seen.add(canonical)
+        yield _BodyMember(py_name, where, member_kind, spec, shape, canonical)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1903,32 +1929,32 @@ def _body_canonical_name(py_name: str, value: object) -> str:
     return snake_to_camel(py_name)
 
 
-def _inject_temporal_members(
-    annotations: dict[str, object], ns: dict[str, object], axes: tuple[TemporalDimension, ...]
-) -> None:
-    """Append the framework temporal members after every authored one.
+def _declare_temporal_members(
+    identity: EntityIdentity,
+    annotations: dict[str, object],
+    ns: dict[str, object],
+    axes: tuple[TemporalDimension, ...],
+) -> tuple[AsOfAxisMetadata, ...]:
+    """Append the framework temporal members after every authored one, and return
+    the As-Of Axes they carry.
 
     The shared derivation supplies the endpoints, so a class declaration and a
     descriptor declaring the same Temporality Profile reach the seam carrying the
     same members in the same canonical axis order — Valid Time first.
     """
-    for axis in _derived_axes(axes):
+    derived = _derived_axes(axes)
+    for axis in derived:
         for endpoint in (axis.start, axis.end):
             py_name = _python_spelling(endpoint.name)
             annotations[py_name] = Attr[_dt.datetime]
             ns[py_name] = AttrSpec(column=endpoint.column)
-
-
-def _axis_metadata(
-    identity: EntityIdentity, axes: tuple[TemporalDimension, ...]
-) -> tuple[AsOfAxisMetadata, ...]:
     return tuple(
         AsOfAxisMetadata(
             dimension=axis.dimension,
             start_attribute=AttributeIdentity(identity, axis.start.name),
             end_attribute=AttributeIdentity(identity, axis.end.name),
         )
-        for axis in _derived_axes(axes)
+        for axis in derived
     )
 
 
@@ -2047,7 +2073,6 @@ def _install_fields(
     ns: dict[str, object],
     shapes: dict[str, _Shape],
     vo_classes: dict[str, type],
-    many_py: set[str],
     *,
     framework_owned: frozenset[str],
 ) -> None:
@@ -2074,7 +2099,7 @@ def _install_fields(
     for py_name in framework_owned:
         ns[f"_reject_framework_owned_{py_name}"] = _framework_owned_validator(py_name)
     for py_name, vo_class in vo_classes.items():
-        multiplicity = Multiplicity.MANY if py_name in many_py else Multiplicity.ONE
+        multiplicity = shapes[py_name].multiplicity
         ns[f"_validate_vo_{py_name}"] = _value_object_validator(py_name, vo_class, multiplicity)
     ns["__annotations__"] = annotations
 
