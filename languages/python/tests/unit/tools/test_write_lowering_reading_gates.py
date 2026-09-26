@@ -17,8 +17,9 @@ duplication is seeded at the preparation seam as a per-instruction registry
 holding a detached copy of every prepared row; a peak-increasing copy is seeded
 at the serialization seam as a complete mutable copy of every document bind held
 across the driver dump; the acquisition scaling seeds are a resolving port that
-keeps every row it answered and one that keeps a key tuple per row, sized by the
-row count. Every seed is a monkeypatch inside the child and ships nowhere.
+keeps a copy of every row it answered and one that keeps a key tuple per row,
+sized by the row count. Every seed is a monkeypatch inside the child and ships
+nowhere.
 
 What the gates cannot see is pinned as well: a duplicate traversal that
 allocates and frees inside the window moves neither the checkpoint nor the
@@ -42,7 +43,7 @@ import pytest
 
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
-from parallax.core.base import detach_json_container
+from parallax.core.base import DocumentValue, PresentDocument, detach_json_container
 from parallax.core.db_port import JsonDocument
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit import _predicate_acquisition_support as acquisition_support
@@ -185,10 +186,19 @@ def _copying_binds(serialize: Callable[..., Any]) -> Callable[..., Any]:
     return serialized
 
 
-def _keeping_rows(project: Callable[..., Any]) -> Callable[..., Any]:
+def _copied_row(row: Sequence[object]) -> tuple[object, ...]:
+    return tuple(
+        PresentDocument(cast("DocumentValue", detach_json_container(cell.document)))
+        if isinstance(cell, PresentDocument)
+        else detach_json_container(cell)
+        for cell in row
+    )
+
+
+def _keeping_row_copies(project: Callable[..., Any]) -> Callable[..., Any]:
     def projected(*args: object, **kwargs: object) -> Any:
         rows = project(*args, **kwargs)
-        _REGISTRY.keep(rows)
+        _REGISTRY.keep([_copied_row(row) for row in rows])
         return rows
 
     return projected
@@ -305,17 +315,22 @@ def test_a_seeded_mutable_copy_of_every_document_bind_trips_the_transient_gate()
 
 @in_a_child_interpreter
 def test_seeded_per_row_retention_trips_the_acquisition_gates_and_their_amortization() -> None:
-    # Two scaling regressions at the resolving read. A port that keeps every row
-    # it answered adds one row's worth per resolved row, which the per-row gates
-    # see at every level. A structure sized by the row count and kept per row
-    # grows with rows squared: per row it is small at eight rows and large at a
-    # hundred and twenty-eight, so the per-row readings stop falling with the
+    # Two scaling regressions at the resolving read. A port that keeps a copy of
+    # every row it answered, its document included, duplicates one row per
+    # resolved row, which the per-row gates see at every level. The copy is what
+    # makes it a duplicate: the group itself retains the answered rows' decoded
+    # documents by transfer, so keeping those same rows would add little beyond
+    # what production already holds. A structure sized by the row count and kept
+    # per row grows with rows squared: per row it is small at eight rows and large
+    # at a hundred and twenty-eight, so the per-row readings stop falling with the
     # row count, which is the amortization the scaling domain requires.
     levels = acquisition_support.CASES
     domain_columns = [case.name for case in levels if case.layout == "columns"]
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(
-            acquisition_support, "projected_rows", _keeping_rows(acquisition_support.projected_rows)
+            acquisition_support,
+            "projected_rows",
+            _keeping_row_copies(acquisition_support.projected_rows),
         )
         for workload in ("acquisition.rows-32.columns", "acquisition.rows-128.document"):
             assert _outside(workload, RETAINED, _Reading(workload)), workload

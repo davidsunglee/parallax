@@ -371,6 +371,7 @@ def admit_and_buffer(
     evidence: SettledEvidence | None,
     *,
     restorations: frozenset[str] = frozenset(),
+    effective: frozenset[str] | None = None,
 ) -> None:
     """Take this write's claim at the scope it settles against, then buffer it.
 
@@ -395,7 +396,7 @@ def admit_and_buffer(
     address one object and carry equal evidence, because what it coalesces is
     the intent rather than the claim.
     """
-    item = buffered_write(instruction, evidence, restorations=restorations)
+    item = buffered_write(instruction, evidence, restorations=restorations, effective=effective)
     admit_write_claim(
         ledger,
         instruction_identity(meta, instruction),

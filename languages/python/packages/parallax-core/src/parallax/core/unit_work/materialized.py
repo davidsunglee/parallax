@@ -14,6 +14,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
+    derive_keyed_write,
 )
 from parallax.core.unit_work.observe import PredecessorRow, WriteObservation
 from parallax.core.unit_work.planner import (
@@ -235,12 +236,16 @@ class ObservedKeyedWrite:
     A retained ``claim`` is spent only if this write survives to settlement.
     ``restorations`` records members touched and put back: their absent
     assignments must cancel earlier assignments during coalescing.
+    ``effective`` names the assigned members its producer already classified as
+    changing what its source observed, and a temporal changed successor
+    overlays those alone; ``None`` leaves that classification to settlement.
     """
 
     instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
     restorations: frozenset[str] = frozenset()
+    effective: frozenset[str] | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -307,13 +312,31 @@ def buffered_write(
     evidence: SettledEvidence | None,
     *,
     restorations: frozenset[str] = frozenset(),
+    effective: frozenset[str] | None = None,
 ) -> PreparedWrite | ClaimedKeyedWrite:
-    """Retained observations travel with the write so settlement can spend them.
+    """``instruction`` as the buffer item that settles against ``evidence``.
 
-    A bare observation has no retained claim. With no evidence, the instruction
-    travels bare and restorations are discarded because it cannot cancel an
-    earlier assignment through coalescing.
+    ``effective`` and ``restorations`` are one effective-change classification
+    of the assigned members, made by a producer against the values its source
+    observed. A restored member is written nowhere: it leaves the row here, and
+    on a claimed carrier it also cancels an earlier assignment during
+    coalescing. A temporal changed successor overlays only the ``effective``
+    members and carries every other member's predecessor cell; without
+    ``effective``, settlement classifies the assigned members once against the
+    observation's Predecessor Row instead.
+
+    Retained observations travel with the write so settlement can spend them,
+    while a bare observation has no retained claim. With no evidence, the
+    instruction travels bare, so neither classification survives it.
     """
+    if restorations and isinstance(instruction, PreparedKeyedWrite):
+        instruction = derive_keyed_write(
+            instruction,
+            tuple(
+                {name: value for name, value in row.items() if name not in restorations}
+                for row in instruction.rows
+            ),
+        )
     if evidence is None:
         return instruction
     if not isinstance(instruction, PreparedKeyedWrite):
@@ -329,9 +352,13 @@ def buffered_write(
             observation=evidence.evidence,
             claim=evidence,
             restorations=restorations,
+            effective=effective,
         )
     return ObservedKeyedWrite(
-        instruction=instruction, observation=evidence, restorations=restorations
+        instruction=instruction,
+        observation=evidence,
+        restorations=restorations,
+        effective=effective,
     )
 
 

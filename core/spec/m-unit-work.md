@@ -822,8 +822,9 @@ mutation did not name — rides forward exactly as stored.
 ### Comparing an assigned member with its persisted value
 
 Wherever this module compares an assigned member with the value a read observed —
-the write-input comparison of a Materialized Write Group below, and the no-op
-elimination that precedes planning — the comparison is `m-document-codec`'s one
+the write-input comparison of a Materialized Write Group below, the no-op
+elimination that precedes planning, and the keyed successor classification
+described below — the comparison is `m-document-codec`'s one
 effective-change classification, over the members the write explicitly assigns
 and, under those same names, the values the read observed, and it answers
 identically under either Storage Layout. What this module states is which members
@@ -844,6 +845,19 @@ over the group's own retained row state, and a restored member contributes
 nothing to the row's changed successor: the successor carries the member's
 persisted state, so a stored subtree the assignment would have replaced — keys no
 member declares included — rides forward.
+
+A keyed temporal write's changed successor follows the same member rule, and its
+assigned members are classified once. The keyed verb classifies them against the
+values its source observed — the originals the published value or its Change
+Record states — and buffers that answer with the write, so planning overlays the
+members it answers as effective without comparing them again. A keyed write
+buffered with its Temporal Observation but without that answer, as a caller
+pairing an instruction with its evidence directly buffers one, is classified
+during planning against that observation's Predecessor Row instead. Either way
+every member the successor does not effectively change carries its persisted
+state. That planning-time classification decides only what the successor
+carries: eliminating a write whose every assigned member is restored remains the
+no-op elimination that precedes planning.
 
 Elimination is deliberately the conservative direction wherever that answer makes
 equal two documents a store spells differently: eliminating the write leaves the

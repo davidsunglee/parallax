@@ -387,23 +387,39 @@ def _merged_claimed(base: ClaimedKeyedWrite, arriving: ClaimedKeyedWrite) -> Cla
 
     The surviving carrier keeps ``base``'s position, mutation, bounds, and claim
     — the two claim one scope over one region, which is what let them coalesce —
-    and gains the merged row. Restoration follows the same later-wins rule as the
-    value: a member ``arriving`` assigns stops being restored, and one it put back
-    becomes restored however the earlier write left it.
+    and gains the merged row. Restoration and effective change follow the same
+    later-wins rule as the value: a member ``arriving`` states is restored or
+    effective as ``arriving`` classified it, however the earlier write left it.
+    A merge with a write its producer did not classify is left unclassified.
     """
+    arriving_row = arriving.instruction.rows[0]
     merged = dict(base.instruction.rows[0])
-    merged.update(arriving.instruction.rows[0])
+    merged.update(arriving_row)
+    stated = arriving.restorations.union(arriving_row)
+    base_effective = _effective(base)
+    arriving_effective = _effective(arriving)
     return _rewritten(
         base,
         merged,
-        (base.restorations - set(arriving.instruction.rows[0])) | arriving.restorations,
+        (base.restorations - stated) | arriving.restorations,
+        None
+        if base_effective is None or arriving_effective is None
+        else (base_effective - stated) | arriving_effective,
     )
 
 
+def _effective(item: ClaimedKeyedWrite) -> frozenset[str] | None:
+    return item.effective if isinstance(item, ObservedKeyedWrite) else None
+
+
 def _rewritten(
-    item: ClaimedKeyedWrite, row: Mapping[str, object], restorations: frozenset[str]
+    item: ClaimedKeyedWrite,
+    row: Mapping[str, object],
+    restorations: frozenset[str],
+    effective: frozenset[str] | None,
 ) -> ClaimedKeyedWrite:
-    """``item`` carrying ``row`` and ``restorations``, at its own claim scope.
+    """``item`` carrying ``row``, ``restorations``, and ``effective``, at its own
+    claim scope.
 
     The one place a carrier is rebuilt, so merging and restoration-dropping state
     what changes rather than each restating which fields a carrier keeps.
@@ -415,6 +431,7 @@ def _rewritten(
             observation=item.observation,
             claim=item.claim,
             restorations=restorations,
+            effective=effective,
         )
     return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
 
@@ -444,7 +461,7 @@ def _coalesced_item(item: BufferItem | None) -> OrderedWrite | None:
         for name, value in item.instruction.rows[0].items()
         if name not in item.restorations
     }
-    return _without_object_claim(_rewritten(item, row, frozenset()))
+    return _without_object_claim(_rewritten(item, row, frozenset(), _effective(item)))
 
 
 def _without_object_claim(item: ClaimedKeyedWrite) -> OrderedWrite:
