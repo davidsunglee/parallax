@@ -106,11 +106,12 @@ def test_a_declared_row_preserves_null_and_empty_many_values() -> None:
     }
 
 
-def test_a_declared_row_is_retained_by_a_predecessor_row_as_itself() -> None:
+def test_a_declared_row_constructed_directly_is_owned_by_its_predecessor_row() -> None:
     row = _declared()
     predecessor = PredecessorRow(row)
 
-    assert predecessor.members is row
+    assert predecessor.members is not row
+    assert _plain(dict(predecessor.members)) == _plain(dict(row))
     assert predecessor.member("displayName") == "Ada"
     assert predecessor.document is None
 
@@ -329,5 +330,13 @@ def test_direct_predecessor_construction_owns_its_members_and_document() -> None
 
     assert predecessor.member("address") == {"city": "Oslo"}
     assert predecessor.document == {"title": "Ada", "manifest": {"cargo": "timber"}}
+
+    viewed: dict[str, object] = {"id": 1, "address": {"city": "Oslo"}}
+    from_view = PredecessorRow(EntityStateRow(viewed))
+    viewed["id"] = 2
+    cast("dict[str, object]", viewed["address"])["city"] = "Bergen"
+
+    assert from_view.member("id") == 1
+    assert from_view.member("address") == {"city": "Oslo"}
     with pytest.raises(ValueError, match="complete state"):
         PredecessorRow({})
