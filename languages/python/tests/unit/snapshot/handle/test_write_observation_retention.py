@@ -28,7 +28,7 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, temporal_read
-from parallax.core.base import INFINITY, FrozenMap
+from parallax.core.base import INFINITY
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -213,11 +213,11 @@ def test_deferred_standalone_evidence_releases_member_state_after_materializatio
     assert evidence._document is None
 
 
-def test_deferred_standalone_temporal_evidence_retains_its_row_view_and_owns_its_document() -> None:
+def test_deferred_standalone_temporal_evidence_adopts_its_row_view_and_document() -> None:
     # The standalone deferred source materializes its predecessor from the
     # judged positional state it held, viewed by declared name, and releases
-    # that state once the evidence exists; the raw document it retains is owned
-    # once, at observation, and shared by identity into the predecessor.
+    # that state once the evidence exists; the raw document the read
+    # transferred to it reaches the predecessor by identity, never copied.
     model = _accepted("document-layout")
     entity = corpus_entity("Voyage")
     document: dict[str, object] = dict(_VOYAGE_DOCUMENT)
@@ -233,11 +233,7 @@ def test_deferred_standalone_temporal_evidence_retains_its_row_view_and_owns_its
     assert origin.observation.key == TemporalStateKey(
         corpus_object_key("Voyage", ("id", 7)), Edge(tx_time=_TX_START)
     )
-    retained = observation.predecessor.document
-    assert isinstance(retained, FrozenMap)
-    assert retained == _VOYAGE_DOCUMENT
-    document["title"] = "Southbound"
-    assert retained == _VOYAGE_DOCUMENT
+    assert observation.predecessor.document is document
     assert evidence._member_row == ()
     assert evidence._document is None
     assert evidence._locator is None
@@ -419,25 +415,30 @@ def test_a_standalone_and_a_participating_read_retain_one_predecessor() -> None:
         assert "charterCode" not in observation.predecessor.members
 
 
-def test_a_retained_predecessor_document_is_isolated_from_the_read_carrier() -> None:
+@pytest.mark.parametrize("participating", [False, True], ids=["standalone", "participating"])
+def test_a_retained_predecessor_document_is_the_one_the_read_transferred(
+    participating: bool,
+) -> None:
+    # The dialect transfers the decoded document to the read, so both retention
+    # hops keep that document itself, host containers and all, rather than a
+    # frozen copy of it (`m-unit-work` "Predecessor Row").
     model = _accepted("document-layout")
+    entity = corpus_entity("Voyage")
     document: dict[str, object] = {
         "title": "Northbound",
-        "manifest": {"cargo": "grain"},
+        "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
+        "legs": [{"port": "Oslo"}],
     }
-    hint = _hint(model, corpus_entity("Voyage"), _voyage_columns(), document)
+
+    def observe(ledger: UnitOfWork | None) -> ReadOrigin:
+        columns = _voyage_columns()
+        return judged_evidence(model, entity, columns, document=document, ledger=ledger)[0]
+
+    hint = _in_transaction(model, observe) if participating else observe(None)
     assert hint.observation is not None
     observation = hint.observation.evidence
     assert isinstance(observation, TemporalObservation)
-
-    cast("dict[str, object]", document["manifest"])["cargo"] = "ore"
-
-    assert observation.predecessor.document == {
-        "title": "Northbound",
-        "manifest": {"cargo": "grain"},
-    }
-    with pytest.raises(TypeError):
-        cast("dict[str, object]", observation.predecessor.document)["title"] = "Southbound"
+    assert observation.predecessor.document is document
 
 
 # --------------------------------------------------------------------------- #

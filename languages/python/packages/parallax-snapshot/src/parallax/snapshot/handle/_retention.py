@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from parallax.core import inheritance, opt_lock, temporal_read
-from parallax.core.base import retain_document_value
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
@@ -46,7 +45,8 @@ class _ObservedRow:
     ``node`` is the Page occurrence this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
     ``entity`` is the row's own resolved concrete Entity. ``document`` is the
-    raw Structured Column under Relational Document Layout.
+    raw Structured Column under Relational Document Layout, held as the dialect
+    transferred it and read only (:class:`PredecessorRow` owns that contract).
 
     It holds neither a raw driver row nor a materialized node, so an observation
     outlives the read that produced it without pinning either.
@@ -155,20 +155,13 @@ class _DeferredReadSources(Mapping[int, ReadOrigin]):
         self._families = inheritance.view(meta)
         self._keys = opt_lock.view(meta)
         self._temporal = temporal_read.view(meta)
-        retained: list[_PendingObservation] = []
-        for pending in observations._rows:  # pyright: ignore[reportPrivateUsage] - same-module transfer
-            if not isinstance(pending, _ObservedRow):
-                retained.append(pending)
-                continue
-            retained.append(
-                _ObservedRow(
-                    pending.node,
-                    pending.entity,
-                    (None if pending.document is None else retain_document_value(pending.document)),
-                )
-                if isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
-                else pending.node
-            )
+        retained: list[_PendingObservation] = [
+            pending
+            if not isinstance(pending, _ObservedRow)
+            or isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
+            else pending.node
+            for pending in observations._rows  # pyright: ignore[reportPrivateUsage] - same-module transfer
+        ]
         self._observations = retained
         self._admitted = admitted
         self._entity = entity
@@ -432,7 +425,7 @@ class _DeferredEvidence:
         self._locator = locator
         self._layout = layout
         self._member_row = member_row
-        self._document = None if document is None else retain_document_value(document)
+        self._document = document
 
     def object_key(self) -> ObjectKey:
         return self._materialized()[0]

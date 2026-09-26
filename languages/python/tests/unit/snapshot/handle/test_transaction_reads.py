@@ -11,8 +11,9 @@ the stale-web-edit recipe's Docker-free halves.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
@@ -22,8 +23,18 @@ import pytest
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import LATEST, TX_TIME
-from parallax.core.base import SQL_NULL, PresentDocument
+from parallax.core import (
+    LATEST,
+    TX_TIME,
+    Attr,
+    Bitemporal,
+    Document,
+    DomainModel,
+    Entity,
+    ValueObject,
+    attr,
+)
+from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import DatabaseConnection, JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -33,6 +44,8 @@ from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
     OptimisticLockConflictError,
+    ReadOrigin,
+    TemporalObservation,
 )
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
@@ -40,6 +53,7 @@ from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,
+    ScopedDatabase,
     Transaction,
     TransactionTimePinReadOnlyError,
 )
@@ -47,6 +61,7 @@ from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._read_plan import ReadPlanner
 from parallax.snapshot.handle._retention import ObservationLedger
+from parallax.snapshot.materialize import WireEntity, read_origin_of
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -571,6 +586,203 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     for op in write_ops[1:]:
         binds = op.binds
         assert binds[-1] == JsonDocument(value=address), binds
+
+
+# One logical Bitemporal Entity under each Storage Layout: `route` nests a One
+# and a Many, and `legs` is a top-level Many, so every Value Object shape a read
+# publishes sits beside the raw state a later successor is built from.
+class OwnedGeo(ValueObject):
+    country: Attr[str | None]
+
+
+class OwnedStop(ValueObject):
+    port: Attr[str | None]
+
+
+class OwnedRoute(ValueObject):
+    name: Attr[str | None]
+    geo: Attr[OwnedGeo | None]
+    stops: Attr[tuple[OwnedStop, ...]]
+
+
+class OwnedDocumentCharter(
+    Bitemporal,
+    table="owned_document_charter",
+    namespace="parallax.compatibility",
+    layout=Document(),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None] = attr(max_length=64)
+    route: Attr[OwnedRoute | None]
+    legs: Attr[tuple[OwnedStop, ...]]
+
+
+class OwnedColumnsCharter(
+    Bitemporal, table="owned_columns_charter", namespace="parallax.compatibility"
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None] = attr(max_length=64)
+    route: Attr[OwnedRoute | None]
+    legs: Attr[tuple[OwnedStop, ...]]
+
+
+_OWNED_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_OWNED_SPLIT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_OWNED_ROUTE: dict[str, object] = {
+    "name": "Coastal",
+    "sealNumber": "S-4021",
+    "geo": {"country": "NO", "grid": "32V"},
+    "stops": [{"port": "Oslo", "berth": "7"}],
+}
+_OWNED_LEGS: list[object] = [{"port": "Bergen", "berth": "2"}]
+_OWNED_DOCUMENT: dict[str, object] = {
+    "title": "Northbound",
+    "charterCode": "NB-118",
+    "route": _OWNED_ROUTE,
+    "legs": _OWNED_LEGS,
+}
+
+
+def _owned_row(layout: str) -> MappingRow:
+    axes = {
+        "from_z": _OWNED_START,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": _OWNED_START,
+        "out_z": INFINITY_INSTANT,
+    }
+    if layout == "document":
+        return {"id": 1, **axes, "payload": _present(_OWNED_DOCUMENT)}
+    return {
+        "id": 1,
+        "title": "Northbound",
+        **axes,
+        "route": _present(_OWNED_ROUTE),
+        "legs": _present(_OWNED_LEGS),
+    }
+
+
+def _present(stored: object) -> PresentDocument:
+    """``stored`` as a fresh decoded document the read takes ownership of."""
+    return PresentDocument(cast("DocumentValue", copy.deepcopy(stored)))
+
+
+def _owned_find(reader: Transaction | ScopedDatabase, layout: str) -> Entity:
+    if layout == "document":
+        document_query = OwnedDocumentCharter.where(OwnedDocumentCharter.id == 1)
+        return reader.find(document_query.as_of(valid_time=LATEST)).result()
+    columns_query = OwnedColumnsCharter.where(OwnedColumnsCharter.id == 1)
+    return reader.find(columns_query.as_of(valid_time=LATEST)).result()
+
+
+def _mutate_everything(value: object) -> int:
+    """Mutate every container reachable from ``value`` and count them.
+
+    A frozen Wire container refuses mutation through the instance, so this goes
+    around it to the base type's own mutators, the one route a caller keeps.
+    """
+    if isinstance(value, Entity | ValueObject):
+        return sum(_mutate_everything(getattr(value, name)) for name in type(value).model_fields)
+    if isinstance(value, tuple):
+        return sum(_mutate_everything(item) for item in cast("tuple[object, ...]", value))
+    if isinstance(value, dict):
+        mapping = cast("dict[str, object]", value)
+        mutated = 1 + sum(_mutate_everything(item) for item in list(mapping.values()))
+        dict[str, object].__setitem__(mapping, "hijacked", True)
+        return mutated
+    if isinstance(value, list):
+        items = cast("list[object]", value)
+        mutated = 1 + sum(_mutate_everything(item) for item in list(items))
+        list[object].append(items, {"hijacked": True})
+        return mutated
+    return 0
+
+
+def _as_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _as_json(item) for key, item in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, list | tuple):
+        return [_as_json(item) for item in cast("Sequence[object]", value)]
+    return value
+
+
+@pytest.mark.parametrize("layout", ["document", "columns"])
+@pytest.mark.parametrize("access", ["typed", "wire"])
+@pytest.mark.parametrize("standalone", [False, True], ids=["participating", "standalone"])
+def test_what_a_read_publishes_never_reaches_its_retained_evidence(
+    layout: str, access: str, standalone: bool
+) -> None:
+    # A temporal read retains the raw document the dialect transferred to it by
+    # reference, unfrozen, so that ownership must hold through everything the
+    # read publishes. Every container a caller can reach is mutated before the
+    # write, a standalone read's evidence outliving the read that produced it.
+    # The carried head then binds the retained document itself and the changed
+    # tail patches only `title` into a copy, both keeping the unknown keys the
+    # model declares nowhere. Under Columns layout the retained document stays
+    # absent and each successor encodes the observed members.
+    entity = OwnedDocumentCharter if layout == "document" else OwnedColumnsCharter
+    table = "owned_document_charter" if layout == "document" else "owned_columns_charter"
+    row = _owned_row(layout)
+    port = (
+        ScriptedAdapter(Read(rows=[row]), Transact(Write(times=3)))
+        if standalone
+        else ScriptedAdapter(Transact(Read(rows=[row]), Write(times=3)))
+    )
+    db = db_for(DomainModel(entity), port)
+    target = f"parallax.compatibility.{entity.__name__}"
+    wire_query: dict[str, object] = {
+        "target": target,
+        "predicate": {"eq": {"attr": f"{target}.id", "value": 1}},
+        "temporal": {"transaction-time": {"asOf": "latest"}, "valid-time": {"asOf": "latest"}},
+    }
+    published: list[Entity | WireEntity] = []
+
+    def find(reader: Transaction | ScopedDatabase) -> Entity | WireEntity:
+        node = (
+            _owned_find(reader, layout)
+            if access == "typed"
+            else reader.wire.find(wire_query).result()
+        )
+        published.append(node)
+        return node
+
+    def write(tx: Transaction, node: Entity | WireEntity) -> None:
+        if isinstance(node, Entity):
+            assert _mutate_everything(node) + _mutate_everything(node.model_dump()) > 0
+            tx.update(node.edit(title="Southbound"), valid_from=_OWNED_SPLIT)
+        else:
+            assert _mutate_everything(node) > 0
+            tx.wire.update(node, {"title": "Southbound"}, valid_from=_OWNED_SPLIT)
+
+    if standalone:
+        node = find(db)
+        db.transact(lambda tx: write(tx, node))
+    else:
+        db.transact(lambda tx: write(tx, find(tx)))
+
+    (node,) = published
+    origin = _retained_evidence(node) if isinstance(node, Entity) else read_origin_of(node)
+    assert isinstance(origin, ReadOrigin)
+    assert origin.observation is not None
+    observation = origin.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    retained = observation.predecessor.document
+    close, head, tail = (op for op in port.calls if isinstance(op, WriteCall))
+    assert close.sql.startswith(f"update {table} set out_z")
+    if layout == "document":
+        assert retained is cast("PresentDocument", row["payload"]).document
+        assert retained == _OWNED_DOCUMENT
+        carried = cast("JsonDocument", head.binds[-1]).value
+        assert carried is retained
+        changed = cast("JsonDocument", tail.binds[-1]).value
+        assert _as_json(changed) == {**_OWNED_DOCUMENT, "title": "Southbound"}
+        return
+    assert retained is None
+    declared_route = {"name": "Coastal", "geo": {"country": "NO"}, "stops": [{"port": "Oslo"}]}
+    for insert, title in ((head, "Northbound"), (tail, "Southbound")):
+        route, legs = (cast("JsonDocument", bind).value for bind in insert.binds[-2:])
+        assert insert.binds[1] == title
+        assert _as_json(route) == declared_route
+        assert _as_json(legs) == [{"port": "Bergen"}]
 
 
 def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None:
