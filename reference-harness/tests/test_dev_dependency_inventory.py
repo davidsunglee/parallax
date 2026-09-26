@@ -30,15 +30,16 @@ class _Tree:
     def project(self) -> Path:
         return self.repository / _PROJECT
 
-    def declare(self, *requirements: str, groups: Sequence[str] | None = None) -> None:
-        extras = ", ".join(f'"{requirement}"' for requirement in requirements)
-        grouped = ", ".join(
-            f'"{requirement}"' for requirement in (requirements if groups is None else groups)
-        )
+    def declare(
+        self, *requirements: str, extra: str = "dev", group: str = f'["{_PROJECT}[dev]"]'
+    ) -> None:
+        """Declare *requirements* as the project's *extra*, and *group*, a TOML
+        array, as its development group."""
+        listed = ", ".join(f'"{requirement}"' for requirement in requirements)
         (self.project / "pyproject.toml").write_text(
             f'[project]\nname = "{_PROJECT}"\nversion = "0"\n'
-            f"[project.optional-dependencies]\ndev = [{extras}]\n"
-            f"[dependency-groups]\ndev = [{grouped}]\n",
+            f"[project.optional-dependencies]\n{extra} = [{listed}]\n"
+            f"[dependency-groups]\ndev = {group}\n",
             encoding="utf-8",
         )
 
@@ -225,16 +226,44 @@ def test_stubs_for_a_module_nothing_imports_are_unclassified(tree: _Tree) -> Non
     assert _codes(tree.audit()) == ["dev-dependency-unclassified"]
 
 
-def test_diverging_development_lists_fail(tree: _Tree) -> None:
-    tree.declare("helper-lib>=1", groups=["helper_lib >= 1", "extra-tool"])
+def test_a_group_entry_naming_the_projects_own_extra_resolves_to_its_members(
+    tree: _Tree,
+) -> None:
+    tree.declare("helper-lib>=1", extra="tools", group=f'["{_PROJECT.upper()}[Tools]", "cli-tool"]')
     tree.install("helper-lib", ["helper_lib.py"])
-    tree.install("extra-tool", ["extra_tool.py"])
-    tree.source("tests/test_helper.py", "import helper_lib\nimport extra_tool\n")
+    tree.install("cli-tool", console_scripts=["cli-tool"])
+    tree.source("tests/test_helper.py", "import helper_lib\n")
+    tree.recipes(f"lint:\n    cd {_PROJECT} && uv run cli-tool\n")
 
     inventory = tree.audit()
 
-    assert _codes(inventory) == ["dev-dependency-lists-diverge"]
-    assert "`extra-tool`" in inventory.diagnostics[0].message
+    assert inventory.diagnostics == ()
+    assert _evidence(inventory, "helper-lib") == {"imported"}
+    assert _evidence(inventory, "cli-tool") == {"invoked"}
+
+
+@pytest.mark.parametrize(
+    "group",
+    [
+        pytest.param(f'["{_PROJECT}[absent]"]', id="missing-extra"),
+        pytest.param(f'["{_PROJECT}"]', id="no-extra"),
+        pytest.param('[{include-group = "other"}]', id="include-group"),
+    ],
+)
+def test_an_unresolvable_group_entry_cannot_be_read(tree: _Tree, group: str) -> None:
+    tree.declare("helper-lib", group=group)
+
+    with pytest.raises(ValueError):
+        tree.audit()
+
+
+def test_the_command_line_reports_an_unreadable_manifest(
+    tree: _Tree, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tree.declare("helper-lib", group=f'["{_PROJECT}[absent]"]')
+
+    assert main([str(tree.project), str(tree.repository)]) == 1
+    assert "selects the extra `absent`" in capsys.readouterr().err
 
 
 def test_a_declared_but_uninstalled_dependency_fails(tree: _Tree) -> None:
