@@ -148,6 +148,19 @@ def test_deptry_fails_a_member_whose_configuration_it_rejects(
     assert run_deptry(deptry_arguments(workspace, workspace.members[0])) == 1
 
 
+def test_an_interrupt_during_deptry_cancels_the_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def interrupt(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("deptry.core.Core.run", interrupt)
+    workspace = _probe(tmp_path, ["pyyaml"])
+
+    with pytest.raises(KeyboardInterrupt):
+        audit(workspace, run_deptry, native_checks=())
+
+
 @pytest.mark.parametrize(("failed", "status"), [([], 0), (["deptry parallax-core"], 1)])
 def test_main_exits_non_zero_exactly_when_a_part_failed(
     monkeypatch: pytest.MonkeyPatch,
