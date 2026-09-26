@@ -29,6 +29,9 @@ def _make_venv(root: Path) -> Path:
 
 
 def _install(python: Path, wheelhouse: Wheelhouse, *packages: str) -> None:
+    # uv caches a find-links wheel by its path, and pytest's numbered temp paths recur
+    # across checkouts, so an unrefreshed install can reuse another tree's same-version wheel.
+    refreshed = [arg for package in wheelhouse.wheels for arg in ("--refresh-package", package)]
     subprocess.run(
         [
             "uv",
@@ -38,6 +41,7 @@ def _install(python: Path, wheelhouse: Wheelhouse, *packages: str) -> None:
             str(python),
             "--find-links",
             str(wheelhouse.directory),
+            *refreshed,
             *packages,
         ],
         check=True,
