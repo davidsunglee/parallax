@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "basedpyright>=1.39.10",
+    "deptry==0.25.1",
     "pytest>=8.0",
     "ruff>=0.16.3",
 ]
@@ -64,3 +65,9 @@ max-complexity = 15
 include = ["src"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
+
+[tool.deptry]
+optional_dependencies_dev_groups = ["dev"]
+
+[tool.deptry.package_module_name_map]
+pyyaml = "yaml"

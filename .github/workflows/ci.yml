@@ -103,6 +103,8 @@ jobs:
   # reaches no database provider. No Docker required.
   harness-check-dbfree:
     runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: extractions/setup-just@v4
@@ -141,7 +143,8 @@ jobs:
   # (lint + format check), Pyright strict, the generated import-linter
   # forbidden-edge complement (DAG-sync check) + lint-imports, the database-free
   # test selection + branch coverage + diff-cover, the database-access guard,
-  # dead-code scan, build + distribution metadata, and the supply-chain audit.
+  # dead-code scan, build + distribution metadata, the dependency-declaration
+  # audit, and the supply-chain audit.
   # The previous CPython minor runs the database-free tests only. No Docker.
   python-check-dbfree:
     runs-on: ubuntu-latest

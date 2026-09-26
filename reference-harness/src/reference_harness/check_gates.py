@@ -152,6 +152,7 @@ _RUNNER_OPERATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bpytest\b"), "test"),
     (re.compile(r"\buv build\b"), "build"),
     (re.compile(r"\bpip-audit\b"), "audit"),
+    (re.compile(r"\bdeptry\b"), "audit"),
     (re.compile(r"\bdiff-cover\b"), "coverage"),
 )
 
