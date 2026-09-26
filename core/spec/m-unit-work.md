@@ -492,7 +492,7 @@ semantics already decided.
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
 - A packed run of a Materialized Write Group's rows MAY be held **compactly** —
-  the group's own aligned columns beside the facts settlement decided for the
+  the group's own aligned evidence beside the facts settlement decided for the
   whole group — and its step access reads those two and nothing else. It
   **MUST NOT** consult a clock, a strategy, a Metamodel, an Inheritance Facet, or
   a Temporal Facet there, and **MUST NOT** re-resolve a Milestone Successor or
@@ -770,18 +770,26 @@ because temporal expansion carries members the authored mutation never mentioned
 and because a decorator must distinguish `m-edit`'s carried state from its
 authored assignments without a second read (ADR 0042). Successors retain or view
 that state rather than copying it, and bulk materialization MAY expose a logical
-Predecessor Row view over columnar storage instead of allocating one row object
-per observation. Where a trusted columnar or keyed-read producer has just
-assembled the final shallow predecessor map from already-owned values, it
-transfers that map into the Predecessor Row's immutable storage; the carrier does
-not copy that map and then freeze it again.
+Predecessor Row view over a group's compact storage — aligned columns, or the
+resolving read's own row state, for example — instead of allocating one row
+object per observation. Where a trusted producer already owns the observed state
+outright, it transfers that state into the Predecessor Row; the carrier does not
+copy it and then freeze it again.
+
+The state is immutable **logically**: no consumer mutates it, and none hands it to
+a caller that could. That is what lets a trusted producer transfer state it owns
+exclusively — decoded host containers included — rather than freeze a copy. State
+a caller supplies is not owned that way, so a carrier constructed from it retains
+it in immutable form.
 
 Under Relational Document Layout a Predecessor Row additionally retains the
 **raw Structured Column document**, as a distinct named field beside its member
-state and never as an entry in it. The compact columnar form carries the same
-value as an aligned raw-document column beside its decoded Attribute and Value
-Object columns, so a logical Predecessor Row view over columnar storage exposes
-the raw document without allocating a second per-row carrier.
+state and never as an entry in it. A group's compact storage carries the same
+value aligned with each row's member state, so a logical Predecessor Row view over
+it exposes the raw document without allocating a second per-row carrier. The
+document is read-only under the same logical immutability: a successor that
+changes a member composes its own document from a copy (`m-document-codec`
+patching), and no reader alters the retained one.
 
 The field is **absent — not empty — under Columns layout**, so its presence is
 itself the signal that the row came from a document-mapped Table. It is not a
@@ -828,6 +836,14 @@ to the write, and a write every assigned member of which is restored is
 **eliminated**: it issues no DML, advances no version, consults no clock, and for
 a temporal entity performs no close and chains no row. That holds however the
 codec reached the answer.
+
+The same holds member by member inside a Materialized Write Group row that
+survives because another of its assigned members is effective. Planning decides
+which of that row's assigned members are restored with the same classification,
+over the group's own retained row state, and a restored member contributes
+nothing to the row's changed successor: the successor carries the member's
+persisted state, so a stored subtree the assignment would have replaced — keys no
+member declares included — rides forward.
 
 Elimination is deliberately the conservative direction wherever that answer makes
 equal two documents a store spells differently: eliminating the write leaves the
@@ -1080,9 +1096,12 @@ never carried into the planner merely to be discarded. Every no-op decision
 derivable from buffered data alone remains the planner's.
 
 One authored predicate becomes exactly one **Materialized Write Group**: the
-authored mutation, one shared primary-key shape, one immutable value column per
-key attribute, and either an aligned version column or complete Predecessor
-Columns. Every key and observation column has the same positive row count.
+authored mutation and, for each selected row in database resolution order, that
+row's key value with either its observed version or its complete Predecessor Row
+state and optional raw document. The entries are aligned and number at least
+one. How the group holds them — aligned columns, the resolving read's own row
+state, or another compact form — is the implementation's, and none of it appears
+in a Write Plan.
 
 - The group is **private**. It is an input to planning, never a member of a Write
   Plan, and it disappears during finalization.

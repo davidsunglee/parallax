@@ -18,8 +18,6 @@ from parallax.core.unit_work.clock import (
 )
 from parallax.core.unit_work.columns import (
     ChunkedColumnBuilder,
-    PredecessorColumns,
-    PredecessorShape,
     whole,
 )
 from parallax.core.unit_work.effects import (
@@ -47,8 +45,10 @@ from parallax.core.unit_work.materialized import (
     BufferItem,
     ClaimedKeyedWrite,
     MaterializedWriteGroup,
-    TemporalColumns,
-    VersionColumns,
+    PredecessorRows,
+    PredecessorRowsBuilder,
+    VersionedEvidence,
+    VersionedEvidenceBuilder,
     buffered_write,
 )
 from parallax.core.unit_work.observe import (
@@ -149,9 +149,9 @@ __all__ = [
     "PlannedClose",
     "PlannedInsert",
     "PlanningRequest",
-    "PredecessorColumns",
     "PredecessorRow",
-    "PredecessorShape",
+    "PredecessorRows",
+    "PredecessorRowsBuilder",
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWrite",
@@ -162,7 +162,6 @@ __all__ = [
     "StaleWriteError",
     "SubjectActor",
     "SystemClock",
-    "TemporalColumns",
     "TemporalObservation",
     "TransactionInstant",
     "TransactionSettings",
@@ -170,8 +169,9 @@ __all__ = [
     "UnitOfWorkError",
     "ValidTimeWindow",
     "VersionArithmetic",
-    "VersionColumns",
     "VersionObservation",
+    "VersionedEvidence",
+    "VersionedEvidenceBuilder",
     "WriteAssignment",
     "WriteBatchTrigger",
     "WriteEffectError",

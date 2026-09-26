@@ -20,26 +20,38 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
+from parallax.core import temporal_read
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import AttributeIdentity, Metamodel
+from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
+    SELECTION_INTENT,
     Clock,
     FixedClock,
     KeyedWrite,
+    MaterializedWriteGroup,
+    ObservedStateKey,
     PlannedInsert,
     PlanningRequest,
+    PredecessorRow,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
     RollbackOnlyError,
     SystemClock,
+    TemporalObservation,
     TransactionInstant,
     TransactionSettings,
     UnitOfWork,
+    UnitOfWorkError,
+    VersionedEvidenceBuilder,
     VersionObservation,
     WriteBatchTrigger,
+    WriteIntent,
     WritePlan,
     active_unit_of_work,
     buffered_write,
+    observed_state_key,
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import (
@@ -55,6 +67,7 @@ from parallax.snapshot.handle import build_write_planner
 from tests._support.clock_probes import CountingClock
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_object_key
+from tests.unit._temporal_group_support import temporal_group
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -614,3 +627,141 @@ def test_escaped_reference_raises_on_every_use() -> None:
         tx.flush(trigger="pre_commit")
     with pytest.raises(EscapedTransactionError):
         tx.read(lambda: None)
+
+
+# --------------------------------------------------------------------------- #
+# Buffering a Materialized Write Group installs its selection claims with it, #
+# or neither.                                                                  #
+# --------------------------------------------------------------------------- #
+_TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def _account_group(*states: tuple[int, int]) -> MaterializedWriteGroup:
+    evidence = VersionedEvidenceBuilder(key_position=0, version_position=1)
+    for state in states:
+        evidence.append(state)
+    sealed = evidence.seal()
+    assert sealed is not None
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "delete",
+            PredicateSelection(
+                "Account", predicate_algebra.Comparison("lessThan", "Account.id", 100)
+            ),
+        ),
+        _ACCOUNT,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return MaterializedWriteGroup(mutation=prepared, evidence=sealed)
+
+
+def _balance_members(key: int, tx_start: object = _TX_START) -> dict[str, object]:
+    return {
+        "id": key,
+        "acctNum": "A",
+        "value": Decimal("1.00"),
+        "txStart": tx_start,
+        "txEnd": INFINITY,
+    }
+
+
+def _balance_group(*rows: dict[str, object]) -> MaterializedWriteGroup:
+    return temporal_group(
+        PredicateWrite(
+            "terminate",
+            PredicateSelection(
+                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "100.00")
+            ),
+        ),
+        _BALANCE,
+        rows,
+    )
+
+
+def _account_state(key: int, version: int) -> VersionedStateKey:
+    return VersionedStateKey(corpus_object_key("Account", ("id", key)), version)
+
+
+def _balance_state(key: int) -> ObservedStateKey:
+    target = _balance_group(_balance_members(key)).mutation.selection.target
+    shape = temporal_read.view(_BALANCE).shape(target.identity)
+    assert shape is not None
+    return observed_state_key(
+        corpus_object_key("Balance", ("id", key)),
+        TemporalObservation(predecessor=PredecessorRow(_balance_members(key))),
+        shape,
+    )
+
+
+_ASSIGNMENT = WriteIntent(kind="assignment")
+
+
+def test_buffering_a_group_claims_every_state_it_selected_as_a_keyed_read_would_key_it() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_account_group((1, 7), (2, 3)))
+        assert uow.claimed(_account_state(1, 7)) is SELECTION_INTENT
+        assert uow.claimed(_account_state(2, 3)) is SELECTION_INTENT
+        assert uow.claimed(_account_state(2, 7)) is None
+
+    _run(body, executor=recorder)
+    assert len(recorder.plans) == 1
+
+    def temporal(uow: UnitOfWork) -> None:
+        uow.buffer(_balance_group(_balance_members(1), _balance_members(2)))
+        assert uow.claimed(_balance_state(1)) is SELECTION_INTENT
+        assert uow.claimed(_balance_state(2)) is SELECTION_INTENT
+
+    _run(temporal, meta=_BALANCE)
+
+
+def test_a_late_milestone_edge_failure_withdraws_only_the_admitted_prefix() -> None:
+    # The third row's axis start is no instant, so deriving its state key fails
+    # after two claims were admitted. Those two are withdrawn, the claim held
+    # before the group is untouched, and the group is never buffered.
+    recorder = _Recorder()
+    held = _balance_state(9)
+
+    def body(uow: UnitOfWork) -> None:
+        assert uow.claim(held, _ASSIGNMENT) == "admit"
+        group = _balance_group(
+            _balance_members(1), _balance_members(2), _balance_members(3, tx_start="soon")
+        )
+        with pytest.raises(TemporalReadError):
+            uow.buffer(group)
+        assert uow.claimed(_balance_state(1)) is None
+        assert uow.claimed(_balance_state(2)) is None
+        assert uow.claimed(held) is _ASSIGNMENT
+
+    _run(body, meta=_BALANCE, executor=recorder)
+    assert recorder.plans == []
+
+
+def test_a_late_collision_leaves_the_pending_claim_it_met_standing() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        assert uow.claim(_account_state(3, 7), _ASSIGNMENT) == "admit"
+        with pytest.raises(UnitOfWorkError, match="collides with a claim"):
+            uow.buffer(_account_group((1, 7), (2, 7), (3, 7), (4, 7)))
+        assert uow.claimed(_account_state(1, 7)) is None
+        assert uow.claimed(_account_state(2, 7)) is None
+        assert uow.claimed(_account_state(3, 7)) is _ASSIGNMENT
+        assert uow.claimed(_account_state(4, 7)) is None
+
+    _run(body, executor=recorder)
+    assert recorder.plans == []
+
+
+def test_a_group_selecting_one_state_twice_is_refused_and_leaves_no_claim() -> None:
+    recorder = _Recorder()
+
+    def body(uow: UnitOfWork) -> None:
+        with pytest.raises(UnitOfWorkError, match="incompatible"):
+            uow.buffer(_account_group((1, 7), (2, 7), (1, 7)))
+        assert uow.claimed(_account_state(1, 7)) is None
+        assert uow.claimed(_account_state(2, 7)) is None
+
+    _run(body, executor=recorder)
+    assert recorder.plans == []

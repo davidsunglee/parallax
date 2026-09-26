@@ -169,7 +169,7 @@ def _bind_bound(
             return value
         case PredecessorStart():
             assert predecessor is not None
-            return predecessor.member(valid_time.start_attribute.name)
+            return predecessor.cell(valid_time.start_attribute)
         case PredecessorEnd():
             assert predecessor is not None
-            return predecessor.member(valid_time.end_attribute.name)
+            return predecessor.cell(valid_time.end_attribute)

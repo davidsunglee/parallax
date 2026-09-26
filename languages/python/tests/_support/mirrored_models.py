@@ -563,6 +563,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "focused predicate-write runtime model and gives the independent compatibility "
             "oracle the same recursive refusal witness"
         ),
+        "document-layout-restored-member": (
+            "no mirror authored; its Transaction-Time document root with a nested "
+            "`many` exists for the restored-member write witness, whose resolving read "
+            "and successor the corpus lane already drives through production"
+        ),
         "evolution-added-value-object-v1": _EVOLUTION_ENDPOINT,
         "evolution-added-value-object-v2": _EVOLUTION_ENDPOINT,
         "evolution-attribute-column-v1": _EVOLUTION_ENDPOINT,

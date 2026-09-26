@@ -49,6 +49,8 @@ from parallax.core.storage_layout import (
 )
 from parallax.core.unit_work import PredecessorRow
 from parallax.core.unit_work.planned import (
+    NEW_LINEAGE,
+    CarriedFrom,
     Finite,
     InsertOrigin,
     KeyTarget,
@@ -168,7 +170,7 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
             entity,
             stamp_tag=True,
             opening=True,
-            predecessor=_origin_predecessor(entry.origin),
+            origin=entry.origin,
         )
         for entry in step.entries
     ]
@@ -480,7 +482,7 @@ def _member_cells(
     *,
     stamp_tag: bool,
     opening: bool,
-    predecessor: PredecessorRow | None = None,
+    origin: InsertOrigin = NEW_LINEAGE,
 ) -> Sequence[_Cell]:
     """The named members as ``(column, value)`` pairs, in Table Layout slot order.
 
@@ -504,9 +506,9 @@ def _member_cells(
     established; a revising statement leaves it alone, since revising a row never
     changes what it is.
 
-    ``predecessor`` is the milestone an opening row succeeds, which decides how its
-    Structured Column is composed: from the retained document it observed, or from
-    the row's own members alone (:func:`_successor_document`).
+    ``origin`` is where an opening row's state came from, which decides how its
+    Structured Column is composed: from the retained document of the milestone it
+    succeeds, or from the row's own members alone (:func:`_successor_document`).
     """
     discriminator = view.discriminator if stamp_tag else None
     cells: list[_Cell] = []
@@ -530,7 +532,7 @@ def _member_cells(
                                 resident,
                                 attributes,
                                 value_objects,
-                                predecessor,
+                                origin,
                             )
                         ),
                         None,
@@ -600,36 +602,35 @@ def _row_document(
     return encode_managed_document(resident.shape, values)
 
 
-def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
-    """The milestone one insert entry succeeds, or absence for a new lineage."""
-    return None if isinstance(origin, NewLineage) else origin.predecessor
-
-
 def _successor_document(
     resident: DocumentResidentSelection,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
-    predecessor: PredecessorRow | None,
+    origin: InsertOrigin,
 ) -> object:
-    """One opening row's Structured Column, given the milestone it succeeds.
+    """One opening row's Structured Column, given where its state came from.
 
     A row that succeeds a milestone whose observation retained the predecessor's
-    raw document is composed by PATCHING that document at the assigned paths
-    alone, so every key it carries outside them survives the close-and-insert — a
-    key a newer application version wrote included (`m-document-codec`,
-    `m-unit-work`). Only the members whose value the mutation actually changed are
-    patched: a member the successor carries forward is already spelled in the
-    retained document, and re-encoding it from its decoded value would rebuild the
-    subtree an occurrence holds and drop the unknown keys inside it — an
-    assignment the author never made.
+    raw document is composed from that document, so every key it carries outside
+    the members the successor changed survives the close-and-insert — a key a
+    newer application version wrote included (`m-document-codec`, `m-unit-work`).
+    A carried successor binds the retained document itself: its state is its
+    predecessor's, unchanged. A changed successor patches it at the members it
+    changed alone: a member it carries forward is already spelled in the retained
+    document, and re-encoding it from its decoded value would rebuild the subtree
+    an occurrence holds and drop the unknown keys inside it — an assignment the
+    author never made.
 
     Without a retained document there is nothing to preserve — a new lineage opens
     no predecessor, and an observation that read no row knows no key this model
     does not declare — so the row's own complete member set composes the document
     (:func:`_row_document`).
     """
-    if predecessor is None or predecessor.document is None:
+    if isinstance(origin, NewLineage) or origin.predecessor.document is None:
         return _row_document(resident, attributes, value_objects)
+    predecessor = origin.predecessor
+    if isinstance(origin, CarriedFrom):
+        return predecessor.document
     patches = _successor_patches(resident, attributes, value_objects, predecessor)
     if not patches:
         return predecessor.document
@@ -642,18 +643,16 @@ def _successor_patches(
     value_objects: Mapping[ValueObjectIdentity, object],
     predecessor: PredecessorRow,
 ) -> tuple[DocumentPatch, ...]:
-    """The in-memory patches carrying one successor's changes onto its predecessor.
+    """The in-memory patches carrying one changed successor's changes onto its
+    predecessor's retained document.
 
-    A successor's row restates every member, changed or not (`m-unit-work`), and
-    its carried half is copied straight out of the observation's own member map —
-    so comparing each member against that same map is what tells a carried member
-    from a changed one. The comparison is deliberately against the observation
-    rather than against the retained document: the map is the row's own
-    provenance, while the document is a value the observation's two paths spell
-    differently (a materialized occurrence carries the declared members decoded by
-    type, the stored subtree carries every key as written), and a carried
-    occurrence misread as changed would be REPLACED by its declared members and
-    lose every key no member names.
+    Its producer carried every document-resident member it did not effectively
+    change as the predecessor's own cell (:class:`ChangedFrom`), so a member is
+    changed exactly when the predecessor does not carry the value the successor
+    holds. The test is identity, never a comparison of values: the retained
+    document spells a member as stored while the successor holds it as decoded,
+    and a carried occurrence misread as changed would be REPLACED by its declared
+    members and lose every key no member names.
 
     Order is canonical logical placement order, which both the in-memory patch and
     the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).
@@ -662,12 +661,11 @@ def _successor_patches(
     for position, placement in zip(resident.positions, resident.placements, strict=True):
         binding = resident.member_selection.bindings[position]
         if isinstance(binding, AttributeMetadata):
-            name = binding.identity.name
-            if binding.identity not in attributes or attributes[binding.identity] == (
-                predecessor.members.get(name)
-            ):
+            if binding.identity not in attributes:
                 continue
             raw = attributes[binding.identity]
+            if predecessor.carries(binding.identity, raw):
+                continue
             patches.append(SetLeaf(placement.path, NULL if raw is None else Present(raw)))
         else:
             occurrence = binding
@@ -675,10 +673,9 @@ def _successor_patches(
                 occurrence.identity not in value_objects
             ):  # pragma: no cover - successor rows are complete
                 continue
-            name = occurrence.identity.path[-1]
-            if value_objects[occurrence.identity] == predecessor.members.get(name):
-                continue
             raw = value_objects[occurrence.identity]
+            if predecessor.carries(occurrence.identity, raw):
+                continue
             patches.append(
                 SetValue(
                     placement.path,

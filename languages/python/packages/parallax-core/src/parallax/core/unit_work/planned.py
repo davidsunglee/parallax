@@ -136,7 +136,11 @@ class ChangedFrom:
     """An insert whose represented state revises its predecessor's.
 
     The authored change set is overlaid on the predecessor, so the entry retains
-    both what changed and what it changed from.
+    both what changed and what it changed from. Its producer overlays only the
+    members it effectively changes: at every document-resident member it does
+    not, the row holds the predecessor's own cell, which is how lowering tells a
+    changed member from a carried one without comparing values
+    (:meth:`~parallax.core.unit_work.observe.PredecessorRow.carries`).
     """
 
     predecessor: PredecessorRow

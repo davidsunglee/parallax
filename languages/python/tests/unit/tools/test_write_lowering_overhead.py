@@ -18,9 +18,8 @@ from parallax.core.db_port import DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.entity import EntityRowCodec
 from parallax.core.unit_work import (
     BufferItem,
-    EntityStateRow,
     MaterializedWriteGroup,
-    TemporalColumns,
+    PredecessorRows,
     TemporalObservation,
     UnitOfWork,
     WritePlanner,
@@ -327,18 +326,14 @@ def test_acquisition_resolves_every_row_once_and_stops_before_any_flush(
         assert marks == ["opened", "closed"]
         assert _CountingPort.reads == 1
         assert _CountingPort.delivered == case.rows
-        # What the window leaves buffered is one group owning every resolved
-        # row's complete predecessor columnarly, and no per-row row view.
+        # What the window leaves buffered is one group retaining every
+        # resolved row's judged positional state, and no per-row row view.
         (group,) = buffered
-        assert isinstance(group.observations, TemporalColumns)
-        predecessors = group.observations.predecessors
-        assert predecessors.length == case.rows
-        assert (predecessors.documents is None) == (case.layout == "columns")
-        assert not any(
-            isinstance(cell, EntityStateRow)
-            for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
-            for cell in column
-        )
+        evidence = group.evidence
+        assert isinstance(evidence, PredecessorRows)
+        assert len(evidence) == case.rows
+        assert (evidence.documents is None) == (case.layout == "columns")
+        assert all(type(row) is tuple for row in evidence.rows)
         assert all(
             row["title"] != acquisition_support.ASSIGNED_TITLE
             if case.layout == "columns"

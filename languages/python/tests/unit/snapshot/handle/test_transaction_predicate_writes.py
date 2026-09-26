@@ -19,9 +19,7 @@ Work left untouched until that traversal has judged every root.
 from __future__ import annotations
 
 import datetime as dt
-import gc
 import re
-import types
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
@@ -53,7 +51,6 @@ from parallax.core.base import (
     INFINITY,
     SQL_NULL,
     DocumentValue,
-    FrozenMap,
     InstantError,
     PresentDocument,
 )
@@ -78,17 +75,21 @@ from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
     BufferItem,
+    ChunkedColumnBuilder,
     EntityStateRow,
     FixedClock,
     MaterializedWriteGroup,
     OptimisticLockConflictError,
+    PredecessorRows,
+    PredecessorRowsBuilder,
     PredicateWrite,
     StaleWriteError,
-    TemporalColumns,
     UnitOfWork,
     WriteRejectedError,
     instructions,
 )
+from parallax.core.unit_work.claims import ClaimTable
+from parallax.core.unit_work.columns import ColumnSlice
 from parallax.core.unit_work.write_settlement import assigned_many_path
 from parallax.snapshot import QueryTargetError, Snapshot, SnapshotDecodingError, connect
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
@@ -96,6 +97,7 @@ from parallax.snapshot.handle import _predicate_writes as predicate_writes
 from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
+from parallax.snapshot.materialize import Page, RootView
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -114,6 +116,7 @@ from tests._support.root_ownership import own_root
 from tests.unit import _predicate_acquisition_support as acquisition_support
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
+from tests.unit._gc_reachability import reachable_objects
 from tests.unit._positional_row_support import positional_row
 from tests.unit._transact_support import (
     ACCOUNT,
@@ -1089,9 +1092,8 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
 def test_materializing_terminate_where_document_layout_binds_a_carried_document_as_json() -> None:
     # A rectangle split's head CARRIES its predecessor's document with nothing
     # patched into it, so the value the insert binds is the retained document
-    # itself. It reaches the bind as the recursively immutable portable document
-    # retained by the compact columnar observation; the adapter owns serialization
-    # of that trusted carrier without first rebuilding a mutable document tree.
+    # itself: the raw document the resolving read decoded and transferred to the
+    # group, bound without being frozen, copied, or rebuilt.
     stored: DocumentValue = {
         "route": "Oslo-Bergen",
         "charterCode": "NB-118",
@@ -1128,9 +1130,8 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     head_binds = writes[1].binds
     carried = cast("JsonDocument", head_binds[-1]).value
     assert carried == stored
-    assert type(carried) is FrozenMap
-    assert type(cast("FrozenMap[str, object]", carried)["terms"]) is FrozenMap
-    assert type(cast("FrozenMap[str, object]", carried)["stops"]) is tuple
+    assert type(carried) is dict
+    assert type(cast("dict[str, object]", carried)["stops"]) is list
 
 
 def _position_row() -> MappingRow:
@@ -2454,8 +2455,8 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# What a materializing temporal resolve retains per row: the row itself,      #
-# streamed whole into the group's Predecessor Columns, and nothing else.      #
+# What a materializing temporal resolve retains per row: the judged row       #
+# itself and its raw document, by reference, and nothing else.                #
 # --------------------------------------------------------------------------- #
 def _recorded_groups_and_views(
     monkeypatch: pytest.MonkeyPatch,
@@ -2491,18 +2492,16 @@ def _plain(value: object) -> object:
 
 
 @pytest.mark.parametrize("layout", ["columns", "document"])
-def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its_columns(
+def test_a_materializing_temporal_write_retains_each_resolved_row_whole_by_reference(
     monkeypatch: pytest.MonkeyPatch, layout: acquisition_support.Layout
 ) -> None:
-    # Every resolved row of a temporal resolve contributes exactly one cell to
-    # every predecessor column — scalars, the primary key, every axis bound
+    # Every resolved row of a temporal resolve is retained as the positional
+    # row the read judged — scalars, the primary key, every axis bound
     # (declared `validStart` over storage `from_z`), and both value-object
-    # occurrences, nested `one` and `many` alike — and the group owns that state
-    # outright: the occurrence cells are the frozen documents, the raw
-    # Structured Column rides beside them under Relational Document Layout and
-    # is absent under `Columns`, and the key columns hold the same values the
-    # selected-state claims were keyed by. The declared-name view the lane read
-    # each row through is not retained anywhere in the buffered group.
+    # occurrences, nested `one` and `many` alike — and the raw Structured
+    # Column rides beside it under Relational Document Layout and is absent
+    # under `Columns`. Acquisition views no row by member name, copies no
+    # cell, and keeps no second key column: the key is read at its position.
     case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
     groups, views = _recorded_groups_and_views(monkeypatch)
     traversals = _traversals(monkeypatch)
@@ -2510,14 +2509,17 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
         acquisition_support.acquire(handle, case)
 
     assert len(traversals) == 1
+    assert views == []
     (group,) = groups
-    assert isinstance(group.observations, TemporalColumns)
-    predecessors = group.observations.predecessors
-    assert predecessors.length == case.rows == len(views)
-    assert [list(column) for column in group.key_columns] == [list(range(1, case.rows + 1))]
+    evidence = group.evidence
+    assert isinstance(evidence, PredecessorRows)
+    assert len(evidence) == case.rows
+    assert [evidence.key(index) for index in range(case.rows)] == list(range(1, case.rows + 1))
     for index in range(case.rows):
         key = index + 1
-        predecessor = predecessors.row(index)
+        row = evidence.rows[index]
+        assert type(row) is tuple
+        predecessor = evidence.predecessor(index)
         stored = acquisition_support.stored_row(layout, key)
         members = (
             cast("Mapping[str, object]", stored["payload"]) if layout == "document" else stored
@@ -2532,52 +2534,38 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
             "txStart": acquisition_support.TX_START,
             "txEnd": INFINITY,
         }
-        address = predecessor.member("address")
-        assert isinstance(address, FrozenMap)
-        assert isinstance(address["geo"], FrozenMap)
-        tags = predecessor.member("tags")
-        assert isinstance(tags, tuple)
-        assert all(isinstance(tag, FrozenMap) for tag in cast("tuple[object, ...]", tags))
         if layout == "document":
-            document = predecessor.document
-            assert isinstance(document, FrozenMap)
-            assert document == stored["payload"]
+            assert predecessor.document is evidence.document(index)
+            assert predecessor.document == stored["payload"]
         else:
             assert predecessor.document is None
-        assert all(predecessor.members is not view for view in views)
-    retained_cells = [
-        cell
-        for column in (*predecessors.attribute_columns, *predecessors.value_object_columns)
-        for cell in column
-    ]
-    assert retained_cells
-    assert not any(isinstance(cell, EntityStateRow) for cell in retained_cells)
-    assert not any(
-        isinstance(cell, Mapping) and not isinstance(cell, FrozenMap) for cell in retained_cells
-    )
+    assert (evidence.documents is None) == (layout == "columns")
 
 
-def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
+def test_a_buffered_group_reaches_no_page_builder_or_row_view(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The buffered group is kept alive here past the transaction; nothing it
-    # holds — and nothing else still alive — refers to the per-row views the
-    # lane read, so those views were short-lived state-key inspection and never
-    # became a second predecessor carrier beside the columns.
+    # holds is the Page it was read from, a Root View over it, the builders
+    # that accumulated it, or a named view of a row.
     case = acquisition_support.case_named("acquisition.rows-8.document")
-    groups, views = _recorded_groups_and_views(monkeypatch)
+    groups, _views = _recorded_groups_and_views(monkeypatch)
     with acquisition_support.database(case) as handle:
         acquisition_support.acquire(handle, case)
 
-    assert len(groups) == 1 and len(views) == case.rows
-    gc.collect()
-    for view in views:
-        referrers = [
-            referrer
-            for referrer in gc.get_referrers(view)
-            if referrer is not views and not isinstance(referrer, types.FrameType)
-        ]
-        assert referrers == []
+    (group,) = groups
+    evidence = group.evidence
+    assert isinstance(evidence, PredecessorRows)
+    reached = reachable_objects(evidence, boundaries=(evidence.selection,))
+    forbidden = (
+        Page,
+        RootView,
+        EntityStateRow,
+        ChunkedColumnBuilder,
+        PredecessorRowsBuilder,
+    )
+    assert not [value for value in reached if isinstance(value, forbidden)]
+    assert sum(1 for value in reached if isinstance(value, ColumnSlice)) == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -2615,18 +2603,18 @@ def _traversals(
 
 def _unit_of_work_mutations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     mutations: list[str] = []
-    buffer, claim = UnitOfWork.buffer, UnitOfWork.claim
+    buffer, claim = UnitOfWork.buffer, ClaimTable.claim
 
     def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
         mutations.append("buffer")
         buffer(uow, instruction)
 
-    def recording_claim(uow: UnitOfWork, key: Any, intent: Any) -> Any:
+    def recording_claim(table: ClaimTable, key: Any, intent: Any) -> Any:
         mutations.append("claim")
-        return claim(uow, key, intent)
+        return claim(table, key, intent)
 
     monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
-    monkeypatch.setattr(UnitOfWork, "claim", recording_claim)
+    monkeypatch.setattr(ClaimTable, "claim", recording_claim)
     return mutations
 
 
@@ -2656,7 +2644,7 @@ def test_a_materializing_write_judges_compares_and_keeps_each_root_in_one_traver
     # everything: the no-op row is eliminated there, the changed row is kept
     # there, and a versioned target's rows are read positionally rather than
     # through a named row view. The group reaches the Unit of Work after the
-    # traversal, and its claim after the group.
+    # traversal, and buffering it installs its claim.
     def named_view(*args: object, **kwargs: object) -> object:
         del args, kwargs
         raise AssertionError("a versioned acquisition viewed a row by member name")

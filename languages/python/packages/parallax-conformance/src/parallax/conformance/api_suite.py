@@ -1258,6 +1258,14 @@ _INVALID_ROOT_WRITE_VALUE_REASON: Final[str] = (
     "used by m-unit-work-017 through -020"
 )
 
+_RESTORED_MEMBER_WITNESS_REASON: Final[str] = (
+    "the restored-member witness of a materializing predicate update: its stored "
+    "document carries keys no authored value can produce, seeded by out-of-band SQL, so "
+    "no idiomatic story can arrange it. The run sweep drives the case's own resolving "
+    "read and predicate update against real Postgres and grades the successor document "
+    "and the committed table state"
+)
+
 _SHARED_STATE_ROOT_AUTHORITY_REASON: Final[str] = (
     "the root-local authority sibling of the corrupt-storage lane: the run sweep "
     "grades this case's two-root graph and stored-data diagnosis against the real "
@@ -1427,6 +1435,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
+    "m-unit-work-042": _RESTORED_MEMBER_WITNESS_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,

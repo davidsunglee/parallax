@@ -263,3 +263,22 @@ are both `actor_identity`.
 The neutrality rule is unchanged. Planning accepts either variant without
 inspecting it except where Audit Provenance projects the actor to its persisted
 string, and a Write Plan retains neither variant as planning context.
+
+## Amendment (2026-09): a group's evidence is its logical content
+
+The group shape recorded above stores a shared primary-key shape, one value
+column per key attribute, and `VersionColumns` or `TemporalColumns` over
+Predecessor Columns.
+
+**Superseding decision:** the group is the authored mutation plus one closed
+evidence variant, aligned per selected row in resolution order: each row's key
+value and observed version, or each row's complete predecessor state and optional
+raw document. `m-unit-work` states that logical content and leaves the physical
+form to the implementation. The Python runtime retains a temporal group's
+resolved rows by reference, reading the key at its selection position rather than
+from a second key column, and installs the group's selection claims when the group
+is buffered, so a group and its claims are published together or not at all.
+
+Everything else about the group is unchanged: it is private, indivisible, never
+empty, never observation-free, and holds no per-row Predecessor Row or keyed-write
+object.

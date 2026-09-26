@@ -202,6 +202,16 @@ def test_the_claim_table_holds_what_the_buffer_will_carry() -> None:
     assert table.held(_STATE) is None
 
 
+def test_releasing_claims_drops_exactly_the_named_scopes() -> None:
+    other = VersionedStateKey(_STATE.object, _STATE.version + 1)
+    table = ClaimTable()
+    assert table.claim(_STATE, SELECTION_INTENT) == "admit"
+    assert table.claim(other, _ASSIGNMENT) == "admit"
+    table.release(iter((_STATE,)))
+    assert table.held(_STATE) is None
+    assert table.held(other) == _ASSIGNMENT
+
+
 # --------------------------------------------------------------------------- #
 # Coalescing through the real verbs.                                          #
 # --------------------------------------------------------------------------- #

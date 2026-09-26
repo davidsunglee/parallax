@@ -1,9 +1,10 @@
-"""Entity State row views (`parallax.core.unit_work.observe`).
+"""Entity State row views and Predecessor Rows (`parallax.core.unit_work.observe`).
 
 The Mapping contract of the positional view over one decoded Entity State, keyed
 by declared member name, and of the nested Value Object views it exposes, driven
 directly through the Mapping interface over layouts whose declared and storage
-names differ.
+names differ; and a Predecessor Row's identity-keyed reads and carried-cell test
+over both a trusted positional row and a caller-supplied mapping.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import pytest
 
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import EntityStateRow, PredecessorRow
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 
@@ -214,3 +216,118 @@ def test_both_layout_twins_expose_one_positional_row_identically() -> None:
     )
 
     assert _plain(dict(columns_twin.items())) == _plain(dict(_declared().items()))
+
+
+# --------------------------------------------------------------------------- #
+# The trusted Predecessor Row: one positional row adopted by reference.        #
+# --------------------------------------------------------------------------- #
+_SELECTION = _DOCUMENT_LAYOUT.member_selection
+_ID, _DISPLAY_NAME, _SCORE, _JOINED_ON = (attribute.identity for attribute in _SELECTION.attributes)
+_ADDRESS, _TAGS = (occurrence.identity for occurrence in _SELECTION.value_objects)
+
+
+def _adopted(
+    values: tuple[object, ...] = _VALUES, document: object | None = None
+) -> PredecessorRow:
+    return PredecessorRow.over_row(_SELECTION, values, document, ABSENT)
+
+
+def test_a_trusted_predecessor_row_adopts_its_row_and_document_without_copying() -> None:
+    document: dict[str, object] = {"displayName": "Ada", "unknown": [1]}
+    predecessor = _adopted(document=document)
+
+    assert predecessor.document is document
+    assert _plain(dict(predecessor.members)) == _plain(dict(_declared()))
+    assert predecessor.member("displayName") == "Ada"
+    assert predecessor == PredecessorRow(_declared(), document=document)
+
+
+def test_a_trusted_predecessor_row_reads_each_member_by_identity() -> None:
+    predecessor = _adopted()
+
+    assert [_plain(predecessor.cell(binding.identity)) for binding in _SELECTION.bindings] == [
+        _plain(_declared()[name]) for name in _DECLARED_NAMES
+    ]
+    assert predecessor.axis_start(None, _ID) == 7
+    assert predecessor.axis_start(None, AttributeIdentity(PERSON, "txStart")) is None
+
+
+def test_identity_maps_hold_each_cell_and_view_each_occurrence_over_its_own_cell() -> None:
+    predecessor = _adopted()
+
+    attributes, value_objects = predecessor.identity_maps(_SELECTION)
+    again, again_objects = predecessor.identity_maps(_SELECTION)
+
+    assert list(attributes) == [_ID, _DISPLAY_NAME, _SCORE, _JOINED_ON]
+    assert list(value_objects) == [_ADDRESS, _TAGS]
+    assert all(attributes[member] is _VALUES[index] for index, member in enumerate(attributes))
+    assert _plain(value_objects[_ADDRESS]) == {"city": "Bergen"}
+    assert _plain(value_objects[_TAGS]) == ({"label": "founder"}, {"label": None})
+    assert again is not attributes
+    assert again_objects[_ADDRESS] is not value_objects[_ADDRESS]
+    for maps in ((attributes, value_objects), (again, again_objects)):
+        for member, value in (*maps[0].items(), *maps[1].items()):
+            assert predecessor.carries(member, value)
+
+
+def test_a_positional_predecessor_carries_by_identity_never_by_equality() -> None:
+    fresh_name = "".join(("A", "da"))
+    values = (7, fresh_name, ABSENT, None, ("Bergen", ABSENT), (("founder",), (None,)))
+    predecessor = _adopted(values)
+    _, value_objects = predecessor.identity_maps(_SELECTION)
+    address = value_objects[_ADDRESS]
+    tags = cast("tuple[object, ...]", value_objects[_TAGS])
+
+    assert predecessor.carries(_DISPLAY_NAME, fresh_name)
+    assert not predecessor.carries(_DISPLAY_NAME, "Ada")
+    assert predecessor.carries(_SCORE, ABSENT)
+    assert predecessor.carries(_JOINED_ON, None)
+    assert not predecessor.carries(_JOINED_ON, "2024-01-01")
+    assert predecessor.carries(_ADDRESS, address)
+    assert not predecessor.carries(_ADDRESS, dict(cast("Mapping[str, object]", address)))
+    assert not predecessor.carries(_ADDRESS, _adopted().identity_maps(_SELECTION)[1][_ADDRESS])
+    assert predecessor.carries(_TAGS, tags)
+    assert not predecessor.carries(_TAGS, tags[:1])
+    assert not predecessor.carries(_TAGS, (tags[0], {"label": None}))
+    assert not predecessor.carries(_TAGS, list(tags))
+
+    nulls = _adopted((7, "Ada", ABSENT, None, None, ABSENT))
+    assert nulls.carries(_ADDRESS, None)
+    assert not nulls.carries(_ADDRESS, {"city": "Bergen"})
+    assert nulls.carries(_TAGS, ABSENT)
+    assert not nulls.carries(_TAGS, ())
+
+
+def test_a_mapping_backed_predecessor_carries_only_its_own_stored_values() -> None:
+    predecessor = PredecessorRow({"id": 7, "address": {"city": "Bergen"}})
+    address = predecessor.member("address")
+
+    attributes, value_objects = predecessor.identity_maps(_SELECTION)
+
+    assert attributes == {_ID: 7}
+    assert value_objects[_ADDRESS] is address
+    assert predecessor.cell(_ID) == 7
+    assert predecessor.cell(_ADDRESS) is address
+    assert predecessor.axis_start(None, _ID) == 7
+    assert predecessor.carries(_ADDRESS, address)
+    assert not predecessor.carries(_ADDRESS, {"city": "Bergen"})
+    assert not predecessor.carries(_TAGS, ())
+
+
+def test_a_mapping_backed_predecessor_refuses_a_member_its_selection_lacks() -> None:
+    with pytest.raises(ValueError, match="'nickname' is not a member"):
+        PredecessorRow({"id": 7, "nickname": "Ada"}).identity_maps(_SELECTION)
+
+
+def test_direct_predecessor_construction_owns_its_members_and_document() -> None:
+    members: dict[str, object] = {"id": 1, "address": {"city": "Oslo"}}
+    stored: dict[str, object] = {"title": "Ada", "manifest": {"cargo": "timber"}}
+    predecessor = PredecessorRow(members, document=stored)
+
+    cast("dict[str, object]", members["address"])["city"] = "Bergen"
+    cast("dict[str, object]", stored["manifest"])["cargo"] = "ore"
+
+    assert predecessor.member("address") == {"city": "Oslo"}
+    assert predecessor.document == {"title": "Ada", "manifest": {"cargo": "timber"}}
+    with pytest.raises(ValueError, match="complete state"):
+        PredecessorRow({})

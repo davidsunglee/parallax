@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
+from parallax.core import inheritance, temporal_read
+from parallax.core.metamodel import AttributeIdentity, Metamodel
+from parallax.core.temporal_read import milestone_edge
 from parallax.core.unit_work.claims import SettledEvidence
-from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
+from parallax.core.unit_work.columns import ChunkedColumnBuilder, ColumnSlice, whole
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
 )
-from parallax.core.unit_work.observe import WriteObservation
-from parallax.core.unit_work.planner import ObjectKey
+from parallax.core.unit_work.observe import PredecessorRow, WriteObservation
+from parallax.core.unit_work.planner import (
+    ObjectKey,
+    ObservedStateKey,
+    TemporalStateKey,
+    VersionedStateKey,
+)
 from parallax.core.unit_work.retain import RetainedObservation
+
+if TYPE_CHECKING:
+    from parallax.core.inheritance import EntityMemberSelection
 
 __all__ = [
     "BufferItem",
@@ -20,80 +33,199 @@ __all__ = [
     "MaterializedWriteGroup",
     "ObjectClaimedWrite",
     "ObservedKeyedWrite",
-    "TemporalColumns",
-    "VersionColumns",
+    "PredecessorRows",
+    "PredecessorRowsBuilder",
+    "VersionedEvidence",
+    "VersionedEvidenceBuilder",
     "buffered_instruction",
     "buffered_write",
+    "group_state_keys",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class VersionColumns:
-    """One aligned optimistic-lock version value per resolved row."""
+class VersionedEvidence:
+    """Each selected row's family key value and the optimistic-lock version it
+    was read at, aligned in resolution order."""
 
+    keys: ColumnSlice[object]
     versions: ColumnSlice[int]
+
+    def __post_init__(self) -> None:
+        if len(self.keys) != len(self.versions):
+            raise ValueError(
+                "Versioned Evidence aligns one version with each key: "
+                f"{len(self.keys)} keys, {len(self.versions)} versions"
+            )
+        if not self.versions:
+            raise ValueError("Versioned Evidence addresses at least one row")
+
+    def __len__(self) -> int:
+        return len(self.versions)
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalColumns:
-    """Complete predecessor state per resolved row."""
+class PredecessorRows:
+    """Each selected row's complete Predecessor Row state, in resolution order.
 
-    predecessors: PredecessorColumns
+    ``rows`` holds the resolving read's own judged positional member rows,
+    aligned to ``selection``, and ``absent`` is the marker those rows carry at a
+    member the row does not hold. ``key_position`` is the family key's position
+    in ``selection``. ``documents`` aligns each row's raw Structured Column and
+    is absent where the read projected none. Rows and documents are adopted by
+    reference from the reader that exclusively owned them, and nothing reads
+    them except to view or copy them.
+    """
+
+    selection: EntityMemberSelection
+    key_position: int
+    absent: object
+    rows: ColumnSlice[tuple[object, ...]]
+    documents: ColumnSlice[object] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.rows:
+            raise ValueError("Predecessor Rows carries at least one row")
+        if self.documents is not None and len(self.documents) != len(self.rows):
+            raise ValueError(
+                "Predecessor Rows aligns one raw document with each row: "
+                f"{len(self.rows)} rows, {len(self.documents)} documents"
+            )
+        if not 0 <= self.key_position < len(self.selection.bindings):
+            raise ValueError("Predecessor Rows' key position lies within its selection")
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def key(self, index: int) -> object:
+        return self.rows[index][self.key_position]
+
+    def document(self, index: int) -> object | None:
+        documents = self.documents
+        return None if documents is None else documents[index]
+
+    def axis_start(self, at: int, attribute: AttributeIdentity, /) -> object:
+        position = self.selection.index.get(attribute)
+        return None if position is None else self.rows[at][position]
+
+    def predecessor(self, index: int) -> PredecessorRow:
+        """Row ``index`` as its Predecessor Row, sharing the retained row and
+        document rather than copying them."""
+        return PredecessorRow.over_row(
+            self.selection, self.rows[index], self.document(index), self.absent
+        )
 
 
-type GroupObservations = VersionColumns | TemporalColumns
-"""One authored predicate's aligned observation evidence, one member per
-resolved row."""
+type GroupEvidence = VersionedEvidence | PredecessorRows
+"""One authored predicate's aligned evidence, one entry per selected row."""
 
 
 @dataclass(frozen=True, slots=True)
 class MaterializedWriteGroup:
     """One authored predicate's compact, private, indivisible planning input.
 
-    ``key_attributes`` names the canonical primary-key shape once (by declared
-    member name, matching the write-instruction row convention); ``key_columns``
-    carries one aligned value column per key attribute, in database resolution
-    order. Every key and observation column shares the same positive row count.
     The group holds no managed Entity object, no per-row keyed-write wrapper,
     and no per-row Predecessor Row object.
 
-    ``observations`` is not optional, so a group exists only for a target
-    entitled to evidence: a predicate write against an unversioned Non-Temporal
-    target stays readless and never materializes at all. Which targets those are
-    needs the model, so — exactly as for :class:`ObservedKeyedWrite` — the
-    model-aware settlement refuses a group whose target turns out to be neither
-    versioned nor temporal rather than settling it Unversioned with its
-    observation columns dropped.
+    ``evidence`` is not optional, so a group exists only for a target entitled
+    to evidence: a predicate write against an unversioned Non-Temporal target
+    stays readless and never materializes at all. Which targets those are needs
+    the model, so — exactly as for :class:`ObservedKeyedWrite` — the model-aware
+    settlement refuses a group whose target turns out to be neither versioned
+    nor temporal rather than settling it Unversioned with its evidence dropped.
     """
 
     mutation: PreparedPredicateWrite
-    key_attributes: tuple[str, ...]
-    key_columns: tuple[ColumnSlice[object], ...]
-    observations: GroupObservations
-
-    def __post_init__(self) -> None:
-        if not self.key_attributes:
-            raise ValueError("a Materialized Write Group names at least one key Attribute")
-        if len(self.key_columns) != len(self.key_attributes):
-            raise ValueError(
-                "a Materialized Write Group carries one key column per key Attribute: "
-                f"expected {len(self.key_attributes)}, got {len(self.key_columns)}"
-            )
-        length = len(self.key_columns[0])
-        if length == 0:
-            raise ValueError("a Materialized Write Group addresses at least one row")
-        if any(len(column) != length for column in self.key_columns):
-            raise ValueError(
-                "a Materialized Write Group's key columns share one positive row count"
-            )
-        if _observation_length(self.observations) != length:
-            raise ValueError(
-                "a Materialized Write Group's observation column carries the same row count as "
-                f"its key columns: expected {length}, got {_observation_length(self.observations)}"
-            )
+    evidence: GroupEvidence
 
     def __len__(self) -> int:
-        return len(self.key_columns[0])
+        return len(self.evidence)
+
+
+class VersionedEvidenceBuilder:
+    """Accumulates :class:`VersionedEvidence` from judged positional rows."""
+
+    __slots__ = ("_key_position", "_keys", "_version_position", "_versions")
+
+    def __init__(self, *, key_position: int, version_position: int) -> None:
+        self._key_position = key_position
+        self._version_position = version_position
+        self._keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+        self._versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+
+    def append(self, row: tuple[object, ...]) -> None:
+        self._keys.append(row[self._key_position])
+        self._versions.append(cast("int", row[self._version_position]))
+
+    def seal(self) -> VersionedEvidence | None:
+        """The evidence appended so far, or ``None`` when nothing was."""
+        if not self._versions:
+            return None
+        return VersionedEvidence(whole(self._keys.build()), whole(self._versions.build()))
+
+
+class PredecessorRowsBuilder:
+    """Accumulates :class:`PredecessorRows` by reference from judged rows."""
+
+    __slots__ = ("_absent", "_documents", "_key_position", "_rows", "_selection")
+
+    def __init__(
+        self,
+        selection: EntityMemberSelection,
+        *,
+        key_position: int,
+        absent: object,
+        documents: bool,
+    ) -> None:
+        self._selection = selection
+        self._key_position = key_position
+        self._absent = absent
+        self._rows: ChunkedColumnBuilder[tuple[object, ...]] = ChunkedColumnBuilder()
+        self._documents: ChunkedColumnBuilder[object] | None = (
+            ChunkedColumnBuilder() if documents else None
+        )
+
+    def append(self, row: tuple[object, ...], document: object | None = None) -> None:
+        self._rows.append(row)
+        documents = self._documents
+        if documents is not None:
+            documents.append(document)
+
+    def seal(self) -> PredecessorRows | None:
+        """The evidence appended so far, or ``None`` when nothing was."""
+        if not self._rows:
+            return None
+        documents = self._documents
+        return PredecessorRows(
+            selection=self._selection,
+            key_position=self._key_position,
+            absent=self._absent,
+            rows=whole(self._rows.build()),
+            documents=None if documents is None else whole(documents.build()),
+        )
+
+
+def group_state_keys(group: MaterializedWriteGroup, meta: Metamodel) -> Iterator[ObservedStateKey]:
+    """Each exact state ``group`` selected, in resolution order, keyed as a
+    keyed read's own observation of that row would be."""
+    entity = group.mutation.selection.target
+    position = inheritance.view(meta).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    key = position.primary_key.identity.name
+    evidence = group.evidence
+    if isinstance(evidence, VersionedEvidence):
+        for value, version in zip(evidence.keys, evidence.versions, strict=True):
+            yield VersionedStateKey(ObjectKey(entity.identity, ((key, value),)), version)
+        return
+    shape = temporal_read.view(meta).shape(entity.identity)
+    if shape is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
+    for index in range(len(evidence)):
+        yield TemporalStateKey(
+            ObjectKey(entity.identity, ((key, evidence.key(index)),)),
+            milestone_edge(shape, evidence, index),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +319,7 @@ def buffered_write(
     if not isinstance(instruction, PreparedKeyedWrite):
         raise TypeError(
             "only a keyed write settles against evidence of its own; a predicate-selected write "
-            "materializes to a Materialized Write Group with its own observation columns"
+            "materializes to a Materialized Write Group with its own aligned evidence"
         )
     if isinstance(evidence, ObjectKey):
         return ObjectClaimedWrite(instruction=instruction, restorations=restorations)
@@ -217,9 +349,3 @@ def buffered_instruction(item: BufferItem) -> PreparedWrite:
     if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
         return item.instruction
     return item
-
-
-def _observation_length(observations: GroupObservations) -> int:
-    if isinstance(observations, VersionColumns):
-        return len(observations.versions)
-    return observations.predecessors.length
