@@ -21,7 +21,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityLocation,
     ModelLocation,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
     ValueObjectAttributeLocation,
@@ -498,7 +498,7 @@ class AttributeExpr[E, T]:
             return self._member if not self._path else None
         if self._member is None or isinstance(self._member, AttributeMetadata) or not self._path:
             return None
-        container: ValueObjectMetadata | NestedValueObjectMetadata = self._member
+        container: OccurrenceMetadata = self._member
         for segment in self._path[:-1]:
             nested = container.value_object(snake_to_camel(segment))
             if nested is None:

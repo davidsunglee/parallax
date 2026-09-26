@@ -36,9 +36,8 @@ from parallax.core.metamodel import (
     EntityIdentity,
     MemberIdentity,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     RelationshipIdentity,
-    ValueObjectMetadata,
 )
 
 __all__ = [
@@ -60,7 +59,7 @@ class _OccurrenceFacts(NamedTuple):
     after its leaves.
     """
 
-    declared: ValueObjectMetadata | NestedValueObjectMetadata
+    declared: OccurrenceMetadata
     cls: type
     plan: PublicationPlan
     many: bool
@@ -277,7 +276,7 @@ def _require_relationship_correspondence(
 
 def _proven_occurrence(
     concrete: EntityIdentity,
-    declared: ValueObjectMetadata | NestedValueObjectMetadata,
+    declared: OccurrenceMetadata,
     vo_class: type,
     *,
     path: str,

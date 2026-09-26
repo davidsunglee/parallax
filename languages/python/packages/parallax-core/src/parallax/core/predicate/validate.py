@@ -12,13 +12,12 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     RelationshipDeclaration,
     RelationshipIdentity,
     RelationshipJoin,
     ReverseRelationshipDeclaration,
     ValueObjectAttributeMetadata,
-    ValueObjectMetadata,
     entity_by_name,
     split_reference,
 )
@@ -66,8 +65,6 @@ __all__ = [
     "validate_narrow",
     "validate_predicate",
 ]
-
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 class ModelRejectedError(ValueError):
@@ -602,12 +599,12 @@ def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:
 
 
 def _resolve_leaf(
-    path: str, container: _VoContainer, segments: Sequence[str]
+    path: str, container: OccurrenceMetadata, segments: Sequence[str]
 ) -> ValueObjectAttributeMetadata:
     """Walk dotted ``segments`` (non-empty) against ``container`` to a scalar leaf,
     classifying the three ways a path fails: an undeclared segment, a scalar the
     path continues past, and a nested object the path ends on."""
-    scope: _VoContainer = container
+    scope: OccurrenceMetadata = container
     for index, segment in enumerate(segments):
         is_last = index == len(segments) - 1
         attribute = scope.attribute(segment)
@@ -658,7 +655,7 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
     return _resolve_leaf(path, vo, segments)
 
 
-def _resolve_element_leaf(container: _VoContainer, path: str) -> ValueObjectAttributeMetadata:
+def _resolve_element_leaf(container: OccurrenceMetadata, path: str) -> ValueObjectAttributeMetadata:
     """Resolve an element-relative path (`type`, `geo.country`) to its leaf.
 
     ``container`` is the TERMINAL value-object descriptor a `nestedExists`/
@@ -669,7 +666,7 @@ def _resolve_element_leaf(container: _VoContainer, path: str) -> ValueObjectAttr
     return _resolve_leaf(path, container, path.split("."))
 
 
-def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
+def _check_nested_vo_terminated(path: str, model: Metamodel) -> OccurrenceMetadata:
     """Resolve a `nestedExists`/`nestedNotExists` path (ends at a value object),
     returning the TERMINAL value-object descriptor — the same-element scope an
     optional `where` predicate's element-relative members resolve against.
@@ -692,7 +689,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name}",
         )
-    container: _VoContainer = vo
+    container: OccurrenceMetadata = vo
     for segment in segments:
         member = container.value_object(segment)
         if member is None:
@@ -718,7 +715,9 @@ def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
         )
 
 
-def _elaborate_element_predicate(op: PredicateNode, container: _VoContainer) -> ValidatedPredicate:
+def _elaborate_element_predicate(
+    op: PredicateNode, container: OccurrenceMetadata
+) -> ValidatedPredicate:
     match op:
         case NestedComparison(path=path, value=value):
             leaf = _resolve_element_leaf(container, path)

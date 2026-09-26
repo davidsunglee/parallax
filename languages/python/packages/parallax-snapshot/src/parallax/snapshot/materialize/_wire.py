@@ -32,8 +32,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
-    NestedValueObjectMetadata,
-    ValueObjectMetadata,
+    OccurrenceMetadata,
 )
 from parallax.core.unit_work import ReadOrigin
 from parallax.core.wire import encode_wire
@@ -77,7 +76,6 @@ the reason :class:`WireEntity` gives. Spelling immutability statically instead,
 through public frozen list and mapping types, would make every ordinary mapping
 statically unusable as Parallax input."""
 
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 type _Encoder = Callable[[NeutralType, ManagedValue], object]
 
 FAMILY_VARIANT_KEY = "familyVariant"
@@ -800,7 +798,7 @@ def _occurrence_sequence(values: Iterable[WireValue]) -> WireValue:
 
 def _occurrence(
     value: object,
-    declared: _VoContainer,
+    declared: OccurrenceMetadata,
     carrier: OccurrenceCarrier,
     encode: _Encoder = encode_managed_wire,
     *,

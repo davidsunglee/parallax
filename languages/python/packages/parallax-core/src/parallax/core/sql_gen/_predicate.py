@@ -14,7 +14,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     ValueObjectAttributeIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
@@ -366,7 +366,7 @@ class ElementScope:
     """
 
     ctx: StatementBuilder
-    container: ValueObjectMetadata | NestedValueObjectMetadata
+    container: OccurrenceMetadata
     alias: str
 
     @property
@@ -379,13 +379,6 @@ class ElementScope:
 
 
 ResolutionScope = EntityScope | ElementScope
-
-# Either kind of Value Object occurrence a dotted path may be walked against.
-# The two Metadata shapes differ only in what a TOP-LEVEL occurrence additionally
-# owns (its Storage Location), and neither member lookup below cares, so the walk
-# takes the union rather than branching on depth.
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
-
 
 # The node kinds only an entity scope admits: everything outside the shared
 # sub-grammar of boolean combinators and the flat `nested*` family.
@@ -868,7 +861,7 @@ def _bind_nested_operand(value: object, leaf_type: NeutralType, scope: Resolutio
 
 def _split_at_many(
     vo: ValueObjectMetadata, segments: Sequence[str]
-) -> tuple[_VoContainer, tuple[str, ...], tuple[str, ...]] | None:
+) -> tuple[OccurrenceMetadata, tuple[str, ...], tuple[str, ...]] | None:
     """Split a flat predicate's path at the first `multiplicity: many` hop
     crossed while walking from `vo` (m-predicate "Flat predicates through a
     `many` segment mean any element matches"). Returns ``(the many container,
@@ -879,7 +872,7 @@ def _split_at_many(
     """
     if vo.multiplicity is Multiplicity.MANY:
         return vo, (), tuple(segments)
-    container: _VoContainer = vo
+    container: OccurrenceMetadata = vo
     for index, segment in enumerate(segments):
         member = container.value_object(segment)
         if member is None:
@@ -893,7 +886,7 @@ def _split_at_many(
 def _lower_any_element(
     product: ValidatedPredicate,
     vo: ValueObjectMetadata,
-    crossing: tuple[_VoContainer, tuple[str, ...], tuple[str, ...]],
+    crossing: tuple[OccurrenceMetadata, tuple[str, ...], tuple[str, ...]],
     scope: EntityScope,
 ) -> str:
     """Any-element lowering for a flat `nested*` predicate crossing a `many`

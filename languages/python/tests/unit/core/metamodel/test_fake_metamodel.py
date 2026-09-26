@@ -14,11 +14,10 @@ from parallax.core.metamodel import (
     EntityMetadata,
     FacetKey,
     Metamodel,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     PersistenceMode,
     TemporalDimension,
     ValueObjectAttributeMetadata,
-    ValueObjectMetadata,
 )
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
@@ -65,8 +64,8 @@ def _leaf(
 
 
 def _occurrence(
-    left: NestedValueObjectMetadata | ValueObjectMetadata,
-    right: NestedValueObjectMetadata | ValueObjectMetadata,
+    left: OccurrenceMetadata,
+    right: OccurrenceMetadata,
 ) -> None:
     """Assert two Value Object occurrences agree member for member."""
     assert left.identity == right.identity

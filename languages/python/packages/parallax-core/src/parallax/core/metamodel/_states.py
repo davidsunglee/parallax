@@ -36,6 +36,7 @@ __all__ = [
     "FacetKey",
     "Metamodel",
     "NestedValueObjectMetadata",
+    "OccurrenceMetadata",
     "UnresolvedEntityDeclaration",
     "UnresolvedMetamodel",
     "ValueObjectAttributeMetadata",
@@ -150,12 +151,14 @@ class ValueObjectAttributeMetadata(Protocol):
     def nullable(self) -> bool: ...
 
 
-class NestedValueObjectMetadata(Protocol):
-    """One self-identifying nested Value Object occurrence.
+class OccurrenceMetadata(Protocol):
+    """One self-identifying Value Object occurrence at any depth.
 
-    Its identity path has length two or more. A nested occurrence owns no
-    Storage Location: the top-level occurrence's location covers the whole
-    composite.
+    Consumers that read only the occurrence's own shape — its members, document
+    shape, and nested occurrences — accept this protocol. The two occurrence
+    protocols name the depth an occurrence is known to sit at rather than
+    separating it nominally: structurally, a top-level occurrence also satisfies
+    :class:`NestedValueObjectMetadata`.
     """
 
     @property
@@ -178,8 +181,17 @@ class NestedValueObjectMetadata(Protocol):
     def value_object(self, name: str) -> NestedValueObjectMetadata | None: ...
 
 
-class ValueObjectMetadata(Protocol):
-    """One self-identifying top-level Value Object occurrence.
+class NestedValueObjectMetadata(OccurrenceMetadata, Protocol):
+    """One nested Value Object occurrence.
+
+    Its identity path has length two or more. A nested occurrence owns no
+    Storage Location: the top-level occurrence's location covers the whole
+    composite.
+    """
+
+
+class ValueObjectMetadata(OccurrenceMetadata, Protocol):
+    """One top-level Value Object occurrence.
 
     Its identity path has length one, and it alone carries the occurrence's
     Storage Location. Structured-column storage under that location is
@@ -188,25 +200,7 @@ class ValueObjectMetadata(Protocol):
     """
 
     @property
-    def identity(self) -> ValueObjectIdentity: ...
-    @property
-    def definition(self) -> Occurrence: ...
-    @property
     def storage(self) -> StorageLocation: ...
-    @property
-    def multiplicity(self) -> Multiplicity: ...
-    @property
-    def nullable(self) -> bool: ...
-    @property
-    def attributes(self) -> Sequence[ValueObjectAttributeMetadata]: ...
-    @property
-    def value_objects(self) -> Sequence[NestedValueObjectMetadata]: ...
-    @property
-    def document_shape(self) -> MemberShape: ...
-    @property
-    def members(self) -> Sequence[ValueObjectAttributeMetadata | NestedValueObjectMetadata]: ...
-    def attribute(self, name: str) -> ValueObjectAttributeMetadata | None: ...
-    def value_object(self, name: str) -> NestedValueObjectMetadata | None: ...
 
 
 class EntityMetadata(Protocol):

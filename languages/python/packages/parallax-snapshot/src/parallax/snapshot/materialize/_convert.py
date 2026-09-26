@@ -31,7 +31,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     MemberIdentity,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     PrimaryKey,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -58,8 +58,6 @@ __all__ = [
     "build_positional_object",
     "convert_deferred",
 ]
-
-_VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 class AttributeReadContract(Protocol):
@@ -535,7 +533,7 @@ def build_positional_many(values: Iterable[object]) -> tuple[object, ...]:
 
 def _occurrence(
     raw: object,
-    declared: _VoContainer,
+    declared: OccurrenceMetadata,
     *,
     outer_classified: bool = False,
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
@@ -613,7 +611,7 @@ def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredD
 
 
 def _occurrence_issue(
-    finding: DocumentFinding, declared: _VoContainer, entity: EntityIdentity
+    finding: DocumentFinding, declared: OccurrenceMetadata, entity: EntityIdentity
 ) -> StoredDataIssueInput:
     path = _logical_path(finding.path)
     return StoredDataIssueInput(
@@ -658,7 +656,7 @@ def _stored_issue_code(
 
 
 def _member_identity(
-    declared: _VoContainer, path: tuple[str, ...]
+    declared: OccurrenceMetadata, path: tuple[str, ...]
 ) -> ValueObjectIdentity | ValueObjectAttributeIdentity:
     """The declared member ``path`` names inside ``declared``, descending through
     the nested occurrences on the way, or the occurrence itself where the codec

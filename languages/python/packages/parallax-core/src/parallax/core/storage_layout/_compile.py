@@ -18,7 +18,7 @@ from parallax.core.metamodel import (
     FacetKey,
     MemberIdentity,
     MemberShape,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     PrimaryKey,
     Table,
     TablePerHierarchy,
@@ -413,7 +413,7 @@ def _effective_nullable(
 
 
 def _contained_members(
-    occurrence: ValueObjectMetadata | NestedValueObjectMetadata,
+    occurrence: OccurrenceMetadata,
     prefix: tuple[str, ...],
 ) -> list[tuple[MemberIdentity, tuple[str, ...]]]:
     """Every member inside ``occurrence``, paired with its path below ``prefix``.

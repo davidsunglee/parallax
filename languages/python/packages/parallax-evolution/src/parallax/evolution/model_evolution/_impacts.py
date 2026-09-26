@@ -14,6 +14,7 @@ from parallax.core.metamodel import (
     Metamodel,
     ModelLocation,
     ModelLocationKey,
+    OccurrenceMetadata,
     PersistenceMode,
     RelationshipIdentity,
     RelationshipLocation,
@@ -38,7 +39,6 @@ from parallax.core.temporal_read import view as temporal_view
 from parallax.evolution.model_evolution._matching import (
     EntityFacts,
     Matching,
-    Occurrence,
     RelationshipFacts,
 )
 from parallax.evolution.model_evolution._values import (
@@ -327,7 +327,7 @@ def _leaf(member: ValueObjectAttributeMetadata) -> ScalarAdmissibility:
     return ScalarAdmissibility(member.type, member.nullable, None)
 
 
-def _occurrence(occurrence: Occurrence) -> OccurrenceAdmissibility:
+def _occurrence(occurrence: OccurrenceMetadata) -> OccurrenceAdmissibility:
     return OccurrenceAdmissibility(occurrence.nullable)
 
 

@@ -15,14 +15,13 @@ from parallax.core.metamodel import (
     IndexIdentity,
     IndexMetadata,
     Metamodel,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     RelationshipDeclaration,
     RelationshipIdentity,
     TemporalDimension,
     ValueObjectAttributeIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
-    ValueObjectMetadata,
     derive_primary_key_index,
 )
 from parallax.core.relationship import RelationshipMetadata
@@ -36,7 +35,6 @@ from parallax.evolution.model_evolution._values import (
 __all__ = [
     "EntityFacts",
     "Matching",
-    "Occurrence",
     "RelationshipFacts",
     "match",
 ]
@@ -45,11 +43,6 @@ type AxisKey = tuple[EntityIdentity, TemporalDimension]
 """An As-Of Axis position: its Entity and the Temporal Dimension that identifies
 it. The dimension participates in identity, so changing it is a removal and an
 addition rather than an alteration."""
-
-type Occurrence = ValueObjectMetadata | NestedValueObjectMetadata
-"""A Value Object occurrence at either depth. A containment path of length one
-is the top-level occurrence that owns the Storage Location; a longer one is
-nested and owns none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +110,7 @@ class Matching:
     later: Metamodel
     entities: Paired[EntityIdentity, EntityFacts]
     attributes: Paired[AttributeIdentity, AttributeMetadata]
-    value_objects: Paired[ValueObjectIdentity, Occurrence]
+    value_objects: Paired[ValueObjectIdentity, OccurrenceMetadata]
     value_object_attributes: Paired[ValueObjectAttributeIdentity, ValueObjectAttributeMetadata]
     relationships: Paired[RelationshipIdentity, RelationshipFacts]
     as_of_axes: Paired[AxisKey, AsOfAxisMetadata]
@@ -206,20 +199,20 @@ def _attributes(model: Metamodel) -> tuple[tuple[AttributeIdentity, AttributeMet
     )
 
 
-def _occurrences(occurrence: Occurrence) -> Iterator[Occurrence]:
+def _occurrences(occurrence: OccurrenceMetadata) -> Iterator[OccurrenceMetadata]:
     """``occurrence`` and every occurrence nested inside it, outermost first."""
     yield occurrence
     for nested in occurrence.value_objects:
         yield from _occurrences(nested)
 
 
-def _declared_occurrences(model: Metamodel) -> Iterator[Occurrence]:
+def _declared_occurrences(model: Metamodel) -> Iterator[OccurrenceMetadata]:
     for entity in model.entities:
         for occurrence in entity.declared_value_objects:
             yield from _occurrences(occurrence)
 
 
-def _value_objects(model: Metamodel) -> tuple[tuple[ValueObjectIdentity, Occurrence], ...]:
+def _value_objects(model: Metamodel) -> tuple[tuple[ValueObjectIdentity, OccurrenceMetadata], ...]:
     return tuple((occurrence.identity, occurrence) for occurrence in _declared_occurrences(model))
 
 

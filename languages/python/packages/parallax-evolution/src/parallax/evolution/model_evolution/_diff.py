@@ -11,13 +11,14 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     IndexMetadata,
+    OccurrenceMetadata,
     RelationshipDeclaration,
     ReverseRelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.evolution.model_evolution._matching import Matching, Occurrence
+from parallax.evolution.model_evolution._matching import Matching
 from parallax.evolution.model_evolution._values import (
     AsOfAxisAdded,
     AsOfAxisAltered,
@@ -293,7 +294,7 @@ def _attribute_deltas(
 
 
 def _occurrence_deltas(
-    identity: ValueObjectIdentity, earlier: Occurrence, later: Occurrence
+    identity: ValueObjectIdentity, earlier: OccurrenceMetadata, later: OccurrenceMetadata
 ) -> tuple[ValueObjectOccurrenceDelta, ...]:
     """The occurrence's changed declarations, in the fixed field order.
 

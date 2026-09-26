@@ -16,7 +16,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    NestedValueObjectMetadata,
+    OccurrenceMetadata,
     TemporalDimension,
     ValueObjectIdentity,
     ValueObjectMetadata,
@@ -34,8 +34,6 @@ from parallax.core.wire import (
 )
 
 __all__ = ["ActualWireProjection"]
-
-type _ValueObject = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 class ActualWireProjection:
@@ -156,7 +154,7 @@ class ActualWireProjection:
             raise ValueError(f"{entity.identity.canonical}: no applicable member {name!r}")
         return projected
 
-    def value_object(self, occurrence: _ValueObject, value: object) -> object:
+    def value_object(self, occurrence: OccurrenceMetadata, value: object) -> object:
         """One Value Object occurrence with every declared leaf projected recursively."""
         if value is None:
             return None
@@ -178,7 +176,7 @@ class ActualWireProjection:
         managed = decode_canonical_wire(member.type, cast("WireValue", value))
         return encode_wire(member.type, managed)
 
-    def published_value_object(self, occurrence: _ValueObject, value: object) -> object:
+    def published_value_object(self, occurrence: OccurrenceMetadata, value: object) -> object:
         """Project a provider-observed Value Object without repairing corruption."""
         if value is None:
             return None
@@ -240,7 +238,9 @@ class ActualWireProjection:
         """Encode a managed value without repairing a Wire-shaped carrier."""
         return encode_wire(neutral_type, cast("ManagedValue", value))
 
-    def _value_object_element(self, occurrence: _ValueObject, value: object) -> dict[str, object]:
+    def _value_object_element(
+        self, occurrence: OccurrenceMetadata, value: object
+    ) -> dict[str, object]:
         if not isinstance(value, Mapping):
             raise ValueError(
                 f"{occurrence.identity.path}: a value-object element requires a mapping"
@@ -262,7 +262,7 @@ class ActualWireProjection:
         return projected
 
     def _published_value_object_element(
-        self, occurrence: _ValueObject, value: object
+        self, occurrence: OccurrenceMetadata, value: object
     ) -> dict[str, object]:
         if not isinstance(value, Mapping):
             raise ValueError(

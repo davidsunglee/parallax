@@ -316,6 +316,7 @@
     "NotPrimaryKey",
     "NullPlacement",
     "Occurrence",
+    "OccurrenceMetadata",
     "PersistenceMode",
     "PkGeneration",
     "PrimaryKey",
