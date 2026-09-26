@@ -332,6 +332,7 @@ _UV_RUN_VALUE_OPTIONS: Final = frozenset(
 
 _SHELL_OPERATORS: Final = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
 _JUST_LINE_PREFIXES: Final = "@-"
+_ENVIRONMENT_ASSIGNMENT: Final = re.compile(r"[A-Za-z_]\w*=")
 
 
 def uv_run_commands(script: str, start: PurePosixPath, origin: str) -> list[Command]:
@@ -341,7 +342,8 @@ def uv_run_commands(script: str, start: PurePosixPath, origin: str) -> list[Comm
     ``cd`` moves the commands after it; a ``--project`` or ``--directory``
     option resolves against where the command runs. A command runs in the
     workspace when that place is the workspace or beneath it, as uv discovers
-    the project upward from there. Shell comments are not commands.
+    the project upward from there. Shell comments are not commands, and a
+    command's leading environment assignments are not its words.
     """
     commands: list[Command] = []
     directory = start
@@ -367,7 +369,8 @@ def _simple_commands(script: str) -> Iterator[list[str]]:
         command: list[str] = []
         for word in [*words, ";"]:
             if word not in _SHELL_OPERATORS:
-                command.append(word)
+                if command or not _ENVIRONMENT_ASSIGNMENT.match(word):
+                    command.append(word)
             elif command:
                 yield command
                 command = []

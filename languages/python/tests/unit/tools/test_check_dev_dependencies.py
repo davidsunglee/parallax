@@ -286,6 +286,8 @@ def test_main_exits_non_zero_on_a_finding(
         (".", "uv run --project=languages/python tool", ("tool",)),
         (".", "cd languages/python && uv run -p 3.13 tool | tee log", ("tool",)),
         ("languages/python/tests", "uv run tool", ("tool",)),
+        (".", "cd languages/python && FLAG=1 A_B=x uv run tool", ("tool",)),
+        ("languages/python", "FLAG=1 uv run tool NAME=kept", ("tool", "NAME=kept")),
     ],
 )
 def test_uv_run_options_are_skipped_before_the_executable(
