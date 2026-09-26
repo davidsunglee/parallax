@@ -61,9 +61,12 @@ behavioral-module catalog:
   sibling lifecycle extension or a concrete database adapter.
 - Every concrete database adapter MUST ship as its own deployable artifact. Its
   manifest is the only Parallax production-artifact manifest that MAY declare
-  that adapter's concrete driver; the adapter depends on the abstract port and
-  its matching driver-free dialect strategy, wherever those driver-free
-  components ship.
+  that adapter's concrete driver unconditionally. An optional dependency
+  selection of another artifact that also selects that adapter MAY declare the
+  driver when the engine-specific surface it gates imports the driver directly;
+  every other artifact's base installation stays driver-free. The adapter
+  depends on the abstract port and its matching driver-free dialect strategy,
+  wherever those driver-free components ship.
 - Installing or using a selected lifecycle extension and database adapter MUST
   NOT install, initialize, or load an unselected lifecycle extension, adapter,
   or driver. A mandatory umbrella artifact that depends on all lifecycle styles
