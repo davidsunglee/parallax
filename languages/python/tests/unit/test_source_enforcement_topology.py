@@ -383,9 +383,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._mechanism.model_facts",
         "parallax.snapshot.handle._preflight",
     ): frozenset({"preflight"}),
-    ("parallax.conformance._lanes.scenario", "parallax.snapshot.handle._transaction"): frozenset(
-        {"buffer_prepared_predicate_write", "buffer_prepared_wire_keyed_write"}
-    ),
     ("parallax.conformance._lanes.scenario", "parallax.snapshot.materialize._wire"): frozenset(
         {"read_origin_of"}
     ),

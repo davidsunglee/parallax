@@ -1,10 +1,10 @@
-"""The three Wire keyed sources, asked what they answer.
+"""The two Wire keyed sources, asked what they answer.
 
 The keyed write ingress owns the order; a source answers facts into it. This
 suite asks each Wire adapter the one question that is its own — given this
-published node, this change document, or this already-prepared product, what did
-you answer — and nothing about what the order then does with the answer, which
-`test_keyed_write_order.py` fixes through the public verbs.
+published node or change document, what did you answer — and nothing about what
+the order then does with the answer, which `test_keyed_write_order.py` fixes
+through the public verbs.
 
 Every case constructs the adapter directly, which is how the claims a verb cannot
 show are shown: that construction is inert, so nothing an adapter could refuse
@@ -27,7 +27,6 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
 from parallax.snapshot.handle._wire_writes import (
-    PreparedWireKeyedWriteSource,
     WireKeyedInsertSource,
     WireKeyedWriteSource,
 )
@@ -237,24 +236,6 @@ def test_a_destructive_verb_authors_its_identity_row_and_no_originals() -> None:
 
     assert prepared.instruction.rows[0] == {"id": 1}
     assert prepared.originals == {}
-
-
-# --------------------------------------------------------------------------- #
-# The conformance bridge's source: preparation as an input capability.        #
-# --------------------------------------------------------------------------- #
-def test_a_prepared_product_is_answered_back_with_the_originals_beside_it() -> None:
-    node = _account_node()
-    authoring = WireKeyedWriteSource(node, {"balance": "125.00"})
-    authoring.capture("update")
-    product = authoring.prepare(authoring.resolve(_meta(ACCOUNT), "update"), _UNBOUNDED).instruction
-
-    bridged = PreparedWireKeyedWriteSource(node, product, frozenset({"balance"}))
-    assert bridged.capture("update") is None
-    prepared = bridged.prepare(bridged.resolve(_meta(ACCOUNT), "update"), _UNBOUNDED)
-
-    assert prepared.instruction is product
-    assert prepared.originals == {"balance": Decimal("100.00")}
-    assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
 # --------------------------------------------------------------------------- #

@@ -133,10 +133,6 @@ from parallax.snapshot.handle import (
     stream_lowered,
     validate_source_pin,
 )
-from parallax.snapshot.handle._transaction import (
-    buffer_prepared_predicate_write,
-    buffer_prepared_wire_keyed_write,
-)
 from parallax.snapshot.materialize._wire import read_origin_of
 
 __all__ = [
@@ -1223,6 +1219,49 @@ def _lower_predicate_write_step(
     return statements[0]
 
 
+def _buffer_wire_predicate_write(
+    tx: handle.Transaction,
+    model: AcceptedMetamodel,
+    raw_write: Mapping[str, object],
+    prepared: PreparedPredicateWrite,
+) -> None:
+    """Buffer one scenario predicate write through its public Wire verb.
+
+    The case's target remains the independently authored corpus input. Managed
+    assignment values come from the prepared product the pure lowering oracle
+    uses, then cross back through the canonical Wire projection before the public
+    verb prepares them again. Dict insertion order preserves the authored
+    assignment order; the Entity Layout still decides emitted SET order.
+    """
+    authored = case_document.canonical_predicate_doc(raw_write)
+    target = cast("Mapping[str, object]", authored["target"])
+    managed_changes = {
+        assignment.attr.rpartition(".")[2]: assignment.value
+        for assignment in prepared.managed_assignments
+    }
+    changes = ActualWireProjection(model).entity_values(prepared.selection.target, managed_changes)
+    valid_from = _bound_instant(prepared.bounds.valid_from)
+    until = _bound_instant(prepared.bounds.until)
+    match prepared.mutation:
+        case "update":
+            tx.wire.update_where(target, changes, valid_from=valid_from)
+        case "delete":
+            tx.wire.delete_where(target)
+        case "terminate":
+            tx.wire.terminate_where(target, valid_from=valid_from)
+        case "updateUntil":
+            tx.wire.update_until_where(
+                target,
+                changes,
+                valid_from=_required(valid_from),
+                until=_required(until),
+            )
+        case "terminateUntil":
+            tx.wire.terminate_until_where(
+                target, valid_from=_required(valid_from), until=_required(until)
+            )
+
+
 def _compile_find(
     step: Mapping[str, object], context: CaseContext, dialect: Dialect
 ) -> tuple[LoweredStatement, ...]:
@@ -2054,6 +2093,7 @@ def execute_keyed_unit(
 def _run_readless_predicate_write(
     port: CaseDatabase,
     context: CaseContext,
+    raw_write: Mapping[str, object],
     instruction: PreparedPredicateWrite,
     statement: LoweredStatement,
     tx_instant: str,
@@ -2063,11 +2103,9 @@ def _run_readless_predicate_write(
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
-    other write path uses. The conformance adapter has already normalized the
-    case-format carriers into a core-owned ``PreparedPredicateWrite``; the
-    private execution bridge retains production ownership of dispatch,
-    materialization, lifecycle, and buffering without producing another
-    instruction.
+    other write path uses. The public Wire verb prepares the case's authored
+    target and canonically projected changes, while the separate prepared
+    product remains the independent lowering oracle.
 
     The reported emission is ``statement`` — lowered from that same prepared
     product — and its compiler metadata renders the canonical Wire binds used
@@ -2087,7 +2125,7 @@ def _run_readless_predicate_write(
         database = _root_database.using_database_login()
 
         def body(tx: handle.Transaction) -> None:
-            buffer_prepared_predicate_write(tx, instruction)
+            _buffer_wire_predicate_write(tx, context.model, raw_write, instruction)
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
@@ -2226,7 +2264,12 @@ def _run_materializing_pair(
         database = _root_database.using_database_login()
 
         def body(tx: handle.Transaction) -> None:
-            buffer_prepared_predicate_write(tx, instruction)
+            _buffer_wire_predicate_write(
+                tx,
+                model,
+                cast("Mapping[str, object]", write_step["write"]),
+                instruction,
+            )
 
         with shadow.staged(doomed=rollback):
             with absorbing_rollback():
@@ -2811,13 +2854,12 @@ def run_group_step(
     """
     model = context.model
     if "write" in step and is_predicate_write_step(step["write"]):
-        prepared = _prepared_case_predicate_write(
-            cast("Mapping[str, object]", step["write"]), model
-        )
+        raw_write = cast("Mapping[str, object]", step["write"])
+        prepared = _prepared_case_predicate_write(raw_write, model)
         statement = _lower_predicate_write_step(
             prepared, model, session.dialect, context.concurrency
         )
-        buffer_prepared_predicate_write(tx, prepared)
+        _buffer_wire_predicate_write(tx, model, raw_write, prepared)
         return (
             LoweredStep(
                 f"/scenario/{index}/write", (statement,), True, step.get("rollback") is True
@@ -3075,6 +3117,7 @@ def run_scenario_case(
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
                     context,
+                    raw_predicate_write,
                     instruction,
                     statement,
                     tx_instant,
@@ -3622,16 +3665,9 @@ def _run_conflict_write(
         def body(tx: handle.Transaction) -> int:
             for write, node in zip(resolved, sources, strict=True):
                 if mutation == "delete":
-                    assert isinstance(write.instruction, PreparedKeyedWrite)
-                    buffer_prepared_wire_keyed_write(tx, write.instruction, node, frozenset())
+                    tx.wire.delete(node)
                 else:
-                    assert isinstance(write.instruction, PreparedKeyedWrite)
-                    buffer_prepared_wire_keyed_write(
-                        tx,
-                        write.instruction,
-                        node,
-                        frozenset(_conflict_changes(write)),
-                    )
+                    tx.wire.update(node, _conflict_changes(model, write))
             return landed  # the expectation machinery already verified this on success
 
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
@@ -3641,15 +3677,18 @@ def _run_conflict_write(
         return ran, affected, observed.round_trips
 
 
-def _conflict_changes(write: _ConflictWrite) -> dict[str, object]:
+def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[str, object]:
     """One conflict attempt row's authored assignments — its durable row less the
     identity the source node already carries, in authored order.
 
-    Order is what the golden's SET clause is rendered in, so it is the case's own
-    rather than the model's declaration order.
+    The mapping preserves authored assignment order through the public call;
+    Entity Layout remains the owner of emitted SET order.
     """
+    instruction = write.instruction
+    assert isinstance(instruction, PreparedKeyedWrite)
     identity = dict(write.key.primary_key) if write.key is not None else {}
-    return {name: value for name, value in write.row.items() if name not in identity}
+    managed = {name: value for name, value in instruction.rows[0].items() if name not in identity}
+    return ActualWireProjection(model).entity_values(instruction.target, managed)
 
 
 # A temporal conflict attempt's verb. The case names none (`when.mutation` is
