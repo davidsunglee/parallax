@@ -196,7 +196,7 @@ class Snapshot[T]:
     _pin: Pin
     _edition: str
     _includes: deep_fetch.IncludeTree | None
-    _projection_model: CatalogedModel | None
+    _projection_model: CatalogedModel | EntityGraphConstruction | None
 
     def __init__(
         self,
@@ -204,7 +204,7 @@ class Snapshot[T]:
         pin: Pin,
         edition: str,
         includes: deep_fetch.IncludeTree | None = None,
-        projection_model: CatalogedModel | None = None,
+        projection_model: CatalogedModel | EntityGraphConstruction | None = None,
     ) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
@@ -271,9 +271,9 @@ class Snapshot[T]:
         at: RelationshipPath[Entity, Any] | object | None = _WIRE_AT_OMITTED,
     ) -> Snapshot[WireEntity] | WireEntity | InvalidData[WireEntity]:
         """Publish this Typed result, or one eligible node, in canonical Wire form."""
-        model = self._projection_model
+        projection = self._projection_model
         includes = self._includes
-        if model is None or includes is None:
+        if projection is None or includes is None:
             raise SnapshotInspectionError(
                 code="snapshot-wire-envelope-ineligible",
                 message="Wire projection is available only on a Typed Snapshot",
@@ -287,18 +287,18 @@ class Snapshot[T]:
             edition = self._edition
             del self
             try:
-                projected = _project_eager_values(values, includes, model, includes.root)
+                projected = _project_eager_values(values, includes, projection, includes.root)
                 return Snapshot(projected, pin, edition)
             finally:
                 values = ()
         del self
-        reader = _require_projection_inputs((value,), model)
+        reader = _require_projection_inputs((value,), projection)
         position = wire_position(
             includes,
-            model,
+            reader.model,
             None if at is _WIRE_AT_OMITTED else cast("RelationshipPath[Entity, Any] | None", at),
         )
-        return _project_eager_values((value,), includes, model, position, reader=reader)[0]
+        return _project_eager_values((value,), includes, projection, position, reader=reader)[0]
 
     @property
     def pin(self) -> Pin:
@@ -334,12 +334,15 @@ class Snapshot[T]:
 
 
 def _require_projection_inputs(
-    values: tuple[object, ...], model: CatalogedModel, *, operation: str = "Snapshot.wire"
+    values: tuple[object, ...],
+    projection: CatalogedModel | EntityGraphConstruction,
+    *,
+    operation: str = "Snapshot.wire",
 ) -> EntityReader:
     """Validate explicit inputs before resolving a separately supplied position."""
     from parallax.snapshot.materialize._wire import EntityReader
 
-    reader = EntityReader(model, operation=operation)
+    reader = EntityReader(projection, operation=operation)
     for value in values:
         record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
         node: object | None = record.data if record is not None else cast("object", value)
@@ -413,7 +416,7 @@ def wire_position(
 def _project_eager_values(
     values: tuple[object, ...],
     includes: deep_fetch.IncludeTree,
-    model: CatalogedModel,
+    projection: CatalogedModel | EntityGraphConstruction,
     position: deep_fetch.PositionId,
     *,
     reader: EntityReader | None = None,
@@ -441,7 +444,7 @@ def _project_eager_values(
                 projected.append(cast("InvalidData[WireEntity]", record))
                 continue
             if reader is None:
-                reader = EntityReader(model)
+                reader = EntityReader(projection)
             concrete = projection_concrete(reader, node)
             if not includes.admits(position, concrete):
                 raise SnapshotInspectionError(
@@ -1152,7 +1155,7 @@ class ResultPublication:
     roots_of: RootsOf
     edition: str
     release: Callable[[], None]
-    projection_model: CatalogedModel | None = None
+    construction: EntityGraphConstruction | None = None
 
     def from_find(self, result: FindResult) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
@@ -1168,8 +1171,8 @@ class ResultPublication:
                 ),
                 result.page.pin,
                 self.edition,
-                result.includes if self.projection_model is not None else None,
-                self.projection_model,
+                result.includes if self.construction is not None else None,
+                self.construction,
             )
         finally:
             self.release()
@@ -1195,8 +1198,8 @@ class ResultPublication:
                 ),
                 Pin(),
                 self.edition,
-                result.includes if self.projection_model is not None else None,
-                self.projection_model,
+                result.includes if self.construction is not None else None,
+                self.construction,
             )
         finally:
             self.release()
@@ -1246,7 +1249,7 @@ def typed_publication(
             prepare=lambda root: root.prime(sources),
         )
 
-    return ResultPublication("typed", roots_of, edition, _release_nothing, model)
+    return ResultPublication("typed", roots_of, edition, _release_nothing, construction)
 
 
 def wire_publication(model: CatalogedModel, edition: str) -> ResultPublication:

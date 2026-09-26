@@ -13,7 +13,7 @@ from parallax.core.document_codec import (
     encode_occurrence,
     occurrence_shape,
 )
-from parallax.core.entity import UNLOADED, Entity
+from parallax.core.entity import UNLOADED, Entity, EntityGraphConstruction
 from parallax.core.entity._declaration import wire_names_of
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._graph_construction import require_correspondence
@@ -435,26 +435,41 @@ class RootViewReader:
 
 
 class EntityReader:
-    """The native published-Entity adapter for the shared Wire walk."""
+    """The native published-Entity adapter for the shared Wire walk.
 
-    __slots__ = ("_checked", "_model", "_operation")
+    Given the model's graph construction, a node of the class it composed for
+    its Entity was proved against that Entity's layout when the construction was
+    built, so only another class pays the correspondence check, once per pair per
+    reader. A bare cataloged model proves no class.
+    """
 
-    def __init__(self, model: CatalogedModel, *, operation: str = "Snapshot.wire") -> None:
-        self._model = model
+    __slots__ = ("_checked", "_construction", "_operation", "model")
+
+    def __init__(
+        self,
+        source: CatalogedModel | EntityGraphConstruction,
+        *,
+        operation: str = "Snapshot.wire",
+    ) -> None:
+        if isinstance(source, EntityGraphConstruction):
+            self.model = source.cataloged
+            self._construction: EntityGraphConstruction | None = source
+        else:
+            self.model = source
+            self._construction = None
         self._operation = operation
         self._checked: set[tuple[type, EntityIdentity]] = set()
 
     def layout(self, node: object) -> EntityLayout:
         state = self._required(node)
-        pair = (type(node), state.entity)
+        cls = type(node)
+        pair = (cls, state.entity)
         try:
-            layout = self._model.layouts.entity(state.entity)
+            layout = self.model.layouts.entity(state.entity)
             if pair not in self._checked:
-                require_correspondence(
-                    layout,
-                    wire_names_of(type(node)),
-                    plan_of(type(node)),
-                )
+                construction = self._construction
+                if construction is None or not construction.proves(cls, state.entity):
+                    require_correspondence(layout, wire_names_of(cls), plan_of(cls))
                 self._checked.add(pair)
         except Exception as error:
             raise SnapshotInspectionError(

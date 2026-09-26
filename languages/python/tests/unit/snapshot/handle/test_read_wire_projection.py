@@ -40,8 +40,12 @@ from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
 from parallax.core.base import INFINITY
+from parallax.core.deep_fetch._include_tree import build_include_tree
+from parallax.core.entity._graph_construction import require_correspondence
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.temporal_read import Pin
 from parallax.snapshot import (
     InvalidData,
     Snapshot,
@@ -56,6 +60,7 @@ from parallax.snapshot.handle import _preflight as preflight_module
 from parallax.snapshot.materialize import _wire as wire_materialize
 from parallax.snapshot.materialize import read_origin_of
 from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.model_capabilities import cataloged_for
 
 
 class _ForeignCustomer(
@@ -307,12 +312,62 @@ def test_element_projection_refuses_edited_and_unpublished_values() -> None:
     assert unpublished.value.code == "snapshot-node-required"
 
 
-def test_element_projection_refuses_a_mismatched_published_layout_before_position_admission() -> (
-    None
-):
+def _recorded_correspondence_checks(monkeypatch: pytest.MonkeyPatch) -> list[EntityIdentity]:
+    checked: list[EntityIdentity] = []
+
+    def recording(layout: Any, names: Any, plan: Any) -> None:
+        checked.append(layout.concrete)
+        require_correspondence(layout, names, plan)
+
+    monkeypatch.setattr(wire_materialize, "require_correspondence", recording)
+    return checked
+
+
+def test_a_node_of_the_class_its_model_composed_projects_without_a_correspondence_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked = _recorded_correspondence_checks(monkeypatch)
+    root, db = _database(Read(rows=[_customer_row()]), Read(rows=[_customer_row()]))
+    query = vo.Customer.where(vo.Customer.id == 1)
+    typed = db.find(query)
+    with db.stream(query) as stream:
+        streamed = [stream.wire(customer)["id"] for customer in stream]
+    root.close()
+
+    assert typed.wire().result()["id"] == 1
+    assert typed.wire(typed.result())["id"] == 1
+    assert streamed == [1]
+    assert checked == []
+
+
+def test_a_projection_over_a_bare_cataloged_model_checks_the_composed_class_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked = _recorded_correspondence_checks(monkeypatch)
+    root, db = _database(Read(rows=[_customer_row()]))
+    customer = db.find(vo.Customer.where(vo.Customer.id == 1)).result()
+    root.close()
+    bare = Snapshot(
+        (customer,),
+        Pin(),
+        "bare",
+        build_include_tree(
+            queried=vo.Customer.identity, root=(vo.Customer.identity,), positions=()
+        ),
+        cataloged_for(vo.CUSTOMER_MODEL),
+    )
+
+    assert bare.wire().result()["id"] == 1
+    assert checked == [vo.Customer.identity]
+
+
+def test_element_projection_refuses_a_mismatched_published_layout_before_position_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A separately accepted Customer edition adds a declared member; projection must
     # reject that published layout before considering whether its requested position
     # admits the otherwise identically named concrete.
+    checked = _recorded_correspondence_checks(monkeypatch)
     root, db = _database(Read(rows=[]))
     snapshot = db.find(vo.Customer.where(vo.Customer.id == 99))
     foreign_root = cast(
@@ -333,6 +388,7 @@ def test_element_projection_refuses_a_mismatched_published_layout_before_positio
     with pytest.raises(SnapshotInspectionError) as refusal:
         cast("Any", snapshot).wire(foreign, at=vo.Customer.locations)
     assert refusal.value.code == "snapshot-wire-input-incompatible"
+    assert checked == [_ForeignCustomer.identity]
 
 
 def test_projection_preserves_hydrated_and_nonhydrating_invalid_records() -> None:
