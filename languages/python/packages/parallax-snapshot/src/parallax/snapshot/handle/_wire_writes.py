@@ -53,7 +53,6 @@ from parallax.snapshot.materialize import WireEntity, opened_wire_entity
 from parallax.snapshot.materialize._wire import read_origin_of
 
 __all__ = [
-    "PreparedWireKeyedWriteSource",
     "WireChanges",
     "WirePredicateTarget",
     "WireWriteLane",
@@ -455,60 +454,6 @@ class WireKeyedWriteSource:
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation, _WireKeyedSource]:
         return retained(self._meta), retained(self._mutation), retained(self._source)
-
-
-class PreparedWireKeyedWriteSource:
-    """The conformance bridge's Keyed Write Source: a product already prepared,
-    stated over a published row.
-
-    Preparation is an INPUT capability here rather than a stage this adapter
-    runs, which is the whole of what makes the conflict lane a source rather than
-    a second front door: every other stage — re-entry, the source, its pin, the
-    window, the effective change set, the buffered-insert exemption, evidence,
-    the claim, and the buffer — runs for it exactly as for a verb a developer
-    called.
-
-    :meth:`capture` judges nothing: there is no raw document, only members a
-    producer already decoded and named.
-    """
-
-    __slots__ = ("_assigned", "_meta", "_observed", "_prepared", "_source")
-
-    def __init__(
-        self, observed: object, prepared: PreparedKeyedWrite, assigned: frozenset[str]
-    ) -> None:
-        self._observed = observed
-        self._prepared = prepared
-        self._assigned = assigned
-        self._source: _WireKeyedSource | None = None
-        self._meta: Metamodel | None = None
-
-    def capture(self, mutation: KeyedMutation, /) -> None:
-        return None
-
-    def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
-        self._meta = model
-        self._source = _resolved_wire_source(model, mutation, self._observed)
-        return self._source.resolved
-
-    def prepare(
-        self, resolved: ResolvedKeyedWriteSource, bounds: PreparedTemporalBounds, /
-    ) -> PreparedSourceWrite:
-        """The product this adapter holds, beside the source's own originals.
-
-        The originals go through the decode that built the product, over the
-        members it names as assigned, so the effective change set is the same
-        comparison of like with like a verb's own document reaches.
-        """
-        meta, source = self._retained()
-        return PreparedSourceWrite(
-            instruction=self._prepared,
-            object_key=source.hint.object_key,
-            originals=_published_originals(meta, resolved.entity, source, self._assigned),
-        )
-
-    def _retained(self) -> tuple[Metamodel, _WireKeyedSource]:
-        return retained(self._meta), retained(self._source)
 
 
 class WireKeyedInsertSource:

@@ -62,10 +62,10 @@ class KeyedWriteContext:
 
     Four facts, all fixed for a ``Transaction``'s whole life, which is why one
     value is built at its construction and handed to every keyed verb it answers
-    — its own, ``tx.wire``'s, and the conformance bridge's alike. ``inserts`` is
-    therefore the SAME ledger under both representations, and ``model`` the same
-    accepted metadata, so no two keyed verbs of one transaction can disagree
-    about what it stores or what it declares.
+    — its own and ``tx.wire``'s alike. ``inserts`` is therefore the SAME ledger
+    under both representations, and ``model`` the same accepted metadata, so no
+    two keyed verbs of one transaction can disagree about what it stores or what
+    it declares.
 
     It carries no connection and no attempt: a keyed write addresses a row its
     caller already holds and reads nothing from the store, so a lane that could
