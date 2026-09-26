@@ -23,6 +23,7 @@ from .case_assertions import CaseFailure
 from .references import split_reference
 from .storage_layout import (
     AttributeContributor,
+    ColumnContributor,
     DocumentMember,
     RelationalDocument,
     TableLayout,
@@ -501,46 +502,38 @@ def _expected_table_row(
         if slot.column not in row or row[slot.column] is None:
             continue
         value = row[slot.column]
-        contributor = slot.contributor
-        if isinstance(contributor, AttributeContributor):
-            owner = case.model.entity(contributor.owner)
-            try:
-                attribute = owner.attribute_by_name(contributor.name)
-            except KeyError:
-                continue
-            _attribute_literal(
-                case,
-                owner,
-                attribute,
-                value,
-                f"{where}.{slot.column}",
-                canonical=True,
-            )
-        elif isinstance(contributor, ValueObjectContributor):
-            owner = case.model.entity(contributor.owner)
-            occurrence = next(
-                (
-                    candidate
-                    for candidate in owner.value_objects
-                    if candidate.get("name") == contributor.name
-                ),
-                None,
-            )
-            if occurrence is not None:
-                _value_object(
-                    case,
-                    occurrence,
-                    value,
-                    f"{where}.{slot.column}",
-                    canonical=True,
-                )
-        elif isinstance(contributor, RelationalDocument):
-            _relational_document(
-                case,
-                document.members,
-                value,
-                f"{where}.{slot.column}",
-            )
+        column_where = f"{where}.{slot.column}"
+        if isinstance(slot.contributor, RelationalDocument):
+            _relational_document(case, document.members, value, column_where)
+        else:
+            _declared_member_literal(case, slot.contributor, value, column_where)
+
+
+def _declared_member_literal(
+    case: Case, contributor: ColumnContributor, value: object, where: str
+) -> None:
+    """Check ``value`` canonically against a declared Attribute or top-level Value
+    Object contributor; any other contributor, or an undeclared name, is not checked."""
+    if isinstance(contributor, AttributeContributor):
+        owner = case.model.entity(contributor.owner)
+        try:
+            attribute = owner.attribute_by_name(contributor.name)
+        except KeyError:
+            return
+        _attribute_literal(case, owner, attribute, value, where, canonical=True)
+    elif isinstance(contributor, ValueObjectContributor):
+        _top_level_value_object(case, contributor.owner, contributor.name, value, where)
+
+
+def _top_level_value_object(
+    case: Case, owner_name: str, name: str, value: object, where: str
+) -> None:
+    owner = case.model.entity(owner_name)
+    try:
+        occurrence = owner.value_object_by_name(name)
+    except KeyError:
+        return
+    _value_object(case, occurrence, value, where, canonical=True)
 
 
 def _table_row_entity(case: Case, layout: TableLayout, row: Mapping[str, object]) -> Entity:
@@ -581,23 +574,13 @@ def _relational_document(
                 case, item, member.type_spelling, _path_where(where, member.path), canonical=True
             )
             continue
-        owner = case.model.entity(member.address.owner)
-        occurrence = next(
-            (
-                candidate
-                for candidate in owner.value_objects
-                if candidate.get("name") == member.address.path[0]
-            ),
-            None,
+        _top_level_value_object(
+            case,
+            member.address.owner,
+            member.address.path[0],
+            item,
+            _path_where(where, member.path),
         )
-        if occurrence is not None:
-            _value_object(
-                case,
-                occurrence,
-                item,
-                _path_where(where, member.path),
-                canonical=True,
-            )
 
 
 def _path_value(value: Mapping[str, object], path: Sequence[str]) -> tuple[bool, object]:
@@ -674,27 +657,9 @@ def _canonical_target_value(
             _literal(case, value, target.neutral_type, where, canonical=True)
         return
     slot = target
-    contributor = slot.contributor
-    if isinstance(contributor, AttributeContributor):
-        entity = case.model.entity(contributor.owner)
-        try:
-            attribute = entity.attribute_by_name(contributor.name)
-        except KeyError:
-            return
-        _attribute_literal(case, entity, attribute, value, where, canonical=True)
-    elif isinstance(contributor, ValueObjectContributor):
-        entity = case.model.entity(contributor.owner)
-        occurrence = next(
-            (
-                candidate
-                for candidate in entity.value_objects
-                if candidate.get("name") == contributor.name
-            ),
-            None,
-        )
-        if occurrence is not None:
-            _value_object(case, occurrence, value, where, canonical=True)
-    elif isinstance(contributor, RelationalDocument) and isinstance(value, Mapping):
+    if not isinstance(slot.contributor, RelationalDocument):
+        _declared_member_literal(case, slot.contributor, value, where)
+    elif isinstance(value, Mapping):
         candidates = tuple(
             member
             for entity in case.model.entities
