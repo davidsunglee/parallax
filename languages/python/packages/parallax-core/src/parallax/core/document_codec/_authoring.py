@@ -110,7 +110,7 @@ def prepare_authoring(
     allow_root_markers: bool = False,
 ) -> PreparedAuthoring:
     """Prepare one authored document directly into recursively immutable storage."""
-    value, failures, _present = _author_document(
+    value, failures, _present, _nulls = _author_document(
         shape,
         source,
         source_access=source_access,
@@ -134,7 +134,7 @@ def validate_authoring(
     allow_root_markers: bool = False,
 ) -> Mapping[int, VoDocumentViolation]:
     """Validate one authored document without constructing managed occurrence output."""
-    _value, failures, _present = _author_document(
+    _value, failures, _present, _nulls = _author_document(
         shape,
         source,
         source_access=source_access,
@@ -214,7 +214,9 @@ def _author_document(
     fill_missing_many: bool,
     source_names: Iterable[str] | None = None,
     allow_markers: bool = False,
-) -> tuple[Mapping[str, object] | None, Mapping[int, VoDocumentViolation], int]:
+) -> tuple[Mapping[str, object] | None, Mapping[int, VoDocumentViolation], int, int]:
+    """The authored document, its per-position failures, and two position bit
+    masks: the members the source names, and those of them it holds as null."""
     names = source_names if source_names is not None else source_access.names(source)
     if names is None:
         raise TypeError("an authored document source must expose named members")
@@ -222,6 +224,7 @@ def _author_document(
     values: dict[str, object] | None = {} if produce else None
     failures: dict[int, VoDocumentViolation] | None = None
     present = 0
+    nulls = 0
     for name in names:
         position = shape.position(name)
         if position is None:
@@ -229,6 +232,8 @@ def _author_document(
         present |= 1 << position
         member = shape.members[position]
         raw = source_access.member(source, name)
+        if raw is None:
+            nulls |= 1 << position
         member_path = _joined(path, name)
         if isinstance(member, Leaf):
             managed, violation = _author_leaf(
@@ -255,12 +260,18 @@ def _author_document(
             failures[position] = violation
 
     if values is not None and fill_missing_many:
-        for position, member in enumerate(shape.members):
-            if not present & (1 << position) and _is_many(member):
-                values[member.name] = ()
+        _fill_missing_many(shape, values, present)
 
     prepared = None if values is None else adopt_frozen_map(values)
-    return prepared, _NO_FAILURES if failures is None else MappingProxyType(failures), present
+    reported = _NO_FAILURES if failures is None else MappingProxyType(failures)
+    return prepared, reported, present, nulls
+
+
+def _fill_missing_many(shape: MemberShape, values: dict[str, object], present: int) -> None:
+    """Author every ``many`` occurrence the source omits as its empty collection."""
+    for position, member in enumerate(shape.members):
+        if not present & (1 << position) and _is_many(member):
+            values[member.name] = ()
 
 
 def _author_leaf(
@@ -336,7 +347,7 @@ def _author_occurrence_document(
     if names is None:
         retained = retain_document_value(source) if produce else source
         return retained, VoDocumentViolation("", "not-a-document", source)
-    value, failures, present = _author_document(
+    value, failures, present, nulls = _author_document(
         shape,
         source,
         source_access=source_access,
@@ -347,37 +358,30 @@ def _author_occurrence_document(
         source_names=names,
         allow_markers=False,
     )
-    violation = _first_document_violation(shape, source, source_access, failures, present)
+    violation = _first_document_violation(shape, failures, present, nulls)
     return (source if value is None else value), violation
 
 
 def _first_document_violation(
     shape: MemberShape,
-    source: object,
-    source_access: SourceAccess,
     failures: Mapping[int, VoDocumentViolation],
     present: int,
+    nulls: int,
 ) -> VoDocumentViolation | None:
+    """The first violation in canonical member order: a required member the
+    document omits or holds as null, or a held member's own failure.
+
+    An omitted ``many`` occurrence is its empty collection, so it is never missing.
+    """
     for position, member in enumerate(shape.members):
-        if not present & (1 << position):
-            if isinstance(member, Leaf) and not member.nullable:
-                return VoDocumentViolation(member.name, "attribute-missing")
-            if isinstance(member, Occurrence):
-                if member.multiplicity is Multiplicity.MANY:
-                    continue
-                if not member.nullable:
-                    return VoDocumentViolation(member.name, "value-object-missing")
-            continue
-        value = source_access.member(source, member.name)
-        if value is None:
-            if isinstance(member, Leaf) and not member.nullable:
-                return VoDocumentViolation(member.name, "attribute-missing")
-            if isinstance(member, Occurrence) and not member.nullable:
-                return VoDocumentViolation(member.name, "value-object-missing")
-            continue
-        failure = failures.get(position)
-        if failure is not None:
-            return _prefixed(member.name, failure)
+        bit = 1 << position
+        if present & bit and not nulls & bit:
+            failure = failures.get(position)
+            if failure is not None:
+                return _prefixed(member.name, failure)
+        elif not member.nullable and (present & bit or not _is_many(member)):
+            reason = "attribute-missing" if isinstance(member, Leaf) else "value-object-missing"
+            return VoDocumentViolation(member.name, reason)
     return None
 
 
