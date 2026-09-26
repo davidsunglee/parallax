@@ -33,6 +33,22 @@ the change is narrower. A focused pass is not a merge-gate result.
 grammar and scheduling rules. `just check-gates` checks the graph, test layout,
 runner configuration, cited command names, and actual CI execution coverage.
 
+## Quality exceptions
+
+Tool configuration owns the complexity ceiling, the duplication threshold, and
+the dependency rules. An exception records why a finding stays, and is
+reviewed like code:
+
+- A `# noqa: C901` covers one declaration, and only where decomposing it would
+  obscure an exhaustive dispatcher, state machine, protocol, or similarly
+  cohesive unit. Say why beside it unless the shape makes that evident.
+- A duplication ignore covers only generated or vendored code, or a repetition
+  reviewed as required. A clone below the threshold is code review's to judge.
+- A deptry exception names one package, gives a durable reason — a dynamic
+  import, a plugin, a metadata use, or a packaging or runtime capability — and
+  has a test exercising that use. A sibling that already installs a package is
+  no reason to import it undeclared.
+
 ## Databases
 
 Database-backed commands need a reachable Docker daemon. See

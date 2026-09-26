@@ -1,9 +1,11 @@
 # Python testing map
 
 The [root testing guide](../../TESTING.md) owns the verification workflow.
-[pyproject.toml](pyproject.toml) owns tool settings and thresholds; the
-[root justfile](../../justfile) owns commands. This map explains placement and
-fixtures without duplicating those inventories.
+[pyproject.toml](pyproject.toml) owns tool settings and thresholds, except the
+duplication scan's in [.jscpd.json](.jscpd.json) and the deptry flags every
+distribution shares, which [the dependency audit](tools/audit_dependencies.py)
+states once. The [root justfile](../../justfile) owns commands. This map
+explains placement and fixtures without duplicating those inventories.
 
 ## Placement
 
