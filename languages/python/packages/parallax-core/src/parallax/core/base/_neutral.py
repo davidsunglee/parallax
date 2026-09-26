@@ -196,11 +196,6 @@ _INT64_BOUNDS: Final[tuple[int, int]] = (-(2**63), 2**63 - 1)
 _BINARY32_MAX_BITS: Final[int] = 0x7F7FFFFF
 _BINARY32_OVERFLOW: Final[_Fraction] = _Fraction(2) ** 128 - _Fraction(2) ** 103
 
-# The adjusted decimal exponents beyond which a magnitude plainly rounds to zero
-# (below the first) or overflows (above the second) at each width.
-_BINARY32_EXPONENT_RANGE: Final[tuple[int, int]] = (-46, 38)
-_BINARY64_EXPONENT_RANGE: Final[tuple[int, int]] = (-324, 308)
-
 
 class ManagedValueExclusion:
     """Token-free marker for a host carrier that is not a managed value.
@@ -369,27 +364,28 @@ def nearest_float_at_width(
         return 0.0
     negative = exact.is_signed()
     magnitude = exact.copy_abs()
-    wide = isinstance(declared, Float64)
-    underflow, overflow = _BINARY64_EXPONENT_RANGE if wide else _BINARY32_EXPONENT_RANGE
-    adjusted = magnitude.adjusted()
-    if adjusted > overflow:
-        return None
-    if adjusted < underflow:
-        return 0.0
 
-    if wide:
+    if isinstance(declared, Float64):
+        adjusted = magnitude.adjusted()
+        if adjusted > 308:
+            return None
+        if adjusted < -324:
+            return 0.0
         projected = float(magnitude)
         if not _math.isfinite(projected):
             return None
         return -projected if negative else projected
 
+    adjusted = magnitude.adjusted()
+    if adjusted > 38:
+        return None
+    if adjusted < -46:
+        return 0.0
     ratio = _Fraction(magnitude)
     if ratio >= _BINARY32_OVERFLOW:
         return None
     projected = _nearest_binary32(ratio)
-    if projected == 0.0:
-        return 0.0
-    return -projected if negative else projected
+    return -projected if negative and projected else projected
 
 
 def _exact_number(

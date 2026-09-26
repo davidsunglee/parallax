@@ -237,18 +237,17 @@ def _author_document(
             failures[position] = violation
 
     if values is not None and fill_missing_many:
-        _fill_missing_many(shape, values, present)
+        values.update(
+            {
+                member.name: ()
+                for position, member in enumerate(shape.members)
+                if not present & (1 << position) and _is_many(member)
+            }
+        )
 
     prepared = None if values is None else adopt_frozen_map(values)
     reported = _NO_FAILURES if failures is None else MappingProxyType(failures)
     return prepared, reported, present, nulls
-
-
-def _fill_missing_many(shape: MemberShape, values: dict[str, object], present: int) -> None:
-    """Author every ``many`` occurrence the source omits as its empty collection."""
-    for position, member in enumerate(shape.members):
-        if not present & (1 << position) and _is_many(member):
-            values[member.name] = ()
 
 
 def _author_leaf(
