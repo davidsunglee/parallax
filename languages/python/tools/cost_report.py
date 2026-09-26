@@ -3186,7 +3186,7 @@ def _assembly_request(
         parser.error(f"{path} does not hold the request to assemble against: {error}")
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--verify", type=Path)
@@ -3223,7 +3223,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--request", type=Path, help="the immutable request being answered")
     parser.add_argument("--assemble", type=Path, metavar="INPUT", help="reconcile shard outputs")
     parser.add_argument("--against", type=Path, metavar="PREVIOUS", help="a previous assembly")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     modes = [
         name
         for name, chosen in (
@@ -3261,6 +3264,94 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.require_compatible and args.compare is None:
         parser.error("--require-compatible is a --compare option")
+
+
+def _run_shard(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    if args.out is None:
+        parser.error("--out is required when collecting a shard")
+    ids = plan_ids("sharded") if args.shard == ALL_SHARDS else [args.shard]
+    if args.shard not in {*plan_ids("sharded"), ALL_SHARDS}:
+        parser.error(f"shard {args.shard!r} is not one of {plan_ids('sharded')} or {ALL_SHARDS!r}")
+    validate_plan(SHARDS)
+    request = _shard_request(parser, args.shard, args.request, args.base_commit)
+    return run_shards(ids, request, args.out, run_member, run_base)
+
+
+def _run_assembly(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    if args.out is None:
+        parser.error("--out is required when assembling")
+    request = _assembly_request(parser, args.assemble, args.request)
+    if args.against is not None and (request.is_pull_request or request.base_commit is not None):
+        parser.error("--against pairs a nightly with its predecessor, never a pull request")
+    validate_plan(SHARDS)
+    captures = discover(args.assemble) if args.assemble.exists() else []
+    assembly = assemble(captures, SHARDS, request, History.load(args.against))
+    write_assembly(assembly, args.assemble, captures, args.out)
+    print(assembly.summary(), end="")
+    return 0
+
+
+def _run_freshness_only(args: argparse.Namespace) -> int:
+    fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
+    print(freshness if fresh else f"advisory: {freshness}")
+    return 0 if fresh or not freshness.startswith(LOCK_FRESHNESS_UNAVAILABLE) else 1
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    document = _load(args.verify)
+    fresh, freshness = lock_freshness(document)
+    if fresh:
+        print(freshness)
+    amended = amendment_beside(args.verify)
+    if amended is not None:
+        print(f"the capture is amended: {amended}")
+    for advisory in advisories(document):
+        print(advisory)
+    failures = verify(document, required=args.require_member)
+    for failure in failures:
+        print(failure, file=sys.stderr)
+    return 1 if failures else 0
+
+
+def _run_compare(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    base, head = (_load(path) for path in args.compare)
+    amendments: list[str] = []
+    try:
+        for role, path in zip(("base", "head"), args.compare, strict=True):
+            amended = amendment_beside(path)
+            if amended is not None:
+                amendments.append(f"- The {role} capture is amended: {amended}.")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
+    if not args.require_compatible:
+        print(compare(base, head, amendments), end="")
+        return 0
+    subjects = [
+        *(member.subject for member in MEMBERS if member.required),
+        *(subject for subject in args.require_member if subject not in REQUIRED_SUBJECTS),
+    ]
+    try:
+        conditions = [conditions_beside(path) for path in args.compare]
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
+    checked = compatibility(base, head, conditions[0], conditions[1], subjects)
+    if checked.failures:
+        print(
+            f"the captures are not comparable over {', '.join(subjects)}; no arithmetic "
+            "is reported:",
+            file=sys.stderr,
+        )
+        for failure in checked.failures:
+            print(failure, file=sys.stderr)
+        return 1
+    print(compare(base, head, [*compatibility_preface(subjects, checked), *amendments]), end="")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    _refuse_misplaced_options(parser, args)
     if args.diagnostic:
         subjects = args.member or [member.subject for member in MEMBERS if member.required]
         return diagnose(subjects, args.select, args.runtime, args.out)
@@ -3269,81 +3360,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(plan_ids(args.layout or "sharded")))
         return 0
     if args.shard is not None:
-        if args.out is None:
-            parser.error("--out is required when collecting a shard")
-        ids = plan_ids("sharded") if args.shard == ALL_SHARDS else [args.shard]
-        if args.shard not in {*plan_ids("sharded"), ALL_SHARDS}:
-            parser.error(
-                f"shard {args.shard!r} is not one of {plan_ids('sharded')} or {ALL_SHARDS!r}"
-            )
-        validate_plan(SHARDS)
-        request = _shard_request(parser, args.shard, args.request, args.base_commit)
-        return run_shards(ids, request, args.out, run_member, run_base)
+        return _run_shard(parser, args)
     if args.assemble is not None:
-        if args.out is None:
-            parser.error("--out is required when assembling")
-        request = _assembly_request(parser, args.assemble, args.request)
-        if args.against is not None and (
-            request.is_pull_request or request.base_commit is not None
-        ):
-            parser.error("--against pairs a nightly with its predecessor, never a pull request")
-        validate_plan(SHARDS)
-        captures = discover(args.assemble) if args.assemble.exists() else []
-        assembly = assemble(captures, SHARDS, request, History.load(args.against))
-        write_assembly(assembly, args.assemble, captures, args.out)
-        print(assembly.summary(), end="")
-        return 0
+        return _run_assembly(parser, args)
     if args.freshness_only is not None:
-        fresh, freshness = lock_freshness(_load(args.freshness_only), args.lock_file)
-        print(freshness if fresh else f"advisory: {freshness}")
-        return 0 if fresh or not freshness.startswith(LOCK_FRESHNESS_UNAVAILABLE) else 1
+        return _run_freshness_only(args)
     if args.verify is not None:
-        document = _load(args.verify)
-        fresh, freshness = lock_freshness(document)
-        if fresh:
-            print(freshness)
-        amended = amendment_beside(args.verify)
-        if amended is not None:
-            print(f"the capture is amended: {amended}")
-        for advisory in advisories(document):
-            print(advisory)
-        failures = verify(document, required=args.require_member)
-        for failure in failures:
-            print(failure, file=sys.stderr)
-        return 1 if failures else 0
+        return _run_verify(args)
     if args.compare is not None:
-        base, head = (_load(path) for path in args.compare)
-        amendments: list[str] = []
-        try:
-            for role, path in zip(("base", "head"), args.compare, strict=True):
-                amended = amendment_beside(path)
-                if amended is not None:
-                    amendments.append(f"- The {role} capture is amended: {amended}.")
-        except (KeyError, TypeError, ValueError, OSError) as error:
-            parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
-        if not args.require_compatible:
-            print(compare(base, head, amendments), end="")
-            return 0
-        subjects = [
-            *(member.subject for member in MEMBERS if member.required),
-            *(subject for subject in args.require_member if subject not in REQUIRED_SUBJECTS),
-        ]
-        try:
-            conditions = [conditions_beside(path) for path in args.compare]
-        except (KeyError, TypeError, ValueError, OSError) as error:
-            parser.error(f"a {CONDITIONS_FILE} beside a portfolio does not decode: {error}")
-        checked = compatibility(base, head, conditions[0], conditions[1], subjects)
-        if checked.failures:
-            print(
-                f"the captures are not comparable over {', '.join(subjects)}; no arithmetic "
-                "is reported:",
-                file=sys.stderr,
-            )
-            for failure in checked.failures:
-                print(failure, file=sys.stderr)
-            return 1
-        print(compare(base, head, [*compatibility_preface(subjects, checked), *amendments]), end="")
-        return 0
+        return _run_compare(parser, args)
     if args.out is None:
         parser.error("--out is required when collecting")
     collection = collect(run_member)
