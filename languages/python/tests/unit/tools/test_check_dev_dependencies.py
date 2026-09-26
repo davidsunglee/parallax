@@ -57,10 +57,6 @@ def _reasons(report: inventory.Report) -> dict[str, tuple[str, ...]]:
     return {entry.requirement: entry.reasons for entry in report.classifications}
 
 
-@pytest.mark.xfail(
-    reason="the dev group redeclares testcontainers, which only parallax-conformance imports "
-    "and already declares"
-)
 def test_every_real_development_dependency_is_classified() -> None:
     report = inventory.check(load_workspace(PY_ROOT), REPO_ROOT, inventory.InstalledMetadata())
     assert report.findings == ()

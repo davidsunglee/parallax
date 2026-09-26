@@ -55,7 +55,6 @@ dev = [
     "twine>=7.0.0",
     "pip-audit>=2.7",
     "jsonschema>=4.21",
-    "testcontainers>=4.15.0",
     "botocore-stubs>=1.43.67",
     "types-pyyaml>=6.0.12.20260724",
     "types-jsonschema>=4.21",
