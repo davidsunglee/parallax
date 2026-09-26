@@ -814,6 +814,10 @@ hatchling.
   declared in that extra, so the base installation stays as narrow as the
   slices it always ships. The declaration grants no source permission (§7):
   manifests say what is installed, and the contracts say who may import it.
+  `just python-audit-dependencies` enforces the rule for every workspace
+  member: deptry checks third-party declarations against each distribution's
+  source, and `tools/check_distribution_dependencies.py` checks sibling
+  declarations, which the shared `parallax` namespace hides from deptry.
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only
   `pydantic` and the `pydantic-core` it imports directly; the clean-install
   check installs it alone and proves `parallax-descriptor`, `pyyaml`,

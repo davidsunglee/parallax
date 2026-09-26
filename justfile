@@ -186,7 +186,7 @@ core-show-language-spec language_spec:
 # ===========================================================================
 
 [doc("Every harness check that needs no live database.")]
-harness-check-dbfree: harness-check-database-access harness-format-check harness-lint harness-typecheck harness-test-dbfree
+harness-check-dbfree: harness-check-database-access harness-format-check harness-lint harness-typecheck harness-audit-dependencies harness-test-dbfree
 
 [doc("Every harness check that needs a live database (Docker).")]
 harness-check-db: harness-test-db
@@ -250,6 +250,12 @@ harness-typecheck:
     cd {{harness}} && uv run basedpyright
 
 [metadata("runtime:fast")]
+[doc("Harness dependency declarations match its imports, and every development dependency is used.")]
+harness-audit-dependencies:
+    cd {{harness}} && uv run deptry src
+    cd {{harness}} && uv run python -m reference_harness.dev_dependency_inventory . ..
+
+[metadata("runtime:fast")]
 [doc("Format the harness in place (rewrites tracked sources).")]
 harness-format:
     cd {{harness}} && uv run ruff format .
@@ -264,7 +270,7 @@ harness-format:
 python-check: python-check-dbfree python-check-db python-check-cost
 
 [doc("Every Python check that needs no live database.")]
-python-check-dbfree: python-format-check python-lint python-typecheck python-check-imports python-check-database-access python-check-dead-code python-test-dbfree python-coverage-diff python-check-distribution-metadata python-check-lock python-audit
+python-check-dbfree: python-format-check python-lint python-typecheck python-check-imports python-check-database-access python-check-dead-code python-test-dbfree python-coverage-diff python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
 
 [doc("Every Python check that needs a live database (Docker).")]
 python-check-db: python-test-db
@@ -473,6 +479,11 @@ python-check-distribution-metadata: python-build
 [doc("The committed lockfile agrees with the declared dependencies.")]
 python-check-lock:
     cd {{python}} && uv lock --check
+
+[metadata("runtime:fast")]
+[doc("Every distribution's dependency declarations match its imports, and every development dependency is used.")]
+python-audit-dependencies:
+    cd {{python}} && uv run python tools/audit_dependencies.py
 
 [metadata("runtime:fast")]
 [doc("Audit the locked dependency set for known vulnerabilities.")]

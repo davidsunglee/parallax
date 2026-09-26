@@ -116,6 +116,7 @@ def test_the_harness_classifies_every_development_dependency(repo_root: Path) ->
     assert inventory.diagnostics == ()
     assert {classification.dependency for classification in inventory.classifications} == {
         "basedpyright",
+        "deptry",
         "pytest",
         "ruff",
     }
