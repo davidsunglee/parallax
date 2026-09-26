@@ -197,33 +197,10 @@ def _assert_schema(case: Case) -> None:
     # Layer 1 is enforced statically across the whole tree by schema_validate.
     # Here we assert the minimal structural invariants the runner relies on so a
     # malformed case fails loudly rather than deep in execution.
-    if case.is_write_sequence:
-        _assert_write_sequence_shape(case)
-    elif case.is_scenario:
-        # A Scenario asserts nothing here because none of its shape is this
-        # check's to adjudicate: the static pass above refuses what the document
-        # says about itself, and
-        # :func:`~reference_harness.unit_work_scenario.assert_unit_work_scenario`
-        # — which :func:`run_case` reaches after this one, on the same branch —
-        # refuses what grading a run needs. This arm exists only to keep a
-        # Scenario clear of the read-shape requirement the chain ends in.
-        pass
-    elif case.is_conflict:
-        _assert_conflict_shape(case)
-    elif case.is_coherence:
-        _assert_coherence_shape(case)
-    elif case.is_error:
-        _assert_error_shape(case)
-    elif case.is_concurrency_success:
-        _assert_concurrency_success_shape(case)
-    elif case.is_boundary:
-        _assert_boundary_shape(case)
-    elif case.is_edit:
-        _assert_edit_shape(case)
-    elif case.is_rejected:
-        _assert_rejected_shape(case)
-    elif case.is_evolution:
-        _assert_evolution_shape(case)
+    shape = case.shape
+    assert_shape = _SHAPE_ASSERTIONS.get(shape) if isinstance(shape, str) else None
+    if assert_shape is not None:
+        assert_shape(case)
     elif "objectQuery" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing objectQuery")
     if not case.model.class_name:
@@ -235,6 +212,17 @@ def _assert_schema(case: Case) -> None:
 def _assert_write_sequence_shape(case: Case) -> None:
     if not case.expected_table_state:
         raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
+
+
+def _assert_scenario_shape(case: Case) -> None:
+    """Nothing: none of a Scenario's shape is this check's to adjudicate.
+
+    The static pass refuses what the document says about itself, and
+    :func:`~reference_harness.unit_work_scenario.assert_unit_work_scenario` —
+    which :func:`run_case` reaches after :func:`_assert_schema`, on the same
+    branch — refuses what grading a run needs. Registering the shape keeps a
+    Scenario clear of the read-shape requirement :func:`_assert_schema` ends in.
+    """
 
 
 def _assert_conflict_shape(case: Case) -> None:
@@ -338,6 +326,20 @@ def _assert_evolution_shape(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: evolution case missing then.evolution")
 
 
+_SHAPE_ASSERTIONS: dict[str, Callable[[Case], None]] = {
+    "writeSequence": _assert_write_sequence_shape,
+    "scenario": _assert_scenario_shape,
+    "conflict": _assert_conflict_shape,
+    "coherence": _assert_coherence_shape,
+    "error": _assert_error_shape,
+    "concurrencySuccess": _assert_concurrency_success_shape,
+    "boundary": _assert_boundary_shape,
+    "edit": _assert_edit_shape,
+    "rejected": _assert_rejected_shape,
+    "evolution": _assert_evolution_shape,
+}
+
+
 def _assert_binds_dialect_keys(case: Case) -> None:
     """A golden entry's dialect-keyed ``binds`` map MUST cover the same dialects as
     its ``sql`` map (m-case-format resolved question 12). A flat-array ``binds`` is
@@ -403,38 +405,56 @@ def _assert_serde(case: Case) -> None:
     # scenario or coherence case has one per read step; a write-sequence case and a
     # conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
-    if case.is_edit:
-        query = case.edit_source.get("objectQuery")
-        if isinstance(query, dict):
-            serde.assert_roundtrip(query)
-    elif case.is_scenario:
-        for step in case.scenario:
-            # Read steps carry an `objectQuery`; write steps carry none.
-            if "objectQuery" in step:
-                serde.assert_roundtrip(step["objectQuery"])
-    elif case.is_coherence:
-        for step in case.coherence:
-            if "objectQuery" in step:
-                serde.assert_roundtrip(step["objectQuery"])
-    elif case.is_rejected:
-        # A rejected case carries the invalid input under `when.objectQuery` (a
-        # schema-valid m-object-query document — serde it), `when.write` (a neutral
-        # write row, which has no query to serde), OR `when.model` (an inline invalid
-        # inheritance descriptor — round-tripped through descriptor serde before
-        # semantic validation asserts the rejection, m-inheritance resolved Q3). The
-        # referenced (valid) descriptor still round-trips below.
-        if "objectQuery" in case.when:
-            serde.assert_roundtrip(case.when["objectQuery"])
-        elif "model" in case.when:
-            serde.assert_roundtrip(case.when["model"])
-    elif (
-        not case.is_write_sequence
-        and not case.is_conflict
-        and not case.is_error
-        and not case.is_concurrency_success
-    ):
-        serde.assert_roundtrip(case.object_query)
+    shape = case.shape
+    documents = _SERDE_DOCUMENTS.get(shape, _read_query) if isinstance(shape, str) else _read_query
+    for document in documents(case):
+        serde.assert_roundtrip(document)
     serde.assert_roundtrip(case.model.descriptor)
+
+
+def _read_query(case: Case) -> list[Any]:
+    return [case.object_query]
+
+
+def _edit_source_query(case: Case) -> list[Any]:
+    query = case.edit_source.get("objectQuery")
+    return [query] if isinstance(query, dict) else []
+
+
+def _step_queries(steps: list[dict[str, Any]]) -> list[Any]:
+    # Read steps carry an `objectQuery`; write steps carry none.
+    return [step["objectQuery"] for step in steps if "objectQuery" in step]
+
+
+def _rejected_input(case: Case) -> list[Any]:
+    # A rejected case carries the invalid input under `when.objectQuery` (a
+    # schema-valid m-object-query document — serde it), `when.write` (a neutral
+    # write row, which has no query to serde), OR `when.model` (an inline invalid
+    # inheritance descriptor — round-tripped through descriptor serde before
+    # semantic validation asserts the rejection, m-inheritance resolved Q3). The
+    # referenced (valid) descriptor still round-trips after it.
+    if "objectQuery" in case.when:
+        return [case.when["objectQuery"]]
+    if "model" in case.when:
+        return [case.when["model"]]
+    return []
+
+
+def _no_query(_case: Case) -> list[Any]:
+    return []
+
+
+# The documents Layer 4a round-trips per shape; any other shape is a read.
+_SERDE_DOCUMENTS: dict[str, Callable[[Case], list[Any]]] = {
+    "edit": _edit_source_query,
+    "scenario": lambda case: _step_queries(case.scenario),
+    "coherence": lambda case: _step_queries(case.coherence),
+    "rejected": _rejected_input,
+    "writeSequence": _no_query,
+    "conflict": _no_query,
+    "error": _no_query,
+    "concurrencySuccess": _no_query,
+}
 
 
 def _assert_equivalent_encodings(case: Case) -> None:
@@ -1666,56 +1686,30 @@ def _assert_temporal_input(
             f"{case.path.name}: a Valid-Time write step's neutral write input (①) MUST "
             "carry `validFrom`, which is DERIVED into the start column."
         )
-    derived_starts = {
-        transaction_time["start_column"]: step.get("at"),
-        **({valid_time["start_column"]: valid_from} if valid_time is not None else {}),
-    }
-    derived_ends = {temporal_axis["end_column"] for temporal_axis in entity.temporal_runtime_axes}
     # The step's only row: a temporal step carrying any other count is refused
     # before this cross-check runs.
     (columns, pk, _set_cols, _observed) = classified[0]
     # A TABLE-PER-HIERARCHY concrete subtype's milestone rows carry the framework-owned
     # tag column, DERIVED from its `tagValue` (m-inheritance) — the chained INSERT sets
     # it at its Discriminator-tier slot and the close GUARDS on it right after the pk, exactly
-    # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
+    # as the non-temporal concrete-subtype write does. Absent for a table-per-concrete-
     # subtype / non-inheritance entity (an ordinary single-table milestone write).
     discriminator = tag(entity)
-    document_column = case.model.storage_layout.document(entity.canonical_name).column
-
-    def assert_open(statement: str, binds: list[Any]) -> None:
-        golden_columns = parse_insert_columns(case, statement)
-        if golden_columns != full_columns:
-            raise CaseFailure(
-                f"{case.path.name}: the golden temporal INSERT column list {golden_columns} != "
-                f"the entity's full physical row {full_columns} — a milestone always writes the "
-                f"whole row (metamodel-sourced, not derived from ①)."
-            )
-        expected = [
-            derived_starts[column]
-            if column in derived_starts
-            else infinity
-            if column in derived_ends
-            else discriminator[1]
-            if (discriminator is not None and column == discriminator[0])
-            else columns.get(column)
-            for column in full_columns
-        ]
-        if not document_column or len(binds) != len(expected):
-            assert_write_values(case, expected, binds, statement)
-            return
-        # Under Relational Document Layout a chained milestone's Structured Column
-        # is the predecessor's own document with the mutation's changes patched
-        # into it, so ① fixes the members it names and NOT the whole document: a
-        # key no member declares rides forward from the row the successor
-        # supersedes, and `then.tableState` is what grades that it did.
-        position = full_columns.index(document_column)
-        _assert_carried_document(case, expected[position], binds[position], statement)
-        assert_write_values(
-            case,
-            [*expected[:position], *expected[position + 1 :]],
-            [*binds[:position], *binds[position + 1 :]],
-            statement,
-        )
+    # The full physical row an opening INSERT writes: an axis start takes its
+    # instant, an axis end the open bound, and the tag column its tag value, in
+    # that precedence; every other column carries ①'s value.
+    derived: dict[str, Any] = {
+        **({discriminator[0]: discriminator[1]} if discriminator is not None else {}),
+        **dict.fromkeys(
+            (temporal_axis["end_column"] for temporal_axis in entity.temporal_runtime_axes),
+            infinity,
+        ),
+        transaction_time["start_column"]: at,
+        **({valid_time["start_column"]: valid_from} if valid_time is not None else {}),
+    }
+    opened_row = [
+        derived[column] if column in derived else columns.get(column) for column in full_columns
+    ]
 
     def assert_close(statement: str, binds: list[Any]) -> None:
         # A close sets `out_z = at` on the milestone its address selects — no domain
@@ -1732,16 +1726,55 @@ def _assert_temporal_input(
 
     mutation = step["mutation"]
     if mutation == "insert":
-        assert_open(step_statements[0], step_binds[0])
+        _assert_milestone_open(
+            case, entity, full_columns, opened_row, step_statements[0], step_binds[0]
+        )
     elif mutation == "update":
         assert_close(step_statements[0], step_binds[0])
-        assert_open(step_statements[1], step_binds[1])
+        _assert_milestone_open(
+            case, entity, full_columns, opened_row, step_statements[1], step_binds[1]
+        )
     elif mutation == "terminate":
         assert_close(step_statements[0], step_binds[0])
     else:
         raise CaseFailure(
             f"{case.path.name}: unexpected temporal mutation {mutation!r} for a ① cross-check."
         )
+
+
+def _assert_milestone_open(
+    case: Case,
+    entity: Entity,
+    full_columns: list[str],
+    expected: list[Any],
+    statement: str,
+    binds: list[Any],
+) -> None:
+    """Grade a milestone-opening INSERT against the full physical row it writes."""
+    golden_columns = parse_insert_columns(case, statement)
+    if golden_columns != full_columns:
+        raise CaseFailure(
+            f"{case.path.name}: the golden temporal INSERT column list {golden_columns} != "
+            f"the entity's full physical row {full_columns} — a milestone always writes the "
+            f"whole row (metamodel-sourced, not derived from ①)."
+        )
+    document_column = case.model.storage_layout.document(entity.canonical_name).column
+    if not document_column or len(binds) != len(expected):
+        assert_write_values(case, expected, binds, statement)
+        return
+    # Under Relational Document Layout a chained milestone's Structured Column
+    # is the predecessor's own document with the mutation's changes patched
+    # into it, so ① fixes the members it names and NOT the whole document: a
+    # key no member declares rides forward from the row the successor
+    # supersedes, and `then.tableState` is what grades that it did.
+    position = full_columns.index(document_column)
+    _assert_carried_document(case, expected[position], binds[position], statement)
+    assert_write_values(
+        case,
+        [*expected[:position], *expected[position + 1 :]],
+        [*binds[:position], *binds[position + 1 :]],
+        statement,
+    )
 
 
 def _assert_until_input(
@@ -3119,7 +3152,13 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                 row_failures.append(failure)
 
     _run_concurrency_rounds(case, execution, concurrency["rounds"], run_step)
+    _assert_no_concurrency_failure(case, dialect, raised, row_failures)
 
+
+def _assert_no_concurrency_failure(
+    case: Case, dialect: str, raised: Mapping[str, Exception], row_failures: Sequence[str]
+) -> None:
+    """The success claim: no node raised, and every read saw its ``expectRows``."""
     if raised:
         raise CaseFailure(
             f"{case.path.name}: expected NO error on {dialect} (the lock is shared / "
@@ -3420,6 +3459,11 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
         _run_rejected(case)
         return
 
+    _run_executed(case, db)
+
+
+def _run_executed(case: Case, db: DatabaseProvider | None) -> None:
+    """Run a shape whose observable needs a database, after its literal preflight."""
     preflight_case_literals(case)
     if db is None:
         raise CaseFailure(

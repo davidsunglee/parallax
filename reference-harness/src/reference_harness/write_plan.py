@@ -285,23 +285,7 @@ def classify_write_row(
                 raise CaseFailure(f"{case.path.name}: {entity.name} {mutation!r}: {refusal}")
             observed_version = value
             continue
-        try:
-            column = entity.attribute_by_name(key)["column"]
-        except KeyError:
-            # Not an attribute — a value object binds as ONE document at its
-            # Document-tier slot (m-value-object); the neutral input names it
-            # like a scalar attribute and its value is the whole document.
-            try:
-                value_object = entity.value_object_by_name(key)
-            except KeyError as exc:
-                raise CaseFailure(
-                    f"{case.path.name}: writeSequence row key {key!r} is not an attribute "
-                    f"or value object of {entity.name} — the neutral write input speaks "
-                    f"ATTRIBUTE / value-object names, not columns."
-                ) from exc
-            column = value_object["column"]
-            if column not in resident_columns:
-                value = encode_document(value_object, value)
+        column, value = _member_column(case, entity, key, value, resident_columns)
         if column in resident_columns:
             continue  # the Structured Column carries it; composed below
         columns[column] = value
@@ -310,17 +294,9 @@ def classify_write_row(
         else:
             set_columns[column] = value
     if opening:
-        # A `many` occurrence with a Column of its own binds on every opening
-        # statement whether or not the row names it: absence and the empty array are
-        # one logical zero state, so an unnamed `many` stores `[]` (m-value-object) —
-        # the same answer the codec composes for one inside a document.
-        for value_object in entity.value_objects:
-            column = value_object["column"]
-            if value_object.get("multiplicity", "one") != "many" or column in resident_columns:
-                continue
-            if value_object["name"] not in row:
-                columns[column] = encode_document(value_object, [])
-                set_columns[column] = columns[column]
+        unnamed_many = _unnamed_many_columns(entity, row, resident_columns)
+        columns.update(unnamed_many)
+        set_columns.update(unnamed_many)
     if document_column and opening:
         # The Structured Column binds on EVERY opening statement, including one for
         # an Entity whose members are all direct: it is `NOT NULL` and every governed
@@ -329,6 +305,50 @@ def classify_write_row(
         columns[document_column] = document
         set_columns[document_column] = document
     return columns, pk_value, set_columns, observed_version
+
+
+def _member_column(
+    case: Case, entity: Entity, key: str, value: Any, resident_columns: set[str]
+) -> tuple[str, Any]:
+    """The physical column a ① row key names, and the value it binds there."""
+    try:
+        return entity.attribute_by_name(key)["column"], value
+    except KeyError:
+        pass
+    # Not an attribute — a value object binds as ONE document at its
+    # Document-tier slot (m-value-object); the neutral input names it
+    # like a scalar attribute and its value is the whole document.
+    try:
+        value_object = entity.value_object_by_name(key)
+    except KeyError as exc:
+        raise CaseFailure(
+            f"{case.path.name}: writeSequence row key {key!r} is not an attribute "
+            f"or value object of {entity.name} — the neutral write input speaks "
+            f"ATTRIBUTE / value-object names, not columns."
+        ) from exc
+    column = value_object["column"]
+    if column in resident_columns:
+        return column, value
+    return column, encode_document(value_object, value)
+
+
+def _unnamed_many_columns(
+    entity: Entity, row: dict[str, Any], resident_columns: set[str]
+) -> dict[str, Any]:
+    """The zero state each unnamed `many` occurrence with a Column of its own binds.
+
+    Such an occurrence binds on every opening statement whether or not the row
+    names it: absence and the empty array are one logical zero state, so an
+    unnamed `many` stores `[]` (m-value-object) — the same answer the codec
+    composes for one inside a document.
+    """
+    return {
+        value_object["column"]: encode_document(value_object, [])
+        for value_object in entity.value_objects
+        if value_object.get("multiplicity", "one") == "many"
+        and value_object["column"] not in resident_columns
+        and value_object["name"] not in row
+    }
 
 
 def _entity_document(

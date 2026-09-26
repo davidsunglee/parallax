@@ -9,7 +9,7 @@ enclosing presence state and is never handed to the typed codec.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from . import portable_literal
@@ -49,17 +49,11 @@ def preflight_case_literals(case: Case) -> None:
     query = when.get("objectQuery")
     if isinstance(query, Mapping):
         _query(case, query, "when.objectQuery")
-    for sequence_name in ("scenario", "coherence"):
-        steps = when.get(sequence_name)
-        if not isinstance(steps, Sequence):
-            continue
-        for index, step in enumerate(steps):
-            if not isinstance(step, Mapping):
-                continue
-            nested = step.get("objectQuery")
-            if isinstance(nested, Mapping):
-                _query(case, nested, f"when.{sequence_name}[{index}].objectQuery")
-            _write_carrier(case, step.get("write"), f"when.{sequence_name}[{index}].write")
+    for where, step in _steps(case):
+        nested = step.get("objectQuery")
+        if isinstance(nested, Mapping):
+            _query(case, nested, f"{where}.objectQuery")
+        _write_carrier(case, step.get("write"), f"{where}.write")
     _write_carrier(case, when.get("write"), "when.write", fallback=case.model.root_entity)
     _write_carrier(case, when.get("writeSequence"), "when.writeSequence")
     attempts = when.get("attempts")
@@ -74,6 +68,17 @@ def preflight_case_literals(case: Case) -> None:
                 )
     _preflight_expected(case)
     _preflight_statement_binds(case)
+
+
+def _steps(case: Case) -> Iterator[tuple[str, Mapping[str, object]]]:
+    """Each scenario, then each coherence, step with its document path."""
+    for sequence_name in ("scenario", "coherence"):
+        steps = case.when.get(sequence_name)
+        if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+            continue
+        for index, step in enumerate(steps):
+            if isinstance(step, Mapping):
+                yield f"when.{sequence_name}[{index}]", step
 
 
 def _query(case: Case, query: Mapping[str, object], where: str) -> None:
@@ -271,6 +276,21 @@ def _write_carrier(
     target = carrier.get("target")
     if isinstance(target, Mapping):
         _write_selection(case, carrier, target, where)
+    _carrier_rows(case, carrier, where, fallback=fallback)
+    for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart"):
+        value = carrier.get(name)
+        if value is not None and value != "infinity":
+            _literal(case, value, "timestamp", f"{where}.{name}")
+
+
+def _carrier_rows(
+    case: Case,
+    carrier: Mapping[str, object],
+    where: str,
+    *,
+    fallback: Entity | None,
+) -> None:
+    """A keyed carrier's ``rows``, or a bare row read as the ``fallback`` Entity's."""
     entity_name = carrier.get("entity")
     rows = carrier.get("rows")
     if isinstance(entity_name, str) and isinstance(rows, Sequence):
@@ -280,10 +300,6 @@ def _write_carrier(
                 _entity_row(case, entity, row, f"{where}.rows[{index}]")
     elif fallback is not None and "mutation" not in carrier and "target" not in carrier:
         _entity_row(case, fallback, carrier, where)
-    for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart"):
-        value = carrier.get(name)
-        if value is not None and value != "infinity":
-            _literal(case, value, "timestamp", f"{where}.{name}")
 
 
 def _write_selection(
@@ -406,23 +422,24 @@ def _preflight_expected(case: Case) -> None:
     if isinstance(query, Mapping) and isinstance(rows, Sequence):
         target = query.get("target")
         if isinstance(target, str):
-            entity = case.model.entity(target)
-            for index, row in enumerate(rows):
-                if isinstance(row, Mapping):
-                    _expected_entity_row(case, entity, row, f"then.rows[{index}]")
+            _expected_rows(case, case.model.entity(target), rows, "then.rows")
     for name in ("graph", "graphs", "stepGraphs"):
         expected = case.then.get(name)
         if expected is not None:
             _expected_graph(case, expected, f"then.{name}")
     _expected_table_state(case)
-    for sequence_name in ("scenario", "coherence"):
-        steps = case.when.get(sequence_name)
-        if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
-            continue
-        for index, step in enumerate(steps):
-            if isinstance(step, Mapping):
-                _expected_step(case, step, f"when.{sequence_name}[{index}]")
+    for where, step in _steps(case):
+        _expected_step(case, step, where)
     _expected_concurrency_rows(case)
+
+
+def _expected_rows(case: Case, entity: Entity, rows: object, where: str) -> None:
+    """Each expected row object of a row list, read as ``entity``'s."""
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return
+    for index, row in enumerate(rows):
+        if isinstance(row, Mapping):
+            _expected_entity_row(case, entity, row, f"{where}[{index}]")
 
 
 def _expected_step(case: Case, step: Mapping[str, object], where: str) -> None:
@@ -430,11 +447,7 @@ def _expected_step(case: Case, step: Mapping[str, object], where: str) -> None:
     if isinstance(query, Mapping) and isinstance(query.get("target"), str):
         entity = case.model.entity(query["target"])
         for rows_name in ("expectRows", "observeRows"):
-            rows = step.get(rows_name)
-            if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)):
-                for row_index, row in enumerate(rows):
-                    if isinstance(row, Mapping):
-                        _expected_entity_row(case, entity, row, f"{where}.{rows_name}[{row_index}]")
+            _expected_rows(case, entity, step.get(rows_name), f"{where}.{rows_name}")
     expected = step.get("expectGraph")
     if expected is not None:
         _expected_graph(case, expected, f"{where}.expectGraph")
@@ -452,22 +465,13 @@ def _expected_concurrency_rows(case: Case) -> None:
             continue
         for session_name in ("A", "B"):
             session = round_value.get(session_name)
-            if not isinstance(session, Mapping):
-                continue
-            rows = session.get("expectRows")
-            if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-                continue
-            for row_index, row in enumerate(rows):
-                if isinstance(row, Mapping):
-                    _expected_entity_row(
-                        case,
-                        case.model.root_entity,
-                        row,
-                        (
-                            f"when.concurrency.rounds[{round_index}].{session_name}"
-                            f".expectRows[{row_index}]"
-                        ),
-                    )
+            if isinstance(session, Mapping):
+                _expected_rows(
+                    case,
+                    case.model.root_entity,
+                    session.get("expectRows"),
+                    f"when.concurrency.rounds[{round_index}].{session_name}.expectRows",
+                )
 
 
 def _expected_table_state(case: Case) -> None:
@@ -731,11 +735,7 @@ def _expected_graph(case: Case, value: object, where: str) -> None:
             except KeyError:
                 _expected_graph(case, nested, f"{where}.{name}")
                 continue
-            if not isinstance(nested, Sequence) or isinstance(nested, (str, bytes)):
-                continue
-            for index, row in enumerate(nested):
-                if isinstance(row, Mapping):
-                    _expected_entity_row(case, entity, row, f"{where}.{name}[{index}]")
+            _expected_rows(case, entity, nested, f"{where}.{name}")
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         for index, nested in enumerate(value):
             _expected_graph(case, nested, f"{where}[{index}]")
@@ -764,10 +764,8 @@ def _expected_entity_row(
         target = case.model.entity(relationship["join"]["target"]["entity"])
         if isinstance(value, Mapping):
             _expected_entity_row(case, target, value, f"{where}.{key}")
-        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            for index, child in enumerate(value):
-                if isinstance(child, Mapping):
-                    _expected_entity_row(case, target, child, f"{where}.{key}[{index}]")
+        else:
+            _expected_rows(case, target, value, f"{where}.{key}")
 
 
 def _nullable_literal(
