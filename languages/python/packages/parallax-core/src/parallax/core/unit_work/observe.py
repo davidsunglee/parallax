@@ -257,8 +257,9 @@ class PredecessorRow:
     the document are both retained in frozen form. :meth:`over_row` instead
     adopts a trusted reader's positional member row and decoded document by
     reference. That document may be mutable host containers; it stays logically
-    immutable because the reader transferred exclusive ownership, nothing reads
-    it except to copy it (``apply_patches``), and no caller can reach it.
+    immutable because the reader transferred exclusive ownership and no consumer
+    mutates it: a carried successor binds it unchanged, and a changed successor
+    patches a copy (``apply_patches``).
     """
 
     members: EntityStateRow | Mapping[str, object]
