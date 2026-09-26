@@ -266,3 +266,23 @@ subject to the shared-namespace limitation above.
    top-level import matching cannot prove.
 4. Trial Complexipy at 15 in report-only mode and keep it only if it identifies a
    distinct class of readability problems.
+
+## As adopted
+
+This note is evidence from before the gates existed. What was adopted differs
+from its recommendation in these respects; the configurations and the root
+[justfile](../../justfile) own the current settings and commands.
+
+- Ruff `C901` gates both projects at 15, tests and tools included. Lowering the
+  ceiling to 10 and the Complexipy trial are separate follow-up work.
+- jscpd scans the two production targets with the settings above. Tests are not
+  scanned at all, even report-only, and no mechanism compares new clones with a
+  baseline: code review owns an actionable clone below the 1% ceiling.
+- The language workspace has seven distributions. One entry point,
+  [`tools/audit_dependencies.py`](../../languages/python/tools/audit_dependencies.py),
+  runs deptry per member with the shared flags stated once, rather than in a
+  recipe or in each member's manifest. It derives the `parallax-*` `DEP002`
+  ignore from the workspace members and also runs the sibling-declaration and
+  development-dependency checks.
+- The residual findings were resolved by direct declarations. The unused
+  `jsonschema` finding had become obsolete: conformance now imports it.
