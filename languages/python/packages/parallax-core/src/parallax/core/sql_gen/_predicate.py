@@ -28,6 +28,7 @@ from parallax.core.predicate import (
     Exists,
     Group,
     Membership,
+    MembershipOp,
     Narrow,
     Navigate,
     NestedComparison,
@@ -386,6 +387,25 @@ ResolutionScope = EntityScope | ElementScope
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
+# The node kinds only an entity scope admits: everything outside the shared
+# sub-grammar of boolean combinators and the flat `nested*` family.
+type _EntityNode = (
+    All
+    | NoneOp
+    | Comparison
+    | Between
+    | NullCheck
+    | StringMatch
+    | Membership
+    | NestedExists
+    | NestedNotExists
+    | Narrow
+    | Navigate
+    | Exists
+    | NotExists
+)
+
+
 def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
     """Lower one predicate node to a SQL fragment, appending binds in order.
 
@@ -398,11 +418,11 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
        an entity scope walks `Class.valueObject.attribute` from its own document
        column, an element scope walks an element-relative path from the unnested
        alias.
-    2. Everything below the element-scope refusal is entity vocabulary. An
-       element scope refuses all of it with one message, deliberately NOT the
-       entity dispatcher's differentiated ones: `m-predicate`'s
-       `elementPredicate` grammar is a single named production, so what an
-       element `where` gets wrong is always the same thing.
+    2. Everything else is entity vocabulary, lowered by
+       :func:`_lower_entity_predicate`. An element scope refuses all of it with
+       one message, deliberately NOT the entity dispatcher's differentiated ones:
+       `m-predicate`'s `elementPredicate` grammar is a single named production,
+       so what an element `where` gets wrong is always the same thing.
     """
     op = product.authored
     match op:
@@ -429,12 +449,19 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
             if isinstance(scope, ElementScope):
                 return _lower_element_nested(product, scope)
             return _lower_nested(product, scope)
-        # -- everything below is ENTITY-scope vocabulary -----------------------
         case _ if isinstance(scope, ElementScope):
             raise SqlGenError(
                 f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
                 "(m-predicate elementPredicate)"
             )
+        case _:
+            return _lower_entity_predicate(op, product, scope)
+
+
+def _lower_entity_predicate(
+    op: _EntityNode, product: ValidatedPredicate, scope: EntityScope
+) -> str:
+    match op:
         case All():
             return ""
         case NoneOp():
@@ -459,23 +486,7 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
         case StringMatch():
             return _lower_string(product, scope)
         case Membership(op=tag, values=values):
-            subject = scope.subject_for(_attribute_member(product))
-            operands = _operands(product)
-            if len(operands) == 1 and isinstance(operands[0], DeferredKeySet):
-                if tag != "in":  # pragma: no cover - generated child reads are positive
-                    raise SqlGenError("a deferred key set supports only positive membership")
-                scope.ctx.bind_framework(operands[0])
-                return (
-                    f"{subject.compared} = any(?)"
-                    if scope.dialect.name == "postgres"
-                    else f"{subject.compared} in (__parallax_deferred_keys__)"
-                )
-            holes = ", ".join("?" for _ in values)
-            del values
-            for index in range(len(_operands(product))):
-                _bind_member_literal(product, index, subject, scope)
-            fragment = f"{subject.compared} in ({holes})"
-            return fragment if tag == "in" else f"not {fragment}"
+            return _lower_membership(product, tag, len(values), scope)
         case NestedExists() | NestedNotExists():
             return _lower_nested_exists(product, scope)
         case Narrow():
@@ -484,6 +495,27 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
             return _lower_navigation(product, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
+
+
+def _lower_membership(
+    product: ValidatedPredicate, tag: MembershipOp, hole_count: int, scope: EntityScope
+) -> str:
+    subject = scope.subject_for(_attribute_member(product))
+    operands = _operands(product)
+    if len(operands) == 1 and isinstance(operands[0], DeferredKeySet):
+        if tag != "in":  # pragma: no cover - generated child reads are positive
+            raise SqlGenError("a deferred key set supports only positive membership")
+        scope.ctx.bind_framework(operands[0])
+        return (
+            f"{subject.compared} = any(?)"
+            if scope.dialect.name == "postgres"
+            else f"{subject.compared} in (__parallax_deferred_keys__)"
+        )
+    holes = ", ".join("?" for _ in range(hole_count))
+    for index in range(len(operands)):
+        _bind_member_literal(product, index, subject, scope)
+    fragment = f"{subject.compared} in ({holes})"
+    return fragment if tag == "in" else f"not {fragment}"
 
 
 def _lower_string(product: ValidatedPredicate, scope: EntityScope) -> str:

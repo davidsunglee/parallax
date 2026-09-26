@@ -357,27 +357,9 @@ def nearest_float_at_width(
     plainly outside the target neighborhood are classified before constructing
     a ratio, so represented exponent size cannot drive allocation.
     """
-    if isinstance(value, (bool, ManagedValueExclusion)):
+    exact = _exact_number(value, declared)
+    if exact is None:
         return None
-    if isinstance(value, float):
-        base_value = float.__float__(value)
-        if not _math.isfinite(base_value):
-            return None
-        exact = _decimal.Decimal.from_float(base_value)
-    elif isinstance(value, int):
-        base_value = int.__int__(value)
-        magnitude_bits = abs(base_value).bit_length()
-        if isinstance(declared, Float32) and magnitude_bits > 129:
-            return None
-        if isinstance(declared, Float64) and magnitude_bits > 1025:
-            return None
-        exact = _decimal.Decimal(base_value)
-    else:
-        sign, digits, exponent = _decimal.Decimal.as_tuple(value)
-        if not isinstance(exponent, int):
-            return None
-        exact = _decimal.Decimal((sign, digits, exponent))
-
     if exact.is_zero():
         return 0.0
     negative = exact.is_signed()
@@ -406,6 +388,33 @@ def nearest_float_at_width(
     if projected == 0.0:
         return 0.0
     return -projected if negative else projected
+
+
+def _exact_number(
+    value: int | float | _decimal.Decimal,
+    declared: Float32 | Float64,
+) -> _decimal.Decimal | None:
+    """``value`` as an exact finite Decimal, or ``None`` when it is not a finite
+    number or is an integer too wide for any value of ``declared``."""
+    if isinstance(value, (bool, ManagedValueExclusion)):
+        return None
+    if isinstance(value, float):
+        base_value = float.__float__(value)
+        if not _math.isfinite(base_value):
+            return None
+        return _decimal.Decimal.from_float(base_value)
+    if isinstance(value, int):
+        base_value = int.__int__(value)
+        magnitude_bits = abs(base_value).bit_length()
+        if isinstance(declared, Float32) and magnitude_bits > 129:
+            return None
+        if isinstance(declared, Float64) and magnitude_bits > 1025:
+            return None
+        return _decimal.Decimal(base_value)
+    sign, digits, exponent = _decimal.Decimal.as_tuple(value)
+    if not isinstance(exponent, int):
+        return None
+    return _decimal.Decimal((sign, digits, exponent))
 
 
 def _nearest_binary32(magnitude: _Fraction) -> float:

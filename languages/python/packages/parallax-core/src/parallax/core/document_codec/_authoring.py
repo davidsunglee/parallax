@@ -158,14 +158,9 @@ def prepare_member_authoring(
 ) -> PreparedMemberAuthoring:
     """Prepare one already-resolved authored member without a wrapper document."""
     if isinstance(member, Leaf):
-        if source is None:
-            return PreparedMemberAuthoring(None, None)
-        if allow_marker and _is_marker(source):
-            return PreparedMemberAuthoring(retain_document_value(source), None)
-        managed, valid = normalize_leaf(member.type, source, path)
-        failure = None
-        if not valid:
-            failure = VoDocumentViolation("", "type-mismatch", managed, member.type)
+        managed, failure = _author_leaf(
+            member, source, normalize_leaf=normalize_leaf, path=path, allow_marker=allow_marker
+        )
         return PreparedMemberAuthoring(managed, failure)
     value, failure = _author_occurrence(
         member,
@@ -236,30 +231,22 @@ def _author_document(
         raw = source_access.member(source, name)
         member_path = _joined(path, name)
         if isinstance(member, Leaf):
-            if raw is None:
-                managed = None
-                valid = True
-            elif allow_markers and _is_marker(raw):
-                managed = retain_document_value(raw)
-                valid = True
-            else:
-                managed, valid = normalize_leaf(member.type, raw, member_path)
-            if values is not None:
-                values[name] = managed
-            if not valid:
-                if failures is None:
-                    failures = {}
-                failures[position] = VoDocumentViolation("", "type-mismatch", managed, member.type)
-            continue
-
-        managed, violation = _author_occurrence(
-            member,
-            raw,
-            source_access=source_access,
-            normalize_leaf=normalize_leaf,
-            path=member_path,
-            produce=produce,
-        )
+            managed, violation = _author_leaf(
+                member,
+                raw,
+                normalize_leaf=normalize_leaf,
+                path=member_path,
+                allow_marker=allow_markers,
+            )
+        else:
+            managed, violation = _author_occurrence(
+                member,
+                raw,
+                source_access=source_access,
+                normalize_leaf=normalize_leaf,
+                path=member_path,
+                produce=produce,
+            )
         if values is not None:
             values[name] = managed
         if violation is not None:
@@ -274,6 +261,24 @@ def _author_document(
 
     prepared = None if values is None else adopt_frozen_map(values)
     return prepared, _NO_FAILURES if failures is None else MappingProxyType(failures), present
+
+
+def _author_leaf(
+    leaf: Leaf,
+    source: object,
+    *,
+    normalize_leaf: LeafNormalizer,
+    path: str,
+    allow_marker: bool,
+) -> tuple[object, VoDocumentViolation | None]:
+    if source is None:
+        return None, None
+    if allow_marker and _is_marker(source):
+        return retain_document_value(source), None
+    managed, valid = normalize_leaf(leaf.type, source, path)
+    if valid:
+        return managed, None
+    return managed, VoDocumentViolation("", "type-mismatch", managed, leaf.type)
 
 
 def _author_occurrence(

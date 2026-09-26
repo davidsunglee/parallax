@@ -109,6 +109,45 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
     match op:
         case All() | NoneOp():
             return ValidatedPredicate(op)
+        case Comparison() | StringMatch() | Membership() | NullCheck() | Between():
+            return _validated_attribute_leaf(op, model, scope)
+        case (
+            NestedComparison()
+            | NestedRange()
+            | NestedMembership()
+            | NestedStringMatch()
+            | NestedNullCheck()
+        ):
+            return _validated_nested_leaf(op, model)
+        case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
+            container = _check_nested_vo_terminated(path, model)
+            children = () if where is None else (_elaborate_element_predicate(where, container),)
+            return ValidatedPredicate(op, children=children, container=container)
+        case And(operands=operands) | Or(operands=operands):
+            return ValidatedPredicate(
+                op, children=tuple(_walk(operand, model, scope) for operand in operands)
+            )
+        case Not(operand=operand) | Group(operand=operand):
+            return ValidatedPredicate(op, children=(_walk(operand, model, scope),))
+        case Narrow(to=to, operand=operand):
+            new_scope = validate_narrow(to, scope, model)
+            return ValidatedPredicate(
+                op,
+                children=(_walk(operand, model, new_scope),),
+                position=_position_identities(model, new_scope),
+            )
+        case Navigate() | Exists() | NotExists():
+            return _validated_hop(op, model)
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(op)
+
+
+def _validated_attribute_leaf(
+    op: Comparison | StringMatch | Membership | NullCheck | Between,
+    model: Metamodel,
+    scope: PositionScope,
+) -> ValidatedPredicate:
+    match op:
         case Comparison(attr=attr, value=value):
             member = _require_attribute(attr, model, scope)
             return _validated_leaf(op, member, (value,))
@@ -132,6 +171,15 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
             product = _validated_leaf(op, member, (lower, upper))
             _check_managed_bound_ordering(attr, product.operands)
             return product
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(op)
+
+
+def _validated_nested_leaf(
+    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
+    model: Metamodel,
+) -> ValidatedPredicate:
+    match op:
         case NestedComparison(path=path, value=value):
             leaf = _resolve_nested_leaf(path, model)
             return _validated_leaf(op, leaf, (value,))
@@ -151,52 +199,36 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
             leaf = _resolve_nested_leaf(op.path, model)
             _require_nullable_null_check(op.path, leaf.nullable)
             return ValidatedPredicate(op, member=leaf)
-        case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
-            container = _check_nested_vo_terminated(path, model)
-            children = () if where is None else (_elaborate_element_predicate(where, container),)
-            return ValidatedPredicate(op, children=children, container=container)
-        case And(operands=operands) | Or(operands=operands):
-            return ValidatedPredicate(
-                op, children=tuple(_walk(operand, model, scope) for operand in operands)
-            )
-        case Not(operand=operand) | Group(operand=operand):
-            return ValidatedPredicate(op, children=(_walk(operand, model, scope),))
-        case Narrow(to=to, operand=operand):
-            new_scope = validate_narrow(to, scope, model)
-            return ValidatedPredicate(
-                op,
-                children=(_walk(operand, model, new_scope),),
-                position=_position_identities(model, new_scope),
-            )
-        case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
-            target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
-            direction = _resolved_relationship(rel, model)
-            join = _direction_join(direction, model)
-            source_view = inheritance.view(model).entity(join.source.entity)
-            target_view = inheritance.view(model).entity(join.target.entity)
-            source = (
-                None if source_view is None else source_view.applicable_attribute(join.source.name)
-            )
-            member = (
-                None if target_view is None else target_view.applicable_attribute(join.target.name)
-            )
-            if source is None or member is None:  # pragma: no cover - formation validates joins
-                raise ValueError(f"{rel!r} has unresolved relationship join members")
-            hop_scope = PositionScope(
-                effective=effective_set(model, target),
-                relationship_target=target.identity.canonical,
-            )
-            children = () if inner is None else (_walk(inner, model, hop_scope),)
-            return ValidatedPredicate(
-                op,
-                children=children,
-                relationship_target=target,
-                relationship=direction,
-                relationship_source=source,
-                relationship_member=member,
-            )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
+
+
+def _validated_hop(op: Navigate | Exists | NotExists, model: Metamodel) -> ValidatedPredicate:
+    """A relationship hop resolved to its direction and join members, its inner
+    predicate walked from the target's own position."""
+    rel = op.rel
+    target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
+    direction = _resolved_relationship(rel, model)
+    join = _direction_join(direction, model)
+    source_view = inheritance.view(model).entity(join.source.entity)
+    target_view = inheritance.view(model).entity(join.target.entity)
+    source = None if source_view is None else source_view.applicable_attribute(join.source.name)
+    member = None if target_view is None else target_view.applicable_attribute(join.target.name)
+    if source is None or member is None:  # pragma: no cover - formation validates joins
+        raise ValueError(f"{rel!r} has unresolved relationship join members")
+    hop_scope = PositionScope(
+        effective=effective_set(model, target),
+        relationship_target=target.identity.canonical,
+    )
+    children = () if op.op is None else (_walk(op.op, model, hop_scope),)
+    return ValidatedPredicate(
+        op,
+        children=children,
+        relationship_target=target,
+        relationship=direction,
+        relationship_source=source,
+        relationship_member=member,
+    )
 
 
 def _position_identities(model: Metamodel, position: PositionScope) -> tuple[EntityIdentity, ...]:
