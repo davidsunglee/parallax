@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import cast
 
 from parallax.core.predicate._nodes import (
@@ -103,32 +103,6 @@ _Shape = tuple[frozenset[str], frozenset[str]]  # (required, optional)
 
 def _shape(required: tuple[str, ...], optional: tuple[str, ...] = ()) -> _Shape:
     return frozenset(required), frozenset(optional)
-
-
-_SHAPES: dict[str, _Shape] = {
-    "all": _shape(()),
-    "none": _shape(()),
-    "between": _shape(("attr", "lower", "upper")),
-    "and": _shape(("operands",)),
-    "or": _shape(("operands",)),
-    "not": _shape(("operand",)),
-    "group": _shape(("operand",)),
-    "narrow": _shape(("to", "operand")),
-    "nestedExists": _shape(("path",), ("where",)),
-    "nestedNotExists": _shape(("path",), ("where",)),
-    "navigate": _shape(("rel",), ("op",)),
-    "exists": _shape(("rel",), ("op",)),
-    "notExists": _shape(("rel",), ("op",)),
-}
-_SHAPES.update({tag: _shape(("attr", "value")) for tag in _COMPARISONS})
-_SHAPES.update({tag: _shape(("attr",)) for tag in _NULLS})
-_SHAPES.update({tag: _shape(("attr", "value"), ("caseInsensitive",)) for tag in _STRINGS})
-_SHAPES.update({tag: _shape(("attr", "values")) for tag in _MEMBERSHIPS})
-_SHAPES.update({tag: _shape(("path", "value")) for tag in _NESTED_CMP})
-_SHAPES.update({tag: _shape(("path", "lower", "upper")) for tag in _NESTED_RANGE})
-_SHAPES.update({tag: _shape(("path", "values")) for tag in _NESTED_MEMBERSHIPS})
-_SHAPES.update({tag: _shape(("path", "value"), ("caseInsensitive",)) for tag in _NESTED_STRINGS})
-_SHAPES.update({tag: _shape(("path",)) for tag in _NESTED_NULL})
 
 
 def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
@@ -259,114 +233,196 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
         raise CanonicalDocumentError(
             f"{tag}: not a legal element predicate inside a nestedExists `where`"
         )
-    shape = _SHAPES.get(tag)
-    if shape is not None:
-        _check_shape(tag, shape, body)
+    grammar = _GRAMMAR.get(tag)
+    if grammar is None:
+        raise CanonicalDocumentError(f"unknown predicate node {tag!r}")
+    shape, parse = grammar
+    _check_shape(tag, shape, body)
+    return parse(tag, body, element_scope)
+
+
+type _Parser = Callable[[str, Mapping[str, object], bool], PredicateNode]
+type _Grammar = tuple[_Shape, _Parser]
+
+
+def _attr(body: Mapping[str, object], tag: str) -> str:
+    return _ref(body, "attr", tag, _MEMBER_REF, "attribute reference")
+
+
+def _rel(body: Mapping[str, object], tag: str) -> str:
+    return _ref(body, "rel", tag, _MEMBER_REF, "relationship reference")
+
+
+def _nested_path(body: Mapping[str, object], tag: str, element_scope: bool) -> str:
     # A nested*-family path is a value-object inner reference at top level
     # (`Class.valueObject.field`), but an element-relative reference inside a
     # scoped `where` (`type`, `geo.country`) — the schema swaps the pattern.
-    nested_ref = _ELEMENT_REF if element_scope else _NESTED_REF
-    nested_kind = "element-relative path" if element_scope else "nested reference"
-    if tag == "all":
-        return All()
-    if tag == "none":
-        return NoneOp()
-    if tag in _COMPARISONS:
-        return Comparison(
-            op=cast("ComparisonOp", tag),
-            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
-            value=_scalar(body.get("value"), tag),
-        )
-    if tag == "between":
-        return Between(
-            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
-            lower=_scalar(body.get("lower"), tag),
-            upper=_scalar(body.get("upper"), tag),
-        )
-    if tag in _NULLS:
-        return NullCheck(
-            op=cast("NullOp", tag),
-            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
-        )
-    if tag in _STRINGS:
-        return StringMatch(
-            op=cast("StringOp", tag),
-            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
-            value=_str(body, "value", tag),
-            case_insensitive=_case_insensitive(body, tag),
-        )
-    if tag in _MEMBERSHIPS:
-        return Membership(
-            op=cast("MembershipOp", tag),
-            attr=_ref(body, "attr", tag, _MEMBER_REF, "attribute reference"),
-            values=_values(body, tag),
-        )
-    if tag == "and":
-        return And(operands=_operands(body, tag, element_scope=element_scope))
-    if tag == "or":
-        return Or(operands=_operands(body, tag, element_scope=element_scope))
-    if tag == "not":
-        return Not(operand=_operand(body, element_scope=element_scope))
-    if tag == "group":
-        return Group(operand=_operand(body, element_scope=element_scope))
-    if tag == "narrow":
-        return Narrow(
-            to=canonical_subtype_selection(_to_list(body, tag)),
-            operand=_operand(body, element_scope=element_scope),
-        )
-    if tag in _NESTED_CMP:
-        return NestedComparison(
-            op=cast("NestedComparisonOp", tag),
-            path=_ref(body, "path", tag, nested_ref, nested_kind),
-            value=_scalar(body.get("value"), tag),
-        )
-    if tag in _NESTED_RANGE:
-        return NestedRange(
-            path=_ref(body, "path", tag, nested_ref, nested_kind),
-            lower=_scalar(body.get("lower"), tag),
-            upper=_scalar(body.get("upper"), tag),
-        )
-    if tag in _NESTED_MEMBERSHIPS:
-        return NestedMembership(
-            op=cast("NestedMembershipOp", tag),
-            path=_ref(body, "path", tag, nested_ref, nested_kind),
-            values=_values(body, tag),
-        )
-    if tag in _NESTED_STRINGS:
-        return NestedStringMatch(
-            op=cast("NestedStringOp", tag),
-            path=_ref(body, "path", tag, nested_ref, nested_kind),
-            value=_str(body, "value", tag),
-            case_insensitive=_case_insensitive(body, tag),
-        )
-    if tag in _NESTED_NULL:
-        return NestedNullCheck(
-            op=cast("NestedNullOp", tag),
-            path=_ref(body, "path", tag, nested_ref, nested_kind),
-        )
-    if tag == "nestedExists":
-        return NestedExists(
-            path=_ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference"),
-            where=_nested_where(body),
-        )
-    if tag == "nestedNotExists":
-        return NestedNotExists(
-            path=_ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference"),
-            where=_nested_where(body),
-        )
-    if tag == "navigate":
-        return Navigate(
-            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
-        )
-    if tag == "exists":
-        return Exists(
-            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
-        )
-    if tag == "notExists":
-        return NotExists(
-            rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
-        )
-    raise CanonicalDocumentError(f"unknown predicate node {tag!r}")
+    if element_scope:
+        return _ref(body, "path", tag, _ELEMENT_REF, "element-relative path")
+    return _ref(body, "path", tag, _NESTED_REF, "nested reference")
+
+
+def _value_object_path(body: Mapping[str, object], tag: str) -> str:
+    return _ref(body, "path", tag, _VALUE_OBJECT_REF, "value-object reference")
+
+
+def _comparison(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return Comparison(
+        op=cast("ComparisonOp", tag),
+        attr=_attr(body, tag),
+        value=_scalar(body.get("value"), tag),
+    )
+
+
+def _between(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return Between(
+        attr=_attr(body, tag),
+        lower=_scalar(body.get("lower"), tag),
+        upper=_scalar(body.get("upper"), tag),
+    )
+
+
+def _null_check(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return NullCheck(op=cast("NullOp", tag), attr=_attr(body, tag))
+
+
+def _string_match(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return StringMatch(
+        op=cast("StringOp", tag),
+        attr=_attr(body, tag),
+        value=_str(body, "value", tag),
+        case_insensitive=_case_insensitive(body, tag),
+    )
+
+
+def _membership(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return Membership(
+        op=cast("MembershipOp", tag), attr=_attr(body, tag), values=_values(body, tag)
+    )
+
+
+def _and(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return And(operands=_operands(body, tag, element_scope=element_scope))
+
+
+def _or(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return Or(operands=_operands(body, tag, element_scope=element_scope))
+
+
+def _not(_tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return Not(operand=_operand(body, element_scope=element_scope))
+
+
+def _group(_tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return Group(operand=_operand(body, element_scope=element_scope))
+
+
+def _narrow(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return Narrow(
+        to=canonical_subtype_selection(_to_list(body, tag)),
+        operand=_operand(body, element_scope=element_scope),
+    )
+
+
+def _nested_comparison(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return NestedComparison(
+        op=cast("NestedComparisonOp", tag),
+        path=_nested_path(body, tag, element_scope),
+        value=_scalar(body.get("value"), tag),
+    )
+
+
+def _nested_range(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return NestedRange(
+        path=_nested_path(body, tag, element_scope),
+        lower=_scalar(body.get("lower"), tag),
+        upper=_scalar(body.get("upper"), tag),
+    )
+
+
+def _nested_membership(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return NestedMembership(
+        op=cast("NestedMembershipOp", tag),
+        path=_nested_path(body, tag, element_scope),
+        values=_values(body, tag),
+    )
+
+
+def _nested_string_match(
+    tag: str, body: Mapping[str, object], element_scope: bool
+) -> PredicateNode:
+    return NestedStringMatch(
+        op=cast("NestedStringOp", tag),
+        path=_nested_path(body, tag, element_scope),
+        value=_str(body, "value", tag),
+        case_insensitive=_case_insensitive(body, tag),
+    )
+
+
+def _nested_null_check(tag: str, body: Mapping[str, object], element_scope: bool) -> PredicateNode:
+    return NestedNullCheck(
+        op=cast("NestedNullOp", tag), path=_nested_path(body, tag, element_scope)
+    )
+
+
+def _nested_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return NestedExists(path=_value_object_path(body, tag), where=_nested_where(body))
+
+
+def _nested_not_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return NestedNotExists(path=_value_object_path(body, tag), where=_nested_where(body))
+
+
+def _navigate(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return Navigate(rel=_rel(body, tag), op=_nav_op(body))
+
+
+def _exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return Exists(rel=_rel(body, tag), op=_nav_op(body))
+
+
+def _not_exists(tag: str, body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return NotExists(rel=_rel(body, tag), op=_nav_op(body))
+
+
+def _all(_tag: str, _body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return All()
+
+
+def _none(_tag: str, _body: Mapping[str, object], _scope: bool) -> PredicateNode:
+    return NoneOp()
+
+
+def _family(tags: frozenset[str], shape: _Shape, parse: _Parser) -> dict[str, _Grammar]:
+    return dict.fromkeys(tags, (shape, parse))
+
+
+_GRAMMAR: dict[str, _Grammar] = {
+    "all": (_shape(()), _all),
+    "none": (_shape(()), _none),
+    "between": (_shape(("attr", "lower", "upper")), _between),
+    "and": (_shape(("operands",)), _and),
+    "or": (_shape(("operands",)), _or),
+    "not": (_shape(("operand",)), _not),
+    "group": (_shape(("operand",)), _group),
+    "narrow": (_shape(("to", "operand")), _narrow),
+    "nestedExists": (_shape(("path",), ("where",)), _nested_exists),
+    "nestedNotExists": (_shape(("path",), ("where",)), _nested_not_exists),
+    "navigate": (_shape(("rel",), ("op",)), _navigate),
+    "exists": (_shape(("rel",), ("op",)), _exists),
+    "notExists": (_shape(("rel",), ("op",)), _not_exists),
+    **_family(_COMPARISONS, _shape(("attr", "value")), _comparison),
+    **_family(_NULLS, _shape(("attr",)), _null_check),
+    **_family(_STRINGS, _shape(("attr", "value"), ("caseInsensitive",)), _string_match),
+    **_family(_MEMBERSHIPS, _shape(("attr", "values")), _membership),
+    **_family(_NESTED_CMP, _shape(("path", "value")), _nested_comparison),
+    **_family(_NESTED_RANGE, _shape(("path", "lower", "upper")), _nested_range),
+    **_family(_NESTED_MEMBERSHIPS, _shape(("path", "values")), _nested_membership),
+    **_family(
+        _NESTED_STRINGS, _shape(("path", "value"), ("caseInsensitive",)), _nested_string_match
+    ),
+    **_family(_NESTED_NULL, _shape(("path",)), _nested_null_check),
+}
 
 
 def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:
@@ -399,44 +455,20 @@ def serialize(op: PredicateNode) -> dict[str, object]:
             return {"all": {}}
         case NoneOp():
             return {"none": {}}
-        case Comparison(op=tag, attr=attr, value=value):
-            return {tag: {"attr": attr, "value": value}}
-        case Between(attr=attr, lower=lower, upper=upper):
-            return {"between": {"attr": attr, "lower": lower, "upper": upper}}
-        case NullCheck(op=tag, attr=attr):
-            return {tag: {"attr": attr}}
-        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=ci):
-            # Omit an omitted flag (None); round-trip an explicit `false`/`true`
-            # verbatim (m-predicate: serialize(deserialize(op)) == op).
-            body: dict[str, object] = {"attr": attr, "value": value}
-            if ci is not None:
-                body["caseInsensitive"] = ci
-            return {tag: body}
-        case Membership(op=tag, attr=attr, values=values):
-            return {tag: {"attr": attr, "values": list(values)}}
-        case And(operands=operands):
-            return {"and": {"operands": [serialize(o) for o in operands]}}
-        case Or(operands=operands):
-            return {"or": {"operands": [serialize(o) for o in operands]}}
-        case Not(operand=operand):
-            return {"not": {"operand": serialize(operand)}}
-        case Group(operand=operand):
-            return {"group": {"operand": serialize(operand)}}
+        case Comparison() | Between() | NullCheck() | StringMatch() | Membership():
+            return _emit_attribute_leaf(op)
+        case (
+            NestedComparison()
+            | NestedRange()
+            | NestedMembership()
+            | NestedStringMatch()
+            | NestedNullCheck()
+        ):
+            return _emit_nested_leaf(op)
+        case And() | Or() | Not() | Group():
+            return _emit_combinator(op)
         case Narrow(to=to, operand=operand):
             return {"narrow": {"to": list(to), "operand": serialize(operand)}}
-        case NestedComparison(op=tag, path=path, value=value):
-            return {tag: {"path": path, "value": value}}
-        case NestedRange(path=path, lower=lower, upper=upper):
-            return {"nestedBetween": {"path": path, "lower": lower, "upper": upper}}
-        case NestedMembership(op=tag, path=path, values=values):
-            return {tag: {"path": path, "values": list(values)}}
-        case NestedStringMatch(op=tag, path=path, value=value, case_insensitive=ci):
-            nested_string: dict[str, object] = {"path": path, "value": value}
-            if ci is not None:
-                nested_string["caseInsensitive"] = ci
-            return {tag: nested_string}
-        case NestedNullCheck(op=tag, path=path):
-            return {tag: {"path": path}}
         case NestedExists(path=path, where=where):
             return {"nestedExists": {"path": path, **_emit_where(where)}}
         case NestedNotExists(path=path, where=where):
@@ -447,3 +479,55 @@ def serialize(op: PredicateNode) -> dict[str, object]:
             return {"exists": _emit_nav(rel, inner)}
         case NotExists(rel=rel, op=inner):
             return {"notExists": _emit_nav(rel, inner)}
+
+
+def _emit_attribute_leaf(
+    op: Comparison | Between | NullCheck | StringMatch | Membership,
+) -> dict[str, object]:
+    match op:
+        case Comparison(op=tag, attr=attr, value=value):
+            return {tag: {"attr": attr, "value": value}}
+        case Between(attr=attr, lower=lower, upper=upper):
+            return {"between": {"attr": attr, "lower": lower, "upper": upper}}
+        case NullCheck(op=tag, attr=attr):
+            return {tag: {"attr": attr}}
+        case StringMatch(op=tag, attr=attr, value=value, case_insensitive=ci):
+            return {tag: _emit_string_body({"attr": attr, "value": value}, ci)}
+        case Membership(op=tag, attr=attr, values=values):
+            return {tag: {"attr": attr, "values": list(values)}}
+
+
+def _emit_nested_leaf(
+    op: NestedComparison | NestedRange | NestedMembership | NestedStringMatch | NestedNullCheck,
+) -> dict[str, object]:
+    match op:
+        case NestedComparison(op=tag, path=path, value=value):
+            return {tag: {"path": path, "value": value}}
+        case NestedRange(path=path, lower=lower, upper=upper):
+            return {"nestedBetween": {"path": path, "lower": lower, "upper": upper}}
+        case NestedMembership(op=tag, path=path, values=values):
+            return {tag: {"path": path, "values": list(values)}}
+        case NestedStringMatch(op=tag, path=path, value=value, case_insensitive=ci):
+            return {tag: _emit_string_body({"path": path, "value": value}, ci)}
+        case NestedNullCheck(op=tag, path=path):
+            return {tag: {"path": path}}
+
+
+def _emit_combinator(op: And | Or | Not | Group) -> dict[str, object]:
+    match op:
+        case And(operands=operands):
+            return {"and": {"operands": [serialize(o) for o in operands]}}
+        case Or(operands=operands):
+            return {"or": {"operands": [serialize(o) for o in operands]}}
+        case Not(operand=operand):
+            return {"not": {"operand": serialize(operand)}}
+        case Group(operand=operand):
+            return {"group": {"operand": serialize(operand)}}
+
+
+def _emit_string_body(body: dict[str, object], case_insensitive: bool | None) -> dict[str, object]:
+    # Omit an omitted flag (None); round-trip an explicit `false`/`true`
+    # verbatim (m-predicate: serialize(deserialize(op)) == op).
+    if case_insensitive is not None:
+        body["caseInsensitive"] = case_insensitive
+    return body

@@ -17,8 +17,8 @@ Each provider exposes:
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
-* ``open_session(isolation)`` — a manual-commit session, opened at a portable
-  Isolation Level when a case declares one.
+* ``open_session(isolation)`` — a manual-commit :class:`Session`, opened at a
+  portable Isolation Level when a case declares one.
 
 An accepted Object Query observation reads through a narrower view of the same
 surface — ``dialect`` and ``query`` alone are
@@ -150,6 +150,33 @@ class Node(Protocol):
         ...
 
 
+class Session(Protocol):
+    """A manual-commit connection whose statements share one held transaction
+    until :meth:`commit` or :meth:`rollback`."""
+
+    dialect: str
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        """Run a read inside the held transaction; return rows as dicts.
+
+        A locking read therefore takes its lock and returns its rows within the
+        open unit of work, which the provider's own connection cannot see into.
+        """
+        ...
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        """Run DML inside the held transaction; return the affected-row count.
+
+        The count is what makes an optimistic-lock conflict observable inside a
+        buffered unit of work (m-opt-lock): a stale-version gate matches 0 rows.
+        """
+        ...
+
+    def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+
 @runtime_checkable
 class DatabaseProvider(Protocol):
     """The provisioning + execution seam the case runner is written against."""
@@ -206,7 +233,7 @@ class DatabaseProvider(Protocol):
 
     def open_session(
         self, isolation: str | None = None
-    ) -> AbstractContextManager[Any]:  # pragma: no cover - protocol stub
+    ) -> AbstractContextManager[Session]:  # pragma: no cover - protocol stub
         """Context-manage a manual-commit session for lock-contention cases.
 
         ``isolation`` is the portable level the case RESOLVES for the session

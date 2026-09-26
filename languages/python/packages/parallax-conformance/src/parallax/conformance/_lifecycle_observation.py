@@ -21,6 +21,8 @@ from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
     AcquisitionFinished,
     AcquisitionStarted,
+    ActivityFinished,
+    ActivityStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
@@ -461,9 +463,28 @@ def _portable(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, ob
 def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, object]:
     """The one wrapper naming ``event``'s transition, and its portable payload.
 
-    The one exhaustive match over the event union: a transition added to the
-    algebra fails to type-check here until the observation can spell it.
+    Exhaustive over the event union, one half per side of its Started/Finished
+    split: a transition added to the algebra fails to type-check here until the
+    observation can spell it.
     """
+    match event:
+        case (
+            ReadStarted()
+            | WriteBatchStarted()
+            | DatabaseCallStarted()
+            | TransactionInvocationStarted()
+            | TransactionAttemptStarted()
+            | SnapshotStreamStarted()
+            | StreamBatchStarted()
+            | AcquisitionStarted()
+            | ReleaseStarted()
+        ):
+            return _started(event, indexer)
+        case _:
+            return _finished(event)
+
+
+def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, object]:
     match event:
         case ReadStarted(target=target, interface=interface, edition=edition):
             read_started: dict[str, object] = {
@@ -473,28 +494,18 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             if edition is not None:
                 read_started["edition"] = edition
             return {"readStarted": read_started}
-        case ReadFinished(outcome=outcome):
-            return {"readFinished": _read_outcome(outcome)}
         case WriteBatchStarted(trigger=trigger):
             return {"writeBatchStarted": {"trigger": _WRITE_BATCH_TRIGGER[trigger]}}
-        case WriteBatchFinished(outcome=outcome):
-            return {"writeBatchFinished": _write_batch_outcome(outcome)}
         case DatabaseCallStarted(target=target, kind=kind, statement=statement):
             started: dict[str, object] = {"target": target, "kind": _CALL_KIND[kind]}
             index = indexer.take(statement)
             if index is not None:
                 started["statement"] = index
             return {"databaseCallStarted": started}
-        case DatabaseCallFinished(outcome=outcome):
-            return {"databaseCallFinished": _database_call_outcome(outcome)}
         case TransactionInvocationStarted(invocation=invocation):
             return {"transactionInvocationStarted": _invocation(invocation)}
-        case TransactionInvocationFinished(outcome=outcome):
-            return {"transactionInvocationFinished": _invocation_outcome(outcome)}
         case TransactionAttemptStarted(edition=edition):
             return {"transactionAttemptStarted": {"edition": edition}}
-        case TransactionAttemptFinished(outcome=outcome):
-            return {"transactionAttemptFinished": _attempt_outcome(outcome)}
         case SnapshotStreamStarted(
             target=target, interface=interface, batch_size=batch_size, edition=edition
         ):
@@ -506,18 +517,34 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             if edition is not None:
                 stream_started["edition"] = edition
             return {"snapshotStreamStarted": stream_started}
-        case SnapshotStreamFinished(outcome=outcome):
-            return {"snapshotStreamFinished": _stream_outcome(outcome)}
         case StreamBatchStarted():
             return {"streamBatchStarted": {}}
-        case StreamBatchFinished(outcome=outcome):
-            return {"streamBatchFinished": _stream_batch_outcome(outcome)}
         case AcquisitionStarted():
             return {"acquisitionStarted": {}}
-        case AcquisitionFinished(outcome=outcome):
-            return {"acquisitionFinished": _acquisition_outcome(outcome)}
         case ReleaseStarted():
             return {"releaseStarted": {}}
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _finished(event: ActivityFinished) -> dict[str, object]:
+    match event:
+        case ReadFinished(outcome=outcome):
+            return {"readFinished": _read_outcome(outcome)}
+        case WriteBatchFinished(outcome=outcome):
+            return {"writeBatchFinished": _write_batch_outcome(outcome)}
+        case DatabaseCallFinished(outcome=outcome):
+            return {"databaseCallFinished": _database_call_outcome(outcome)}
+        case TransactionInvocationFinished(outcome=outcome):
+            return {"transactionInvocationFinished": _invocation_outcome(outcome)}
+        case TransactionAttemptFinished(outcome=outcome):
+            return {"transactionAttemptFinished": _attempt_outcome(outcome)}
+        case SnapshotStreamFinished(outcome=outcome):
+            return {"snapshotStreamFinished": _stream_outcome(outcome)}
+        case StreamBatchFinished(outcome=outcome):
+            return {"streamBatchFinished": _stream_batch_outcome(outcome)}
+        case AcquisitionFinished(outcome=outcome):
+            return {"acquisitionFinished": _acquisition_outcome(outcome)}
         case ReleaseFinished(cleanup_result=cleanup_result):
             return {"releaseFinished": _cleanup(cleanup_result)}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard

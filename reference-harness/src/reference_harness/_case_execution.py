@@ -5,13 +5,16 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ._declared_contributor import DeclaredContributor
 from ._statement_bind_inference import infer_statement_bind_targets
 from .case import Case
 from .ddl_builder import declared_contributors
 from .storage_layout import ColumnContributor, ColumnSlot
+
+if TYPE_CHECKING:
+    from .providers import Session
 
 
 def _array_bind_indexes(statement: str) -> frozenset[int]:
@@ -33,19 +36,11 @@ class _StatementExecutor(_ReadExecutor, Protocol):
 
 
 class _SessionSource(Protocol):
-    def open_session(
-        self, isolation: str | None = None
-    ) -> AbstractContextManager[_StatementExecutor]: ...
+    def open_session(self, isolation: str | None = None) -> AbstractContextManager[Session]: ...
 
 
 class _PeerSource(Protocol):
     def open_peer(self) -> AbstractContextManager[_StatementExecutor]: ...
-
-
-class _TransactionExecutor(Protocol):
-    def commit(self) -> None: ...
-
-    def rollback(self) -> None: ...
 
 
 class CaseExecution:
@@ -74,10 +69,10 @@ class CaseExecution:
         return executor.execute(sql, self._provider_binds(sql, binds))
 
     def commit(self) -> None:
-        cast(_TransactionExecutor, self._executor).commit()
+        cast("Session", self._executor).commit()
 
     def rollback(self) -> None:
-        cast(_TransactionExecutor, self._executor).rollback()
+        cast("Session", self._executor).rollback()
 
     @contextmanager
     def open_session(self, isolation: str | None = None) -> Iterator[CaseExecution]:

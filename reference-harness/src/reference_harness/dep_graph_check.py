@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import yaml
@@ -450,7 +451,7 @@ def formation_manifest_errors(modules_markdown: str, manifest_markdown: str) -> 
     owners: set[str] = set()
     issue_owners: dict[str, str] = {}
     facet_owners: dict[str, str] = {}
-    manifest_entries: list[tuple[str, set[str], set[str]]] = []
+    manifest_entries: list[tuple[str, set[str]]] = []
     metadata_compiler_owners: list[str] = []
     for row in rows:
         owner_match = re.fullmatch(rf"`({MODULE_SLUG})`", row["owner"])
@@ -461,119 +462,20 @@ def formation_manifest_errors(modules_markdown: str, manifest_markdown: str) -> 
         if owner in owners:
             errors.append(f"formation manifest owner {owner} appears more than once")
         owners.add(owner)
-
-        if owner not in catalog:
-            errors.append(f"formation manifest owner {owner} is absent from the module catalog")
-        elif catalog[owner]["status"] != "active":
-            errors.append(f"formation manifest owner {owner} is not active in the module catalog")
-
-        rule_set = row["rule set"]
-        rule_set_kind = "none" if rule_set == "none" or rule_set.startswith("none; ") else rule_set
-        valid_rule_sets = {"required", "none", "fixed resolver, not a supplied Rule Set"}
-        if rule_set_kind not in valid_rule_sets:
-            errors.append(
-                f"formation manifest owner {owner} has invalid Rule Set declaration {rule_set!r}"
+        errors.extend(_manifest_owner_catalog_errors(owner, catalog))
+        rule_set_kind, rule_set_errors = _manifest_rule_set(owner, row["rule set"])
+        errors.extend(rule_set_errors)
+        errors.extend(
+            _manifest_issue_code_errors(
+                owner, row["complete owned issue codes"], rule_set_kind, issue_owners
             )
-        if rule_set_kind == "fixed resolver, not a supplied Rule Set" and owner != "m-metamodel":
-            errors.append(
-                f"formation manifest owner {owner} declares the fixed resolver owned by m-metamodel"
-            )
-
-        issue_codes, cell_errors = _manifest_list(
-            row["complete owned issue codes"],
-            item_pattern=rf"`({_ISSUE_CODE_BODY})`",
-            item_kind="Issue Code",
-            owner=owner,
         )
-        errors.extend(cell_errors)
-        if rule_set_kind == "none" and issue_codes:
-            errors.append(
-                f"formation manifest owner {owner} has no Rule Set but declares owned Issue Codes"
-            )
-        expected_issue_prefix = owner.removeprefix("m-") + "-"
-        for issue_code in issue_codes:
-            if not issue_code.startswith(expected_issue_prefix):
-                errors.append(f"formation manifest Issue Code {issue_code} is not owned by {owner}")
-            previous_owner = issue_owners.setdefault(issue_code, owner)
-            if previous_owner != owner:
-                errors.append(
-                    f"formation manifest Issue Code {issue_code} is owned by both "
-                    f"{previous_owner} and {owner}"
-                )
-
-        compiler_facet = row["compiler / facet"]
-        declared_facet_owner: str | None = None
-        if compiler_facet == "mandatory Metadata Compiler; no facet":
+        if row["compiler / facet"] == _METADATA_COMPILER_DECLARATION:
             metadata_compiler_owners.append(owner)
-            if owner != "m-metamodel":
-                errors.append(
-                    f"formation manifest owner {owner} declares the Metadata Compiler owned by "
-                    "m-metamodel"
-                )
-        elif compiler_facet == "none" or compiler_facet.startswith("none; "):
-            pass
-        else:
-            facet_match = re.fullmatch(
-                rf"`([A-Z][A-Za-z0-9]*Facet)` under `FacetKey\(({MODULE_SLUG})\)`",
-                compiler_facet,
-            )
-            if facet_match is None:
-                errors.append(
-                    f"formation manifest owner {owner} has invalid compiler/facet declaration "
-                    f"{compiler_facet!r}"
-                )
-            else:
-                declared_facet_owner = facet_match.group(2)
-                if declared_facet_owner is None:
-                    errors.append(
-                        f"formation manifest owner {owner} has no facet-key owner in "
-                        f"{compiler_facet!r}"
-                    )
-                    continue
-                if declared_facet_owner != owner:
-                    errors.append(
-                        f"formation manifest owner {owner} declares facet key owned by "
-                        f"{declared_facet_owner}"
-                    )
-                previous_owner = facet_owners.setdefault(declared_facet_owner, owner)
-                if previous_owner != owner:
-                    errors.append(
-                        f"formation manifest facet {declared_facet_owner} is declared by both "
-                        f"{previous_owner} and {owner}"
-                    )
-
-        required_module_values, cell_errors = _manifest_list(
-            row["required modules"],
-            item_pattern=rf"`({MODULE_SLUG})`",
-            item_kind="required module",
-            owner=owner,
-        )
-        errors.extend(cell_errors)
-        required_modules = set(required_module_values)
-        for dependency in sorted(required_modules):
-            if dependency not in catalog:
-                errors.append(
-                    f"formation manifest required module {dependency} is absent from the catalog"
-                )
-            if (owner, dependency) not in edges:
-                errors.append(
-                    f"formation manifest requires missing direct edge {owner} --> {dependency}"
-                )
-
-        required_facet_values, cell_errors = _manifest_list(
-            row["required facets"],
-            item_pattern=rf"`FacetKey\(({MODULE_SLUG})\)`",
-            item_kind="required facet",
-            owner=owner,
-        )
-        errors.extend(cell_errors)
-        required_facets = set(required_facet_values)
-        for facet_owner in sorted(required_facets - required_modules):
-            errors.append(
-                f"formation manifest owner {owner} requires facet {facet_owner} "
-                f"without requiring its module"
-            )
-        manifest_entries.append((owner, required_modules, required_facets))
+        errors.extend(_manifest_compiler_facet_errors(owner, row["compiler / facet"], facet_owners))
+        required_facets, requirement_errors = _manifest_requirements(owner, row, catalog, edges)
+        errors.extend(requirement_errors)
+        manifest_entries.append((owner, required_facets))
 
     if metadata_compiler_owners != ["m-metamodel"]:
         errors.append(
@@ -581,7 +483,7 @@ def formation_manifest_errors(modules_markdown: str, manifest_markdown: str) -> 
             "m-metamodel"
         )
 
-    for owner, _required_modules, required_facets in manifest_entries:
+    for owner, required_facets in manifest_entries:
         for facet_owner in sorted(required_facets):
             declaring_owner = facet_owners.get(facet_owner)
             if declaring_owner is None:
@@ -594,6 +496,138 @@ def formation_manifest_errors(modules_markdown: str, manifest_markdown: str) -> 
                     f"declared by {declaring_owner}"
                 )
     return errors
+
+
+_FIXED_RESOLVER_DECLARATION = "fixed resolver, not a supplied Rule Set"
+_METADATA_COMPILER_DECLARATION = "mandatory Metadata Compiler; no facet"
+
+
+def _manifest_owner_catalog_errors(
+    owner: str, catalog: Mapping[str, Mapping[str, str]]
+) -> list[str]:
+    if owner not in catalog:
+        return [f"formation manifest owner {owner} is absent from the module catalog"]
+    if catalog[owner]["status"] != "active":
+        return [f"formation manifest owner {owner} is not active in the module catalog"]
+    return []
+
+
+def _manifest_rule_set(owner: str, rule_set: str) -> tuple[str, list[str]]:
+    errors: list[str] = []
+    rule_set_kind = "none" if rule_set == "none" or rule_set.startswith("none; ") else rule_set
+    if rule_set_kind not in {"required", "none", _FIXED_RESOLVER_DECLARATION}:
+        errors.append(
+            f"formation manifest owner {owner} has invalid Rule Set declaration {rule_set!r}"
+        )
+    if rule_set_kind == _FIXED_RESOLVER_DECLARATION and owner != "m-metamodel":
+        errors.append(
+            f"formation manifest owner {owner} declares the fixed resolver owned by m-metamodel"
+        )
+    return rule_set_kind, errors
+
+
+def _manifest_issue_code_errors(
+    owner: str, cell: str, rule_set_kind: str, issue_owners: dict[str, str]
+) -> list[str]:
+    """Check an owner's Issue Codes, claiming each unclaimed one in *issue_owners*."""
+    issue_codes, errors = _manifest_list(
+        cell,
+        item_pattern=rf"`({_ISSUE_CODE_BODY})`",
+        item_kind="Issue Code",
+        owner=owner,
+    )
+    if rule_set_kind == "none" and issue_codes:
+        errors.append(
+            f"formation manifest owner {owner} has no Rule Set but declares owned Issue Codes"
+        )
+    expected_issue_prefix = owner.removeprefix("m-") + "-"
+    for issue_code in issue_codes:
+        if not issue_code.startswith(expected_issue_prefix):
+            errors.append(f"formation manifest Issue Code {issue_code} is not owned by {owner}")
+        previous_owner = issue_owners.setdefault(issue_code, owner)
+        if previous_owner != owner:
+            errors.append(
+                f"formation manifest Issue Code {issue_code} is owned by both "
+                f"{previous_owner} and {owner}"
+            )
+    return errors
+
+
+def _manifest_compiler_facet_errors(
+    owner: str, compiler_facet: str, facet_owners: dict[str, str]
+) -> list[str]:
+    """Check a compiler/facet cell, claiming a declared facet key in *facet_owners*."""
+    if compiler_facet == _METADATA_COMPILER_DECLARATION:
+        if owner != "m-metamodel":
+            return [
+                f"formation manifest owner {owner} declares the Metadata Compiler owned by "
+                "m-metamodel"
+            ]
+        return []
+    if compiler_facet == "none" or compiler_facet.startswith("none; "):
+        return []
+    facet_match = re.fullmatch(
+        rf"`([A-Z][A-Za-z0-9]*Facet)` under `FacetKey\(({MODULE_SLUG})\)`",
+        compiler_facet,
+    )
+    if facet_match is None:
+        return [
+            f"formation manifest owner {owner} has invalid compiler/facet declaration "
+            f"{compiler_facet!r}"
+        ]
+    errors: list[str] = []
+    declared_facet_owner = facet_match.group(2)
+    if declared_facet_owner != owner:
+        errors.append(
+            f"formation manifest owner {owner} declares facet key owned by {declared_facet_owner}"
+        )
+    previous_owner = facet_owners.setdefault(declared_facet_owner, owner)
+    if previous_owner != owner:
+        errors.append(
+            f"formation manifest facet {declared_facet_owner} is declared by both "
+            f"{previous_owner} and {owner}"
+        )
+    return errors
+
+
+def _manifest_requirements(
+    owner: str,
+    row: Mapping[str, str],
+    catalog: Mapping[str, Mapping[str, str]],
+    edges: set[tuple[str, str]],
+) -> tuple[set[str], list[str]]:
+    """Return an owner's required facets and the errors in its requirement cells."""
+    required_module_values, errors = _manifest_list(
+        row["required modules"],
+        item_pattern=rf"`({MODULE_SLUG})`",
+        item_kind="required module",
+        owner=owner,
+    )
+    required_modules = set(required_module_values)
+    for dependency in sorted(required_modules):
+        if dependency not in catalog:
+            errors.append(
+                f"formation manifest required module {dependency} is absent from the catalog"
+            )
+        if (owner, dependency) not in edges:
+            errors.append(
+                f"formation manifest requires missing direct edge {owner} --> {dependency}"
+            )
+
+    required_facet_values, cell_errors = _manifest_list(
+        row["required facets"],
+        item_pattern=rf"`FacetKey\(({MODULE_SLUG})\)`",
+        item_kind="required facet",
+        owner=owner,
+    )
+    errors.extend(cell_errors)
+    required_facets = set(required_facet_values)
+    for facet_owner in sorted(required_facets - required_modules):
+        errors.append(
+            f"formation manifest owner {owner} requires facet {facet_owner} "
+            f"without requiring its module"
+        )
+    return required_facets, errors
 
 
 # --- profile (conformance-slice) consistency gate --------------------------

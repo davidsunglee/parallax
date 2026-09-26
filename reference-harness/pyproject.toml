@@ -7,6 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.13"
 dependencies = [
     "jsonschema>=4.21",
+    "referencing>=0.28.4",
     "testcontainers>=4.15.0",
     "psycopg[binary]>=3.3.4",
     "pymysql>=1.1",
@@ -30,15 +31,12 @@ packages = ["src/reference_harness"]
 
 [tool.uv]
 # Keep dev tooling in the default sync so `uv run pytest`, `uv run ruff`, and
-# `uv run basedpyright` work without an extra flag.
+# `uv run basedpyright` work without an extra flag. The `dev` group installs the
+# `dev` extra, so `pip install .[dev]` and `uv run` share one tool list.
 default-groups = ["dev"]
 
 [dependency-groups]
-dev = [
-    "basedpyright>=1.39.10",
-    "pytest>=8.0",
-    "ruff>=0.16.3",
-]
+dev = ["reference-harness[dev]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

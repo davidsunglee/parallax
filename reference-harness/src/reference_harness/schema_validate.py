@@ -35,6 +35,7 @@ It performs m-case-format layer 1 statically (no database needed):
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1016,7 +1017,6 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     registry = build_registry(schema_map)
     errors: list[str] = []
 
-    # 1. The schemas themselves are valid JSON Schema documents.
     for name, schema in schema_map.items():
         try:
             Draft202012Validator.check_schema(schema)
@@ -1027,17 +1027,33 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     predicate_schema = schema_map["predicate.schema.json"]
     object_query_schema = schema_map["object-query.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
+    families, model_entities = _validate_models(compatibility_root, metamodel_schema, errors)
 
-    # 2. Every model descriptor validates against the metamodel schema, the
-    #    foundational Index-identity rule, and the unconditional semantic
-    #    validators for Inheritance and Storage Layout. Inheritance validates
-    #    family topology when present; Storage Layout also validates standalone
-    #    Table ownership and Column claims. A family resolver per model backs the
-    #    family-aware query self-consistency cross-check below.
-    models_dir = compatibility_root / "models"
+    cases_dir = compatibility_root / "cases"
+    for case_path in sorted(cases_dir.glob("**/*.y*ml")):
+        case = _load_yaml(case_path)
+        model_rel = _case_model(case)
+        model_name = Path(model_rel).name if isinstance(model_rel, str) else None
+        scope = _CaseScope(
+            label=f"case {case_path.name}",
+            family=families.get(model_name) if model_name is not None else None,
+            entities=model_entities.get(model_name or "", []),
+            case_schema=case_schema,
+            object_query_schema=object_query_schema,
+            predicate_schema=predicate_schema,
+            registry=registry,
+        )
+        _validate_case(compatibility_root, case, scope, errors)
+
+    return errors
+
+
+def _validate_models(
+    compatibility_root: Path, metamodel_schema: dict[str, Any], errors: list[str]
+) -> tuple[dict[str, Family], dict[str, list[dict[str, Any]]]]:
     families: dict[str, Family] = {}
     model_entities: dict[str, list[dict[str, Any]]] = {}
-    for model_path in sorted(models_dir.glob("**/*.y*ml")):
+    for model_path in sorted((compatibility_root / "models").glob("**/*.y*ml")):
         descriptor = _load_yaml(model_path)
         _validate(descriptor, metamodel_schema, f"model {model_path.name}", errors)
         entity_defs = _descriptor_entity_defs(derive_temporal_structure(descriptor))
@@ -1049,154 +1065,160 @@ def validate_tree(compatibility_root: Path) -> list[str]:
             validate_storage_layout(entity_defs)
         except RejectionError as exc:
             errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
+    return families, model_entities
 
-    # 3. Every case + the Object Queries it carries validate against their schemas.
-    cases_dir = compatibility_root / "cases"
-    for case_path in sorted(cases_dir.glob("**/*.y*ml")):
-        case = _load_yaml(case_path)
-        model_rel = _case_model(case)
-        model_name = Path(model_rel).name if isinstance(model_rel, str) else None
-        family = families.get(model_name) if model_name is not None else None
-        # The execution oracle's referential and arithmetic checks read members the
-        # case schema has already typed, so they run only once the case IS
-        # schema-valid; on a schema-invalid case the structural diagnostics are the
-        # answer and a semantic walk over unchecked shapes would raise instead.
-        case_problem = validation_error(case, case_schema, registry)
-        if case_problem is not None:
-            errors.append(f"case {case_path.name}: {case_problem}")
-        _check_compile_eligibility(case, f"case {case_path.name}", errors)
-        if case_problem is None and isinstance(case, dict):
-            errors.extend(
-                f"case {case_path.name}: {problem}" for problem in validate_execution(case)
-            )
-        # The action under test lives under `when`; a read or rejected case's
-        # Object Query and each scenario/coherence step's own are canonical
-        # m-object-query documents that must also validate against that schema.
-        when = case.get("when") if isinstance(case, dict) else None
-        when = when if isinstance(when, dict) else {}
-        if "objectQuery" in when:
-            _check_object_query(
-                when["objectQuery"],
-                object_query_schema,
-                family,
-                f"case {case_path.name} objectQuery",
-                errors,
-                registry,
-                model_aware=case.get("shape") == "read",
-                encodings=when.get("equivalentEncodings"),
-                encodings_label=f"case {case_path.name} equivalentEncodings",
-            )
-        edit = when.get("edit")
-        if isinstance(edit, dict):
-            source = edit.get("source")
-            query = source.get("objectQuery") if isinstance(source, dict) else None
-            if isinstance(query, dict):
-                _check_object_query(
-                    query,
-                    object_query_schema,
-                    family,
-                    f"case {case_path.name} edit.source.objectQuery",
-                    errors,
-                    registry,
+
+@dataclass(frozen=True)
+class _CaseScope:
+    label: str
+    family: Family | None
+    entities: list[dict[str, Any]]
+    case_schema: dict[str, Any]
+    object_query_schema: dict[str, Any]
+    predicate_schema: dict[str, Any]
+    registry: Registry
+
+    def check_object_query(
+        self,
+        query: Any,
+        label: str,
+        errors: list[str],
+        *,
+        model_aware: bool = True,
+        encodings: Any = None,
+        encodings_label: str | None = None,
+    ) -> None:
+        _check_object_query(
+            query,
+            self.object_query_schema,
+            self.family,
+            label,
+            errors,
+            self.registry,
+            model_aware=model_aware,
+            encodings=encodings,
+            encodings_label=encodings_label,
+        )
+
+
+def _validate_case(
+    compatibility_root: Path, case: Any, scope: _CaseScope, errors: list[str]
+) -> None:
+    # The execution oracle's referential and arithmetic checks read members the
+    # case schema has already typed, so they run only once the case IS
+    # schema-valid; on a schema-invalid case the structural diagnostics are the
+    # answer and a semantic walk over unchecked shapes would raise instead.
+    case_problem = validation_error(case, scope.case_schema, scope.registry)
+    if case_problem is not None:
+        errors.append(f"{scope.label}: {case_problem}")
+    _check_compile_eligibility(case, scope.label, errors)
+    if case_problem is None and isinstance(case, dict):
+        errors.extend(f"{scope.label}: {problem}" for problem in validate_execution(case))
+    # The action under test lives under `when`; a read or rejected case's
+    # Object Query and each scenario/coherence step's own are canonical
+    # m-object-query documents that must also validate against that schema.
+    when = case.get("when") if isinstance(case, dict) else None
+    when = when if isinstance(when, dict) else {}
+    if "objectQuery" in when:
+        scope.check_object_query(
+            when["objectQuery"],
+            f"{scope.label} objectQuery",
+            errors,
+            model_aware=case.get("shape") == "read",
+            encodings=when.get("equivalentEncodings"),
+            encodings_label=f"{scope.label} equivalentEncodings",
+        )
+    edit = when.get("edit")
+    if isinstance(edit, dict):
+        _validate_case_edit(edit, scope, errors)
+    # A scenario case carries its Object Query per step (under
+    # `when.scenario[].objectQuery`); each one validates the same way.
+    if isinstance(when.get("scenario"), list):
+        for index, step in enumerate(when["scenario"]):
+            if isinstance(step, dict):  # the case schema owns a malformed step
+                _validate_scenario_step(when["scenario"], index, step, scope, errors)
+    # A coherence case likewise carries read-step queries under
+    # `when.coherence[].objectQuery`.
+    if isinstance(when.get("coherence"), list):
+        for index, step in enumerate(when["coherence"]):
+            if isinstance(step, dict) and "objectQuery" in step:
+                scope.check_object_query(
+                    step["objectQuery"], f"{scope.label} coherence[{index}].objectQuery", errors
                 )
-            _validate_edit_case(
-                edit,
-                model_entities.get(model_name or "", []),
-                f"case {case_path.name}",
-                errors,
-            )
-        # A scenario case carries its Object Query per step (under
-        # `when.scenario[].objectQuery`); each one validates the same way.
-        if isinstance(when.get("scenario"), list):
-            for index, step in enumerate(when["scenario"]):
-                if not isinstance(step, dict):
-                    continue  # the case schema owns a malformed step
-                step_label = f"case {case_path.name} scenario[{index}]"
-                _scenario_statement_binds_keys(step, step_label, errors)
-                _validate_scenario_reference_sql(step, case_schema, step_label, errors)
-                _validate_identity_anchor(step, index, step_label, errors)
-                if "objectQuery" in step:
-                    _check_object_query(
-                        step["objectQuery"],
-                        object_query_schema,
-                        family,
-                        f"{step_label}.objectQuery",
-                        errors,
-                        registry,
-                        encodings=step.get("equivalentEncodings"),
-                        encodings_label=f"{step_label}.equivalentEncodings",
-                    )
-                if "write" in step and "on" in step:
-                    _validate_settled_write(when["scenario"], index, step_label, errors)
-                if isinstance(step.get("write"), dict):
-                    entity = _validate_predicate_write(
-                        step["write"],
-                        model_entities.get(model_name or "", []),
-                        predicate_schema,
-                        step_label,
-                        errors,
-                        registry,
-                    )
-                    if entity is not None:
-                        try:
-                            validate_predicate_write_materialization(
-                                entity, when["scenario"][:index], step["write"]
-                            )
-                        except PredicateWriteValidationError as exc:
-                            errors.append(f"{step_label}: {exc}")
-                if step.get("action") == "mutate":
-                    _validate_scenario_edit(
-                        when["scenario"],
-                        index,
-                        model_entities.get(model_name or "", []),
-                        family,
-                        step_label,
-                        errors,
-                    )
-                if isinstance(step.get("write"), list):
-                    _validate_buffered_write(
-                        step["write"],
-                        model_entities.get(model_name or "", []),
-                        predicate_schema,
-                        step_label,
-                        errors,
-                        registry,
-                        grouped=isinstance(step.get("uow"), str),
-                    )
-        # A coherence case likewise carries read-step queries under
-        # `when.coherence[].objectQuery`.
-        if isinstance(when.get("coherence"), list):
-            for index, step in enumerate(when["coherence"]):
-                if isinstance(step, dict) and "objectQuery" in step:
-                    _check_object_query(
-                        step["objectQuery"],
-                        object_query_schema,
-                        family,
-                        f"case {case_path.name} coherence[{index}].objectQuery",
-                        errors,
-                        registry,
-                    )
-        # A corruption's address is judged against the model it names, which JSON
-        # Schema cannot see: `given.corrupt` addresses a non-temporal Entity.
-        if isinstance(case, dict):
-            _validate_corruptions(
-                case.get("given"),
-                model_entities.get(model_name or "", []),
-                f"case {case_path.name}",
-                errors,
-            )
-        # Every model a case names must exist — the one model most shapes carry,
-        # and BOTH endpoints an evolution case names, since an unreadable earlier
-        # endpoint would otherwise read as the provisioning sentinel.
-        if isinstance(case, dict):
-            for named in _case_models(case):
-                if not (compatibility_root / named).is_file():
-                    errors.append(f"case {case_path.name}: model {named} does not exist")
-            errors.extend(
-                f"case {case_path.name}: {problem}" for problem in _schema_matrix_problems(case)
-            )
+    if isinstance(case, dict):
+        _validate_case_model_references(compatibility_root, case, scope, errors)
 
-    return errors
+
+def _validate_case_edit(edit: dict[str, Any], scope: _CaseScope, errors: list[str]) -> None:
+    source = edit.get("source")
+    query = source.get("objectQuery") if isinstance(source, dict) else None
+    if isinstance(query, dict):
+        scope.check_object_query(query, f"{scope.label} edit.source.objectQuery", errors)
+    _validate_edit_case(edit, scope.entities, scope.label, errors)
+
+
+def _validate_scenario_step(
+    scenario: list[Any],
+    index: int,
+    step: dict[str, Any],
+    scope: _CaseScope,
+    errors: list[str],
+) -> None:
+    step_label = f"{scope.label} scenario[{index}]"
+    _scenario_statement_binds_keys(step, step_label, errors)
+    _validate_scenario_reference_sql(step, scope.case_schema, step_label, errors)
+    _validate_identity_anchor(step, index, step_label, errors)
+    if "objectQuery" in step:
+        scope.check_object_query(
+            step["objectQuery"],
+            f"{step_label}.objectQuery",
+            errors,
+            encodings=step.get("equivalentEncodings"),
+            encodings_label=f"{step_label}.equivalentEncodings",
+        )
+    if "write" in step and "on" in step:
+        _validate_settled_write(scenario, index, step_label, errors)
+    if isinstance(step.get("write"), dict):
+        entity = _validate_predicate_write(
+            step["write"],
+            scope.entities,
+            scope.predicate_schema,
+            step_label,
+            errors,
+            scope.registry,
+        )
+        if entity is not None:
+            try:
+                validate_predicate_write_materialization(entity, scenario[:index], step["write"])
+            except PredicateWriteValidationError as exc:
+                errors.append(f"{step_label}: {exc}")
+    if step.get("action") == "mutate":
+        _validate_scenario_edit(scenario, index, scope.entities, scope.family, step_label, errors)
+    if isinstance(step.get("write"), list):
+        _validate_buffered_write(
+            step["write"],
+            scope.entities,
+            scope.predicate_schema,
+            step_label,
+            errors,
+            scope.registry,
+            grouped=isinstance(step.get("uow"), str),
+        )
+
+
+def _validate_case_model_references(
+    compatibility_root: Path, case: dict[str, Any], scope: _CaseScope, errors: list[str]
+) -> None:
+    # A corruption's address is judged against the model it names, which JSON
+    # Schema cannot see: `given.corrupt` addresses a non-temporal Entity.
+    _validate_corruptions(case.get("given"), scope.entities, scope.label, errors)
+    # Every model a case names must exist — the one model most shapes carry,
+    # and BOTH endpoints an evolution case names, since an unreadable earlier
+    # endpoint would otherwise read as the provisioning sentinel.
+    for named in _case_models(case):
+        if not (compatibility_root / named).is_file():
+            errors.append(f"{scope.label}: model {named} does not exist")
+    errors.extend(f"{scope.label}: {problem}" for problem in _schema_matrix_problems(case))
 
 
 def main(argv: list[str]) -> int:

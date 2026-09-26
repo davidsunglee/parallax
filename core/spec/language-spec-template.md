@@ -124,8 +124,9 @@ separately deployable adapter per supported database.
   and proof that it depends downward on common behavior but not a sibling
   lifecycle or concrete adapter.
 - **(decide and record — All slices)** Each concrete adapter manifest and proof
-  that it alone introduces its matching driver. Record where pure driver-free
-  dialect strategies ship.
+  that its matching driver enters another artifact's installation only as the
+  [required artifact topology](modules.md#required-production-artifact-topology)
+  permits. Record where pure driver-free dialect strategies ship.
 - **(decide and record — All slices)** The application/test composition root that
   selects the lifecycle extension and adapter without leaking either dependency
   into common runtime code.

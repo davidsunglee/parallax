@@ -128,6 +128,54 @@ class StreamDelivery:
     nodes: list[dict[str, Any] | None]
 
 
+def _continuing_page_binds(
+    first_root_sql: str,
+    range_arm: str,
+    carried_binds: list[Any],
+    composed: seek.ComposedSeek,
+    requested: int,
+    *,
+    null_tail: bool,
+    locking: seek.LockingContinuationFacts | None,
+) -> tuple[list[Any], list[str | None]]:
+    """The binds a continuing page owes, with the neutral type of each seek bind.
+
+    The seek's binds sit where the range arm diverges from the first page's
+    statement, between the carried query binds, and the requested size follows.
+    A NULL-tail arm repeats the carried binds and size, then the locking read's
+    identity binds and the size again.
+    """
+    spliced_at, _spliced_to = seek.seek_splice(first_root_sql, range_arm)
+    seek_bind_position = range_arm[:spliced_at].count("?")
+    expected_binds: list[Any] = [
+        *carried_binds[:seek_bind_position],
+        *composed.binds,
+        *carried_binds[seek_bind_position:],
+        requested,
+    ]
+    expected_bind_types: list[str | None] = [
+        *([None] * seek_bind_position),
+        *composed.neutral_types,
+        *([None] * (len(carried_binds) - seek_bind_position + 1)),
+    ]
+    if null_tail:
+        identity_binds = () if locking is None else locking.identity_binds
+        expected_binds.extend([*carried_binds, requested, *identity_binds, requested])
+        expected_bind_types.extend([None] * (len(carried_binds) + len(identity_binds) + 2))
+    return expected_binds, expected_bind_types
+
+
+def _unlocked_first_page(case: Case, source: str, first_root_sql: str) -> str:
+    """The first locking page's statement without the lock its arms do not repeat."""
+    suffix = " for share of t0"
+    if not first_root_sql.endswith(suffix):
+        raise CaseFailure(
+            f"{case.path.name}: {source} (postgres) first locking page does "
+            "not end with `for share of t0`"
+        )
+    return first_root_sql.removesuffix(suffix)
+
+
 def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDelivery:
     """Execute a streamed delivery page by page and assert the pages it authored.
 
@@ -260,24 +308,15 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                     requested,
                     locking,
                 )
-            range_arm = arms[0]
-            spliced_at, _spliced_to = seek.seek_splice(first_root_sql, range_arm)
-            seek_bind_position = range_arm[:spliced_at].count("?")
-            expected_binds = [
-                *carried_binds[:seek_bind_position],
-                *composed.binds,
-                *carried_binds[seek_bind_position:],
+            expected_binds, expected_bind_types = _continuing_page_binds(
+                first_root_sql,
+                arms[0],
+                carried_binds,
+                composed,
                 requested,
-            ]
-            expected_bind_types = [
-                *([None] * seek_bind_position),
-                *composed.neutral_types,
-                *([None] * (len(carried_binds) - seek_bind_position + 1)),
-            ]
-            if wants_null_tail:
-                identity_binds = () if locking is None else locking.identity_binds
-                expected_binds.extend([*carried_binds, requested, *identity_binds, requested])
-                expected_bind_types.extend([None] * (len(carried_binds) + len(identity_binds) + 2))
+                null_tail=wants_null_tail,
+                locking=locking,
+            )
         if not _binds_equal(authored, expected_binds, expected_bind_types):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) page {page + 1} root binds "
@@ -291,13 +330,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 raise AssertionError("a continuing page has no parsed arms")
             arm_baseline = first_root_sql
             if len(arms) == 2 and locking is not None:
-                suffix = " for share of t0"
-                if not arm_baseline.endswith(suffix):
-                    raise CaseFailure(
-                        f"{case.path.name}: {source} (postgres) first locking page does "
-                        "not end with `for share of t0`"
-                    )
-                arm_baseline = arm_baseline.removesuffix(suffix)
+                arm_baseline = _unlocked_first_page(case, source, first_root_sql)
             seek.refuse_a_drifting_page(
                 seek.PageText(case, dialect, source, page, arm_baseline, arms[0]),
                 composed,

@@ -50,7 +50,7 @@ from __future__ import annotations
 import contextlib
 import re
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from . import errors, serde
@@ -198,8 +198,7 @@ def _assert_schema(case: Case) -> None:
     # Here we assert the minimal structural invariants the runner relies on so a
     # malformed case fails loudly rather than deep in execution.
     if case.is_write_sequence:
-        if not case.expected_table_state:
-            raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
+        _assert_write_sequence_shape(case)
     elif case.is_scenario:
         # A Scenario asserts nothing here because none of its shape is this
         # check's to adjudicate: the static pass above refuses what the document
@@ -210,98 +209,133 @@ def _assert_schema(case: Case) -> None:
         # Scenario clear of the read-shape requirement the chain ends in.
         pass
     elif case.is_conflict:
-        if case.expected_affected_rows is None and not case.attempts:
-            raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
-        # Whether the case may name an observed milestone at all is a property of
-        # the document, not of a dialect or of an execution path, so it is decided
-        # HERE — the one layer every conflict shape reaches. The cross-check that
-        # consumes the coordinate (:func:`_assert_conflict_input`) is skipped
-        # entirely for an api-conformance lane case and for a dialect the case
-        # carries no golden for, so an entitlement left there would hold on some
-        # runs and not others.
-        _assert_observed_edge_entitlement(case, _conflict_temporal_entity(case))
+        _assert_conflict_shape(case)
     elif case.is_coherence:
-        if len(case.coherence) < 2:
-            raise CaseFailure(
-                f"{case.path.name}: coherence case needs at least a write and a re-fetch step"
-            )
-        for index, step in enumerate(case.coherence):
-            if step.get("kind") == "write" and "sameObjectAs" in step:
-                raise CaseFailure(
-                    f"{case.path.name}: coherence[{index}] is a write step but "
-                    f"declares sameObjectAs; identity is asserted on read steps "
-                    f"(a write observes no object)."
-                )
-        if not any(step.get("observeRows") is not None for step in case.coherence):
-            raise CaseFailure(
-                f"{case.path.name}: coherence case asserts nothing — at least the "
-                f"final re-fetch MUST declare observeRows"
-            )
+        _assert_coherence_shape(case)
     elif case.is_error:
-        if not case.error_class:
-            raise CaseFailure(f"{case.path.name}: error case missing errorClass")
-        if not case.expected_native_code:
-            raise CaseFailure(f"{case.path.name}: error case missing then.nativeCode")
-        if not (_error_has_golden(case, "postgres") or _error_has_golden(case, "mariadb")):
-            raise CaseFailure(
-                f"{case.path.name}: error case declares no trigger — needs then.statements "
-                f"(single-connection) or a non-empty concurrency choreography"
-            )
-        _assert_commit_is_a_nodes_last_step(case)
+        _assert_error_shape(case)
     elif case.is_concurrency_success:
-        if not (
-            _concurrency_has_golden(case, "postgres") or _concurrency_has_golden(case, "mariadb")
-        ):
-            raise CaseFailure(
-                f"{case.path.name}: concurrency-success case has an empty concurrency "
-                f"choreography (no round declares a golden statement)"
-            )
-        # Fail fast (DB-free, timing-independent) if a success step omits its `kind` or a
-        # `read` forgot expectRows: the runner branches read-vs-write on the EXPLICIT kind
-        # (no SQL-verb sniffing), so a mis-declared step would mis-dispatch. Redundant with
-        # the schema (which requires kind + the read/write expectRows rule), as defense.
-        _assert_concurrency_success_step_kinds(case)
-        _assert_commit_is_a_nodes_last_step(case)
+        _assert_concurrency_success_shape(case)
     elif case.is_boundary:
-        if not case.boundary:
-            raise CaseFailure(f"{case.path.name}: boundary case has no actions")
-        if not case.outcome:
-            raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+        _assert_boundary_shape(case)
     elif case.is_edit:
-        if not case.edit_source:
-            raise CaseFailure(f"{case.path.name}: edit case has no source")
+        _assert_edit_shape(case)
     elif case.is_rejected:
-        if case.rejected_rule not in ALL_REJECTED_RULES:
-            raise CaseFailure(
-                f"{case.path.name}: rejected case then.rejectedRule "
-                f"{case.rejected_rule!r} is not a known rule"
-            )
-        # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
-        # EXACTLY ONE of `objectQuery` / `write` / `model` (the normative "exactly
-        # one invalid input" rule, m-case-format Rejected cases). This guard is a
-        # defense-in-depth mirror of the schema's `oneOf`
-        # (compatibility-case.schema.json rejected branch): it keeps the constraint
-        # enforced even if some future caller reaches the runner without schema
-        # validation, and `_assert_rejected` below dispatches on the single member
-        # present.
-        present = [member for member in ("objectQuery", "write", "model") if member in case.when]
-        if len(present) != 1:
-            raise CaseFailure(
-                f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
-                f"when.objectQuery / when.write / when.model (one invalid input); found "
-                f"{present or 'none'}."
-            )
+        _assert_rejected_shape(case)
     elif case.is_evolution:
-        if case.evolve_later is None:
-            raise CaseFailure(f"{case.path.name}: evolution case names no later endpoint")
-        if not isinstance(case.expected_evolution, dict):
-            raise CaseFailure(f"{case.path.name}: evolution case missing then.evolution")
+        _assert_evolution_shape(case)
     elif "objectQuery" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing objectQuery")
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
+
+
+def _assert_write_sequence_shape(case: Case) -> None:
+    if not case.expected_table_state:
+        raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
+
+
+def _assert_conflict_shape(case: Case) -> None:
+    if case.expected_affected_rows is None and not case.attempts:
+        raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
+    # Whether the case may name an observed milestone at all is a property of
+    # the document, not of a dialect or of an execution path, so it is decided
+    # HERE — the one layer every conflict shape reaches. The cross-check that
+    # consumes the coordinate (:func:`_assert_conflict_input`) is skipped
+    # entirely for an api-conformance lane case and for a dialect the case
+    # carries no golden for, so an entitlement left there would hold on some
+    # runs and not others.
+    _assert_observed_edge_entitlement(case, _conflict_temporal_entity(case))
+
+
+def _assert_coherence_shape(case: Case) -> None:
+    if len(case.coherence) < 2:
+        raise CaseFailure(
+            f"{case.path.name}: coherence case needs at least a write and a re-fetch step"
+        )
+    for index, step in enumerate(case.coherence):
+        if step.get("kind") == "write" and "sameObjectAs" in step:
+            raise CaseFailure(
+                f"{case.path.name}: coherence[{index}] is a write step but "
+                f"declares sameObjectAs; identity is asserted on read steps "
+                f"(a write observes no object)."
+            )
+    if not any(step.get("observeRows") is not None for step in case.coherence):
+        raise CaseFailure(
+            f"{case.path.name}: coherence case asserts nothing — at least the "
+            f"final re-fetch MUST declare observeRows"
+        )
+
+
+def _assert_error_shape(case: Case) -> None:
+    if not case.error_class:
+        raise CaseFailure(f"{case.path.name}: error case missing errorClass")
+    if not case.expected_native_code:
+        raise CaseFailure(f"{case.path.name}: error case missing then.nativeCode")
+    if not (_error_has_golden(case, "postgres") or _error_has_golden(case, "mariadb")):
+        raise CaseFailure(
+            f"{case.path.name}: error case declares no trigger — needs then.statements "
+            f"(single-connection) or a non-empty concurrency choreography"
+        )
+    _assert_commit_is_a_nodes_last_step(case)
+
+
+def _assert_concurrency_success_shape(case: Case) -> None:
+    if not (_concurrency_has_golden(case, "postgres") or _concurrency_has_golden(case, "mariadb")):
+        raise CaseFailure(
+            f"{case.path.name}: concurrency-success case has an empty concurrency "
+            f"choreography (no round declares a golden statement)"
+        )
+    # Fail fast (DB-free, timing-independent) if a success step omits its `kind` or a
+    # `read` forgot expectRows: the runner branches read-vs-write on the EXPLICIT kind
+    # (no SQL-verb sniffing), so a mis-declared step would mis-dispatch. Redundant with
+    # the schema (which requires kind + the read/write expectRows rule), as defense.
+    _assert_concurrency_success_step_kinds(case)
+    _assert_commit_is_a_nodes_last_step(case)
+
+
+def _assert_boundary_shape(case: Case) -> None:
+    if not case.boundary:
+        raise CaseFailure(f"{case.path.name}: boundary case has no actions")
+    if not case.outcome:
+        raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+
+
+def _assert_edit_shape(case: Case) -> None:
+    if not case.edit_source:
+        raise CaseFailure(f"{case.path.name}: edit case has no source")
+
+
+def _assert_rejected_shape(case: Case) -> None:
+    if case.rejected_rule not in ALL_REJECTED_RULES:
+        raise CaseFailure(
+            f"{case.path.name}: rejected case then.rejectedRule "
+            f"{case.rejected_rule!r} is not a known rule"
+        )
+    # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
+    # EXACTLY ONE of `objectQuery` / `write` / `model` (the normative "exactly
+    # one invalid input" rule, m-case-format Rejected cases). This guard is a
+    # defense-in-depth mirror of the schema's `oneOf`
+    # (compatibility-case.schema.json rejected branch): it keeps the constraint
+    # enforced even if some future caller reaches the runner without schema
+    # validation, and `_assert_rejected` dispatches on the single member
+    # present.
+    present = [member for member in ("objectQuery", "write", "model") if member in case.when]
+    if len(present) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
+            f"when.objectQuery / when.write / when.model (one invalid input); found "
+            f"{present or 'none'}."
+        )
+
+
+def _assert_evolution_shape(case: Case) -> None:
+    if case.evolve_later is None:
+        raise CaseFailure(f"{case.path.name}: evolution case names no later endpoint")
+    if not isinstance(case.expected_evolution, dict):
+        raise CaseFailure(f"{case.path.name}: evolution case missing then.evolution")
 
 
 def _assert_binds_dialect_keys(case: Case) -> None:
@@ -2859,6 +2893,50 @@ def _assert_classified(case: Case, db: DatabaseProvider, exc: Exception) -> None
             )
 
 
+_CONCURRENCY_NODES = ("A", "B")
+
+
+def _run_concurrency_rounds(
+    case: Case,
+    execution: CaseExecution,
+    rounds: Sequence[Mapping[str, Any]],
+    run_step: Callable[[str, Any, object], None],
+) -> None:
+    """Run each node's step of every round on its own thread and held session.
+
+    A barrier separates rounds, so round k completes for both nodes before round
+    k+1 begins; a node absent from a round receives ``None``. *run_step* must not
+    raise. Both sessions are rolled back (releasing any held lock or uncommitted
+    write) before they close.
+    """
+    barrier = threading.Barrier(len(_CONCURRENCY_NODES))
+
+    def run_node(node: str, session: Any) -> None:
+        for rnd in rounds:
+            run_step(node, session, rnd.get(node))
+            try:
+                barrier.wait(timeout=30)
+            except threading.BrokenBarrierError:
+                return
+
+    with contextlib.ExitStack() as stack:
+        sessions = {
+            node: stack.enter_context(execution.open_session(case.isolation))
+            for node in _CONCURRENCY_NODES
+        }
+        threads = [
+            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
+            for node in _CONCURRENCY_NODES
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        for session in sessions.values():
+            with contextlib.suppress(Exception):
+                session.rollback()
+
+
 def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     """Two-node, barrier-synchronized contention (deadlock / lock timeout / serialization).
 
@@ -2894,50 +2972,26 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     concurrency = case.concurrency
     if concurrency is None:
         raise CaseFailure(f"{case.path.name}: error case missing concurrency choreography")
-    rounds = concurrency["rounds"]
-    nodes = ("A", "B")
-    barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
     execution = CaseExecution(case, db)
 
     provision(case, db)  # given.fixtures seeds the lockable Gauge rows
 
-    def run_node(node: str, session: Any) -> None:
-        for rnd in rounds:
-            step = rnd.get(node)
-            if isinstance(step, dict):
-                try:
-                    if step.get("kind") == "commit":
-                        session.commit()
-                    else:
-                        for sql, binds in entry_pairs(step.get("statements"), dialect):
-                            session.execute(sql, binds)
-                except Exception as exc:  # noqa: BLE001 -- the contention signal
-                    raised[node] = exc
-                    with contextlib.suppress(Exception):
-                        session.rollback()  # release locks so the peer unblocks
-            try:
-                barrier.wait(timeout=30)
-            except threading.BrokenBarrierError:
-                return
-
-    with contextlib.ExitStack() as stack:
-        sessions = {
-            node: stack.enter_context(execution.open_session(case.isolation)) for node in nodes
-        }
-        threads = [
-            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
-            for node in nodes
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=60)
-        # Roll back any session that did not error (releases held locks) before
-        # the ExitStack closes them.
-        for session in sessions.values():
+    def run_step(node: str, session: Any, step: object) -> None:
+        if not isinstance(step, dict):
+            return
+        try:
+            if step.get("kind") == "commit":
+                session.commit()
+            else:
+                for sql, binds in entry_pairs(step.get("statements"), dialect):
+                    session.execute(sql, binds)
+        except Exception as exc:  # noqa: BLE001 -- the contention signal
+            raised[node] = exc
             with contextlib.suppress(Exception):
-                session.rollback()
+                session.rollback()  # release locks so the peer unblocks
+
+    _run_concurrency_rounds(case, execution, concurrency["rounds"], run_step)
 
     if not raised:
         raise CaseFailure(
@@ -3021,7 +3075,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     """Two-node, barrier-synchronized rounds that assert NO error and each read's rows.
 
     The non-error counterpart of :func:`_assert_error_concurrency`, reusing the same
-    barrier + two ``open_session`` plumbing: ``m-read-lock-007`` (both readers take
+    :func:`_run_concurrency_rounds` plumbing: ``m-read-lock-007`` (both readers take
     the shared lock and BOTH succeed -- shared, not exclusive). Each node runs its
     round steps on its own held non-autocommit session; a ``kind: read`` step is
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
@@ -3033,80 +3087,38 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     finally (releasing any lock a held read took).
     """
     dialect = db.dialect
-    tolerance = case.tolerance
     concurrency = case.concurrency
     if concurrency is None:
         raise CaseFailure(f"{case.path.name}: concurrency-success case missing concurrency")
-    rounds = concurrency["rounds"]
-    nodes = ("A", "B")
-    barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
     row_failures: list[str] = []
     execution = CaseExecution(case, db)
 
     provision(case, db)  # given.fixtures seeds the Account rows the reads observe
 
-    def run_node(node: str, session: Any) -> None:
-        for rnd in rounds:
-            step = rnd.get(node)
-            pairs = entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
-            if isinstance(step, dict) and step.get("kind") == "commit":
-                try:
-                    session.commit()
-                except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
-                    raised[node] = exc
-            elif pairs:
-                try:
-                    if step.get("kind") == "read":
-                        # A read step: fetch on the HELD session (a shared-lock SELECT
-                        # takes its lock here) and compare the observed rows.
-                        rows: list[dict[str, Any]] = []
-                        for sql, binds in pairs:
-                            rows = session.query(sql, binds)
-                        expect = step.get("expectRows") or []
-                        if not object_query_row.rows_equal(
-                            rows,
-                            expect,
-                            case.model,
-                            case.model.root_entity,
-                            tolerance,
-                        ):
-                            row_failures.append(
-                                f"node {node} observed rows != expectRows.\n"
-                                f"  observed: {rows!r}\n"
-                                f"  expected: {expect!r}"
-                            )
-                    else:
-                        # A write step (kind: write) succeeds iff no lock blocks it;
-                        # it holds until the finally rolls it back.
-                        for sql, binds in pairs:
-                            session.execute(sql, binds)
-                except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
-                    raised[node] = exc
-                    with contextlib.suppress(Exception):
-                        session.rollback()  # release any lock so the peer can proceed
+    def run_step(node: str, session: Any, step: object) -> None:
+        if not isinstance(step, dict):
+            return
+        if step.get("kind") == "commit":
             try:
-                barrier.wait(timeout=30)
-            except threading.BrokenBarrierError:
-                return
-
-    with contextlib.ExitStack() as stack:
-        sessions = {
-            node: stack.enter_context(execution.open_session(case.isolation)) for node in nodes
-        }
-        threads = [
-            threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
-            for node in nodes
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=60)
-        # Roll back both held sessions (releasing any shared read lock / uncommitted
-        # write) before the ExitStack closes them.
-        for session in sessions.values():
+                session.commit()
+            except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
+                raised[node] = exc
+            return
+        pairs = entry_pairs(step.get("statements"), dialect)
+        if not pairs:
+            return
+        try:
+            failure = _concurrency_success_step(case, node, session, step, pairs)
+        except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
+            raised[node] = exc
             with contextlib.suppress(Exception):
-                session.rollback()
+                session.rollback()  # release any lock so the peer can proceed
+        else:
+            if failure is not None:
+                row_failures.append(failure)
+
+    _run_concurrency_rounds(case, execution, concurrency["rounds"], run_step)
 
     if raised:
         raise CaseFailure(
@@ -3115,6 +3127,36 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
         )
     if row_failures:
         raise CaseFailure(f"{case.path.name}: " + "\n".join(row_failures))
+
+
+def _concurrency_success_step(
+    case: Case,
+    node: str,
+    session: Any,
+    step: dict[str, Any],
+    pairs: list[tuple[str, list[Any]]],
+) -> str | None:
+    """Run one node's read or write round step on its held session.
+
+    Returns the row mismatch a read observed, or ``None``; any raise is the node's error.
+    """
+    if step.get("kind") != "read":
+        # A write step (kind: write) succeeds iff no lock blocks it; it holds until
+        # the caller rolls it back.
+        for sql, binds in pairs:
+            session.execute(sql, binds)
+        return None
+    # A read step: fetch on the HELD session (a shared-lock SELECT takes its lock
+    # here) and compare the observed rows.
+    rows: list[dict[str, Any]] = []
+    for sql, binds in pairs:
+        rows = session.query(sql, binds)
+    expect = step.get("expectRows") or []
+    if object_query_row.rows_equal(
+        rows, expect, case.model, case.model.root_entity, case.tolerance
+    ):
+        return None
+    return f"node {node} observed rows != expectRows.\n  observed: {rows!r}\n  expected: {expect!r}"
 
 
 # --- coherence cases (cross-process cache coherence) -------------------------
@@ -3369,47 +3411,13 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
     without a database and the Schema Delta beside it is graded with one.
     """
     if case.lane == "api-conformance":
-        # The api-conformance lane is schema-validated by the m-case-format harness but NOT
-        # executed here — its observable (an injected transient, a retry-loop
-        # branch, the emitted read-lock proof) needs machinery the single-connection
-        # harness lacks. Each language's API Conformance Suite satisfies it. Run the
-        # dialect-agnostic structural checks so coverage is not silently skipped,
-        # then return BEFORE touching the database (no dialect / provisioning /
-        # execution — so this lane runs even with no provider bound).
-        _assert_schema(case)
-        if not case.is_boundary:
-            # A read-shape api-conformance case and a read-origin edit case still
-            # round-trip their query plus descriptor through the serde seam.
-            _assert_serde(case)
-            if not case.is_edit:
-                _assert_equivalent_encodings(case)
+        _run_api_conformance(case)
         return
-
     if case.is_evolution:
-        # A model evolution (m-model-evolution) is a pure description of two accepted
-        # models: no dialect, no provisioning, no execution. The
-        # authored Evolution is a golden the harness grades STRUCTURALLY — a
-        # language implementation grades the value itself through the conformance
-        # adapter, exactly as it grades golden SQL against a run.
-        _assert_schema(case)
-        _assert_evolution(case)
-        # The Schema Delta beside it is not pure: an authored `delta` cell claims
-        # statements that carry a real database from one endpoint to the other,
-        # so it is executed and its result compared against the later model's own
-        # provisioning. A cell naming an unsupported operation has nothing to
-        # execute, and a Coordinated Evolution carries no cell at all.
-        if db is not None:
-            _assert_evolution_schema(case, db)
+        _run_evolution(case, db)
         return
-
     if case.is_rejected:
-        # Negative validation (m-value-object / m-predicate, resolved Q7): the input
-        # is refused PRE-SQL by model-aware validation — no dialect, no provisioning,
-        # no execution. It runs identically on every dialect (idempotent, DB-free), so
-        # branch here before the dialect is even read.
-        _assert_schema(case)  # layer 1 (structural invariants for the shape)
-        _assert_serde(case)  # layer 4 (query, if any, + descriptor)
-        _assert_rejected(case)  # the pre-SQL refusal, asserting the named rule
+        _run_rejected(case)
         return
 
     preflight_case_literals(case)
@@ -3421,83 +3429,137 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
     dialect = db.dialect
 
     if case.is_scenario:
-        # Everything Scenario-specific — normalization, accounting, settlement,
-        # provisioning, ordered execution, and the diagnostics that name a step —
-        # is one operation. This branch contributes only the layers every case
-        # shape shares.
-        _assert_schema(case)
-        _assert_serde(case)  # layer 4
-        _assert_equivalent_encodings(case)  # layer 4c
-        assert_unit_work_scenario(case, db, literals_preflighted=True)
-        return
-
-    if case.is_coherence:
-        if not _coherence_has_golden(case, dialect) or not hasattr(db, "open_peer"):
-            # No golden SQL for this dialect, or this provider has no two-node
-            # seam: run the dialect-agnostic checks so coverage is not skipped.
-            _assert_schema(case)
-            _assert_serde(case)
-            _assert_equivalent_encodings(case)
-            return
-        _assert_schema(case)
-        _assert_coherence_normalization(case, dialect)  # layer 3
-        _assert_serde(case)  # layer 4
-        _assert_equivalent_encodings(case)  # layer 4c
-        _assert_coherence(case, db)  # layer 2 (two-node observation)
-        return
-
-    if case.is_conflict and case.attempts:
-        # Retry conflict (m-opt-lock): golden SQL lives PER ATTEMPT, so there is no
-        # top-level then.statements to key on. Handle it here, before the then.statements
-        # access below, mirroring the scenario / coherence per-step shapes.
-        if not _conflict_retry_has_golden(case, dialect):
-            _assert_schema(case)
-            _assert_serde(case)
-            _assert_equivalent_encodings(case)
-            return
-        _assert_schema(case)
-        _assert_conflict_retry_normalization(case, dialect)  # layer 3
-        _assert_serde(case)  # layer 4
-        _assert_equivalent_encodings(case)  # layer 4c
-        _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② per attempt)
-        provision(case, db)  # fixtures loaded: the versioned row exists
-        _assert_conflict_retry(case, db)  # given.apply + ordered attempts
-        return
-
-    if case.is_error:
-        # A two-connection (concurrency) error case has no top-level then.statements, so
-        # branch before the then.statements access below, like the per-step shapes.
-        _assert_schema(case)
-        _assert_serde(case)  # descriptor serde only (error cases carry no query)
-        _assert_equivalent_encodings(case)
-        if not _error_has_golden(case, dialect):
-            return  # no golden for this dialect: dialect-agnostic checks only
-        _assert_error_normalization(case, dialect)  # layer 3
-        _assert_error_classification(case, db)
-        return
-
-    if case.is_concurrency_success:
-        # A concurrency-success case (m-read-lock behavioral read-lock:
-        # m-read-lock-007) also carries its golden per round inside
-        # `concurrency.rounds` (no top-level then.statements), so
-        # branch before the then.statements access below, as a sibling of `is_error`.
-        _assert_schema(case)
-        _assert_serde(case)  # descriptor serde only (no query)
-        _assert_equivalent_encodings(case)
-        if not _concurrency_has_golden(case, dialect):
-            return  # no golden for this dialect: dialect-agnostic checks only
-        _assert_concurrency_normalization(case, dialect)  # layer 3
-        _assert_concurrency_success(case, db)  # layer 2 (two held sessions, no error)
-        return
-
-    if dialect not in case.golden_dialects:
+        _run_scenario(case, db)
+    elif case.is_coherence:
+        _run_coherence(case, db, dialect)
+    elif case.is_conflict and case.attempts:
+        _run_conflict_retry(case, db, dialect)
+    elif case.is_error:
+        _run_error(case, db, dialect)
+    elif case.is_concurrency_success:
+        _run_concurrency_success(case, db, dialect)
+    elif dialect not in case.golden_dialects:
         # No golden SQL for this dialect: nothing to execute against it. The
         # serde + (dialect-agnostic) checks still run so coverage is not skipped.
-        _assert_schema(case)
-        _assert_serde(case)
-        _assert_equivalent_encodings(case)  # layer 4c (dialect-agnostic)
-        return
+        _assert_dialect_agnostic_layers(case)
+    else:
+        _run_statement_golden(case, db, dialect)
 
+
+def _assert_dialect_agnostic_layers(case: Case) -> None:
+    _assert_schema(case)
+    _assert_serde(case)  # layer 4
+    _assert_equivalent_encodings(case)  # layer 4c
+
+
+def _run_api_conformance(case: Case) -> None:
+    # The api-conformance lane is schema-validated by the m-case-format harness but NOT
+    # executed here — its observable (an injected transient, a retry-loop
+    # branch, the emitted read-lock proof) needs machinery the single-connection
+    # harness lacks. Each language's API Conformance Suite satisfies it. Run the
+    # dialect-agnostic structural checks so coverage is not silently skipped,
+    # then return BEFORE touching the database (no dialect / provisioning /
+    # execution — so this lane runs even with no provider bound).
+    _assert_schema(case)
+    if not case.is_boundary:
+        # A read-shape api-conformance case and a read-origin edit case still
+        # round-trip their query plus descriptor through the serde seam.
+        _assert_serde(case)
+        if not case.is_edit:
+            _assert_equivalent_encodings(case)
+
+
+def _run_evolution(case: Case, db: DatabaseProvider | None) -> None:
+    # A model evolution (m-model-evolution) is a pure description of two accepted
+    # models: no dialect, no provisioning, no execution. The
+    # authored Evolution is a golden the harness grades STRUCTURALLY — a
+    # language implementation grades the value itself through the conformance
+    # adapter, exactly as it grades golden SQL against a run.
+    _assert_schema(case)
+    _assert_evolution(case)
+    # The Schema Delta beside it is not pure: an authored `delta` cell claims
+    # statements that carry a real database from one endpoint to the other,
+    # so it is executed and its result compared against the later model's own
+    # provisioning. A cell naming an unsupported operation has nothing to
+    # execute, and a Coordinated Evolution carries no cell at all.
+    if db is not None:
+        _assert_evolution_schema(case, db)
+
+
+def _run_rejected(case: Case) -> None:
+    # Negative validation (m-value-object / m-predicate, resolved Q7): the input
+    # is refused PRE-SQL by model-aware validation — no dialect, no provisioning,
+    # no execution. It runs identically on every dialect (idempotent, DB-free), so
+    # it is dispatched before the dialect is even read.
+    _assert_schema(case)  # layer 1 (structural invariants for the shape)
+    _assert_serde(case)  # layer 4 (query, if any, + descriptor)
+    _assert_rejected(case)  # the pre-SQL refusal, asserting the named rule
+
+
+def _run_scenario(case: Case, db: DatabaseProvider) -> None:
+    # Everything Scenario-specific — normalization, accounting, settlement,
+    # provisioning, ordered execution, and the diagnostics that name a step —
+    # is one operation. This contributes only the layers every case shape shares.
+    _assert_dialect_agnostic_layers(case)
+    assert_unit_work_scenario(case, db, literals_preflighted=True)
+
+
+def _run_coherence(case: Case, db: DatabaseProvider, dialect: str) -> None:
+    if not _coherence_has_golden(case, dialect) or not hasattr(db, "open_peer"):
+        # No golden SQL for this dialect, or this provider has no two-node
+        # seam: run the dialect-agnostic checks so coverage is not skipped.
+        _assert_dialect_agnostic_layers(case)
+        return
+    _assert_schema(case)
+    _assert_coherence_normalization(case, dialect)  # layer 3
+    _assert_serde(case)  # layer 4
+    _assert_equivalent_encodings(case)  # layer 4c
+    _assert_coherence(case, db)  # layer 2 (two-node observation)
+
+
+def _run_conflict_retry(case: Case, db: DatabaseProvider, dialect: str) -> None:
+    # Retry conflict (m-opt-lock): golden SQL lives PER ATTEMPT, so there is no
+    # top-level then.statements to key on, mirroring the scenario / coherence
+    # per-step shapes.
+    if not _conflict_retry_has_golden(case, dialect):
+        _assert_dialect_agnostic_layers(case)
+        return
+    _assert_schema(case)
+    _assert_conflict_retry_normalization(case, dialect)  # layer 3
+    _assert_serde(case)  # layer 4
+    _assert_equivalent_encodings(case)  # layer 4c
+    _assert_conflict_input(case, dialect)  # layer 5c (① ↔ ② per attempt)
+    provision(case, db)  # fixtures loaded: the versioned row exists
+    _assert_conflict_retry(case, db)  # given.apply + ordered attempts
+
+
+def _run_error(case: Case, db: DatabaseProvider, dialect: str) -> None:
+    # A two-connection (concurrency) error case has no top-level then.statements,
+    # like the per-step shapes.
+    _assert_schema(case)
+    _assert_serde(case)  # descriptor serde only (error cases carry no query)
+    _assert_equivalent_encodings(case)
+    if not _error_has_golden(case, dialect):
+        return  # no golden for this dialect: dialect-agnostic checks only
+    _assert_error_normalization(case, dialect)  # layer 3
+    _assert_error_classification(case, db)
+
+
+def _run_concurrency_success(case: Case, db: DatabaseProvider, dialect: str) -> None:
+    # A concurrency-success case (m-read-lock behavioral read-lock:
+    # m-read-lock-007) also carries its golden per round inside
+    # `concurrency.rounds` (no top-level then.statements), as a sibling of the
+    # error shape.
+    _assert_schema(case)
+    _assert_serde(case)  # descriptor serde only (no query)
+    _assert_equivalent_encodings(case)
+    if not _concurrency_has_golden(case, dialect):
+        return  # no golden for this dialect: dialect-agnostic checks only
+    _assert_concurrency_normalization(case, dialect)  # layer 3
+    _assert_concurrency_success(case, db)  # layer 2 (two held sessions, no error)
+
+
+def _run_statement_golden(case: Case, db: DatabaseProvider, dialect: str) -> None:
     _assert_schema(case)
     _assert_normalization(case, dialect)  # layer 3
     _assert_serde(case)  # layer 4

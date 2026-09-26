@@ -19,6 +19,7 @@ from parallax.core.execution_lifecycle._events import (
     AcquisitionFinished,
     AcquisitionStarted,
     ActivityFinished,
+    ActivityStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
@@ -644,38 +645,51 @@ def _stream_batch_projection(event: StreamBatchFinished, transition: str) -> _Pr
 def _projected(event: ExecutionEvent) -> _Projected[Any]:
     """``event`` as a level, a transition name, and the renderer that describes it.
 
-    The one exhaustive match over the event union: a transition added to the
-    algebra fails to type-check here until it is answered, which is what makes
-    this Handler's coverage of the algebra a compile-time fact rather than a
-    property re-established by inspection. It answers the level without
-    describing anything, so the Logger can be asked about a record before the
-    work of describing it is done.
+    An exhaustive match over the event union, one half per side of its
+    Started/Finished split: a transition added to the algebra fails to
+    type-check here until it is answered, which is what makes this Handler's
+    coverage of the algebra a compile-time fact rather than a property
+    re-established by inspection. It answers the level without describing
+    anything, so the Logger can be asked about a record before the work of
+    describing it is done.
 
     The arms stay flat. Exhaustiveness is proved by subtracting matched members
     from the union, and a nested subpattern subtracts nothing, so folding an
-    outcome match into an arm here would turn the guard below into a runtime
-    branch.
+    outcome match into an arm here would turn the guards below into runtime
+    branches.
     """
+    match event:
+        case (
+            ReadStarted()
+            | WriteBatchStarted()
+            | DatabaseCallStarted()
+            | TransactionInvocationStarted()
+            | TransactionAttemptStarted()
+            | SnapshotStreamStarted()
+            | StreamBatchStarted()
+            | AcquisitionStarted()
+            | ReleaseStarted()
+        ):
+            return _started_projection(event)
+        case _:
+            return _finished_projection(event)
+
+
+def _started_projection(event: ActivityStarted) -> _Projected[Any]:
     match event:
         case ReadStarted():
             projected = _Projected(logging.DEBUG, "readStarted", False, event, _read_started_fields)
             return projected
-        case ReadFinished():
-            return _read_projection(event, "readFinished")
         case WriteBatchStarted():
             projected = _Projected(
                 logging.DEBUG, "writeBatchStarted", False, event, _write_batch_started_fields
             )
             return projected
-        case WriteBatchFinished():
-            return _write_batch_projection(event, "writeBatchFinished")
         case DatabaseCallStarted():
             projected = _Projected(
                 logging.DEBUG, "databaseCallStarted", False, event, _database_call_started_fields
             )
             return projected
-        case DatabaseCallFinished():
-            return _database_call_projection(event, "databaseCallFinished")
         case TransactionInvocationStarted():
             projected = _Projected(
                 logging.DEBUG,
@@ -685,35 +699,47 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
                 _invocation_started_fields,
             )
             return projected
-        case TransactionInvocationFinished():
-            return _invocation_projection(event, "transactionInvocationFinished")
         case TransactionAttemptStarted():
             projected = _Projected(
                 logging.DEBUG, "transactionAttemptStarted", False, event, _attempt_started_fields
             )
             return projected
-        case TransactionAttemptFinished():
-            return _attempt_projection(event, "transactionAttemptFinished")
         case SnapshotStreamStarted():
             projected = _Projected(
                 logging.DEBUG, "snapshotStreamStarted", False, event, _stream_started_fields
             )
             return projected
-        case SnapshotStreamFinished():
-            return _stream_projection(event, "snapshotStreamFinished")
         case StreamBatchStarted():
             projected = _Projected(logging.DEBUG, "streamBatchStarted", False, event, _no_fields)
             return projected
-        case StreamBatchFinished():
-            return _stream_batch_projection(event, "streamBatchFinished")
         case AcquisitionStarted():
             projected = _Projected(logging.DEBUG, "acquisitionStarted", False, event, _no_fields)
             return projected
-        case AcquisitionFinished():
-            return _acquisition_projection(event, "acquisitionFinished")
         case ReleaseStarted():
             projected = _Projected(logging.DEBUG, "releaseStarted", False, event, _no_fields)
             return projected
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _finished_projection(event: ActivityFinished) -> _Projected[Any]:
+    match event:
+        case ReadFinished():
+            return _read_projection(event, "readFinished")
+        case WriteBatchFinished():
+            return _write_batch_projection(event, "writeBatchFinished")
+        case DatabaseCallFinished():
+            return _database_call_projection(event, "databaseCallFinished")
+        case TransactionInvocationFinished():
+            return _invocation_projection(event, "transactionInvocationFinished")
+        case TransactionAttemptFinished():
+            return _attempt_projection(event, "transactionAttemptFinished")
+        case SnapshotStreamFinished():
+            return _stream_projection(event, "snapshotStreamFinished")
+        case StreamBatchFinished():
+            return _stream_batch_projection(event, "streamBatchFinished")
+        case AcquisitionFinished():
+            return _acquisition_projection(event, "acquisitionFinished")
         case ReleaseFinished():
             projected = _Projected(
                 _finished_level(event, False), "releaseFinished", True, event, _release_fields

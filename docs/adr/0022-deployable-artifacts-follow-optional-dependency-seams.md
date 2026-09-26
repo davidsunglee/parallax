@@ -49,3 +49,13 @@ are refined in
 [`core/spec/m-db-port.md`](../../core/spec/m-db-port.md). The behavioral DAG is
 unchanged by this decision: artifact boundaries neither create behavioral edges
 nor make forbidden source directions legal.
+
+## Amendment (2026-09): an engine-specific extra may declare the driver it imports
+
+The adapter is no longer the only production artifact allowed to declare its
+concrete driver. It remains the only one that declares it unconditionally. An
+optional dependency selection that also selects the adapter may declare the
+driver when the engine-specific surface it gates imports that driver directly.
+Each artifact then declares what its code imports. The seam this decision
+protects is unchanged: the driver still arrives only together with its adapter,
+and every other artifact's base installation stays driver-free.

@@ -981,6 +981,7 @@ dependencies = [
 [package.optional-dependencies]
 postgres = [
     { name = "parallax-postgres" },
+    { name = "psycopg" },
 ]
 
 [package.metadata]
@@ -988,6 +989,7 @@ requires-dist = [
     { name = "botocore", specifier = ">=1.43.99" },
     { name = "parallax-core", editable = "packages/parallax-core" },
     { name = "parallax-postgres", marker = "extra == 'postgres'", editable = "packages/parallax-postgres" },
+    { name = "psycopg", marker = "extra == 'postgres'", specifier = ">=3.3.5" },
 ]
 provides-extras = ["postgres"]
 
@@ -1002,6 +1004,9 @@ dependencies = [
     { name = "parallax-evolution" },
     { name = "parallax-postgres" },
     { name = "parallax-snapshot" },
+    { name = "psycopg" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "testcontainers" },
 ]
 
@@ -1013,6 +1018,9 @@ requires-dist = [
     { name = "parallax-evolution", editable = "packages/parallax-evolution" },
     { name = "parallax-postgres", editable = "packages/parallax-postgres" },
     { name = "parallax-snapshot", editable = "packages/parallax-snapshot" },
+    { name = "psycopg", specifier = ">=3.3.5" },
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "testcontainers", specifier = ">=4.15.0" },
 ]
 
@@ -1022,10 +1030,14 @@ version = "0.1.0"
 source = { editable = "packages/parallax-core" }
 dependencies = [
     { name = "pydantic" },
+    { name = "pydantic-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.13" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.13" },
+    { name = "pydantic-core", specifier = ">=2.46" },
+]
 
 [[package]]
 name = "parallax-descriptor"
@@ -1099,7 +1111,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
     { name = "ruff" },
-    { name = "testcontainers" },
     { name = "twine" },
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
@@ -1130,7 +1141,6 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.16.3" },
-    { name = "testcontainers", specifier = ">=4.15.0" },
     { name = "twine", specifier = ">=7.0.0" },
     { name = "types-jsonschema", specifier = ">=4.21" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260724" },
