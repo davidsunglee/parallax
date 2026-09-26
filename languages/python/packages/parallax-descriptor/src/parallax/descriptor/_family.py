@@ -298,24 +298,28 @@ def _reject_missing_concrete_subtype(root: Entity, participants: tuple[Entity, .
 def _reject_strategy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
     strategy = _inh(root).strategy
     if strategy == "table-per-hierarchy":
-        if root.table is None:
-            raise InheritanceError(
-                "inheritance-tph-root-table-required",
-                f"table-per-hierarchy root {root.name} declares no shared table",
-                entity=root.name,
-            )
-        for entity in participants:
-            if entity is not root and entity.table is not None:
-                raise InheritanceError(
-                    "inheritance-tph-descendant-table-forbidden",
-                    f"table-per-hierarchy descendant {entity.name} repeats the root-owned "
-                    "shared table",
-                    entity=entity.name,
-                )
-        return
+        _reject_hierarchy_storage(root, participants)
+    elif strategy == "table-per-concrete-subtype":
+        _reject_concrete_subtype_storage(root, participants)
 
-    if strategy != "table-per-concrete-subtype":
-        return
+
+def _reject_hierarchy_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
+    if root.table is None:
+        raise InheritanceError(
+            "inheritance-tph-root-table-required",
+            f"table-per-hierarchy root {root.name} declares no shared table",
+            entity=root.name,
+        )
+    for entity in participants:
+        if entity is not root and entity.table is not None:
+            raise InheritanceError(
+                "inheritance-tph-descendant-table-forbidden",
+                f"table-per-hierarchy descendant {entity.name} repeats the root-owned shared table",
+                entity=entity.name,
+            )
+
+
+def _reject_concrete_subtype_storage(root: Entity, participants: tuple[Entity, ...]) -> None:
     for entity in participants:
         role = _inh(entity).role
         if role in ("root", "abstract-subtype") and entity.table is not None:
