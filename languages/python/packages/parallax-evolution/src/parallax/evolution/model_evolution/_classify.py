@@ -146,6 +146,67 @@ def classify(
 
 def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classification:
     match operation:
+        case (
+            ConcreteSubtypeAdded()
+            | AttributeAdded()
+            | ValueObjectOccurrenceAdded()
+            | ValueObjectAttributeAdded()
+        ):
+            return _addition(matching, operation)
+        case (
+            EntityRemoved()
+            | ConcreteSubtypeRemoved()
+            | RelationshipRemoved()
+            | AttributeRemoved()
+            | ValueObjectOccurrenceRemoved()
+            | ValueObjectAttributeRemoved()
+        ):
+            return _removal(matching, operation)
+        case EntityAltered():
+            return _entity_alteration(
+                matching, matching.entities.surviving[operation.entity], operation
+            )
+        case AttributeAltered():
+            return _attribute_alteration(
+                matching.attributes.surviving[operation.attribute],
+                operation,
+                _position(matching, operation.attribute.entity),
+            )
+        case ValueObjectOccurrenceAltered():
+            return _occurrence_alteration(
+                operation, _position(matching, operation.value_object.entity)
+            )
+        case ValueObjectAttributeAltered():
+            return _value_object_attribute_alteration(
+                operation,
+                _position(matching, operation.value_object_attribute.value_object.entity),
+            )
+        case RelationshipAltered():
+            return _relationship_alteration(
+                matching.relationships.surviving[operation.relationship]
+            )
+        case AsOfAxisAdded() | AsOfAxisAltered() | AsOfAxisRemoved():
+            # An axis on an Entity that already stores rows changes the temporal
+            # operation surface and the framework ownership of its endpoints, and
+            # it moves the derived physical key and the bounds existing rows must
+            # carry. Removing one is not the mirror of removing a member: the
+            # key it leaves is NARROWER than the one the surviving rows were
+            # written under, so that history collides beneath the later logical
+            # identity. An axis on a wholly new Entity is suppressed by that
+            # Entity's own unilateral addition and never reaches here.
+            return Classification(reasons=_BOTH, overlap_visible=False)
+        case _:
+            return Classification(reasons=_UNILATERAL, overlap_visible=False)
+
+
+def _addition(
+    matching: Matching,
+    operation: ConcreteSubtypeAdded
+    | AttributeAdded
+    | ValueObjectOccurrenceAdded
+    | ValueObjectAttributeAdded,
+) -> Classification:
+    match operation:
         case ConcreteSubtypeAdded():
             return Classification(
                 reasons=_UNILATERAL,
@@ -153,6 +214,35 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                     matching, matching.entities.added[operation.entity].family
                 ),
             )
+        case AttributeAdded():
+            return _attribute_addition(
+                matching.attributes.added[operation.attribute],
+                _position(matching, operation.attribute.entity),
+            )
+        case ValueObjectOccurrenceAdded():
+            return _member_addition(
+                nullable=matching.value_objects.added[operation.value_object].nullable,
+                position=_position(matching, operation.value_object.entity),
+            )
+        case ValueObjectAttributeAdded():
+            return _member_addition(
+                nullable=matching.value_object_attributes.added[
+                    operation.value_object_attribute
+                ].nullable,
+                position=_position(matching, operation.value_object_attribute.value_object.entity),
+            )
+
+
+def _removal(
+    matching: Matching,
+    operation: EntityRemoved
+    | ConcreteSubtypeRemoved
+    | RelationshipRemoved
+    | AttributeRemoved
+    | ValueObjectOccurrenceRemoved
+    | ValueObjectAttributeRemoved,
+) -> Classification:
+    match operation:
         case EntityRemoved() | ConcreteSubtypeRemoved() | RelationshipRemoved():
             # The stored shape goes with the declaration — a Relationship
             # direction stores no value of its own — so nothing the later
@@ -178,58 +268,6 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 ].nullable,
                 position=_position(matching, operation.value_object_attribute.value_object.entity),
             )
-        case EntityAltered():
-            return _entity_alteration(
-                matching, matching.entities.surviving[operation.entity], operation
-            )
-        case AttributeAdded():
-            return _attribute_addition(
-                matching.attributes.added[operation.attribute],
-                _position(matching, operation.attribute.entity),
-            )
-        case AttributeAltered():
-            return _attribute_alteration(
-                matching.attributes.surviving[operation.attribute],
-                operation,
-                _position(matching, operation.attribute.entity),
-            )
-        case ValueObjectOccurrenceAdded():
-            return _member_addition(
-                nullable=matching.value_objects.added[operation.value_object].nullable,
-                position=_position(matching, operation.value_object.entity),
-            )
-        case ValueObjectOccurrenceAltered():
-            return _occurrence_alteration(
-                operation, _position(matching, operation.value_object.entity)
-            )
-        case ValueObjectAttributeAdded():
-            return _member_addition(
-                nullable=matching.value_object_attributes.added[
-                    operation.value_object_attribute
-                ].nullable,
-                position=_position(matching, operation.value_object_attribute.value_object.entity),
-            )
-        case ValueObjectAttributeAltered():
-            return _value_object_attribute_alteration(
-                operation,
-                _position(matching, operation.value_object_attribute.value_object.entity),
-            )
-        case RelationshipAltered():
-            return _relationship_alteration(
-                matching.relationships.surviving[operation.relationship]
-            )
-        case AsOfAxisAdded() | AsOfAxisAltered() | AsOfAxisRemoved():
-            # An axis on an Entity that already stores rows changes the temporal
-            # operation surface and the framework ownership of its endpoints, and
-            # it moves the derived physical key and the bounds existing rows must
-            # carry. Removing one is not the mirror of removing a member: the
-            # key it leaves is NARROWER than the one the surviving rows were
-            # written under, so that history collides beneath the later logical
-            # identity. An axis on a wholly new Entity is suppressed by that
-            # Entity's own unilateral addition and never reaches here.
-            return Classification(reasons=_BOTH, overlap_visible=False)
-        case _:
-            return Classification(reasons=_UNILATERAL, overlap_visible=False)
 
 
 def _tags_a_shared_table(family: InheritanceEntityView) -> bool:
@@ -558,15 +596,24 @@ def _attribute_alteration(
                 else:
                     reasons |= _domain_contraction(position)
             case ReadOnlyChanged() | OptimisticLockingChanged():
-                # Neither flag is the contract: what invalidates a previously
-                # valid write is caller input the later edition no longer
-                # accepts, which a flag moving over an Attribute the caller
-                # never supplied — a generated key, an axis endpoint — does not,
-                # and neither does one moving over an Entity that accepted no
-                # caller write to carry the input in the first place.
-                if _withdraws_caller_input(*surviving) and position.wrote_before:
-                    reasons.add(_AUTHORING)
+                reasons |= _write_flag_reasons(surviving, position)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
+
+
+def _write_flag_reasons(
+    surviving: tuple[AttributeMetadata, AttributeMetadata], position: _Position
+) -> set[CoordinationReason]:
+    """The reasons a read-only or optimistic-locking flag moving over an Attribute carries.
+
+    Neither flag is the contract: what invalidates a previously valid write is
+    caller input the later edition no longer accepts, which a flag moving over an
+    Attribute the caller never supplied — a generated key, an axis endpoint —
+    does not, and neither does one moving over an Entity that accepted no caller
+    write to carry the input in the first place.
+    """
+    if _withdraws_caller_input(*surviving) and position.wrote_before:
+        return {_AUTHORING}
+    return set()
 
 
 def _occurrence_alteration(
