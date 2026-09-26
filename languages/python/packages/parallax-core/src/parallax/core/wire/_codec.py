@@ -179,9 +179,7 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
         _fail("type-mismatch", value, neutral_type)
     match neutral_type:
         case Boolean():
-            if not isinstance(value, bool):
-                _fail("type-mismatch", value, neutral_type)
-            return _DecodedWireLiteral(value)
+            return _decode_boolean(value, neutral_type)
         case Int32() | Int64():
             return _decode_integer(value, neutral_type)
         case Float32() | Float64():
@@ -189,12 +187,7 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
         case Decimal(precision, scale):
             return _decode_decimal(value, neutral_type, precision, scale)
         case String():
-            if not isinstance(value, str):
-                _fail("type-mismatch", value, neutral_type)
-            managed = str.__str__(value)
-            if not matches_neutral_type(managed, neutral_type):
-                _fail("out-of-space", value, neutral_type)
-            return _DecodedWireLiteral(managed)
+            return _decode_string(value, neutral_type)
         case Bytes():
             return _decode_bytes(value, neutral_type)
         case Date():
@@ -213,6 +206,21 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             return _DecodedWireLiteral(cast("ManagedValue", managed))
         case _ as unreachable:
             assert_never(unreachable)
+
+
+def _decode_boolean(value: object, neutral_type: Boolean) -> _DecodedWireLiteral:
+    if not isinstance(value, bool):
+        _fail("type-mismatch", value, neutral_type)
+    return _DecodedWireLiteral(value)
+
+
+def _decode_string(value: object, neutral_type: String) -> _DecodedWireLiteral:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    managed = str.__str__(value)
+    if not matches_neutral_type(managed, neutral_type):
+        _fail("out-of-space", value, neutral_type)
+    return _DecodedWireLiteral(managed)
 
 
 def _source_decimal(value: object) -> decimal.Decimal | None:
