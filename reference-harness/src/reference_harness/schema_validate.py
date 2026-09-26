@@ -1017,7 +1017,6 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     registry = build_registry(schema_map)
     errors: list[str] = []
 
-    # The schemas themselves are valid JSON Schema documents.
     for name, schema in schema_map.items():
         try:
             Draft202012Validator.check_schema(schema)
@@ -1030,7 +1029,6 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     case_schema = schema_map["compatibility-case.schema.json"]
     families, model_entities = _validate_models(compatibility_root, metamodel_schema, errors)
 
-    # Every case + the Object Queries it carries validate against their schemas.
     cases_dir = compatibility_root / "cases"
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
@@ -1053,15 +1051,6 @@ def validate_tree(compatibility_root: Path) -> list[str]:
 def _validate_models(
     compatibility_root: Path, metamodel_schema: dict[str, Any], errors: list[str]
 ) -> tuple[dict[str, Family], dict[str, list[dict[str, Any]]]]:
-    """Validate every model descriptor; return its family resolver and entity definitions.
-
-    Every descriptor validates against the metamodel schema, the foundational
-    Index-identity rule, and the unconditional semantic validators for
-    Inheritance and Storage Layout. Inheritance validates family topology when
-    present; Storage Layout also validates standalone Table ownership and Column
-    claims. The family resolver backs each case's family-aware query
-    self-consistency cross-check.
-    """
     families: dict[str, Family] = {}
     model_entities: dict[str, list[dict[str, Any]]] = {}
     for model_path in sorted((compatibility_root / "models").glob("**/*.y*ml")):
@@ -1081,8 +1070,6 @@ def _validate_models(
 
 @dataclass(frozen=True)
 class _CaseScope:
-    """What every check of one case reads: its label, its model, and the schemas."""
-
     label: str
     family: Family | None
     entities: list[dict[str, Any]]

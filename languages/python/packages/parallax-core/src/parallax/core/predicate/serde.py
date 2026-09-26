@@ -397,7 +397,6 @@ def _family(tags: frozenset[str], shape: _Shape, parse: _Parser) -> dict[str, _G
     return dict.fromkeys(tags, (shape, parse))
 
 
-# Each tag's closed body shape beside the parser that builds its node.
 _GRAMMAR: dict[str, _Grammar] = {
     "all": (_shape(()), _all),
     "none": (_shape(()), _none),

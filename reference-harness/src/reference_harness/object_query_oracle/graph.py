@@ -281,8 +281,6 @@ def _node_shape(entity: Entity) -> _NodeShape:
 
 
 class _ModelGraphComparison:
-    """Node equality under a model's declared member kinds and types."""
-
     def __init__(self, model: Model) -> None:
         self._model = model
 

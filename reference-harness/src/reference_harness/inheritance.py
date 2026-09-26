@@ -828,7 +828,6 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
 
 
 def _check_parents_declared(family: Family, participants: list[dict[str, Any]]) -> None:
-    """1. Every declared parent resolves to an entity in the descriptor."""
     for definition in participants:
         key = family.key_of(definition)
         parent = family.parents[key]
@@ -841,7 +840,6 @@ def _check_parents_declared(family: Family, participants: list[dict[str, Any]]) 
 
 
 def _check_parents_acyclic(family: Family, participants: list[dict[str, Any]]) -> None:
-    """2. Parent links are acyclic."""
     for definition in participants:
         seen: set[str] = set()
         current: str | None = family.key_of(definition)
@@ -927,7 +925,6 @@ def _check_root_owned_declarations(participants: list[dict[str, Any]]) -> None:
 
 
 def _check_concrete_root_ancestry(family: Family, participants: list[dict[str, Any]]) -> None:
-    """6. Every concrete subtype reaches an abstract root through its ancestry."""
     for definition in participants:
         if role_of(definition) != ROLE_CONCRETE:
             continue
@@ -946,10 +943,10 @@ def _check_family_roots(family: Family, families: list[tuple[str, list[dict[str,
 
     Its members share one ancestry, so "more than one" is unrepresentable and only
     the zero-root shape remains. A family with a CONCRETE participant and no root
-    is already caught by check #6 (concrete-without-abstract-root), which runs
-    first, so reaching this point rootless means every member is an abstract orphan
-    whose ancestry never tops out at a `root` — a family that can never be
-    instantiated or discriminated.
+    is already caught by :func:`_check_concrete_root_ancestry`, which runs first,
+    so reaching this point rootless means every member is an abstract orphan whose
+    ancestry never tops out at a `root` — a family that can never be instantiated
+    or discriminated.
     """
     for top, members in families:
         if role_of(family.defs.get(top, {})) != ROLE_ROOT:
