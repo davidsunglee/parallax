@@ -451,41 +451,48 @@ def _check_scheduling(repository: _Repository) -> Iterator[Diagnostic]:
                 )
 
     for scope in repository.scopes:
-        classes = repository.scope_classes(scope)
-        if scope in repository.language_scopes and not repository.declares(f"{scope}-check"):
-            yield Diagnostic(
-                "missing-aggregate",
-                f"`{scope}` exposes no `{scope}-check` aggregate; its language spec names one "
-                f"complete verification command, and nothing else in the graph provides it",
-            )
-        for scheduling_class in classes:
-            aggregate = f"{scope}-check-{scheduling_class}"
-            if not repository.declares(aggregate):
-                yield Diagnostic(
-                    "missing-aggregate",
-                    f"`{scope}` declares the scheduling class `{scheduling_class}` but exposes "
-                    f"no `{aggregate}` aggregate for it",
-                )
-                continue
-            reached = {recipe.name for recipe in graph.closure(aggregate)}
-            owner = f"{scope}-test-{scheduling_class}"
-            if owner not in reached:
-                yield Diagnostic(
-                    "incomplete-aggregate",
-                    f"`{aggregate}` does not compose `{owner}`, so the class it names is not "
-                    f"what it runs",
-                )
-            for other in classes:
-                foreign = f"{scope}-test-{other}"
-                if other != scheduling_class and foreign in reached:
-                    yield Diagnostic(
-                        "foreign-test-in-aggregate",
-                        f"`{aggregate}` composes `{foreign}`, which belongs to the "
-                        f"`{other}` class; class selections must stay disjoint",
-                    )
-        yield from _check_scheduling_guard(repository, scope, classes)
+        yield from _check_scope_aggregates(repository, scope)
 
     yield from _check_repository_aggregates(repository)
+
+
+def _check_scope_aggregates(repository: _Repository, scope: str) -> Iterator[Diagnostic]:
+    """§7's scope level: one complete aggregate, and one aggregate per class that
+    runs that class's owner and no other class's."""
+    graph = repository.graph
+    classes = repository.scope_classes(scope)
+    if scope in repository.language_scopes and not repository.declares(f"{scope}-check"):
+        yield Diagnostic(
+            "missing-aggregate",
+            f"`{scope}` exposes no `{scope}-check` aggregate; its language spec names one "
+            f"complete verification command, and nothing else in the graph provides it",
+        )
+    for scheduling_class in classes:
+        aggregate = f"{scope}-check-{scheduling_class}"
+        if not repository.declares(aggregate):
+            yield Diagnostic(
+                "missing-aggregate",
+                f"`{scope}` declares the scheduling class `{scheduling_class}` but exposes "
+                f"no `{aggregate}` aggregate for it",
+            )
+            continue
+        reached = {recipe.name for recipe in graph.closure(aggregate)}
+        owner = f"{scope}-test-{scheduling_class}"
+        if owner not in reached:
+            yield Diagnostic(
+                "incomplete-aggregate",
+                f"`{aggregate}` does not compose `{owner}`, so the class it names is not "
+                f"what it runs",
+            )
+        for other in classes:
+            foreign = f"{scope}-test-{other}"
+            if other != scheduling_class and foreign in reached:
+                yield Diagnostic(
+                    "foreign-test-in-aggregate",
+                    f"`{aggregate}` composes `{foreign}`, which belongs to the "
+                    f"`{other}` class; class selections must stay disjoint",
+                )
+    yield from _check_scheduling_guard(repository, scope, classes)
 
 
 def _selected_scheduling_classes(repository: _Repository, recipe: Recipe) -> frozenset[str] | None:
@@ -879,33 +886,8 @@ def _check_ci(repository: _Repository) -> Iterator[Diagnostic]:
     covered: set[str] = set()
     ownership: dict[str, set[str]] = {}
     for job in repository.jobs:
-        for command in job.commands:
-            performed = _runner_operation(command)
-            if performed is not None:
-                yield Diagnostic(
-                    "ci-embedded-gate",
-                    f"job `{job.identifier}` runs `{command.strip()}`, embedding a "
-                    f"`{performed}` gate a canonical command already owns",
-                )
-        unknown = [name for name in job.invoked if not repository.declares(name)]
-        for name in unknown:
-            yield Diagnostic(
-                "ci-unknown-recipe",
-                f"job `{job.identifier}` invokes `just {name}`, which the graph does not declare",
-            )
         resolved = [name for name in job.invoked if repository.declares(name)]
-        if resolved and job.identifier not in resolved:
-            yield Diagnostic(
-                "ci-job-name-mismatch",
-                f"job `{job.identifier}` runs {', '.join(sorted(set(resolved)))}; a job's "
-                f"identifier matches the command it executes",
-            )
-        elif not resolved and repository.declares(job.identifier):
-            yield Diagnostic(
-                "ci-missing-invocation",
-                f"job `{job.identifier}` names a command but does not invoke it; the primary "
-                f"verification step invokes that command directly",
-            )
+        yield from _check_ci_job(repository, job, resolved)
         owners = {owner for name in resolved for owner in repository.blocking_owners(name)}
         if owners:
             ownership[job.identifier] = owners
@@ -927,6 +909,40 @@ def _check_ci(repository: _Repository) -> Iterator[Diagnostic]:
             "ci-uncovered-gate",
             f"no job runs `{missing}`; the union of jobs covers the complete required check "
             f"graph even when CI parallelizes it",
+        )
+
+
+def _check_ci_job(
+    repository: _Repository, job: ci_workflow.Job, resolved: Sequence[str]
+) -> Iterator[Diagnostic]:
+    """One job invokes, by its own identifier, only commands the graph declares,
+    and embeds no gate of its own; ``resolved`` is what it invokes that the graph
+    declares."""
+    for command in job.commands:
+        performed = _runner_operation(command)
+        if performed is not None:
+            yield Diagnostic(
+                "ci-embedded-gate",
+                f"job `{job.identifier}` runs `{command.strip()}`, embedding a "
+                f"`{performed}` gate a canonical command already owns",
+            )
+    unknown = [name for name in job.invoked if not repository.declares(name)]
+    for name in unknown:
+        yield Diagnostic(
+            "ci-unknown-recipe",
+            f"job `{job.identifier}` invokes `just {name}`, which the graph does not declare",
+        )
+    if resolved and job.identifier not in resolved:
+        yield Diagnostic(
+            "ci-job-name-mismatch",
+            f"job `{job.identifier}` runs {', '.join(sorted(set(resolved)))}; a job's "
+            f"identifier matches the command it executes",
+        )
+    elif not resolved and repository.declares(job.identifier):
+        yield Diagnostic(
+            "ci-missing-invocation",
+            f"job `{job.identifier}` names a command but does not invoke it; the primary "
+            f"verification step invokes that command directly",
         )
 
 

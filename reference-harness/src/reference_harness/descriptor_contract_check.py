@@ -375,6 +375,15 @@ def _fixture_pair_errors(
         if not actual:
             errors.append(f"{label}: expected value violations but the document is value-valid")
             return errors
+    errors.extend(_violation_comparison_errors(label, expected, actual))
+    return errors
+
+
+def _violation_comparison_errors(
+    label: str, expected: list[Violation], actual: list[Violation]
+) -> list[str]:
+    """The sidecar names exactly the canonical violations, in canonical order."""
+    errors: list[str] = []
     canonical_expected = sorted(set(expected), key=violation_sort_key)
     if set(expected) != set(actual):
         errors.append(
@@ -473,6 +482,45 @@ def export_determinism_errors(models_dir: Path) -> list[str]:
     return errors
 
 
+class _SchemaUnusable(Exception):
+    """The metamodel schema cannot back either gate; ``exit_code`` is the CLI's."""
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _metamodel_schema(compatibility_root: Path) -> tuple[Path, dict[str, Any]]:
+    """The metamodel schema's path and document, checked against the Draft
+    2020-12 meta-schema."""
+    try:
+        schema_path = schemas_dir(compatibility_root) / "metamodel.schema.json"
+    except OSError as exc:
+        raise _SchemaUnusable(str(exc), 2) from exc
+    try:
+        schema = load_json(schema_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _SchemaUnusable(f"unreadable schema file {schema_path}: {exc}", 2) from exc
+    except json.JSONDecodeError as exc:
+        raise _SchemaUnusable(f"malformed schema JSON in {schema_path}: {exc}", 1) from exc
+    if not isinstance(schema, dict):
+        raise _SchemaUnusable(
+            f"malformed schema JSON in {schema_path}: the document root is not a JSON object", 1
+        )
+    # ``check_schema`` rejects every defect the Draft 2020-12 meta-schema can
+    # see, including ``pattern`` regex validity via its format checks. Reference
+    # resolution is lazy, so a dangling ``$ref`` in a meta-schema-valid schema
+    # surfaces only when fixture validation reaches it; the guard in :func:`main`
+    # converts that residual escape into the same diagnostic.
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise _SchemaUnusable(
+            f"malformed Draft 2020-12 schema in {schema_path}: {exc.json_path}: {exc.message}", 1
+        ) from exc
+    return schema_path, schema
+
+
 def main(argv: list[str]) -> int:
     """CLI entry point: run both gates over the compatibility tree *argv[0]*
     (the schema location is derived via `schemas_dir`).
@@ -499,37 +547,10 @@ def main(argv: list[str]) -> int:
             return 2
 
     try:
-        schema_path = schemas_dir(compatibility_root) / "metamodel.schema.json"
-    except OSError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    try:
-        schema = load_json(schema_path)
-    except (OSError, UnicodeDecodeError) as exc:
-        print(f"unreadable schema file {schema_path}: {exc}", file=sys.stderr)
-        return 2
-    except json.JSONDecodeError as exc:
-        print(f"malformed schema JSON in {schema_path}: {exc}", file=sys.stderr)
-        return 1
-    if not isinstance(schema, dict):
-        print(
-            f"malformed schema JSON in {schema_path}: the document root is not a JSON object",
-            file=sys.stderr,
-        )
-        return 1
-    # ``check_schema`` rejects every defect the Draft 2020-12 meta-schema can
-    # see, including ``pattern`` regex validity via its format checks. Reference
-    # resolution is lazy, so a dangling ``$ref`` in a meta-schema-valid schema
-    # surfaces only when fixture validation reaches it; the guard below converts
-    # that residual escape into the same diagnostic.
-    try:
-        Draft202012Validator.check_schema(schema)
-    except SchemaError as exc:
-        print(
-            f"malformed Draft 2020-12 schema in {schema_path}: {exc.json_path}: {exc.message}",
-            file=sys.stderr,
-        )
-        return 1
+        schema_path, schema = _metamodel_schema(compatibility_root)
+    except _SchemaUnusable as exc:
+        print(exc, file=sys.stderr)
+        return exc.exit_code
 
     try:
         errors = fixture_errors(fixture_dir, schema)
