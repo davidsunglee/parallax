@@ -630,6 +630,13 @@ class WriteSettlement:
             entity, facts.view, row, context="insert"
         )
         predecessor = None if observed is None else observed.predecessor
+        if predecessor is not None and not any(
+            isinstance(resolved.state, CarriedState | ChangedState)
+            for resolved in facts.resolved_successors
+        ):
+            # No successor carries this state forward, yet a member the entity
+            # does not declare still refuses it.
+            _predecessor_maps(facts, predecessor)
         steps: list[PlannedStep] = []
         close = facts.close
         if close is not None:

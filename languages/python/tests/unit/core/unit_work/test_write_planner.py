@@ -2353,8 +2353,17 @@ def test_single_assignment_groups_and_keyed_writes_are_not_compared_again_at_set
     assert calls == {"prepared": 0, "compared": 0}
 
 
-def test_a_keyed_predecessor_naming_a_non_member_is_refused_as_a_planning_error() -> None:
-    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},))
+@pytest.mark.parametrize(
+    "addressed",
+    [
+        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("9.00")},)),
+        KeyedWrite("terminate", "Balance", ({"id": 1},)),
+    ],
+    ids=["successor", "close-only"],
+)
+def test_a_keyed_predecessor_naming_a_non_member_is_refused_as_a_planning_error(
+    addressed: KeyedWrite,
+) -> None:
     key_ = object_key(addressed, _BALANCE)
     assert key_ is not None
     predecessor = PredecessorRow(members={**_BALANCE_PREDECESSOR, "nickname": "Ada"})
