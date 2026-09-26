@@ -22,9 +22,9 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
+    OccurrenceMetadata,
     TemporalDimension,
     ValueObjectIdentity,
-    ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.temporal_read import Bitemporal, TemporalFacet, TransactionTimeOnly
@@ -1610,7 +1610,7 @@ def reject_readless_document_many(
             )
 
 
-def assigned_many_path(occurrence: ValueObjectMetadata, authored: object) -> tuple[str, ...] | None:
+def assigned_many_path(occurrence: OccurrenceMetadata, authored: object) -> tuple[str, ...] | None:
     """Return the first authored nested ``many`` path in declaration order."""
     if not isinstance(authored, Mapping):
         return None
@@ -1621,7 +1621,7 @@ def assigned_many_path(occurrence: ValueObjectMetadata, authored: object) -> tup
             continue
         if nested.multiplicity is Multiplicity.MANY:
             return (name,)
-        path = assigned_many_path(cast("ValueObjectMetadata", nested), authored_members[name])
+        path = assigned_many_path(nested, authored_members[name])
         if path is not None:
             return (name, *path)
     return None
