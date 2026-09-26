@@ -198,8 +198,7 @@ def _assert_schema(case: Case) -> None:
     # Here we assert the minimal structural invariants the runner relies on so a
     # malformed case fails loudly rather than deep in execution.
     if case.is_write_sequence:
-        if not case.expected_table_state:
-            raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
+        _assert_write_sequence_shape(case)
     elif case.is_scenario:
         # A Scenario asserts nothing here because none of its shape is this
         # check's to adjudicate: the static pass above refuses what the document
@@ -220,8 +219,7 @@ def _assert_schema(case: Case) -> None:
     elif case.is_boundary:
         _assert_boundary_shape(case)
     elif case.is_edit:
-        if not case.edit_source:
-            raise CaseFailure(f"{case.path.name}: edit case has no source")
+        _assert_edit_shape(case)
     elif case.is_rejected:
         _assert_rejected_shape(case)
     elif case.is_evolution:
@@ -232,6 +230,11 @@ def _assert_schema(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
     _assert_reference_sql_dialect_keys(case)
+
+
+def _assert_write_sequence_shape(case: Case) -> None:
+    if not case.expected_table_state:
+        raise CaseFailure(f"{case.path.name}: write sequence missing then.tableState")
 
 
 def _assert_conflict_shape(case: Case) -> None:
@@ -298,6 +301,11 @@ def _assert_boundary_shape(case: Case) -> None:
         raise CaseFailure(f"{case.path.name}: boundary case has no actions")
     if not case.outcome:
         raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+
+
+def _assert_edit_shape(case: Case) -> None:
+    if not case.edit_source:
+        raise CaseFailure(f"{case.path.name}: edit case has no source")
 
 
 def _assert_rejected_shape(case: Case) -> None:
