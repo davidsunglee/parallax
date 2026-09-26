@@ -176,7 +176,9 @@ def _unlocked_first_page(case: Case, source: str, first_root_sql: str) -> str:
     return first_root_sql.removesuffix(suffix)
 
 
-def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDelivery:
+# One page loop: each page's expected binds, arms, and seek shapes are measured
+# against the cursor, carried binds, and shapes the pages before it established.
+def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDelivery:  # noqa: C901
     """Execute a streamed delivery page by page and assert the pages it authored.
 
     A streamed statement list is the pages' own ``1 + L`` groups concatenated
