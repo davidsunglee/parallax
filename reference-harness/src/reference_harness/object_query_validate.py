@@ -156,25 +156,29 @@ def _walk(entity: Entity, node: Any) -> None:
     elif tag in ("navigate", "exists", "notExists"):
         _check_navigation(entity, body)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
-        subject = body.get("attr")
-        _check_find_root(entity, subject)
-        if not isinstance(subject, str):
-            return
-        attribute = entity.attribute_by_name(subject.rpartition(".")[2])
-        if tag in ("isNull", "isNotNull"):
-            _check_null_check(attribute, subject)
-        elif tag in _STRING_TAGS:
-            _check_string_predicate(attribute, body, subject=subject)
-        elif tag in ("in", "notIn"):
-            for value in body.get("values", []):
-                decode_typed_literal(value, attribute.get("type"), repr(subject))
-        else:
-            decode_typed_literal(body.get("value"), attribute.get("type"), repr(subject))
+        _check_attribute_predicate(entity, tag, body)
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk(entity, operand)
     elif tag in ("not", "group", "narrow"):
         _walk(entity, body.get("operand"))
+
+
+def _check_attribute_predicate(entity: Entity, tag: str, body: dict[str, Any]) -> None:
+    subject = body.get("attr")
+    _check_find_root(entity, subject)
+    if not isinstance(subject, str):
+        return
+    attribute = entity.attribute_by_name(subject.rpartition(".")[2])
+    if tag in ("isNull", "isNotNull"):
+        _check_null_check(attribute, subject)
+    elif tag in _STRING_TAGS:
+        _check_string_predicate(attribute, body, subject=subject)
+    elif tag in ("in", "notIn"):
+        for value in body.get("values", []):
+            decode_typed_literal(value, attribute.get("type"), repr(subject))
+    else:
+        decode_typed_literal(body.get("value"), attribute.get("type"), repr(subject))
 
 
 def _check_between(entity: Entity, body: dict[str, Any]) -> None:
