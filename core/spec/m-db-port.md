@@ -537,8 +537,8 @@ acquisition) and delegates every parse decision to the dialect layer, so parse
 logic is never duplicated across adapters. Adding a database type is a **new
 independently deployable adapter artifact and source enforcement scope**, not a
 new behavioral-module node or a change to the port, dialect layer, or anything
-above the seam. The adapter artifact's production manifest is the only Parallax
-manifest that MAY declare its concrete driver.
+above the seam. Which production manifests may declare that driver is fixed by
+the [required artifact topology](modules.md#required-production-artifact-topology).
 
 Two structural rules make the decomposition load-bearing:
 

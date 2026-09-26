@@ -420,7 +420,8 @@ every Entity child that imports the substrate is granted it by name, and
 contract sources of their own. Ownership is independent of §8's manifests both
 ways: a manifest dependency never grants source permission —
 `parallax-snapshot` installs Pydantic through `parallax-core` and may not import
-it — and a source grant needs no direct manifest declaration.
+it — and a grant only permits an import, never implying a declaration. The
+declaration an exercised grant needs is §8's separate direct-declaration rule.
 
 `parallax.conformance` is granted `pydantic` and `psycopg`. Its edit-model
 fixtures (`edit_models.py`, `edit_runner.py`) are deliberately native Pydantic
