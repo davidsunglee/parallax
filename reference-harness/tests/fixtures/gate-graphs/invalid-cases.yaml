@@ -142,8 +142,8 @@
 
 - name: class-aggregate-omitting-a-scope
   file: justfile
-  old: "check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree"
-  new: "check-dbfree: core-check lint-markdown harness-check-dbfree"
+  old: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree python-check-dbfree"
+  new: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree"
   code: incomplete-aggregate
   message: "`check-dbfree` does not compose `python-check-dbfree`"
 

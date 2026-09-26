@@ -74,13 +74,16 @@ check: check-gates check-dbfree check-db report-check-summary
 check-all: check check-cost report-check-all-summary
 
 [doc("Every blocking check that needs no live database.")]
-check-dbfree: core-check lint-markdown harness-check-dbfree python-check-dbfree
+check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree python-check-dbfree
 
 [doc("Every blocking check that needs a live database (Docker).")]
 check-db: harness-check-db python-check-db
 
 [doc("Every blocking check needing an interpreter no other test shares.")]
 check-cost: python-check-cost
+
+[doc("Duplicated-code scans, one per codebase, each against its own threshold.")]
+lint-duplication: harness-lint-duplication python-lint-duplication
 
 [metadata("runtime:fast")]
 [doc("This file matches the grammar, roles, and composition core/spec/language-testing.md fixes.")]
@@ -243,6 +246,11 @@ harness-format-check:
 [doc("Ruff lint rules over the harness.")]
 harness-lint:
     cd {{harness}} && uv run ruff check .
+
+[metadata("runtime:fast")]
+[doc("Duplicated-code scan over the harness source.")]
+harness-lint-duplication:
+    pnpm exec jscpd --config {{harness}}/.jscpd.json
 
 [metadata("runtime:fast")]
 [doc("Typecheck the harness with basedpyright.")]
@@ -414,6 +422,11 @@ python-format-check:
 [doc("Ruff lint rules over the Python workspace.")]
 python-lint:
     cd {{python}} && uv run ruff check .
+
+[metadata("runtime:fast")]
+[doc("Duplicated-code scan over the Python distributions' sources and tools.")]
+python-lint-duplication:
+    pnpm exec jscpd --config {{python}}/.jscpd.json
 
 [metadata("runtime:fast")]
 [doc("Typecheck the Python workspace with Pyright in strict mode.")]

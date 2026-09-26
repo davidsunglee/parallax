@@ -82,6 +82,22 @@ jobs:
       - name: just lint-markdown
         run: just lint-markdown
 
+  # Duplicated-code scans over the harness and the Python implementation, each
+  # against its own threshold.
+  lint-duplication:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: pnpm/action-setup@v6.1.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: just lint-duplication
+        run: just lint-duplication
+
   # Conventional-commit validation across the PR commit range.
   commitlint:
     runs-on: ubuntu-latest

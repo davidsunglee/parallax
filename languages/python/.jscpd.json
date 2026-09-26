@@ -1,0 +1,10 @@
+{
+  "path": ["packages", "tools"],
+  "format": ["python"],
+  "mode": "mild",
+  "minTokens": 100,
+  "minLines": 10,
+  "threshold": 1,
+  "reporters": ["console", "threshold"],
+  "noTips": true
+}

@@ -7,7 +7,7 @@
   "engines": {
     "node": ">=22.13"
   },
-  "description": "Dev-tooling only (husky, commitlint, markdownlint, lint-staged) for the parallax polyglot monorepo. No runtime code lives here.",
+  "description": "Dev-tooling only for the parallax polyglot monorepo. No runtime code lives here.",
   "scripts": {
     "prepare": "husky",
     "markdownlint": "markdownlint-cli2 \"core/spec/**/*.md\" \"*.md\"",
@@ -17,6 +17,7 @@
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",
     "husky": "^9.1.7",
+    "jscpd": "5.0.10",
     "lint-staged": "^17.5.1",
     "markdownlint-cli2": "^0.23.2"
   },

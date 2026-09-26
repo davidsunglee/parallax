@@ -148,6 +148,7 @@ _RUNNER_OPERATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bruff format\b"), "format"),
     (re.compile(r"\bruff check\b"), "lint"),
     (re.compile(r"\bmarkdownlint-cli2\b"), "lint"),
+    (re.compile(r"\bjscpd\b"), "lint"),
     (re.compile(r"\b(?:based)?pyright\b"), "typecheck"),
     (re.compile(r"\bpytest\b"), "test"),
     (re.compile(r"\buv build\b"), "build"),
