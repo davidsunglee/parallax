@@ -17,7 +17,11 @@ from parallax.core.document_codec._document import (
     reduce_declared_members,
 )
 from parallax.core.document_codec._leaf import encode_leaf, is_text_compared
-from parallax.core.document_codec._managed import classify_effective_change
+from parallax.core.document_codec._managed import (
+    PreparedEffectiveChange,
+    classify_effective_change,
+    prepare_effective_change,
+)
 from parallax.core.document_codec._occurrence import OccurrenceCarrier, encode_occurrence
 from parallax.core.document_codec._shape import (
     MISSING,
@@ -46,6 +50,7 @@ __all__ = [
     "Missing",
     "Occurrence",
     "OccurrenceCarrier",
+    "PreparedEffectiveChange",
     "Present",
     "SetLeaf",
     "SetValue",
@@ -59,6 +64,7 @@ __all__ = [
     "is_text_compared",
     "locate_raw_entity_member",
     "occurrence_shape",
+    "prepare_effective_change",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
     "shape_of_declaration",

@@ -79,7 +79,6 @@ from parallax.snapshot.materialize import (
     RootView,
     classify_roots,
     page_edges,
-    require_publishable,
     wire_roots,
 )
 from parallax.snapshot.materialize._page import ABSENT
@@ -115,7 +114,6 @@ __all__ = [
     "guarded_parents",
     "parent_refs",
     "projection_concrete",
-    "publishable_rows",
     "slot_table",
     "typed_publication",
     "wire_position",
@@ -617,31 +615,6 @@ def find(
     return Materializer(observer).read_page(
         EagerPageRead(query, model, port, preference, ledger, calls, planner, edition)
     )
-
-
-def publishable_rows(
-    model: CatalogedModel,
-    compiled: CompiledRead,
-    read: Callable[[], Sequence[Row]],
-    *,
-    pin: Pin,
-) -> RowPublication:
-    """Materialize and validate one predicate-write batch.
-
-    A predicate write has no in-band channel for a stored-data verdict, so it
-    applies the publication gate before deriving observations or writes. History
-    and row reads publish invalid roots in band through their own Root View
-    publication.
-    """
-    materializer = Materializer()
-    staged = materializer.read_page(FlatPageRead(model, compiled, read, pin))
-
-    def require(root: RootView, _position: int) -> Iterator[object]:
-        require_publishable(root)
-        return iter(())
-
-    tuple(materializer.roots(staged.page, require))
-    return staged
 
 
 def find_rows(

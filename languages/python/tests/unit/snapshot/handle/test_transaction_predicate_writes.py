@@ -9,10 +9,11 @@ atomic-unit buffering (ADR 0014) — across audit-only, bitemporal, and versione
 non-temporal targets.
 
 No-op elimination is covered from both sides: through a whole write's emitted
-statements, and through the lane's own comparison helpers driven directly off
-hand-built rows, under `Columns` layout and Relational Document Layout alike.
-This is the one suite reaching those private helpers, so the seam has a single
-place to move from.
+statements, and through the codec's prepared comparison driven directly off
+positional rows over these models' own shapes, under `Columns` layout and
+Relational Document Layout alike. Acquisition itself is graded as the one
+traversal of the resolved roots inside the resolving Read, with the Unit of
+Work left untouched until that traversal has judged every root.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.conformance._lanes import scenario
+from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import (
@@ -58,9 +60,22 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import (
+    Leaf,
+    MemberShape,
+    PreparedEffectiveChange,
+    prepare_effective_change,
+)
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import LayoutCatalog
 from parallax.core.entity._model import model_of
+from parallax.core.execution_lifecycle import (
+    DirectFailure,
+    ExecutionEvent,
+    ReadFailed,
+    ReadFinished,
+)
+from parallax.core.metamodel import DocumentMember, Multiplicity
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.unit_work import (
@@ -77,13 +92,11 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.write_settlement import assigned_many_path
-from parallax.snapshot import QueryTargetError, Snapshot
+from parallax.snapshot import QueryTargetError, Snapshot, SnapshotDecodingError, connect
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
+from parallax.snapshot.handle import _predicate_writes as predicate_writes
 from parallax.snapshot.handle._family import comparison_shape
-from parallax.snapshot.handle._predicate_writes import (
-    _is_no_op_assignment,  # pyright: ignore[reportPrivateUsage] - the lane's own per-row no-op comparison, driven off hand-built rows so a normalization defect names itself rather than surfacing as a missing statement
-    _normalize_assignment_values,  # pyright: ignore[reportPrivateUsage] - the lane's own once-per-write assignment decoding, driven directly so each encoded spelling is proved rather than inferred from the SQL a whole write emitted
-)
+from parallax.snapshot.handle._materialization import Materializer
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 from tests._support import inheritance_models as im
 from tests._support import mirrored_models as mm
@@ -1475,13 +1488,47 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
-def test_normalizing_production_encoded_assignments_yields_the_managed_comparison_operand() -> None:
-    # `set` accepts an occurrence in the encoded spelling production emits, so the
-    # authored side is decoded ONCE for the whole write. What normalization answers
-    # is already the operand the codec weighs: the same managed document a resolved
-    # row's own decode produces, for a `one` and for every element of a `many`. The
-    # comparison that follows therefore decodes nothing, and a Decimal, date, time,
-    # timestamp, UUID, or bytes leaf is weighed as the host value both sides hold.
+def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[object, ...]:
+    """``members`` as the positional row a resolving read materializes over
+    ``shape``: a member it does not name is the absent marker, and each
+    occurrence is positional over its own shape."""
+    return tuple(
+        _positional_cell(member, members[member.name]) if member.name in members else ABSENT
+        for member in shape.members
+    )
+
+
+def _positional_cell(member: DocumentMember, value: object) -> object:
+    if isinstance(member, Leaf) or value is None:
+        return value
+    if member.multiplicity is Multiplicity.MANY:
+        return tuple(
+            _positional(member.shape, cast("Mapping[str, object]", element))
+            for element in cast("Sequence[object]", value)
+        )
+    return _positional(member.shape, cast("Mapping[str, object]", value))
+
+
+def _managed_subscriber_shape() -> MemberShape:
+    meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
+    entity = next(
+        entity
+        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
+        if entity.identity.name == "WhereManagedSubscriber"
+    )
+    return comparison_shape(meta, entity)
+
+
+def _no_op(shape: MemberShape, assigned: Mapping[str, object], row: tuple[object, ...]) -> bool:
+    return not prepare_effective_change(shape, assigned, absent=ABSENT).any_effective(row)
+
+
+def test_an_encoded_occurrence_assignment_is_compared_as_the_managed_document_a_row_holds() -> None:
+    # `set` accepts an occurrence in the encoded spelling production emits, and
+    # the write's comparison is prepared from it ONCE: what it weighs is the same
+    # managed document a resolved row's own decode produces, for a `one` and for
+    # every element of a `many`, so a Decimal, date, time, timestamp, UUID, or
+    # bytes leaf is weighed as the host value both sides hold.
     encoded = {
         "amount": "19.95",
         "payload": "0a1b",
@@ -1498,50 +1545,37 @@ def test_normalizing_production_encoded_assignments_yields_the_managed_compariso
         "instant": dt.datetime(2026, 8, 13, 13, 30, tzinfo=dt.UTC),
         "token": UUID("12345678-1234-5678-1234-567812345678"),
     }
-    meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
-    entity = next(
-        entity
-        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
-        if entity.identity.name == "WhereManagedSubscriber"
-    )
-    shape = comparison_shape(meta, entity)
-    row: MappingRow = {"details": managed, "entries": [managed]}
+    shape = _managed_subscriber_shape()
+    row = _positional(shape, {"details": managed, "entries": [managed]})
 
-    assignments = _normalize_assignment_values({"details": encoded, "entries": [encoded]}, shape)
-
-    assert assignments == {"details": managed, "entries": [managed]}
-    assert _is_no_op_assignment(shape, assignments, row)
+    assert _no_op(shape, {"details": encoded, "entries": [encoded]}, row)
+    changed = _positional(shape, {"details": {**managed, "amount": Decimal("19.96")}})
+    assert not _no_op(shape, {"details": encoded}, changed)
 
 
 def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
     # A resolved row's scalars arrive from the shared Entity State in their declared
     # Neutral Type's managed carrier, and an assignment already carries one, so
-    # normalization leaves both sides alone and the comparison weighs two host
+    # preparation leaves both sides alone and the comparison weighs two host
     # values without an encode/decode round trip between them. Nothing on either
     # side is judged, so a stored value a current authoring constraint would reject
     # — a Decimal carrying more fractional digits than the declared scale — is
     # compared rather than refused, and the assignment correcting it is a change.
-    meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
-    entity = next(
-        entity
-        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
-        if entity.identity.name == "WhereManagedSubscriber"
-    )
-    shape = comparison_shape(meta, entity)
+    shape = _managed_subscriber_shape()
     stored = {"amount": Decimal("19.95"), "day": dt.date(2026, 8, 13), "payload": b"\x0a\x1b"}
-    row: MappingRow = dict(stored)
+    row = _positional(shape, stored)
 
-    assert _is_no_op_assignment(shape, _normalize_assignment_values(stored, shape), row)
-    assert not _is_no_op_assignment(shape, {"payload": b"\x0a\x1c"}, row)
-    assert not _is_no_op_assignment(shape, {"day": dt.date(2026, 8, 14)}, row)
+    assert _no_op(shape, stored, row)
+    assert not _no_op(shape, {"payload": b"\x0a\x1c"}, row)
+    assert not _no_op(shape, {"day": dt.date(2026, 8, 14)}, row)
 
-    out_of_scale: MappingRow = {"amount": Decimal("19.9501")}
-    assert not _is_no_op_assignment(shape, {"amount": Decimal("19.95")}, out_of_scale)
+    out_of_scale = _positional(shape, {"amount": Decimal("19.9501")})
+    assert not _no_op(shape, {"amount": Decimal("19.95")}, out_of_scale)
 
 
 def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
     # The operand the comparison weighs is the document the assignment would STORE:
-    # normalization answers the whole subtree, because the write replaces it whole.
+    # preparation answers the whole subtree, because the write replaces it whole.
     # Naming only `city` is therefore a CHANGE against a row holding `geo` — issuing
     # it removes `geo`, so eliminating it would leave stored state the assignment
     # says is gone. The target declares Relational Document Layout, so both sides of
@@ -1549,20 +1583,22 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
     model = document_model()
     person = document_layout_entity(model, "Person")
     shape = comparison_shape(model, person)
-    row: MappingRow = {
-        "address": {"city": "Bergen", "geo": {"country": "NO"}},
-        "tags": [{"label": "founder"}],
-    }
-
-    def no_op(assignments: Mapping[str, object]) -> bool:
-        return _is_no_op_assignment(shape, _normalize_assignment_values(assignments, shape), row)
-
-    assert no_op(
-        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]}
+    row = _positional(
+        shape,
+        {
+            "address": {"city": "Bergen", "geo": {"country": "NO"}},
+            "tags": [{"label": "founder"}],
+        },
     )
-    assert not no_op({"address": {"city": "Bergen"}})
-    assert not no_op({"address": {"city": "Oslo"}})
-    assert not no_op({"tags": []})
+
+    assert _no_op(
+        shape,
+        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]},
+        row,
+    )
+    assert not _no_op(shape, {"address": {"city": "Bergen"}}, row)
+    assert not _no_op(shape, {"address": {"city": "Oslo"}}, row)
+    assert not _no_op(shape, {"tags": []}, row)
 
 
 def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:
@@ -2488,9 +2524,11 @@ def test_a_materializing_temporal_write_streams_each_resolved_row_whole_into_its
     # each row through is not retained anywhere in the buffered group.
     case = acquisition_support.case_named(f"acquisition.rows-8.{layout}")
     groups, views = _recorded_groups_and_views(monkeypatch)
+    traversals = _traversals(monkeypatch)
     with acquisition_support.database(case) as handle:
         acquisition_support.acquire(handle, case)
 
+    assert len(traversals) == 1
     (group,) = groups
     assert isinstance(group.observations, TemporalColumns)
     predecessors = group.observations.predecessors
@@ -2561,32 +2599,209 @@ def test_a_row_view_read_by_a_materializing_write_is_released_with_the_resolve(
         assert referrers == []
 
 
+# --------------------------------------------------------------------------- #
+# Acquisition is ONE traversal of the resolved roots, inside the resolving     #
+# Read: each root is judged publishable, compared, and accumulated in turn,   #
+# and the Unit of Work hears of the group only once every root has passed.    #
+# --------------------------------------------------------------------------- #
+_READ_ENDS = frozenset({"ReadFinished"})
+
+
+def _names(events: tuple[ExecutionEvent, ...]) -> list[str]:
+    return [type(event).__name__ for event in events]
+
+
+def _read_open(names: Sequence[str]) -> bool:
+    started = len(names) - 1 - names[::-1].index("ReadStarted")
+    return not _READ_ENDS & set(names[started:])
+
+
+def _traversals(
+    monkeypatch: pytest.MonkeyPatch, recorder: RecordingLifecycleProvider | None = None
+) -> list[list[str]]:
+    """Every Page-root traversal from now on, each as the event names its
+    transaction had delivered when the traversal began."""
+    traversals: list[list[str]] = []
+    roots = Materializer.roots
+
+    def counting(self: Materializer, page: Any, publish: Any, **options: Any) -> Any:
+        traversals.append([] if recorder is None else _names(recorder.roots[-1].events))
+        return roots(self, page, publish, **options)
+
+    monkeypatch.setattr(Materializer, "roots", counting)
+    return traversals
+
+
+def _unit_of_work_mutations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    mutations: list[str] = []
+    buffer, claim = UnitOfWork.buffer, UnitOfWork.claim
+
+    def recording_buffer(uow: UnitOfWork, instruction: BufferItem) -> None:
+        mutations.append("buffer")
+        buffer(uow, instruction)
+
+    def recording_claim(uow: UnitOfWork, key: Any, intent: Any) -> Any:
+        mutations.append("claim")
+        return claim(uow, key, intent)
+
+    monkeypatch.setattr(UnitOfWork, "buffer", recording_buffer)
+    monkeypatch.setattr(UnitOfWork, "claim", recording_claim)
+    return mutations
+
+
+def _account_rows(*owners: str | None) -> list[MappingRow]:
+    return [
+        {"id": key, "owner": owner, "balance": Decimal("10.00"), "version": 1}
+        for key, owner in enumerate(owners, start=1)
+    ]
+
+
+def _recorded_account_db(port: ScriptedAdapter, recorder: RecordingLifecycleProvider) -> Any:
+    return own_root(
+        connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+    ).using_database_login()
+
+
+def _assign_owner(tx: Transaction) -> None:
+    tx.update_where(
+        mm.Account.where(mm.Account.balance < Decimal("200.00")), mm.Account.owner.set("Ada")
+    )
+
+
+def test_a_materializing_write_judges_compares_and_keeps_each_root_in_one_traversal_of_its_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One traversal, begun while the resolving Read is still open, decides
+    # everything: the no-op row is eliminated there, the changed row is kept
+    # there, and a versioned target's rows are read positionally rather than
+    # through a named row view. The group reaches the Unit of Work after the
+    # traversal, and its claim after the group.
+    def named_view(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("a versioned acquisition viewed a row by member name")
+
+    recorder = RecordingLifecycleProvider()
+    traversals = _traversals(monkeypatch, recorder)
+    mutations = _unit_of_work_mutations(monkeypatch)
+    monkeypatch.setattr(EntityStateRow, "over_declared_members", staticmethod(named_view))
+    port = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write()))
+
+    _recorded_account_db(port, recorder).transact(_assign_owner, concurrency="optimistic")
+
+    (traversal,) = traversals
+    assert _read_open(traversal)
+    assert mutations == ["buffer", "claim"]
+    (written,) = (call for call in port.calls if isinstance(call, WriteCall))
+    assert written.binds == ("Ada", 2, 2, 1)
+
+
+def test_a_root_refused_later_in_the_traversal_leaves_the_unit_of_work_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The first two roots are compared and kept before the third is judged, and
+    # its invalid stored document fails the resolving Read itself. What the
+    # traversal had accumulated stays in its local builders: nothing was
+    # buffered or claimed, so the transaction commits with no write at all.
+    recorder = RecordingLifecycleProvider()
+    traversals = _traversals(monkeypatch, recorder)
+    mutations = _unit_of_work_mutations(monkeypatch)
+    compared: list[tuple[object, ...]] = []
+    any_effective = PreparedEffectiveChange.any_effective
+
+    def recording_any_effective(change: PreparedEffectiveChange, row: tuple[object, ...]) -> bool:
+        compared.append(row)
+        return any_effective(change, row)
+
+    monkeypatch.setattr(PreparedEffectiveChange, "any_effective", recording_any_effective)
+    port = ScriptedAdapter(
+        Transact(
+            Read(
+                rows=[
+                    {"id": key, "version": 1, "address": PresentDocument({"city": city})}
+                    for key, city in ((1, "Bergen"), (2, "Paris"), (3, 7))
+                ]
+            )
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(SnapshotDecodingError):
+            tx.update_where(
+                WhereSubscriber.where(WhereSubscriber.id < 10),
+                WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
+            )
+
+    own_root(
+        connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+    ).using_database_login().transact(fn, concurrency="optimistic")
+
+    assert len(traversals) == 1
+    assert [row[0] for row in compared] == [1, 2]
+    assert mutations == []
+    (finished,) = (event for event in recorder.roots[-1].events if isinstance(event, ReadFinished))
+    assert isinstance(finished.outcome, ReadFailed)
+    assert isinstance(finished.outcome.failure, DirectFailure)
+    assert finished.outcome.failure.diagnostic.qualified_type.endswith(".SnapshotDecodingError")
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
+
+
+@pytest.mark.parametrize("owners", [(), ("Ada", "Ada")], ids=["empty", "all-no-op"])
+def test_a_resolve_keeping_no_row_buffers_and_claims_nothing(
+    monkeypatch: pytest.MonkeyPatch, owners: tuple[str, ...]
+) -> None:
+    traversals = _traversals(monkeypatch)
+    mutations = _unit_of_work_mutations(monkeypatch)
+    port = ScriptedAdapter(Transact(Read(rows=_account_rows(*owners))))
+
+    account_db(port).transact(_assign_owner, concurrency="optimistic")
+
+    assert len(traversals) == 1
+    assert mutations == []
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
+
+
+def test_a_verb_carrying_no_assignments_prepares_no_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `delete` and `terminate` keep every resolved row, so no comparison exists
+    # for them to prepare or ask.
+    def forbidden(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("a destructive verb prepared an effective-change comparison")
+
+    monkeypatch.setattr(predicate_writes, "prepare_effective_change", forbidden)
+    deleting = ScriptedAdapter(Transact(Read(rows=_account_rows("Ada", "Grace")), Write(times=2)))
+    account_db(deleting).transact(
+        lambda tx: tx.delete_where(mm.Account.where(mm.Account.balance < 200)),
+        concurrency="optimistic",
+    )
+    terminating = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
+    own_root(
+        Database.connect(terminating, BALANCE, clock=FixedClock(FIXED))
+    ).using_database_login().transact(
+        lambda tx: tx.terminate_where(mm.Balance.where(mm.Balance.value < 200)),
+        concurrency="locking",
+    )
+    for port in (deleting, terminating):
+        assert len([op for op in port.calls if isinstance(op, WriteCall)]) == 2
+
+
 def test_a_positional_rows_absent_marker_is_compared_as_itself_never_as_the_observed_null() -> None:
-    # A resolved row is handed to the codec's comparison whole, keyed by declared
-    # name. A member the row holds as null is the observed null and a null
-    # assignment restores it; a member the row does not carry at all is that
-    # same observed null. A position the read left ABSENT is neither: the
-    # marker is a present value the comparison weighs as itself, so a null
-    # assignment against it is a change rather than a no-op, exactly as the
-    # physical-name view answered it.
+    # A member the row holds as null is the observed null, and a null assignment
+    # restores it. A position the read left ABSENT is not: the marker is a
+    # present value the comparison weighs as itself, so a null assignment against
+    # it is a change rather than a no-op.
     meta = model_of(_WHERE_VOYAGE_META)
     entity = next(entity for entity in meta.entities if entity.identity.name == "WhereVoyage")
     shape = comparison_shape(meta, entity)
     layout = LayoutCatalog(meta).entity(entity.identity)
+    assert layout.member_selection.shape is shape
     tx_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
-    def positional(title: object) -> EntityStateRow:
-        return EntityStateRow.over_declared_members(
-            layout.member_selection, (1, title, tx_start, INFINITY, ("grain",)), absent=ABSENT
-        )
+    def positional(title: object) -> tuple[object, ...]:
+        return (1, title, tx_start, INFINITY, ("grain",))
 
-    assignment = _normalize_assignment_values({"title": None}, shape)
-    assert _is_no_op_assignment(shape, assignment, positional(None))
-    assert _is_no_op_assignment(shape, assignment, {"id": 1})
-    assert not _is_no_op_assignment(shape, assignment, positional(ABSENT))
-    assert not _is_no_op_assignment(shape, assignment, positional("Coastal Run"))
-    assert _is_no_op_assignment(
-        shape,
-        _normalize_assignment_values({"manifest": {"cargo": "grain"}}, shape),
-        positional(None),
-    )
+    assert _no_op(shape, {"title": None}, positional(None))
+    assert not _no_op(shape, {"title": None}, positional(ABSENT))
+    assert not _no_op(shape, {"title": None}, positional("Coastal Run"))
+    assert _no_op(shape, {"manifest": {"cargo": "grain"}}, positional(None))

@@ -82,7 +82,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.snapshot.handle._predicate_writes",
         "parallax.core.sql_gen._compile",
-    ): frozenset({"compile_read", "CompiledRead"}),
+    ): frozenset({"compile_read"}),
     (
         "parallax.snapshot.handle._materialization",
         "parallax.core.sql_gen._compile",

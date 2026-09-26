@@ -4,7 +4,6 @@ from parallax.core import inheritance, storage_layout, temporal_read
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
-    AttributeMetadata,
     EntityMetadata,
     Metamodel,
     entity_by_name,
@@ -19,7 +18,6 @@ __all__ = [
     "entity_layout",
     "entity_of",
     "family_view",
-    "members",
     "temporal_shape",
 ]
 
@@ -89,27 +87,3 @@ def comparison_shape(model: Metamodel, entity: EntityMetadata) -> MemberShape:
     surfaces on one member set without reconstructing it for each comparison.
     """
     return family_view(model, entity).applicable_document_shape
-
-
-def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:
-    """Map each writable member name to `(row key, is_value_object)`.
-
-    The row key is the name a resolved row carries that member's value under,
-    which is the member's own Column name under either layout: a direct
-    placement selects that Column, and a document-mapped read fans the shared
-    Structured Column back out under the same name (`m-sql`), so one logical
-    member is read the same way whichever place the layout put it.
-
-    Membership is ``layout``'s own: every applicable logical member of the
-    row-owning Entity, and nothing else. The framework-owned discriminator is
-    not a member — a write derives it from the layout's own discriminator
-    assignment rather than from row data."""
-    return {
-        binding.identity.name
-        if isinstance(binding, AttributeMetadata)
-        else binding.identity.path[-1]: (
-            binding.storage.name,
-            not isinstance(binding, AttributeMetadata),
-        )
-        for binding in layout.member_selection.bindings
-    }

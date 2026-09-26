@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeIs
+from typing import NamedTuple, TypeIs, cast
 
+from parallax.core.document_codec._document import reduce_declared_members
 from parallax.core.document_codec._shape import (
     DocumentMember,
     Leaf,
@@ -13,7 +14,9 @@ from parallax.core.document_codec._shape import (
 from parallax.core.metamodel import Multiplicity
 
 __all__ = [
+    "PreparedEffectiveChange",
     "classify_effective_change",
+    "prepare_effective_change",
 ]
 
 _EXHAUSTED = object()
@@ -71,6 +74,130 @@ def classify_effective_change(
         else:
             effective.add(name)
     return EffectiveChangeSet(effective=frozenset(effective), restored=frozenset(restored))
+
+
+class _Assigned(NamedTuple):
+    position: int
+    member: DocumentMember
+    value: object
+
+
+class PreparedEffectiveChange:
+    """:func:`classify_effective_change`'s rule, prepared once for positional rows.
+
+    A row is positional over the prepared shape: one cell per member, a ``one``
+    occurrence a tuple positional over its own shape, a ``many`` a tuple of
+    those, and the prepared absence marker at every position the row does not
+    hold. Only the assigned positions are read, and a row is compared in place
+    rather than through a view, copy, or member set.
+    """
+
+    __slots__ = ("_absent", "_assigned")
+
+    def __init__(self, assigned: tuple[_Assigned, ...], absent: object) -> None:
+        self._assigned = assigned
+        self._absent = absent
+
+    def any_effective(self, row: tuple[object, ...]) -> bool:
+        """Whether any assignment changes ``row``, stopping at the first that does."""
+        absent = self._absent
+        for position, member, value in self._assigned:
+            if not _restores(member, value, row[position], absent):
+                return True
+        return False
+
+    def effective_positions(self, row: tuple[object, ...]) -> Iterator[int]:
+        """The positions of ``row`` the assignments change, in authored order."""
+        absent = self._absent
+        for position, member, value in self._assigned:
+            if not _restores(member, value, row[position], absent):
+                yield position
+
+
+def prepare_effective_change(
+    shape: MemberShape, assigned: Mapping[str, object], *, absent: object
+) -> PreparedEffectiveChange:
+    """Prepare the effective-change comparison of ``assigned`` against rows of ``shape``.
+
+    Each assigned occurrence is reduced once to the complete document the
+    assignment would store, whether it arrives managed or in its encoded
+    spelling, and canonicalized once; a name ``shape`` does not declare takes no
+    part. A row position holding ``absent`` is always an effective change: the
+    marker is a value the row holds, never the observed null a missing mapping
+    key is to :func:`classify_effective_change`.
+    """
+    prepared: list[_Assigned] = []
+    for name, value in assigned.items():
+        position = shape.position(name)
+        if position is None:
+            continue
+        member = shape.members[position]
+        prepared.append(_Assigned(position, member, _prepared_value(member, value)))
+    return PreparedEffectiveChange(tuple(prepared), absent)
+
+
+def _prepared_value(member: DocumentMember, value: object) -> object:
+    if isinstance(member, Leaf):
+        return value
+    if member.multiplicity is Multiplicity.MANY:
+        reduced: object = [
+            reduce_declared_members(member.shape, element, preserve_presence=True)
+            for element in cast("Sequence[object]", value)
+        ]
+    else:
+        reduced = reduce_declared_members(member.shape, value, preserve_presence=True)
+    return _canonical_member(member, reduced)
+
+
+def _restores(member: DocumentMember, value: object, cell: object, absent: object) -> bool:
+    if cell is absent:
+        return False
+    if isinstance(member, Leaf):
+        return value == cell or _structurally_equal(value, cell)
+    return _occurrence_restores(member, value, cell, absent)
+
+
+def _occurrence_restores(member: Occurrence, value: object, cell: object, absent: object) -> bool:
+    """Whether canonical ``value`` equals the canonical form of positional ``cell``.
+
+    A null ``many`` cell is that occurrence's empty collection, as an omitted
+    one is inside a document.
+    """
+    if member.multiplicity is Multiplicity.MANY:
+        items = () if cell is None else cast("tuple[tuple[object, ...], ...]", cell)
+        if not _is_array(value) or len(value) != len(items):
+            return False
+        shape = member.shape
+        for element, item in zip(value, items, strict=True):
+            if not (_is_document(element) and _document_restores(shape, element, item, absent)):
+                return False
+        return True
+    if not isinstance(cell, tuple):
+        return _structurally_equal(value, cell)
+    return _is_document(value) and _document_restores(
+        member.shape, value, cast("tuple[object, ...]", cell), absent
+    )
+
+
+def _document_restores(
+    shape: MemberShape, value: Mapping[str, object], cell: tuple[object, ...], absent: object
+) -> bool:
+    held = 0
+    for member, stored in zip(shape.members, cell, strict=True):
+        if stored is absent:
+            if not _is_many(member):
+                continue
+            stored = None
+        if member.name not in value:
+            return False
+        held += 1
+        assigned = value[member.name]
+        if isinstance(member, Leaf):
+            if not _structurally_equal(assigned, stored):
+                return False
+        elif not _occurrence_restores(member, assigned, stored, absent):
+            return False
+    return held == len(value)
 
 
 def _canonical_document(shape: MemberShape, document: Mapping[str, object]) -> Mapping[str, object]:
