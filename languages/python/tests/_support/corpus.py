@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         OccurrenceMetadata,
         ValueObjectMetadata,
     )
+    from tests._support.bind_positions import BindPosition
 
 
 def case_document(case: Any) -> dict[str, Any]:
@@ -116,7 +117,11 @@ def _row_equal(observed: dict[str, Any], expected: dict[str, Any]) -> bool:
     )
 
 
-def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> None:
+def compare_binds(
+    observed: Sequence[object],
+    expected: Sequence[object],
+    positions: Mapping[int, BindPosition] | None = None,
+) -> None:
     """Order-SENSITIVE positional bind comparison with the same exact-Decimal
     fallback ``compare_rows`` uses (m-case-format): an authored golden literal
     (``5.00``, a plain YAML float) and a real ``decimal``-typed bind
@@ -126,12 +131,19 @@ def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> Non
     document before comparing, so it reconciles against the golden's plain
     dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
     own emission-wire rendering; everything else is exact wire equality.
+
+    At each of ``positions`` the bind additionally carries the golden's float
+    zero sign (`tests._support.bind_positions`).
     """
     obs = [_wire_value(value) for value in observed]
     exp = [_wire_value(value) for value in expected]
     assert len(obs) == len(exp), f"bind count: observed {obs!r} != expected {exp!r}"
     for index, (left, right) in enumerate(zip(obs, exp, strict=True)):
         assert _scalar_equal(left, right), (index, left, right)
+    if positions:
+        from tests._support.bind_positions import assert_zero_signs
+
+        assert_zero_signs(obs, exp, positions)
 
 
 def _wire_value(value: object) -> object:
