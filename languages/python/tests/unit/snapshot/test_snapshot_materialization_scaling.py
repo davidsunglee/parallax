@@ -368,6 +368,23 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     assert any(value is includes for value in direct)
 
     reached = reachable_objects(result, boundaries=(model, includes))
+    kinds: tuple[tuple[type, str], ...] = (
+        (Snapshot, "snapshot"),
+        (Entity, "entity"),
+        (SnapshotNodeState, "node-state"),
+        (ReadOrigin, "origin"),
+        (EntityIdentity, "entity-identity"),
+        (Pin, "pin"),
+        (type, "shared"),
+    )
+    exact_kinds: dict[type, str] = {
+        dict: "views",
+        tuple: "tuple",
+        type(None): "shared",
+        bool: "shared",
+        int: "shared",
+        str: "shared",
+    }
 
     def category(value: object) -> str:
         if value is model:
@@ -376,27 +393,12 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
             return "includes"
         if value is UNLOADED:
             return "unloaded"
-        if isinstance(value, Snapshot):
-            return "snapshot"
-        if isinstance(value, Entity):
-            return "entity"
-        if isinstance(value, SnapshotNodeState):
-            return "node-state"
-        if isinstance(value, ReadOrigin):
-            return "origin"
-        if isinstance(value, EntityIdentity):
-            return "entity-identity"
-        if isinstance(value, Pin):
-            return "pin"
-        if isinstance(value, type):
-            return "shared"
-        if type(value) is dict:
-            return "views"
-        if type(value) is tuple:
-            return "tuple"
-        if type(value) in (type(None), bool, int, str):
-            return "shared"
-        return f"unexpected:{type(value).__module__}.{type(value).__qualname__}"
+        for kind, name in kinds:
+            if isinstance(value, kind):
+                return name
+        return exact_kinds.get(type(value)) or (
+            f"unexpected:{type(value).__module__}.{type(value).__qualname__}"
+        )
 
     inventory = Counter(category(value) for value in reached)
     del inventory["shared"]
