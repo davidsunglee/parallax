@@ -2975,7 +2975,7 @@ def test_a_projected_row_rejects_an_ambiguous_member() -> None:
             model,
             ActualWireProjection(model),
             columns,
-            False,
+            None,
             {"ambiguous": 1},
         )
 

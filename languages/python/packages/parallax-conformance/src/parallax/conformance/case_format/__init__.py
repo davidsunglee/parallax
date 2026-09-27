@@ -254,7 +254,6 @@ def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSel
             raise ValueError(f"{where}.databaseAuthorization requires {where}.actorIdentity")
         return None
     actor = container["actorIdentity"]
-    authorization = container.get("databaseAuthorization")
     if not isinstance(actor, Mapping):
         raise ValueError(f"{where}.actorIdentity must be a mapping, got {actor!r}")
     authored = cast("Mapping[str, object]", actor)
@@ -263,31 +262,40 @@ def _actor_selection(container: Mapping[str, object], *, where: str) -> ActorSel
         raise ValueError(f"{where}.actorIdentity names unknown keys {unknown}")
     kind = authored.get("kind")
     if kind == "subject":
-        if set(authored) != {"kind", "value"}:
-            raise ValueError(
-                f"{where}.actorIdentity subject selection requires exactly kind and value"
-            )
-        subject = authored["value"]
-        if not isinstance(subject, str) or not subject or subject.startswith("db-login:"):
-            raise ValueError(
-                f"{where}.actorIdentity.value must be a nonempty, nonreserved subject string"
-            )
-        if not isinstance(authorization, str) or not authorization:
-            raise ValueError(
-                f"{where}.databaseAuthorization must be a nonempty fixture selector for a subject"
-            )
-        return SubjectSelection(subject, authorization)
+        return _subject_selection(container, authored, where=where)
     if kind == "database-login":
-        if set(authored) != {"kind"}:
-            raise ValueError(f"{where}.actorIdentity database-login selection carries no value")
-        if "databaseAuthorization" in container:
-            raise ValueError(
-                f"{where}.databaseAuthorization is forbidden for database-login selection"
-            )
-        return DatabaseLoginSelection()
+        return _database_login_selection(container, authored, where=where)
     raise ValueError(
         f"{where}.actorIdentity.kind must be one of ['database-login', 'subject'], got {kind!r}"
     )
+
+
+def _subject_selection(
+    container: Mapping[str, object], authored: Mapping[str, object], *, where: str
+) -> SubjectSelection:
+    if set(authored) != {"kind", "value"}:
+        raise ValueError(f"{where}.actorIdentity subject selection requires exactly kind and value")
+    subject = authored["value"]
+    if not isinstance(subject, str) or not subject or subject.startswith("db-login:"):
+        raise ValueError(
+            f"{where}.actorIdentity.value must be a nonempty, nonreserved subject string"
+        )
+    authorization = container.get("databaseAuthorization")
+    if not isinstance(authorization, str) or not authorization:
+        raise ValueError(
+            f"{where}.databaseAuthorization must be a nonempty fixture selector for a subject"
+        )
+    return SubjectSelection(subject, authorization)
+
+
+def _database_login_selection(
+    container: Mapping[str, object], authored: Mapping[str, object], *, where: str
+) -> DatabaseLoginSelection:
+    if set(authored) != {"kind"}:
+        raise ValueError(f"{where}.actorIdentity database-login selection carries no value")
+    if "databaseAuthorization" in container:
+        raise ValueError(f"{where}.databaseAuthorization is forbidden for database-login selection")
+    return DatabaseLoginSelection()
 
 
 _SERIALIZED_ISOLATION: Final[Mapping[IsolationLevel, str]] = {

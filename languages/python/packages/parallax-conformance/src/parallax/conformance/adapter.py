@@ -269,6 +269,19 @@ def _read_observations(
     return {"emissions": emissions, "observations": {"rows": rows, "roundTrips": round_trips}}
 
 
+def _scenario_observations(run: engine.ScenarioRun) -> dict[str, Any]:
+    """A scenario run's contract observations: ``roundTrips`` always, and each
+    per-step channel only where some step filled it."""
+    observations: dict[str, Any] = {"roundTrips": run.round_trips}
+    if run.errors:
+        observations["errors"] = run.errors
+    if run.step_rows:
+        observations["stepRows"] = run.step_rows
+    if run.step_graphs:
+        observations["stepGraphs"] = run.step_graphs
+    return observations
+
+
 def _report_execution_lifecycle(
     case: case_format.Case,
     observations: dict[str, Any],
@@ -326,14 +339,7 @@ def _run(
         raise _scenario_lane_error(case)
     if case.shape == "scenario":
         run = engine.run_scenario_case(case, port, lifecycle)
-        scenario_observations: dict[str, Any] = {"roundTrips": run.round_trips}
-        if run.errors:
-            scenario_observations["errors"] = run.errors
-        if run.step_rows:
-            scenario_observations["stepRows"] = run.step_rows
-        if run.step_graphs:
-            scenario_observations["stepGraphs"] = run.step_graphs
-        return run.emissions, scenario_observations
+        return run.emissions, _scenario_observations(run)
     if case.shape == "writeSequence":
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, port, lifecycle)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}

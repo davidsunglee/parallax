@@ -40,6 +40,7 @@ from parallax.core.metamodel import (
     PersistenceMode,
     PkGeneration,
     PrimaryKey,
+    RelationshipDeclaration,
     RelationshipIdentity,
     RelationshipJoin,
     RelationshipOrder,
@@ -63,6 +64,7 @@ from parallax.evolution.model_evolution import (
     BehavioralImpact,
     ConcreteSubtypeAdded,
     ConcreteSubtypeRemoved,
+    ConcurrencyControl,
     CoordinatedEvolution,
     CoordinationReason,
     CoordinationRequirement,
@@ -73,6 +75,7 @@ from parallax.evolution.model_evolution import (
     EntityAltered,
     EntityRemoved,
     EntitySelectionFacts,
+    EntityWriteCapability,
     EntityWriteShape,
     Evolution,
     EvolutionOperation,
@@ -86,10 +89,12 @@ from parallax.evolution.model_evolution import (
     RelationshipRemoved,
     RelationshipSelectionFacts,
     ScalarAdmissibility,
+    SelectionFacts,
     TemporalAxisFacts,
     TransactionTimeGated,
     UnilateralEvolution,
     UniqueTuple,
+    ValueAdmissibility,
     ValueObjectAttributeAdded,
     ValueObjectAttributeAltered,
     ValueObjectAttributeRemoved,
@@ -478,8 +483,7 @@ def _metamodel_fact(
     | AbstractRoot
     | RelationshipJoin
     | RelationshipOrder
-    | DefiningRelationshipDeclaration
-    | ReverseRelationshipDeclaration,
+    | RelationshipDeclaration,
 ) -> Any:
     match value:
         case Table() | Column():
@@ -494,6 +498,21 @@ def _metamodel_fact(
             return {"generation": _generation(value.generation)}
         case AbstractRoot():
             return {"role": "root", **_strategy(value.strategy)}
+        case (
+            RelationshipJoin()
+            | RelationshipOrder()
+            | DefiningRelationshipDeclaration()
+            | ReverseRelationshipDeclaration()
+        ):
+            return _relationship_fact(value)
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _relationship_fact(
+    value: RelationshipJoin | RelationshipOrder | RelationshipDeclaration,
+) -> Any:
+    match value:
         case RelationshipJoin():
             return {"source": _attribute(value.source), "target": _attribute(value.target)}
         case RelationshipOrder():
@@ -522,16 +541,11 @@ def _metamodel_fact(
 
 def _impact_fact(
     value: UniqueTuple
-    | ScalarAdmissibility
-    | OccurrenceAdmissibility
-    | LockingFallback
-    | VersionGated
-    | TransactionTimeGated
+    | ValueAdmissibility
+    | ConcurrencyControl
     | TemporalAxisFacts
-    | EntitySelectionFacts
-    | RelationshipSelectionFacts
-    | WritesDisabled
-    | WritesEnabled,
+    | SelectionFacts
+    | EntityWriteCapability,
 ) -> Any:
     match value:
         case UniqueTuple():
@@ -544,15 +558,8 @@ def _impact_fact(
             }
         case OccurrenceAdmissibility():
             return {"nullable": value.nullable}
-        case LockingFallback():
-            return {"gate": "LockingFallback"}
-        case VersionGated():
-            return {"gate": "VersionGated", "attribute": _attribute(value.attribute)}
-        case TransactionTimeGated():
-            return {
-                "gate": "TransactionTimeGated",
-                "startAttribute": _attribute(value.start_attribute),
-            }
+        case LockingFallback() | VersionGated() | TransactionTimeGated():
+            return _concurrency_control_fact(value)
         case TemporalAxisFacts():
             return {
                 "dimension": _DIMENSIONS[value.dimension],
@@ -570,6 +577,21 @@ def _impact_fact(
             return {"writes": "Disabled"}
         case WritesEnabled():
             return {"writes": "Enabled", "shape": _WRITE_SHAPES[value.shape]}
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _concurrency_control_fact(value: ConcurrencyControl) -> Any:
+    match value:
+        case LockingFallback():
+            return {"gate": "LockingFallback"}
+        case VersionGated():
+            return {"gate": "VersionGated", "attribute": _attribute(value.attribute)}
+        case TransactionTimeGated():
+            return {
+                "gate": "TransactionTimeGated",
+                "startAttribute": _attribute(value.start_attribute),
+            }
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
 
