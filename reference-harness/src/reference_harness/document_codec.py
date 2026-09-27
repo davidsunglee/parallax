@@ -29,7 +29,7 @@ import re
 from typing import Any
 
 from . import portable_literal
-from .portable_literal import AuthoredInteger, AuthoredNumber
+from .portable_literal import AuthoredInteger, AuthoredNumber, DeclaredFloat
 
 __all__ = [
     "DocumentEncodingError",
@@ -107,14 +107,18 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     The domain is the case corpus's own wire literals — the spelling a neutral value
     rides in YAML — because that is what a case authors and what a conforming writer
     receives. Every type has exactly one document form, so two writers of one value
-    produce one document.
+    produce one document. A ``float32`` or ``float64`` spelling comes back as a
+    :class:`~.portable_literal.DeclaredFloat`, so grading it observes its zero sign.
     """
     if value is None:
         return None
     try:
-        return portable_literal.canonicalize(value, type_spelling)
+        encoded = portable_literal.canonicalize(value, type_spelling)
     except portable_literal.PortableLiteralError as exc:
         raise DocumentEncodingError(str(exc)) from exc
+    if type_spelling in ("float32", "float64"):
+        return DeclaredFloat(encoded)
+    return encoded
 
 
 def decode_leaf(type_spelling: str, value: Any) -> Any:

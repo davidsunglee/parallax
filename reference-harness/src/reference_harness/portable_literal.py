@@ -514,6 +514,18 @@ class AuthoredNumber(float):
         return number
 
 
+class DeclaredFloat(float):
+    """A number encoded at a position that declares ``float32`` or ``float64``.
+
+    Canonical comparison observes a float zero's sign, while a Json position
+    compares JSON values, which do not (m-wire). A bare host float cannot say
+    which position it came from, so the encoding that knows the declared type
+    records it in the carrier.
+    """
+
+    __slots__ = ()
+
+
 def decode_number(value: Any, *, binary32: bool) -> float | None:
     """*value* as the float of the declared width nearest it, else ``None``.
 
