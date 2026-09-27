@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import Any, Final, cast
 
@@ -50,6 +50,10 @@ from tests._support.sweep_goldens import (
     assert_wire_binds,
     wire_binds,
     write_golden_statements,
+)
+from tests.compatibility._float_zero_support import (
+    project_float_zero_negative,
+    spell_float_zero_negative,
 )
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
@@ -597,6 +601,51 @@ def _grade_write_run(
         assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
         for table, expected_rows in expected_state.items():
             compare_rows(observed_state[table], expected_rows)
+
+
+def _write_case(case_id: str) -> case_format.Case:
+    (case,) = [c for c in _WRITE_CASES if c.case_id == case_id]
+    return case
+
+
+@pytest.mark.parametrize(
+    ("case_id", "fault", "refusal"),
+    [
+        pytest.param(case_id, fault, refusal, id=case_id)
+        for case_id, fault, refusal in (
+            ("m-document-codec-015", spell_float_zero_negative, r"^bind 2: "),
+            ("m-document-codec-016", spell_float_zero_negative, r"^bind 2: "),
+            ("m-core-009", project_float_zero_negative, r"^driver bind 1: "),
+            ("m-core-010", project_float_zero_negative, r"^driver bind 1: "),
+        )
+    ],
+)
+def test_write_run_grading_rejects_a_float_zero_turned_negative(
+    case_id: str,
+    fault: Callable[[pytest.MonkeyPatch], None],
+    refusal: str,
+    profile: Profile,
+    profile_run: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A float zero turned negative before the database fails grading, and the
+    restored run passes.
+
+    A document leaf's fault reaches the reported Wire bind, so the emission
+    refuses it. A scalar's reaches only the driver bind: the reported bind is
+    re-encoded as ``0.0``, and table state compares in decimal space.
+    """
+    case = _write_case(case_id)
+    model = engine.load_case_metamodel(case)
+    profile_run.reset(model, case_fixtures(case))
+    fault(monkeypatch)
+    envelope, port = _run_recording_writes(case, profile, profile_run)
+    monkeypatch.undo()
+    with pytest.raises(AssertionError, match=refusal):
+        _grade_write_run(case, model, envelope, port)
+
+    profile_run.reset(model, case_fixtures(case))
+    _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
 
 def _resolves_a_materializing_write(

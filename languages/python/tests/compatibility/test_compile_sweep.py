@@ -14,6 +14,7 @@ orthogonal focused selector, not a class.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Sequence
 from typing import Any, cast
@@ -34,6 +35,7 @@ from tests._support.sweep_goldens import (
     assert_wire_binds,
     write_golden_statements,
 )
+from tests.compatibility._float_zero_support import spell_float_zero_negative
 
 pytestmark = pytest.mark.compile_sweep
 
@@ -368,3 +370,21 @@ def test_m_opt_lock_001_is_query_result_dependent_run_only() -> None:
     envelope = adapter.compile_case(case.path, "postgres")
     assert envelope["status"] == "run-only", envelope
     assert envelope["diagnostics"][0]["code"] == "compile-run-only", envelope
+
+
+@pytest.mark.parametrize("case_id", ["m-document-codec-015", "m-document-codec-016"])
+def test_write_grading_rejects_a_document_leaf_spelled_negative_zero(
+    case_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A float leaf the codec spells ``-0.0`` fails the golden's positive zero,
+    which equals it as a number; restored, the same case passes."""
+    (case,) = [c for c in _REACHABLE if c.case_id == case_id]
+    spell_float_zero_negative(monkeypatch)
+    faulty = adapter.compile_case(case.path, "postgres")
+    monkeypatch.undo()
+
+    document = faulty["emissions"][0]["binds"][2]
+    assert math.copysign(1.0, document["ratio"]) == math.copysign(1.0, document["measure"]) == -1.0
+    with pytest.raises(AssertionError, match=r"^bind 2: .* carries a zero sign"):
+        _assert_write_emissions(case, faulty)
+    _assert_write_emissions(case, adapter.compile_case(case.path, "postgres"))
