@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format
+from parallax.core.metamodel import Metamodel
+from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import case_document, wire_value_deep
 
 # Reachable read cases whose golden projection and predicate are supported by
@@ -610,6 +612,16 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
 def wire_binds(binds: list[object]) -> list[object]:
     """Test-authored bind carriers in Wire-like form, outside production."""
     return [wire_value_deep(bind) for bind in binds]
+
+
+def assert_wire_binds(
+    model: Metamodel, golden_sql: str, golden_binds: list[object], observed_binds: list[object]
+) -> None:
+    """Emitted binds equal the golden's in Wire form, and carry its zero sign at
+    every declared float position (`m-case-format` *Canonical literal oracles*)."""
+    observed, expected = wire_binds(observed_binds), wire_binds(golden_binds)
+    assert observed == expected, (golden_sql, observed, expected)
+    assert_zero_signs(observed, expected, statement_bind_positions(model, golden_sql, golden_binds))
 
 
 def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:

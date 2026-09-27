@@ -26,6 +26,7 @@ from parallax.conformance import adapter, case_format, concurrency_runner, engin
 from parallax.conformance.profile import Profile
 from parallax.core import inheritance, storage_layout
 from parallax.core.metamodel import Metamodel, entity_by_name
+from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.corpus import (
     CollectionKinds,
     case_document,
@@ -45,6 +46,7 @@ from tests._support.repo import adapter_schema
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
+    assert_wire_binds,
     wire_binds,
     write_golden_statements,
 )
@@ -262,6 +264,11 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
             # The root statement's binds are user-authored (never gathered), so
             # their order is defined and exact.
             assert observed_binds == expected_binds, (case.case_id, emission)
+            assert_zero_signs(
+                observed_binds,
+                expected_binds,
+                statement_bind_positions(model, golden_sql, golden_binds),
+            )
         else:
             # A deep-fetch child level's key-set binds are the distinct keys
             # GATHERED from the parent level's own returned rows — an unordered
@@ -533,7 +540,11 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
         # never lossily coerced to ``float`` for SQL execution — `m-core`),
         # which a plain YAML-authored golden literal (``200.00``, a ``float``)
         # only reconciles against in Decimal space, not by bare wire equality.
-        compare_binds(emission["binds"], golden_binds)
+        compare_binds(
+            emission["binds"],
+            golden_binds,
+            statement_bind_positions(model, golden_sql, golden_binds),
+        )
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
     _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
@@ -965,7 +976,11 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission.sql == golden_sql, (case.case_id, emission)
-        compare_binds(list(emission.binds), golden_binds)
+        compare_binds(
+            list(emission.binds),
+            golden_binds,
+            statement_bind_positions(model, golden_sql, golden_binds),
+        )
 
     then = case_document(case)["then"]
     assert round_trips == then["roundTrips"], case.case_id
@@ -1150,10 +1165,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
         assert len(emissions) == len(golden_statements), (case.case_id, emissions)
         for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
             assert emission["sql"] == golden_sql, (case.case_id, emission)
-            assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (
-                case.case_id,
-                emission,
-            )
+            assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
         assert observations["affectedRows"] == then["affectedRows"], case.case_id
     else:
         attempts = cast("list[dict[str, Any]]", doc["when"]["attempts"])
@@ -1165,10 +1177,7 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
         assert len(emissions) == len(golden_statements), (case.case_id, emissions)
         for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
             assert emission["sql"] == golden_sql, (case.case_id, emission)
-            assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (
-                case.case_id,
-                emission,
-            )
+            assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
         assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
 
     # `then.roundTrips` where the case authors it: the calls that actually
@@ -1238,7 +1247,7 @@ def test_run_only_write_sequence_run_sweep(
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
-        assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
+        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
 
     expected_state = cast(

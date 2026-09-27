@@ -31,7 +31,7 @@ from tests._support.repo import adapter_schema
 from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
-    wire_binds,
+    assert_wire_binds,
     write_golden_statements,
 )
 
@@ -167,13 +167,14 @@ def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) ->
     those reads for a case whose writes address existing ones.
     """
     assert envelope["status"] == "ok", envelope
+    model = engine.load_case_metamodel(case)
     golden_statements = write_golden_statements(case)
     assert envelope["roundTrips"] == len(golden_statements), case.case_id
     emissions = envelope["emissions"]
     assert len(emissions) == len(golden_statements), (case.case_id, emissions, golden_statements)
     for emission, (golden_sql, golden_binds) in zip(emissions, golden_statements, strict=True):
         assert emission["sql"] == golden_sql, (case.case_id, emission)
-        assert wire_binds(emission["binds"]) == wire_binds(golden_binds), (case.case_id, emission)
+        assert_wire_binds(model, golden_sql, golden_binds, emission["binds"])
         assert _pointer_ok(case.shape, emission["casePointer"]), (case.case_id, emission)
 
 
@@ -205,7 +206,7 @@ def test_compile_sweep(case: case_format.Case) -> None:
     assert emission["casePointer"] == "/objectQuery"
     golden_sql, golden_binds = golden(case)
     assert emission["sql"] == golden_sql
-    assert emission["binds"] == golden_binds
+    assert_wire_binds(engine.load_case_metamodel(case), golden_sql, golden_binds, emission["binds"])
 
 
 def test_exercised_set_is_a_subset_of_the_reachable_reads() -> None:
