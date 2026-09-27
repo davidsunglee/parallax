@@ -245,49 +245,15 @@ class TransactionRunner:
         level = isolation if isinstance(isolation, Omitted) else isolation_level(isolation)
         active = active_unit_of_work()
         if active is not None:
-            joined = active.companion
-            if not isinstance(joined, _ActiveTransaction):
-                raise UnitOfWorkError(
-                    "a bare unit of work is active on this thread; db.transact can "
-                    "only join a transaction it opened"
-                )
-            if joined.root is not self._root:
-                raise TransactionOwnershipError(
-                    "this scope does not belong to the runtime that opened the active "
-                    "transaction (transaction-owner-mismatch)"
-                )
-            active.ensure_not_rollback_only()
-            if not same_execution(joined.capture, capture):
-                raise TransactionAuthorityError(
-                    "the joining scope carries different execution authority "
-                    "(transaction-authority-mismatch)"
-                )
-            _check_join_options(
-                joined.tx.options,
+            return self._join(
+                active,
+                fn,
+                capture,
                 max_retries=bound,
                 concurrency=preference,
                 retry_optimistic_conflicts=opt_in,
                 isolation=level,
             )
-            # The join path returns immediately and ignores these arguments in
-            # favor of the active transaction's own (m-unit-work); rollback-only
-            # foreclosure happens before the closure runs. The joined activity is
-            # a child of the attempt currently running rather than a root of its
-            # own, and it opens after the deterministic refusals above precisely
-            # because those refusals reach no transaction at all. Nothing is
-            # adopted and nothing is wrapped: the selection and the failure
-            # contract are the outer invocation's.
-            with joined.attempt.joined_invocation():
-                return run_unit_of_work(
-                    lambda _: fn(joined.tx),
-                    settings=active.settings,
-                    clock=active.clock,
-                    meta=active.meta,
-                    flush_executor=active.flush_executor,
-                    write_batch_opening=active.write_batch_opening,
-                    planner=joined.planner,
-                    actor_identity=joined.capture.actor,
-                )
         options = _resolved(
             defaults,
             max_retries=bound,
@@ -425,6 +391,65 @@ class TransactionRunner:
         # under the attempt it came from, and what the caller receives names
         # the edition of the attempt that failed last.
         return execution.contextualized(invoke)
+
+    def _join[T](
+        self,
+        active: UnitOfWork,
+        fn: Callable[[Transaction], T],
+        capture: ExecutionCapture,
+        *,
+        max_retries: int | Omitted,
+        concurrency: Concurrency | Omitted,
+        retry_optimistic_conflicts: bool | Omitted,
+        isolation: IsolationLevel | Omitted,
+    ) -> T:
+        """Run ``fn`` inside ``active``'s transaction once the join is proven, in
+        this order: a transaction this resource root opened, not rollback-only,
+        under the same execution authority, and with no explicit option in
+        conflict."""
+        joined = active.companion
+        if not isinstance(joined, _ActiveTransaction):
+            raise UnitOfWorkError(
+                "a bare unit of work is active on this thread; db.transact can "
+                "only join a transaction it opened"
+            )
+        if joined.root is not self._root:
+            raise TransactionOwnershipError(
+                "this scope does not belong to the runtime that opened the active "
+                "transaction (transaction-owner-mismatch)"
+            )
+        active.ensure_not_rollback_only()
+        if not same_execution(joined.capture, capture):
+            raise TransactionAuthorityError(
+                "the joining scope carries different execution authority "
+                "(transaction-authority-mismatch)"
+            )
+        _check_join_options(
+            joined.tx.options,
+            max_retries=max_retries,
+            concurrency=concurrency,
+            retry_optimistic_conflicts=retry_optimistic_conflicts,
+            isolation=isolation,
+        )
+        # The join path returns immediately and ignores these arguments in
+        # favor of the active transaction's own (m-unit-work); rollback-only
+        # foreclosure happens before the closure runs. The joined activity is
+        # a child of the attempt currently running rather than a root of its
+        # own, and it opens after the deterministic refusals above precisely
+        # because those refusals reach no transaction at all. Nothing is
+        # adopted and nothing is wrapped: the selection and the failure
+        # contract are the outer invocation's.
+        with joined.attempt.joined_invocation():
+            return run_unit_of_work(
+                lambda _: fn(joined.tx),
+                settings=active.settings,
+                clock=active.clock,
+                meta=active.meta,
+                flush_executor=active.flush_executor,
+                write_batch_opening=active.write_batch_opening,
+                planner=joined.planner,
+                actor_identity=joined.capture.actor,
+            )
 
 
 def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptActivity) -> T:

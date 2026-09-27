@@ -196,6 +196,43 @@ def _drain_rows(rows: list[Row]) -> Iterator[Row]:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingFetch:
+    index: int
+    step: deep_fetch.QueryFetchStep
+    parents: tuple[int, ...]
+    compiled: CompiledRead
+    prepared: PreparedRead
+
+
+def _pipelined_rows(
+    pending: Sequence[_PendingFetch], port: DatabaseConnection, calls: DatabaseCallScope
+) -> list[list[Row]]:
+    """Run the pending fetches as one pipeline, each inside its own Database Call
+    bracket, and answer their rows in pending order."""
+    if not pending:
+        return []
+    with ExitStack() as stack:
+        call_contexts: list[DatabaseCallActivity] = []
+        for fetch in pending:
+            context = calls.database_call(fetch.compiled.statement, "read", fetch.compiled.target)
+            call_contexts.append(context.__enter__())
+            stack.push(context.__exit__)
+        batches = port.execute_pipeline(
+            tuple(
+                PipelineStatement(
+                    port.dialect.to_driver_sql(fetch.compiled.statement.sql),
+                    fetch.compiled.statement.binds,
+                    fetch.compiled.document_reads,
+                )
+                for fetch in pending
+            )
+        )
+        for call, rows in zip(call_contexts, batches, strict=True):
+            call.read_completed(rows)
+    return batches
+
+
+@dataclass(frozen=True, slots=True)
 class StreamPageRead:
     """Inputs for one bounded Page in an already prepared delivery."""
 
@@ -343,15 +380,7 @@ class Materializer:
         completed: set[int] = set()
         while len(completed) < plan.fetch_count:
             ready = plan.ready_fetches(completed)
-            pending: list[
-                tuple[
-                    int,
-                    deep_fetch.QueryFetchStep,
-                    tuple[int, ...],
-                    CompiledRead,
-                    PreparedRead,
-                ]
-            ] = []
+            pending: list[_PendingFetch] = []
             for index in ready:
                 step = plan.fetch_step(index)
                 parents = _read.guarded_parents(
@@ -375,63 +404,33 @@ class Materializer:
                     continue
                 compiled, prepared = plan.fetch_read(index, keys)
                 root_read.observer.statement_rendered(index + 1)
-                pending.append((index, step, parents, compiled, prepared))
+                pending.append(_PendingFetch(index, step, parents, compiled, prepared))
 
             if len(pending) == 1:
-                for index, step, parents, compiled, prepared in pending:
-                    rows = _read.execute_read(port, compiled, calls)
-                    root_read.observer.statement_executed(index + 1, len(rows))
-                    child_refs = _read.convert_rows(
-                        builder,
-                        index + 1,
-                        prepared,
-                        rows,
-                        observations,
-                        plan.correlation_members(index + 1),
-                    )
-                    _read.attach_children(builder, meta, includes, step, parents, child_refs)
-                    fetch_refs[index] = child_refs
-                    completed.add(index)
-            elif pending:
-                with ExitStack() as stack:
-                    call_contexts: list[DatabaseCallActivity] = []
-                    for _index, _step, _parents, compiled, _prepared in pending:
-                        context = calls.database_call(compiled.statement, "read", compiled.target)
-                        call_contexts.append(context.__enter__())
-                        stack.push(context.__exit__)
-                    batches = port.execute_pipeline(
-                        tuple(
-                            PipelineStatement(
-                                port.dialect.to_driver_sql(compiled.statement.sql),
-                                compiled.statement.binds,
-                                compiled.document_reads,
-                            )
-                            for _index, _step, _parents, compiled, _prepared in pending
-                        )
-                    )
-                    for call, rows in zip(call_contexts, batches, strict=True):
-                        call.read_completed(rows)
-                for (index, step, parents, _compiled, prepared), rows in zip(
-                    pending, batches, strict=True
-                ):
-                    root_read.observer.statement_executed(index + 1, len(rows))
-                    child_refs = _read.convert_rows(
-                        builder,
-                        index + 1,
-                        prepared,
-                        rows,
-                        observations,
-                        plan.correlation_members(index + 1),
-                    )
-                    _read.attach_children(builder, meta, includes, step, parents, child_refs)
-                    fetch_refs[index] = child_refs
-                    completed.add(index)
+                batches = [_read.execute_read(port, pending[0].compiled, calls)]
+            else:
+                batches = _pipelined_rows(pending, port, calls)
+            for fetch, rows in zip(pending, batches, strict=True):
+                root_read.observer.statement_executed(fetch.index + 1, len(rows))
+                child_refs = _read.convert_rows(
+                    builder,
+                    fetch.index + 1,
+                    fetch.prepared,
+                    rows,
+                    observations,
+                    plan.correlation_members(fetch.index + 1),
+                )
+                _read.attach_children(
+                    builder, meta, includes, fetch.step, fetch.parents, child_refs
+                )
+                fetch_refs[fetch.index] = child_refs
+                completed.add(fetch.index)
 
         pin = validated_query_pin(root_read.temporal)
         page = builder.finish(root_refs, pin)
         return FindResult(
             page=page,
-            includes=plan.include_tree(),
+            includes=includes,
             sources=self._retained(
                 meta,
                 root_read.temporal,

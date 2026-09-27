@@ -379,13 +379,6 @@ def _decode_row(
     unknown_family_tag: UnknownFamilyTag | None,
     classified_members: frozenset[str],
 ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-    if (
-        not level.requires_state_reduction
-        and unknown_family_tag is None
-        and not findings
-        and not classified_members
-    ):
-        return raw_values, ()
     layout = level.layout
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
@@ -411,10 +404,7 @@ def _decode_row(
         zip(layout.occurrences, level.projected_by_position, strict=True),
         start=layout.attribute_count,
     ):
-        if not projected:
-            continue
-        raw = raw_values[occurrence_position]
-        if raw is ABSENT:
+        if not projected or (raw := raw_values[occurrence_position]) is ABSENT:
             continue
         value, occurrence_findings = _occurrence(
             raw,
@@ -425,7 +415,7 @@ def _decode_row(
             _occurrence_issue(finding, occurrence, level.concrete_entity)
             for finding in occurrence_findings
         )
-        if value is not raw_values[occurrence_position]:
+        if value is not raw:
             if members is None:
                 members = list(raw_values)
             members[occurrence_position] = value
@@ -456,35 +446,33 @@ def _judge_attributes(
             value = (
                 ABSENT if raw is UNAVAILABLE or (raw is None and not attribute.nullable) else raw
             )
-            if value is not raw_values[position]:
-                if members is None:
-                    members = list(raw_values)
-                members[position] = value
+        elif position not in host_checked:
             continue
-        if position not in host_checked:
-            continue
-        try:
-            value = (
-                decode_canonical_wire(attribute.type, cast("WireValue", raw))
-                if contract is not None and contract.encoded
-                else raw
+        else:
+            try:
+                value = (
+                    decode_canonical_wire(attribute.type, cast("WireValue", raw))
+                    if contract is not None and contract.encoded
+                    else raw
+                )
+            except WireDecodingError:
+                value = raw
+            admission = admits_stored_scalar(
+                value,
+                attribute.type,
+                nullable=attribute.nullable,
+                temporal_end=(
+                    attribute.identity in layout.temporal_ends
+                    if contract is None
+                    else contract.temporal_end
+                ),
             )
-        except WireDecodingError:
-            value = raw
-        admission = admits_stored_scalar(
-            value,
-            attribute.type,
-            nullable=attribute.nullable,
-            temporal_end=(
-                attribute.identity in layout.temporal_ends
-                if contract is None
-                else contract.temporal_end
-            ),
-        )
-        if not admission.admitted:
-            issues.append(_attribute_issue(attribute, admission.rejected, level.concrete_entity))
-        value = value if admission.admitted else ABSENT
-        if value is not raw_values[position]:
+            if not admission.admitted:
+                issues.append(
+                    _attribute_issue(attribute, admission.rejected, level.concrete_entity)
+                )
+            value = value if admission.admitted else ABSENT
+        if value is not raw:
             if members is None:
                 members = list(raw_values)
             members[position] = value
