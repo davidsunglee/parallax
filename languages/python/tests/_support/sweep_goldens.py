@@ -481,6 +481,21 @@ _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in range(29, 35)}
     | {"m-txtime-write-013", "m-txtime-write-014"}
 )
+# Float write witnesses: `m-document-codec-014` rounds a `float32` leaf once, from its
+# authored digits; `-015`/`-016` write `float32` and `float64` leaves that underflow
+# from below or are `-0.0`, and `m-core-009`/`-010` the same inputs as scalar Columns.
+# Each golden binds positive zero, which the bind graders tell apart from `-0.0` at a
+# declared float position — the run lane on the driver bind for a scalar, since its
+# reported Wire bind is re-encoded.
+_FLOAT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {
+        "m-document-codec-014",
+        "m-document-codec-015",
+        "m-document-codec-016",
+        "m-core-009",
+        "m-core-010",
+    }
+)
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
@@ -488,6 +503,7 @@ _WRITE_SEQUENCES: Final[frozenset[str]] = (
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
     | _DOCUMENT_LAYOUT_WRITE_SEQUENCES
+    | _FLOAT_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-
