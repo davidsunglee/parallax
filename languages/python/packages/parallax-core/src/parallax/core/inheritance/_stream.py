@@ -19,8 +19,8 @@ def declaration_order(
     while traversing those chains; then the concretes contribute in canonical
     order. That prefix is the projection over the effective set. Every
     ``family`` participant not yet encountered then follows, ``root`` first and
-    the rest in canonical Entity Identity order, so a rowless child can precede
-    its rowless parent.
+    the rest in canonical Entity Identity order, so a dormant child can precede
+    its dormant parent.
 
     The concretes are encountered before any ancestor is visited, so a concrete
     that is also another chain's ancestor contributes once, at its concrete

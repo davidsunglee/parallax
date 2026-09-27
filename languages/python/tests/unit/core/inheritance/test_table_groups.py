@@ -35,12 +35,12 @@ from tests.unit._metamodel_support import (
     key,
     source,
 )
-from tests.unit.core._rowless_family_support import (
+from tests.unit.core._dormant_family_support import (
     DORMANT,
     DORMANT_CHILD,
     LIVE,
     ROOT,
-    rowless_family,
+    dormant_family,
 )
 
 type _Entry = tuple[str, EntityIdentity, str]
@@ -89,7 +89,7 @@ def _category_passes(
 
 
 def test_a_shared_table_group_passes_over_the_compiled_family_stream() -> None:
-    model = rowless_family("tph")
+    model = dormant_family("tph")
     group = _group(model, ROOT)
     family = inheritance.view(form_metamodel(model)).family(ROOT)
     assert family is not None

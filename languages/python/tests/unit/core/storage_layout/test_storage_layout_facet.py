@@ -62,12 +62,12 @@ from tests.unit._metamodel_support import (
     key,
     source,
 )
-from tests.unit.core._rowless_family_support import (
+from tests.unit.core._dormant_family_support import (
     DORMANT,
     DORMANT_CHILD,
     LIVE,
     ROOT,
-    rowless_family,
+    dormant_family,
 )
 
 
@@ -930,17 +930,17 @@ def test_a_position_over_disjoint_branches_answers_placement_per_branch() -> Non
             assert placement == branch.layout.placement(member) or placement is None
 
 
-def _rowless_slot(layout: storage_layout.TableLayout, column: str) -> storage_layout.ColumnSlot:
+def _dormant_slot(layout: storage_layout.TableLayout, column: str) -> storage_layout.ColumnSlot:
     slot = layout.column(Column(column))
     assert slot is not None, column
     return slot
 
 
-_ROWLESS_DETAIL: Final = ValueObjectIdentity(DORMANT_CHILD, ("childDetail",))
+_DORMANT_DETAIL: Final = ValueObjectIdentity(DORMANT_CHILD, ("childDetail",))
 
 
-def test_a_nested_rowless_tph_branch_contributes_to_the_complete_shared_layout() -> None:
-    facet = storage_layout.view(form_metamodel(rowless_family("tph")))
+def test_a_nested_dormant_tph_branch_contributes_to_the_complete_shared_layout() -> None:
+    facet = storage_layout.view(form_metamodel(dormant_family("tph")))
     layout = _require_layout(facet, "record")
     assert [(slot.column.name, slot.tier.value) for slot in layout.columns] == [
         ("id", "identity"),
@@ -955,15 +955,15 @@ def test_a_nested_rowless_tph_branch_contributes_to_the_complete_shared_layout()
         ("child_detail", "document"),
         ("dormant_detail", "document"),
     ]
-    rowless = {
+    dormant_owners = {
         "child_zeta": DORMANT_CHILD,
         "child_alpha": DORMANT_CHILD,
         "dormant_value": DORMANT,
         "child_detail": DORMANT_CHILD,
         "dormant_detail": DORMANT,
     }
-    for column, owner in rowless.items():
-        slot = _rowless_slot(layout, column)
+    for column, owner in dormant_owners.items():
+        slot = _dormant_slot(layout, column)
         assert slot.declaring_owner == owner, column
         assert slot.applicable_entities == frozenset(), column
         assert slot.effective_nullable, column
@@ -976,12 +976,12 @@ def test_a_nested_rowless_tph_branch_contributes_to_the_complete_shared_layout()
         "summary",
         "live_detail",
     ]
-    detail = _rowless_slot(layout, "child_detail")
+    detail = _dormant_slot(layout, "child_detail")
     assert layout.placement(AttributeIdentity(DORMANT_CHILD, "childZeta")) == (
-        storage_layout.DirectColumn(_rowless_slot(layout, "child_zeta"))
+        storage_layout.DirectColumn(_dormant_slot(layout, "child_zeta"))
     )
-    assert layout.placement(_ROWLESS_DETAIL) == storage_layout.DirectColumn(detail)
-    assert layout.placement(ValueObjectAttributeIdentity(_ROWLESS_DETAIL, "label")) == (
+    assert layout.placement(_DORMANT_DETAIL) == storage_layout.DirectColumn(detail)
+    assert layout.placement(ValueObjectAttributeIdentity(_DORMANT_DETAIL, "label")) == (
         storage_layout.DocumentPath(detail, ("label",))
     )
     position = facet.position((LIVE,))
@@ -995,9 +995,9 @@ def test_a_nested_rowless_tph_branch_contributes_to_the_complete_shared_layout()
     )
 
 
-def test_a_nested_rowless_branch_is_placed_inside_a_shared_document() -> None:
+def test_a_nested_dormant_branch_is_placed_inside_a_shared_document() -> None:
     facet = storage_layout.view(
-        form_metamodel(rowless_family("tph", layout=Document(Column("payload"))))
+        form_metamodel(dormant_family("tph", layout=Document(Column("payload"))))
     )
     layout = _require_layout(facet, "record")
     assert _column_names(layout) == ["id", "kind", "payload"]
@@ -1005,8 +1005,8 @@ def test_a_nested_rowless_branch_is_placed_inside_a_shared_document() -> None:
     for member, path in (
         (AttributeIdentity(DORMANT_CHILD, "childZeta"), ("childZeta",)),
         (AttributeIdentity(DORMANT, "dormantValue"), ("dormantValue",)),
-        (_ROWLESS_DETAIL, ("childDetail",)),
-        (ValueObjectAttributeIdentity(_ROWLESS_DETAIL, "label"), ("childDetail", "label")),
+        (_DORMANT_DETAIL, ("childDetail",)),
+        (ValueObjectAttributeIdentity(_DORMANT_DETAIL, "label"), ("childDetail", "label")),
     ):
         assert layout.placement(member) == storage_layout.DocumentPath(payload, path), member
     residents = _require_entity(facet, LIVE).document_residents
@@ -1019,14 +1019,14 @@ def test_a_nested_rowless_branch_is_placed_inside_a_shared_document() -> None:
     ]
 
 
-def test_a_rowless_tpcs_branch_reaches_no_concrete_table() -> None:
-    facet = storage_layout.view(form_metamodel(rowless_family("tpcs")))
+def test_a_dormant_tpcs_branch_reaches_no_concrete_table() -> None:
+    facet = storage_layout.view(form_metamodel(dormant_family("tpcs")))
     layout = _require_layout(facet, "live")
     assert _column_names(layout) == ["id", "title", "live_value", "summary", "live_detail"]
     for member in (
         AttributeIdentity(DORMANT_CHILD, "childZeta"),
         AttributeIdentity(DORMANT, "dormantValue"),
-        _ROWLESS_DETAIL,
+        _DORMANT_DETAIL,
     ):
         assert layout.contribution(member) is None, member
         assert layout.placement(member) is None, member
@@ -1242,7 +1242,7 @@ def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_fa
 
 
 def test_compiling_without_a_family_stream_refuses_rather_than_rebuilding_one() -> None:
-    model = form_metamodel(rowless_family("tph"))
+    model = form_metamodel(dormant_family("tph"))
     with pytest.raises(RuntimeError, match="has no Inheritance Facet family stream"):
         storage_layout_compile.compile_facet(
             cast(CompiledMetadata, model),
@@ -1254,7 +1254,7 @@ def test_compiling_without_a_family_stream_refuses_rather_than_rebuilding_one() 
 
 
 def test_compiling_without_a_roots_metadata_refuses_rather_than_guessing_its_policies() -> None:
-    model = form_metamodel(rowless_family("tph"))
+    model = form_metamodel(dormant_family("tph"))
     with pytest.raises(RuntimeError, match="is absent from accepted metadata"):
         storage_layout_compile.compile_facet(
             _RootlessMetadata(cast(CompiledMetadata, model)),

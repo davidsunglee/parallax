@@ -113,7 +113,7 @@ class InheritanceEntityView(Protocol):
 
 
 class InheritanceFamilyView(Protocol):
-    """One family's complete declaration stream, rowless branches included.
+    """One family's complete declaration stream, dormant branches included.
 
     Every family participant contributes its declared members once, in the
     order ``m-inheritance`` fixes, so the root's superset sequences are
@@ -439,7 +439,7 @@ class _InheritanceFacet:
     and each root's family stream.
 
     A root's supersets are its family stream's prefix, so only a family with
-    rowless participants retains anything more: the members of that suffix.
+    dormant participants retains anything more: the members of that suffix.
     """
 
     __slots__ = ("_facts", "_suffixes", "_views")
@@ -450,16 +450,16 @@ class _InheritanceFacet:
 
     def __init__(self, positions: Sequence[InheritanceEntityFacts]) -> None:
         facts = {position.entity: position for position in positions}
-        rowless: dict[EntityIdentity, list[EntityIdentity]] = {}
+        dormant: dict[EntityIdentity, list[EntityIdentity]] = {}
         for position in positions:
             if not position.concrete_subtypes:
-                rowless.setdefault(position.root, []).append(position.entity)
+                dormant.setdefault(position.root, []).append(position.entity)
         views: dict[EntityIdentity, _InheritanceEntityView] = {}
         suffixes: dict[EntityIdentity, _Members] = {}
         for position in positions:
             contributors, prefix = declaration_order(
                 _chains(facts, position.concrete_subtypes),
-                rowless.get(position.entity, ()),
+                dormant.get(position.entity, ()),
                 position.entity,
             )
             views[position.entity] = _entity_view(position, _members(facts, contributors[:prefix]))
