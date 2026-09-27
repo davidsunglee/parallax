@@ -547,31 +547,8 @@ def historical(run: Run, jobs: Sequence[Job], portfolio: Document) -> Historical
             run, None, UNKNOWN_SCOPE, commit, coverage, _unknown_timing(), tuple(problems), ()
         )
     head = job.step(HISTORICAL_HEAD_STEP)
-    base = job.step(HISTORICAL_BASE_STEP)
-    upload = job.step(HISTORICAL_UPLOAD_STEP)
-    if base is None:
-        scope = UNKNOWN_SCOPE
-        problems.append(
-            f"the before job has no `{HISTORICAL_BASE_STEP}` step, so its scope is unknown"
-        )
-    elif base.conclusion == SKIPPED:
-        scope = HEAD_ONLY
-    elif base.succeeded:
-        scope = PAIRED
-    else:
-        scope = UNKNOWN_SCOPE
-        problems.append(f"the before job's `{HISTORICAL_BASE_STEP}` step ended {base.conclusion}")
-    if head is None:
-        problems.append(f"the before job has no `{HISTORICAL_HEAD_STEP}` step")
-    elif not head.succeeded:
-        problems.append(
-            f"the before job's `{HISTORICAL_HEAD_STEP}` step ended "
-            f"{head.conclusion or head.status}, so its measurement is not evidence"
-        )
-    elif head.seconds is None:
-        problems.append(f"the before job's `{HISTORICAL_HEAD_STEP}` step carries no timestamps")
-    if upload is None or not upload.succeeded:
-        problems.append(f"the before job's `{HISTORICAL_UPLOAD_STEP}` step did not succeed")
+    scope = _historical_scope(job.step(HISTORICAL_BASE_STEP), problems)
+    problems += _measurement_problems(head, job.step(HISTORICAL_UPLOAD_STEP))
     if not job.succeeded and head is not None and head.succeeded:
         notes.append(
             f"the before job ended {job.conclusion}: its `{HISTORICAL_HEAD_STEP}` and "
@@ -604,6 +581,39 @@ def historical(run: Run, jobs: Sequence[Job], portfolio: Document) -> Historical
     return Historical(run, job, scope, commit, coverage, timing, tuple(problems), tuple(notes))
 
 
+def _historical_scope(base: Step | None, problems: list[str]) -> str:
+    """What the before job measured, from its merge-base step: the head alone
+    when the step was skipped, a pair when it succeeded, and otherwise unknown."""
+    if base is None:
+        problems.append(
+            f"the before job has no `{HISTORICAL_BASE_STEP}` step, so its scope is unknown"
+        )
+        return UNKNOWN_SCOPE
+    if base.conclusion == SKIPPED:
+        return HEAD_ONLY
+    if base.succeeded:
+        return PAIRED
+    problems.append(f"the before job's `{HISTORICAL_BASE_STEP}` step ended {base.conclusion}")
+    return UNKNOWN_SCOPE
+
+
+def _measurement_problems(head: Step | None, upload: Step | None) -> list[str]:
+    """Why the before job's head measurement and its upload are not evidence."""
+    problems: list[str] = []
+    if head is None:
+        problems.append(f"the before job has no `{HISTORICAL_HEAD_STEP}` step")
+    elif not head.succeeded:
+        problems.append(
+            f"the before job's `{HISTORICAL_HEAD_STEP}` step ended "
+            f"{head.conclusion or head.status}, so its measurement is not evidence"
+        )
+    elif head.seconds is None:
+        problems.append(f"the before job's `{HISTORICAL_HEAD_STEP}` step carries no timestamps")
+    if upload is None or not upload.succeeded:
+        problems.append(f"the before job's `{HISTORICAL_UPLOAD_STEP}` step did not succeed")
+    return problems
+
+
 def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
     """The after side, cross-checked before any arithmetic: the assembly's
     request against the run, every planned shard's head against the request
@@ -617,33 +627,7 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
             f"not {ASSEMBLY_VERSION}"
         )
     request = Request.from_document(portfolio.get("request"))
-    if request.run_id != run.id or request.run_attempt != run.attempt:
-        problems.append(
-            f"the assembly answers run {request.run_id} attempt {request.run_attempt}, "
-            f"not run {run.id} attempt {run.attempt}"
-        )
-    if request.event != run.event:
-        problems.append(f"the assembly's event {request.event} is not the run's {run.event}")
-    if run.event == SCHEDULE_EVENT and run.head_sha != request.head_commit:
-        problems.append(
-            f"the scheduled run's head_sha {run.head_sha} is not the measured commit "
-            f"{request.head_commit}"
-        )
-    if run.event == DISPATCH_EVENT:
-        notes.append(
-            f"the dispatch run's head_sha {run.head_sha} identifies the workflow's ref"
-            + (
-                f" (workflow revision {request.workflow_commit})"
-                if run.head_sha == request.workflow_commit
-                else f", which differs from the workflow revision {request.workflow_commit}"
-            )
-            + f"; the measured commit is the request's {request.head_commit}"
-        )
-    if run.event == PULL_REQUEST_EVENT:
-        notes.append(
-            f"the pull request run's head_sha {run.head_sha} is the event's ref; the measured "
-            f"commit is the request's {request.head_commit}"
-        )
+    _cross_check_request(request, run, problems, notes)
     scope = PAIRED if request.base_commit is not None else HEAD_ONLY
     plan = _once_each(portfolio, "plan", "planned shard", problems)
     entries = _once_each(portfolio, "shards", "assembled shard", problems)
@@ -721,6 +705,39 @@ def sharded(run: Run, jobs: Sequence[Job], assembled: Path) -> Sharded:
     )
 
 
+def _cross_check_request(request: Request, run: Run, problems: list[str], notes: list[str]) -> None:
+    """Every way the assembly's request does not answer ``run``, as problems,
+    and which commit the run's own head_sha names beside the one measured, as
+    notes."""
+    if request.run_id != run.id or request.run_attempt != run.attempt:
+        problems.append(
+            f"the assembly answers run {request.run_id} attempt {request.run_attempt}, "
+            f"not run {run.id} attempt {run.attempt}"
+        )
+    if request.event != run.event:
+        problems.append(f"the assembly's event {request.event} is not the run's {run.event}")
+    if run.event == SCHEDULE_EVENT and run.head_sha != request.head_commit:
+        problems.append(
+            f"the scheduled run's head_sha {run.head_sha} is not the measured commit "
+            f"{request.head_commit}"
+        )
+    if run.event == DISPATCH_EVENT:
+        notes.append(
+            f"the dispatch run's head_sha {run.head_sha} identifies the workflow's ref"
+            + (
+                f" (workflow revision {request.workflow_commit})"
+                if run.head_sha == request.workflow_commit
+                else f", which differs from the workflow revision {request.workflow_commit}"
+            )
+            + f"; the measured commit is the request's {request.head_commit}"
+        )
+    if run.event == PULL_REQUEST_EVENT:
+        notes.append(
+            f"the pull request run's head_sha {run.head_sha} is the event's ref; the measured "
+            f"commit is the request's {request.head_commit}"
+        )
+
+
 def _shard_outcome(
     shard_id: str,
     subject: str,
@@ -734,84 +751,24 @@ def _shard_outcome(
     reasons: list[str] = []
     runtimes: dict[str, str] = {}
     runner = "unknown"
-    if entry is None:
-        reasons.append("the assembly has no entry for this planned shard")
-        return ShardOutcome(
-            shard_id,
-            subject,
-            False,
-            tuple(reasons),
-            runtimes,
-            runner,
-            head_seconds,
-            setup_seconds,
-            job,
-        )
-    for reason in cast("Sequence[object]", entry.get("reasons", ())):
-        fields = _object(reason, "reason")
-        if fields.get("side") == HEAD:
-            reasons.append(f"{fields.get('code')}: {fields.get('message')}")
-    head = entry.get("head")
-    if not isinstance(head, Mapping):
-        reasons.append("no head capture")
-        return ShardOutcome(
-            shard_id,
-            subject,
-            False,
-            tuple(reasons),
-            runtimes,
-            runner,
-            head_seconds,
-            setup_seconds,
-            job,
-        )
-    side = cast("Mapping[str, object]", head)
-    try:
-        capture = Capture.from_document(side.get("capture"))
-    except (KeyError, TypeError, ValueError) as error:
-        reasons.append(f"the head capture does not decode: {error}")
-        return ShardOutcome(
-            shard_id,
-            subject,
-            False,
-            tuple(reasons),
-            runtimes,
-            runner,
-            head_seconds,
-            setup_seconds,
-            job,
-        )
-    if capture.side != HEAD:
-        reasons.append(f"the head capture's side is {capture.side}")
-    if capture.commit != request.head_commit:
-        reasons.append(f"the head capture measured {capture.commit}, not {request.head_commit}")
-    for minor, status in capture.runtimes.items():
-        document = status.document()
-        runtimes[minor] = (
-            f"{document.get('implementation')} {document.get('version')}"
-            if document.get("status") == "available"
-            else f"unavailable ({document.get('reason')})"
-        )
-    if capture.runner is not None:
-        runner = f"{capture.runner.get('image')} {capture.runner.get('imageVersion')}"
-    members = _subject_members(side.get("portfolio"), subject)
-    if len(members) != 1:
-        reasons.append(f"the head portfolio holds {len(members)} `{subject}` envelope(s), not one")
-    else:
-        envelope = members[0]
-        provenance = envelope.get("provenance")
-        producing = (
-            cast("Mapping[str, object]", provenance).get("commit")
-            if isinstance(provenance, Mapping)
-            else None
-        )
-        if producing != request.head_commit:
-            reasons.append(
-                f"the head envelope's provenance names {producing}, not {request.head_commit}"
+    head = _head_capture(entry, reasons)
+    if head is not None:
+        capture, portfolio = head
+        if capture.side != HEAD:
+            reasons.append(f"the head capture's side is {capture.side}")
+        if capture.commit != request.head_commit:
+            reasons.append(f"the head capture measured {capture.commit}, not {request.head_commit}")
+        for minor, status in capture.runtimes.items():
+            document = status.document()
+            runtimes[minor] = (
+                f"{document.get('implementation')} {document.get('version')}"
+                if document.get("status") == "available"
+                else f"unavailable ({document.get('reason')})"
             )
-        if envelope.get("incomplete") or envelope.get("errors"):
-            reasons.append("the head envelope is incomplete or carries errors")
-        if not reasons:
+        if capture.runner is not None:
+            runner = f"{capture.runner.get('image')} {capture.runner.get('imageVersion')}"
+        envelope = _head_envelope(portfolio, subject, request, reasons)
+        if envelope is not None and not reasons:
             envelopes.append(envelope)
     return ShardOutcome(
         shard_id,
@@ -824,6 +781,55 @@ def _shard_outcome(
         setup_seconds,
         job,
     )
+
+
+def _head_capture(entry: Document | None, reasons: list[str]) -> tuple[Capture, object] | None:
+    """The head capture an assembly entry holds and the portfolio beside it,
+    after the reasons the assembly recorded against its head; ``None`` once
+    one is missing or does not decode."""
+    if entry is None:
+        reasons.append("the assembly has no entry for this planned shard")
+        return None
+    for reason in cast("Sequence[object]", entry.get("reasons", ())):
+        fields = _object(reason, "reason")
+        if fields.get("side") == HEAD:
+            reasons.append(f"{fields.get('code')}: {fields.get('message')}")
+    head = entry.get("head")
+    if not isinstance(head, Mapping):
+        reasons.append("no head capture")
+        return None
+    side = cast("Mapping[str, object]", head)
+    try:
+        capture = Capture.from_document(side.get("capture"))
+    except (KeyError, TypeError, ValueError) as error:
+        reasons.append(f"the head capture does not decode: {error}")
+        return None
+    return capture, side.get("portfolio")
+
+
+def _head_envelope(
+    portfolio: object, subject: str, request: Request, reasons: list[str]
+) -> Document | None:
+    """The one ``subject`` envelope of a head portfolio, with every way it was
+    not produced complete at the requested head; ``None`` unless there is one."""
+    members = _subject_members(portfolio, subject)
+    if len(members) != 1:
+        reasons.append(f"the head portfolio holds {len(members)} `{subject}` envelope(s), not one")
+        return None
+    envelope = members[0]
+    provenance = envelope.get("provenance")
+    producing = (
+        cast("Mapping[str, object]", provenance).get("commit")
+        if isinstance(provenance, Mapping)
+        else None
+    )
+    if producing != request.head_commit:
+        reasons.append(
+            f"the head envelope's provenance names {producing}, not {request.head_commit}"
+        )
+    if envelope.get("incomplete") or envelope.get("errors"):
+        reasons.append("the head envelope is incomplete or carries errors")
+    return envelope
 
 
 def _subject_members(portfolio: object, subject: str) -> list[Document]:
