@@ -76,6 +76,80 @@ def _make_body(
     return body
 
 
+def _assert_outcome(
+    case: case_format.Case,
+    outcome: str,
+    run: Callable[[], Account | None],
+    *,
+    steps: list[boundary_runner.BoundaryStep],
+    fault: str | None,
+    verify_db: ScopedDatabase,
+) -> None:
+    """Invoke the boundary and assert it ends as ``outcome`` states, leaving the
+    persisted balance that outcome implies."""
+    if outcome == "committed":
+        result = run()
+        assert result is not None
+        expected_balance = (
+            Decimal("251.00")
+            if any(step.action == "update" for step in steps)
+            else Decimal("250.00")
+        )
+        assert result.balance == expected_balance
+        assert _persisted_balance(verify_db) == expected_balance, "the committed write must persist"
+    elif outcome == "aborted":
+        with raises_contextualized(BoundaryAbort):
+            run()
+        assert _persisted_balance(verify_db) == Decimal("250.00"), (
+            "the withheld, force-flushed write must never persist"
+        )
+    elif outcome == "optimistic-lock-conflict":
+        with raises_contextualized(OptimisticLockConflictError):
+            run()
+    elif outcome == "option-conflict":
+        with raises_contextualized(TransactionOptionConflictError):
+            run()
+        assert _persisted_balance(verify_db) == Decimal("250.00"), (
+            "a refused joining option dooms the boundary it tried to renegotiate"
+        )
+    elif outcome == "authority-mismatch":
+        with raises_contextualized(TransactionAuthorityError):
+            run()
+    elif outcome == "boundary-failed":
+        # The boundary never opened, so what surfaces is the error the port made
+        # rather than a classified failure of the work. WHICH error is the fault's
+        # own: a refused session setup is a database error carrying no category,
+        # because nothing above may read a request the engine would not honor as
+        # a contention worth retrying, while an acquisition that granted no
+        # connection never reached the database at all and surfaces the
+        # acquisition failure itself, which is outside the `m-db-error`
+        # categories by contract. Either way the attempt had adopted before it
+        # asked the boundary to begin, so the failure names the edition it ran
+        # under.
+        if fault == "connection-acquisition-failure":
+            with raises_contextualized(ConnectionAcquisitionError) as unacquired:
+                run()
+            assert unacquired.value.reason == "preparation_failed", case.case_id
+            assert unacquired.edition == engine.case_edition(case)
+        else:
+            with raises_contextualized(DatabaseError) as unopened:
+                run()
+            assert unopened.value.category is None, (case.case_id, unopened.value)
+            assert unopened.edition == engine.case_edition(case)
+    else:
+        category = _FAILURE_CATEGORY[outcome]
+        with raises_contextualized(DatabaseError) as excinfo:
+            run()
+        assert excinfo.value.category == category, (case.case_id, excinfo.value)
+
+
+def _persisted_balance(verify_db: ScopedDatabase) -> Decimal:
+    verify = verify_db.transact(
+        lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
+    )
+    return verify.balance
+
+
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 def test_boundary_case_runs_through_the_shipped_surface(
     case: case_format.Case, profile_run: Any, request: pytest.FixtureRequest
@@ -160,69 +234,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     def run() -> Account | None:
         return db.transact(body, **requests)
 
-    if outcome == "committed":
-        result = run()
-        assert result is not None
-        expected_balance = (
-            Decimal("251.00")
-            if any(step.action == "update" for step in steps)
-            else Decimal("250.00")
-        )
-        assert result.balance == expected_balance
-        verify = verify_db.transact(
-            lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
-        )
-        assert verify.balance == expected_balance, "the committed write must persist"
-    elif outcome == "aborted":
-        with raises_contextualized(BoundaryAbort):
-            run()
-        verify = verify_db.transact(
-            lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
-        )
-        assert verify.balance == Decimal("250.00"), (
-            "the withheld, force-flushed write must never persist"
-        )
-    elif outcome == "optimistic-lock-conflict":
-        with raises_contextualized(OptimisticLockConflictError):
-            run()
-    elif outcome == "option-conflict":
-        with raises_contextualized(TransactionOptionConflictError):
-            run()
-        verify = verify_db.transact(
-            lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
-        )
-        assert verify.balance == Decimal("250.00"), (
-            "a refused joining option dooms the boundary it tried to renegotiate"
-        )
-    elif outcome == "authority-mismatch":
-        with raises_contextualized(TransactionAuthorityError):
-            run()
-    elif outcome == "boundary-failed":
-        # The boundary never opened, so what surfaces is the error the port made
-        # rather than a classified failure of the work. WHICH error is the fault's
-        # own: a refused session setup is a database error carrying no category,
-        # because nothing above may read a request the engine would not honor as
-        # a contention worth retrying, while an acquisition that granted no
-        # connection never reached the database at all and surfaces the
-        # acquisition failure itself, which is outside the `m-db-error`
-        # categories by contract. Either way the attempt had adopted before it
-        # asked the boundary to begin, so the failure names the edition it ran
-        # under.
-        if fault == "connection-acquisition-failure":
-            with raises_contextualized(ConnectionAcquisitionError) as unacquired:
-                run()
-            assert unacquired.value.reason == "preparation_failed", case.case_id
-            assert unacquired.edition == engine.case_edition(case)
-        else:
-            with raises_contextualized(DatabaseError) as unopened:
-                run()
-            assert unopened.value.category is None, (case.case_id, unopened.value)
-            assert unopened.edition == engine.case_edition(case)
-    else:
-        category = _FAILURE_CATEGORY[outcome]
-        with raises_contextualized(DatabaseError) as excinfo:
-            run()
-        assert excinfo.value.category == category, (case.case_id, excinfo.value)
+    _assert_outcome(case, outcome, run, steps=steps, fault=fault, verify_db=verify_db)
 
     # How many attempts ran is what the boundary itself did — one Transaction
     # Attempt activity is one physical attempt — never a count the fault

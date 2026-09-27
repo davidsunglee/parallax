@@ -435,6 +435,60 @@ def _db(
     return _connect(story, _port_for(story.run, responses))
 
 
+_CANNED_READS: Mapping[Callable[[ScopedDatabase], Any], tuple[Sequence[MappingRow], ...]] = {
+    graph_stories.mutation_has_no_writeback: ([_ORDER_ROW], [_ORDER_ROW]),
+    graph_stories.an_edit_chain_keeps_a_loaded_relationship_view: (
+        [_ORDER_ROW],
+        [_ORDER_ITEM_ROW],
+    ),
+    graph_stories.a_write_keeps_a_loaded_value_object_document: (
+        [_LOCATION_100_ROW],
+        [_CUSTOMER_1_ROW],
+        [_CUSTOMER_1_ROW],
+        [],
+    ),
+    graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows: (
+        [_ORDER_6_ROW],
+        [_ORDER_ITEM_61_ROW],
+        [_ORDER_ITEM_61_ROW],
+        [],
+    ),
+    graph_stories.a_multi_hop_access_drops_its_null_branches: (
+        [_ORDER_ROW],
+        _ORDER_1_STATUS_ROWS,
+        [_ORDER_ITEM_ROW, _ORDER_ITEM_12_ROW],
+    ),
+    graph_stories.a_write_keeps_a_loaded_to_one_view: (
+        [_ORDER_ITEM_ROW],
+        [_ORDER_ROW],
+        [_ORDER_ROW],
+        [_ORDER_ROW],
+    ),
+    graph_stories.a_write_keeps_a_loaded_empty_relationship_view: ([_ORDER_3_ROW], []),
+    graph_stories.a_write_keeps_an_unloaded_relationship_absent: ([_ORDER_3_ROW],),
+    graph_stories.a_delete_keeps_a_loaded_relationship_view: (
+        [_ORDER_ROW],
+        [_ORDER_ITEM_ROW],
+        [_ORDER_ITEM_ROW],
+        [],
+    ),
+    graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view: (
+        [_POLICY_2_ROW],
+        [_COVERAGE_20_ROW],
+        [_COVERAGE_20_ROW],
+        [],
+    ),
+    graph_stories.a_grouped_read_observes_its_own_relationship_writes: (
+        [_ORDER_ROW],
+        [_ORDER_ITEM_12_ROW, _ORDER_ITEM_ROW],
+        [_ORDER_ROW],
+        [_ORDER_ITEM_12_ROW, _ORDER_ITEM_ROW],
+    ),
+    graph_stories.an_edited_copy_keeps_its_source_nodes_views: ([_ORDER_ROW],),
+    graph_stories.an_edit_keeps_a_loaded_relationship_view: ([_ORDER_ROW],),
+}
+
+
 def _responses_for(run: Callable[[ScopedDatabase], Any]) -> list[list[MappingRow]]:
     """Canned reads for the stories whose bodies dereference a result — every
     other story's empty root level legally short-circuits the rest.
@@ -470,35 +524,7 @@ def _responses_for(run: Callable[[ScopedDatabase], Any]) -> list[list[MappingRow
     dependent find observes of the group's own writes is the real-database
     driver's to say.
     """
-    if run is graph_stories.mutation_has_no_writeback:
-        return [[_ORDER_ROW], [_ORDER_ROW]]
-    if run is graph_stories.an_edit_chain_keeps_a_loaded_relationship_view:
-        return [[_ORDER_ROW], [_ORDER_ITEM_ROW]]
-    if run is graph_stories.a_write_keeps_a_loaded_value_object_document:
-        return [[_LOCATION_100_ROW], [_CUSTOMER_1_ROW], [_CUSTOMER_1_ROW], []]
-    if run is graph_stories.a_write_keeps_a_view_over_freshly_inserted_rows:
-        return [[_ORDER_6_ROW], [_ORDER_ITEM_61_ROW], [_ORDER_ITEM_61_ROW], []]
-    if run is graph_stories.a_multi_hop_access_drops_its_null_branches:
-        return [[_ORDER_ROW], _ORDER_1_STATUS_ROWS, [_ORDER_ITEM_ROW, _ORDER_ITEM_12_ROW]]
-    if run is graph_stories.a_write_keeps_a_loaded_to_one_view:
-        return [[_ORDER_ITEM_ROW], [_ORDER_ROW], [_ORDER_ROW], [_ORDER_ROW]]
-    if run is graph_stories.a_write_keeps_a_loaded_empty_relationship_view:
-        return [[_ORDER_3_ROW], []]
-    if run is graph_stories.a_write_keeps_an_unloaded_relationship_absent:
-        return [[_ORDER_3_ROW]]
-    if run is graph_stories.a_delete_keeps_a_loaded_relationship_view:
-        return [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ITEM_ROW], []]
-    if run is graph_stories.a_rectangle_split_keeps_a_loaded_relationship_view:
-        return [[_POLICY_2_ROW], [_COVERAGE_20_ROW], [_COVERAGE_20_ROW], []]
-    if run is graph_stories.a_grouped_read_observes_its_own_relationship_writes:
-        items = [_ORDER_ITEM_12_ROW, _ORDER_ITEM_ROW]
-        return [[_ORDER_ROW], items, [_ORDER_ROW], items]
-    if run in (
-        graph_stories.an_edited_copy_keeps_its_source_nodes_views,
-        graph_stories.an_edit_keeps_a_loaded_relationship_view,
-    ):
-        return [[_ORDER_ROW]]
-    return []
+    return [list(level) for level in _CANNED_READS.get(run, ())]
 
 
 @pytest.mark.parametrize(
