@@ -40,16 +40,15 @@ def infer_statement_bind_targets(
     tree = parse_indexed_statement(statement, dialect)
     if tree is None:
         return {}
-    guarded = _guarded_values(tree, binds)
     targets = _insert_targets(case, tree, binds)
-    targets.update(_update_targets(case, tree, binds, guarded))
+    targets.update(_update_targets(case, tree, binds))
     for placeholder in tree.find_all(exp.Placeholder):
         index = placeholder_index(placeholder)
         if index is None or index in targets:
             continue
         operand = _compared_operand(placeholder)
         if operand is not None:
-            target = _expression_target(case, tree, operand, binds, guarded)
+            target = _expression_target(case, operand, binds)
             if target is not None:
                 targets[index] = target
     return targets
@@ -92,7 +91,7 @@ def _insert_targets(
 
 
 def _update_targets(
-    case: Case, tree: Expr, binds: Sequence[object], guarded: Mapping[str, object]
+    case: Case, tree: Expr, binds: Sequence[object]
 ) -> dict[int, CanonicalBindTarget]:
     if not isinstance(tree, exp.Update):
         return {}
@@ -100,7 +99,7 @@ def _update_targets(
     for assignment in tree.expressions:
         if not isinstance(assignment, exp.EQ) or not isinstance(assignment.this, exp.Column):
             continue
-        slot = _column_slot(case, tree, assignment.this)
+        slot, guarded = _column_slot(case, assignment.this, binds)
         placeholders = tuple(assignment.expression.find_all(exp.Placeholder))
         if isinstance(assignment.expression, exp.Placeholder):
             placeholders = (assignment.expression,)
@@ -226,18 +225,19 @@ def _document_members(
     )
 
 
-def _guarded_values(tree: Expr, binds: Sequence[object]) -> dict[str, object]:
-    where = tree.args.get("where")
-    if where is None:
-        return {}
+def _guarded_values(scopes: Sequence[Expr], binds: Sequence[object]) -> dict[str, object]:
     guards: dict[str, list[object]] = {}
-    for comparison in where.find_all(exp.EQ):
-        for guarded, operand in (
-            (comparison.this, comparison.expression),
-            (comparison.expression, comparison.this),
-        ):
-            if isinstance(guarded, exp.Column):
-                guards.setdefault(guarded.name, []).append(_operand_value(operand, binds))
+    for scope in scopes:
+        where = scope.args.get("where")
+        if where is None:
+            continue
+        for comparison in where.find_all(exp.EQ):
+            for guarded, operand in (
+                (comparison.this, comparison.expression),
+                (comparison.expression, comparison.this),
+            ):
+                if isinstance(guarded, exp.Column):
+                    guards.setdefault(guarded.name, []).append(_operand_value(operand, binds))
     return {column: values[0] for column, values in guards.items() if len(values) == 1}
 
 
@@ -281,19 +281,15 @@ def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
 
 
 def _expression_target(
-    case: Case,
-    tree: Expr,
-    expression: Expr,
-    binds: Sequence[object],
-    guarded: Mapping[str, object],
+    case: Case, expression: Expr, binds: Sequence[object]
 ) -> CanonicalBindTarget | None:
     if isinstance(expression, exp.Column):
-        compared = _column_slot(case, tree, expression)
+        compared, guarded = _column_slot(case, expression, binds)
         return None if compared is None else _slot_target(case, compared, guarded)
     columns = tuple(expression.find_all(exp.Column))
     if len(columns) != 1:
         return None
-    slot = _column_slot(case, tree, columns[0])
+    slot, guarded = _column_slot(case, columns[0], binds)
     path = _extraction_path(expression, binds)
     if slot is None or not path:
         return None
@@ -379,23 +375,64 @@ def _extraction_path(expression: Expr, binds: Sequence[object]) -> tuple[str, ..
     return ()
 
 
-def _column_slot(case: Case, tree: Expr, column: exp.Column) -> ColumnSlot | None:
-    table_name: str | None = None
-    if column.table:
-        for table in tree.find_all(exp.Table):
-            if table.alias_or_name == column.table:
-                table_name = table.name
-                break
-    else:
-        tables = {table.name for table in tree.find_all(exp.Table)}
-        if len(tables) == 1:
-            table_name = next(iter(tables))
-    if table_name is not None:
-        layout = case.model.storage_layout.table(table_name)
-        return None if layout is None else layout.column(column.name)
+def _column_slot(
+    case: Case, column: exp.Column, binds: Sequence[object]
+) -> tuple[ColumnSlot | None, dict[str, object]]:
+    """The slot ``column`` reads and the column values its row is guarded to.
+
+    A qualifier resolves in the column's own query scope and then its enclosing
+    ones, so ``union all`` branches may reuse an alias. A ``select *`` derived table
+    passes through to its one source, and its filter guards the same row.
+    """
+    scope: Expr | None = _query_scope(column)
+    while scope is not None:
+        sources = _scope_sources(scope)
+        if column.table:
+            source = next((s for s in sources if s.alias_or_name == column.table), None)
+        else:
+            source = sources[0] if len(sources) == 1 else None
+        if source is not None:
+            return _source_slot(case, source, column.name, (scope,), binds)
+        scope = _query_scope(scope.parent) if column.table and scope.parent else None
     matches = tuple(
         slot
         for layout in case.model.storage_layout.tables
         if (slot := layout.column(column.name)) is not None
     )
-    return matches[0] if len(matches) == 1 else None
+    guarded = _guarded_values((_query_scope(column),), binds)
+    return (matches[0] if len(matches) == 1 else None), guarded
+
+
+def _source_slot(
+    case: Case,
+    source: exp.Table | exp.Subquery,
+    name: str,
+    scopes: tuple[Expr, ...],
+    binds: Sequence[object],
+) -> tuple[ColumnSlot | None, dict[str, object]]:
+    while isinstance(source, exp.Subquery):
+        inner = source.this
+        if not isinstance(inner, exp.Select) or not inner.is_star:
+            return None, {}
+        sources = _scope_sources(inner)
+        if len(sources) != 1:
+            return None, {}
+        scopes = (*scopes, inner)
+        source = sources[0]
+    layout = case.model.storage_layout.table(source.name)
+    slot = None if layout is None else layout.column(name)
+    return slot, _guarded_values(scopes, binds)
+
+
+def _query_scope(node: Expr) -> Expr:
+    scope = node.find_ancestor(exp.Select)
+    return node.root() if scope is None else scope
+
+
+def _scope_sources(scope: Expr) -> tuple[exp.Table | exp.Subquery, ...]:
+    return tuple(
+        source
+        for source in scope.find_all(exp.Table, exp.Subquery)
+        if (isinstance(source.parent, (exp.From, exp.Join)) or source.parent is scope)
+        and _query_scope(source) is scope
+    )
