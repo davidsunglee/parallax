@@ -1,7 +1,3 @@
-# A negative number too small for a column's declared float width names zero, and
-# zero is positive (m-core "Float projection at a declared width", m-wire "zero is
-# positive"): the float32 and float64 columns each bind and store `0.0`. Canonical
-# comparison observes a float zero's sign, so a bind of `-0.0` fails this case.
 model: models/writable-scalars.yaml
 tags: [m-core, m-wire, m-sql, scalar, write-sequence, insert, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
