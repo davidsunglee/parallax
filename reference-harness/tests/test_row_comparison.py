@@ -48,6 +48,15 @@ def test_write_grading_observes_a_declared_float_zero_sign() -> None:
     assert write_value_equal(-0.0, 0.0)  # no declared float position: JSON-value equality
 
 
+def test_write_grading_reads_a_declared_float_as_one_json_number() -> None:
+    assert write_value_equal(DeclaredFloat(20.0), 20)
+    assert write_value_equal(AuthoredInteger("20"), DeclaredFloat(20.0))
+    assert write_value_equal({"leaf": [DeclaredFloat(0.0)]}, {"leaf": [0]})
+    assert not write_value_equal(DeclaredFloat(20.0), 21)
+    assert not write_value_equal(DeclaredFloat(1.0), True)
+    assert not write_value_equal(DeclaredFloat(20.0), "20")
+
+
 def test_row_grading_keeps_decimal_space_for_a_declared_float_zero() -> None:
     assert scalars_equal(DeclaredFloat(-0.0), 0.0, None)
     assert rows_equal([{"f": DeclaredFloat(-0.0)}], [{"f": 0.0}])
