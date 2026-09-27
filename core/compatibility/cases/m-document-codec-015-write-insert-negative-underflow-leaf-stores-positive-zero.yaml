@@ -1,0 +1,40 @@
+# A negative number too small for a leaf's declared width names zero, and zero is
+# positive (m-wire "zero is positive", m-core "Float projection at a declared
+# width"): each leaf's canonical Wire value, and so the document bound and stored,
+# is `0.0` at both float widths. Canonical comparison observes a float zero's
+# sign, so a document that spells either leaf `-0.0` fails this case.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-wire, m-value-object, m-sql, write-sequence, insert, json, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Sample
+      statements: 1
+      note: insert one Sample whose float32 and float64 leaves each underflow from below
+      rows:
+        - id: 150
+          label: Underflow
+          profile:
+            ratio: -1e-50
+            measure: -1e-400
+then:
+  statements:
+    - sql:
+        postgres: insert into sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+      binds:
+        - 150
+        - Underflow
+        - ratio: 0.0
+          measure: 0.0
+          entries: []
+  tableState:
+    sample:
+      - id: 150
+        label: Underflow
+        profile:
+          ratio: 0.0
+          measure: 0.0
+          entries: []
+  roundTrips: 1
