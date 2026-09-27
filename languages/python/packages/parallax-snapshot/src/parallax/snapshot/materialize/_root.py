@@ -371,7 +371,7 @@ class RootView:
             logical: claimed if isinstance(claimed, int) else self._canonical(claimed)
             for logical, claimed in local_claims.items()
         }
-        root_states: dict[int, tuple[int, int]] = {}
+        root_nodes: dict[int, int] = {}
         for logical, winner in canonical_by_logical.items():
             state = None if defer_states else self._state(winner)
             index = None if state is None or state_nodes is None else state_nodes.get(id(state))
@@ -391,10 +391,9 @@ class RootView:
                     else None
                 )
                 winners.append(carried_views)
-            root_states[logical] = winner, index
+            root_nodes[logical] = index
         for projection in reachable:
-            logical = rows.logical_ids[projection]
-            _winner, index = root_states[logical]
+            index = root_nodes[rows.logical_ids[projection]]
             self._resolved[projection] = index
             values = rows.view_rows[projection]
             carried_views = winners[index]
