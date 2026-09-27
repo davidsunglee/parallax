@@ -23,7 +23,12 @@ class LiteralBindTarget:
     neutral_type: str
 
 
-type CanonicalBindTarget = ColumnSlot | LiteralBindTarget | DocumentMember
+@dataclass(frozen=True, slots=True)
+class DocumentBindTarget:
+    members: tuple[DocumentMember, ...]
+
+
+type CanonicalBindTarget = ColumnSlot | LiteralBindTarget | DocumentMember | DocumentBindTarget
 
 
 def infer_statement_bind_targets(
@@ -35,21 +40,24 @@ def infer_statement_bind_targets(
     tree = parse_indexed_statement(statement, dialect)
     if tree is None:
         return {}
-    targets = _insert_targets(case, tree)
-    targets.update(_update_targets(case, tree, binds))
+    guarded = _guarded_values(tree, binds)
+    targets = _insert_targets(case, tree, binds)
+    targets.update(_update_targets(case, tree, binds, guarded))
     for placeholder in tree.find_all(exp.Placeholder):
         index = placeholder_index(placeholder)
         if index is None or index in targets:
             continue
         operand = _compared_operand(placeholder)
         if operand is not None:
-            target = _expression_target(case, tree, operand, binds)
+            target = _expression_target(case, tree, operand, binds, guarded)
             if target is not None:
                 targets[index] = target
     return targets
 
 
-def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
+def _insert_targets(
+    case: Case, tree: Expr, binds: Sequence[object]
+) -> dict[int, CanonicalBindTarget]:
     if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
         return {}
     table = tree.this.this
@@ -68,7 +76,9 @@ def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
     for row in values.expressions:
         if not isinstance(row, exp.Tuple):
             continue
-        for column_name, expression in zip(columns, row.expressions, strict=False):
+        cells = dict(zip(columns, row.expressions, strict=False))
+        known = {column: _operand_value(cell, binds) for column, cell in cells.items()}
+        for column_name, expression in cells.items():
             placeholders = tuple(expression.find_all(exp.Placeholder))
             if isinstance(expression, exp.Placeholder):
                 placeholders = (expression,)
@@ -77,12 +87,12 @@ def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
             index = placeholder_index(placeholders[0])
             slot = layout.column(column_name)
             if index is not None and slot is not None:
-                targets[index] = slot
+                targets[index] = _slot_target(case, slot, known)
     return targets
 
 
 def _update_targets(
-    case: Case, tree: Expr, binds: Sequence[object]
+    case: Case, tree: Expr, binds: Sequence[object], guarded: Mapping[str, object]
 ) -> dict[int, CanonicalBindTarget]:
     if not isinstance(tree, exp.Update):
         return {}
@@ -99,16 +109,17 @@ def _update_targets(
         ):
             index = placeholder_index(placeholders[0])
             if index is not None and slot is not None:
-                targets[index] = slot
+                targets[index] = _slot_target(case, slot, guarded)
         elif slot is not None and isinstance(slot.contributor, RelationalDocument):
-            targets.update(_path_assignment_targets(case, slot, assignment, binds))
+            members = _document_members(case, slot, guarded)
+            targets.update(_path_assignment_targets(members, assignment, binds))
     return targets
 
 
 def _path_assignment_targets(
-    case: Case, slot: ColumnSlot, assignment: exp.EQ, binds: Sequence[object]
+    members: Sequence[DocumentMember], assignment: exp.EQ, binds: Sequence[object]
 ) -> dict[int, CanonicalBindTarget]:
-    members = {member.path: member for member in document_members(case, slot)}
+    by_path = {member.path: member for member in members}
     targets: dict[int, CanonicalBindTarget] = {}
     for path_placeholder, value_placeholder in _path_assignments(
         assignment.this, assignment.expression
@@ -117,7 +128,7 @@ def _path_assignment_targets(
         value_index = placeholder_index(value_placeholder)
         if path_index is None or value_index is None or path_index >= len(binds):
             continue
-        member = members.get(_document_path(binds[path_index]))
+        member = by_path.get(_document_path(binds[path_index]))
         if member is not None:
             targets[value_index] = member
     return targets
@@ -170,19 +181,41 @@ def _document_path(bind: object) -> tuple[str, ...]:
     return ()
 
 
-def document_members(case: Case, slot: ColumnSlot) -> tuple[DocumentMember, ...]:
-    """The members the Structured Column ``slot`` carries whose Document Path every
-    Entity sharing that column resolves to one address and declared type."""
-    candidates = tuple(
-        member
+def _slot_target(case: Case, slot: ColumnSlot, known: Mapping[str, object]) -> CanonicalBindTarget:
+    if isinstance(slot.contributor, RelationalDocument):
+        return DocumentBindTarget(_document_members(case, slot, known))
+    return slot
+
+
+def _document_members(
+    case: Case, slot: ColumnSlot, known: Mapping[str, object]
+) -> tuple[DocumentMember, ...]:
+    """The members a row of the Structured Column ``slot`` carries.
+
+    ``known`` holds the column values the statement pins for that row. A
+    table-per-hierarchy tag value among them names the one concrete row owner whose
+    members apply. Without it, only a Document Path every row owner resolves to one
+    address and declared type is typed, since disjoint siblings may reuse a path
+    with different declarations (``m-storage-layout``).
+    """
+    views = tuple(
+        view
         for entity in case.model.entities
         if (view := case.model.storage_layout.entity(entity.canonical_name)) is not None
         and slot in view.layout.columns
-        for member in case.model.storage_layout.document(entity.canonical_name).members
     )
+    tagged = tuple(
+        view
+        for view in views
+        if view.discriminator is not None
+        and known.get(view.discriminator.slot.column) == view.discriminator.value
+    )
+    if len(tagged) == 1:
+        return case.model.storage_layout.document(tagged[0].entity).members
     by_path: dict[tuple[str, ...], list[DocumentMember]] = {}
-    for member in candidates:
-        by_path.setdefault(member.path, []).append(member)
+    for view in views:
+        for member in case.model.storage_layout.document(view.entity).members:
+            by_path.setdefault(member.path, []).append(member)
     return tuple(
         members[0]
         for members in by_path.values()
@@ -191,6 +224,32 @@ def document_members(case: Case, slot: ColumnSlot) -> tuple[DocumentMember, ...]
             for member in members[1:]
         )
     )
+
+
+def _guarded_values(tree: Expr, binds: Sequence[object]) -> dict[str, object]:
+    where = tree.args.get("where")
+    if where is None:
+        return {}
+    guards: dict[str, list[object]] = {}
+    for comparison in where.find_all(exp.EQ):
+        for guarded, operand in (
+            (comparison.this, comparison.expression),
+            (comparison.expression, comparison.this),
+        ):
+            if isinstance(guarded, exp.Column):
+                guards.setdefault(guarded.name, []).append(_operand_value(operand, binds))
+    return {column: values[0] for column, values in guards.items() if len(values) == 1}
+
+
+def _operand_value(expression: Expr | None, binds: Sequence[object]) -> object:
+    while isinstance(expression, (exp.Cast, exp.Paren)):
+        expression = expression.this
+    if isinstance(expression, exp.Placeholder):
+        index = placeholder_index(expression)
+        return binds[index] if index is not None and index < len(binds) else None
+    if isinstance(expression, exp.Literal) and expression.is_string:
+        return expression.this
+    return None
 
 
 def _transparent_placeholder(expression: Expr, placeholder: exp.Placeholder) -> bool:
@@ -222,10 +281,15 @@ def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
 
 
 def _expression_target(
-    case: Case, tree: Expr, expression: Expr, binds: Sequence[object]
+    case: Case,
+    tree: Expr,
+    expression: Expr,
+    binds: Sequence[object],
+    guarded: Mapping[str, object],
 ) -> CanonicalBindTarget | None:
     if isinstance(expression, exp.Column):
-        return _column_slot(case, tree, expression)
+        compared = _column_slot(case, tree, expression)
+        return None if compared is None else _slot_target(case, compared, guarded)
     columns = tuple(expression.find_all(exp.Column))
     if len(columns) != 1:
         return None

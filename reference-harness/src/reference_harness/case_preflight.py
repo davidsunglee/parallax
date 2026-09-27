@@ -15,8 +15,8 @@ from typing import Any
 from . import portable_literal
 from ._statement_bind_inference import (
     CanonicalBindTarget,
+    DocumentBindTarget,
     LiteralBindTarget,
-    document_members,
     infer_statement_bind_targets,
 )
 from .case import Case, Entity
@@ -655,12 +655,10 @@ def _canonical_target_value(
     if isinstance(target, DocumentMember):
         if value is not None:
             _document_member_value(case, target, value, where)
-        return
-    slot = target
-    if not isinstance(slot.contributor, RelationalDocument):
-        _declared_member_literal(case, slot.contributor, value, where)
-    elif isinstance(value, Mapping):
-        _relational_document(case, document_members(case, slot), value, where)
+    elif isinstance(target, DocumentBindTarget):
+        _relational_document(case, target.members, value, where)
+    else:
+        _declared_member_literal(case, target.contributor, value, where)
 
 
 def _expected_graph(case: Case, value: object, where: str) -> None:

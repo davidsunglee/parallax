@@ -670,3 +670,75 @@ def test_execution_passes_document_path_binds_through_unadapted(dialect: str) ->
     assert all(
         sent is authored for sent, authored in zip(executor.binds[:4], binds[:4], strict=True)
     )
+
+
+def _payment_write(dialect: str, sql: str, binds: list[object]) -> Case:
+    model = load_model(_COMPATIBILITY_ROOT, "models/document-layout.yaml")
+    statement = {"sql": {dialect: sql}, "binds": {dialect: binds}}
+    return Case(
+        Path("synthetic-payment-write.yaml"),
+        {"shape": "scenario", "when": {"scenario": [{"statements": [statement]}]}, "then": {}},
+        model,
+    )
+
+
+def _payment_path_update(dialect: str, kind: str, value: object) -> Case:
+    mutation = {
+        "postgres": "jsonb_set(payload, ?, cast(? as jsonb))",
+        "mariadb": "json_set(payload, ?, json_extract(?, '$'))",
+    }[dialect]
+    return _payment_write(
+        dialect,
+        f"update payment_document set payload = {mutation} where id = ? and kind = ?",
+        [_document_path(dialect, "detail"), value, 2, kind],
+    )
+
+
+def _payment_document_insert(dialect: str, kind: str, value: object) -> Case:
+    return _payment_write(
+        dialect,
+        "insert into payment_document (id, kind, payload) values (?, ?, ?)",
+        [2, kind, {"detail": value}],
+    )
+
+
+def _payment_document_update(dialect: str, kind: str, value: object) -> Case:
+    return _payment_write(
+        dialect,
+        "update payment_document set payload = ? where id = ? and kind = ?",
+        [{"detail": value}, 2, kind],
+    )
+
+
+@pytest.mark.parametrize("dialect", _DIALECTS)
+@pytest.mark.parametrize(
+    ("write", "value_index", "location"),
+    [
+        (_payment_path_update, 1, ""),
+        (_payment_document_insert, 2, r"\.detail"),
+        (_payment_document_update, 0, r"\.detail"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("kind", "canonical", "damaged", "declared"),
+    [
+        ("cash", "12.50", -0.0, r"decimal\(18,2\)"),
+        ("card", "visa-4242", 12.5, "string"),
+    ],
+)
+def test_preflight_types_a_sibling_reused_document_path_by_the_statement_tag(
+    dialect: str,
+    write: Any,
+    value_index: int,
+    location: str,
+    kind: str,
+    canonical: object,
+    damaged: object,
+    declared: str,
+) -> None:
+    preflight_case_literals(write(dialect, kind, canonical))
+    with pytest.raises(
+        CaseFailure,
+        match=rf"binds\.{dialect}\[{value_index}\]{location}: .* for {declared}",
+    ):
+        preflight_case_literals(write(dialect, kind, damaged))
