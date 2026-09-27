@@ -1,0 +1,37 @@
+# A value authored as negative zero names the one float zero, which is positive
+# (m-core `Float32` / `Float64`, m-wire "zero is positive"): the float32 and
+# float64 columns each bind and store `0.0`. Canonical comparison observes a float
+# zero's sign, so a bind of `-0.0` fails this case.
+model: models/writable-scalars.yaml
+tags: [m-core, m-wire, m-sql, scalar, write-sequence, insert, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.WritableScalar
+      statements: 1
+      note: insert one row whose float32 and float64 values are negative zero
+      rows:
+        - id: 1
+          f32: -0.0
+          f64: -0.0
+then:
+  statements:
+    - sql:
+        postgres: insert into writable_scalars(id, f32, f64) values (?, ?, ?)
+        mariadb: insert into writable_scalars(id, f32, f64) values (?, ?, ?)
+      binds:
+        - 1
+        - 0.0
+        - 0.0
+  tableState:
+    writable_scalars:
+      - id: 1
+        f32: 0.0
+        f64: 0.0
+        payload: null
+        local_time: null
+        external_id: null
+        amount: null
+        label: null
+  roundTrips: 1
