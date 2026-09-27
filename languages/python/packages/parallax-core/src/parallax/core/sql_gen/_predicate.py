@@ -165,7 +165,7 @@ class EntityScope:
     layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
-    position: tuple[EntityIdentity, ...] | None = None
+    position: Sequence[EntityIdentity] | None = None
     variant: EntityIdentity | None = None
     wrapped: bool = False
 

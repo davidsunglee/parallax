@@ -53,6 +53,7 @@ from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import observed_document as _observed_document
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
+from parallax.core.sql_gen._inheritance import position_layout as _position_layout
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_entity_view
@@ -659,7 +660,7 @@ def _compile_read_arm(
     narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
     if target.inheritance is not None:
-        statement, plan_position, document_reads, result_keys, stages = _compile_inheritance_read(
+        statement, plan, document_reads, result_keys, stages = _compile_inheritance_read(
             target,
             predicate,
             narrow_to,
@@ -674,7 +675,8 @@ def _compile_read_arm(
             lock,
             null_tail,
         )
-        position_documents = _position_documents(facet, storage, plan_position)
+        plan_position = tuple(plan.position)
+        position_documents = _position_documents(plan.resolved, plan.layout)
         return CompiledRead(
             statement,
             narrow_to,
@@ -717,8 +719,9 @@ def _compile_read_arm(
     # A non-family read projects no tag and no variant literal, so its rows'
     # identity is fixed and the only stages it can fill are the document fan-out
     # its own projection decided and the occurrences that hold their own Column.
-    position = (target.identity,)
-    position_documents = _position_documents(facet, storage, position)
+    view = _entity_view(facet, target.identity)
+    position = tuple(view.concrete_subtypes)
+    position_documents = _position_documents(view, _position_layout(storage, position))
     return CompiledRead(
         statement,
         narrow_to,
@@ -887,7 +890,7 @@ def _compile_inheritance_read(
     null_tail: bool,
 ) -> tuple[
     LoweredStatement,
-    tuple[EntityIdentity, ...],
+    _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan,
     tuple[DocumentReadOrdinals, ...],
     tuple[str, ...],
     _RowStages,
@@ -896,7 +899,9 @@ def _compile_inheritance_read(
 
     Returns the statement AND its row materialization stages together: whether a
     read carries `familyVariant` is decided by the very same resolved position
-    that decides what it projects, so the two travel together on one plan.
+    that decides what it projects, so the two travel together on one plan. The
+    plan comes back as well, carrying the position's Inheritance and Storage
+    Layout answers its planning resolved, so the caller never resolves them again.
     """
     plan = _plan_inheritance_read(
         entity,
@@ -934,7 +939,7 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, plan.position, document_reads, result_keys, stages
+            return statement, plan, document_reads, result_keys, stages
         case _TpcsSinglePlan():
             statement, document_reads, stages = _compile_tpcs_single(
                 plan,
@@ -950,7 +955,7 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, plan.position, document_reads, result_keys, stages
+            return statement, plan, document_reads, result_keys, stages
         case _TpcsUnionPlan():
             statement, document_reads, stages = _compile_tpcs_read(
                 plan,
@@ -965,7 +970,7 @@ def _compile_inheritance_read(
                 dialect,
                 null_tail,
             )
-            return statement, plan.position, document_reads, result_keys, stages
+            return statement, plan, document_reads, result_keys, stages
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 

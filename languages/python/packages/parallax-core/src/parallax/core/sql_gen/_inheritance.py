@@ -753,11 +753,12 @@ def position_slots(
 
 
 def position_documents(
-    facet: InheritanceFacet,
-    storage: StorageLayoutFacet,
-    position: Sequence[EntityIdentity],
+    position: InheritancePositionView, layout: PositionLayoutView
 ) -> tuple[ValueObjectMetadata, ...]:
-    """The top-level Value Object occurrences ``position``'s rows can carry.
+    """The top-level Value Object occurrences one resolved position's rows can carry.
+
+    ``position`` and ``layout`` are the Inheritance and Storage Layout answers
+    for one concrete set, which the read already resolved; this only pairs them.
 
     The compiled read carries this so materialization decodes documents from the
     occurrences the position actually has, in the Position Layout's own order,
@@ -773,20 +774,16 @@ def position_documents(
     and contributes no column entry at all, which would leave this answering
     nothing and materialization decoding nothing.
     """
-    view = facet.position(tuple(position))
-    layout_view = storage.position(tuple(position))
-    if view is None or layout_view is None:  # pragma: no cover - a resolved position is total
-        return ()
-    by_identity = {member.identity: member for member in view.superset_value_objects}
+    by_identity = {member.identity: member for member in position.superset_value_objects}
     placed = {
         member
-        for branch in layout_view.branches
-        for member, placement in zip(layout_view.members, branch.placements, strict=True)
+        for branch in layout.branches
+        for member, placement in zip(layout.members, branch.placements, strict=True)
         if placement is not None
     }
     return tuple(
         by_identity[member]
-        for member in layout_view.members
+        for member in layout.members
         if member in by_identity and member in placed
     )
 
@@ -1014,11 +1011,16 @@ class TphPlan:
     """
 
     table: str
-    position: tuple[EntityIdentity, ...]
+    resolved: InheritancePositionView
+    layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
     inner: PredicateNode
     tag: TagPredicate | None
     stages: RowStages
+
+    @property
+    def position(self) -> Sequence[EntityIdentity]:
+        return self.resolved.concrete_subtypes
 
     def projection(
         self,
@@ -1050,10 +1052,15 @@ class TpcsSinglePlan:
     """
 
     table: str
-    position: tuple[EntityIdentity, ...]
+    resolved: InheritancePositionView
+    layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
     inner: PredicateNode
     stages: RowStages
+
+    @property
+    def position(self) -> Sequence[EntityIdentity]:
+        return self.resolved.concrete_subtypes
 
     def projection(
         self, dialect: Dialect, alias: str, *, document_pairs: bool = True
@@ -1198,10 +1205,15 @@ class TpcsUnionPlan:
     """
 
     branches: tuple[TpcsBranchPlan, ...]
-    position: tuple[EntityIdentity, ...]
+    resolved: InheritancePositionView
+    layout: PositionLayoutView
     columns: tuple[TpcsUnionColumn, ...]
     inner: PredicateNode
     stages: RowStages
+
+    @property
+    def position(self) -> Sequence[EntityIdentity]:
+        return self.resolved.concrete_subtypes
 
     def projection(
         self, dialect: Dialect, alias: str
@@ -1347,7 +1359,8 @@ def _plan_tph_read(
     # agree on one pairing.
     return TphPlan(
         table=layout.table.name,
-        position=tuple(position.concrete_subtypes),
+        resolved=position,
+        layout=position_layout(storage, position.concrete_subtypes),
         columns=columns,
         inner=inner,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
@@ -1437,7 +1450,8 @@ def _plan_tpcs_read(
             columns = (*columns, document)
         return TpcsSinglePlan(
             table=layout.table.name,
-            position=concretes,
+            resolved=position,
+            layout=position_layout(storage, concretes),
             columns=columns,
             inner=inner,
             # A single resolved concrete projects neither a tag column nor a
@@ -1609,7 +1623,8 @@ def _plan_tpcs_read(
     )
     return TpcsUnionPlan(
         branches=branches,
-        position=concretes,
+        resolved=position,
+        layout=layout_position,
         columns=union_columns,
         inner=inner,
         stages=stages,
