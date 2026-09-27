@@ -38,6 +38,7 @@ from tests._support.corpus import (
     compare_stored_data_issues,
     wire_value_deep,
 )
+from tests._support.driver_writes import RecordingCaseDatabase, assert_driver_write_zero_signs
 from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
     classify_child_graph_shape_residuals,
@@ -518,12 +519,35 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     row-observing step's `stepRows` observation equals its `expectRows`
     (:func:`_grade_step_rows`);
     a writeSequence's committed `tableState` observation equals `then.tableState`,
-    table for table.
+    table for table. The binds each golden write handed the driver carry the
+    golden's zero sign at every declared float position
+    (:func:`_grade_write_run`).
     """
     model = engine.load_case_metamodel(case)
     profile_run.reset(model, case_fixtures(case))
+    _grade_write_run(case, model, *_run_recording_writes(case, profile, profile_run))
 
-    envelope = adapter.run_case(case.path, profile_run)
+
+def _run_recording_writes(
+    case: case_format.Case, profile: Profile, profile_run: Any
+) -> tuple[dict[str, Any], RecordingCaseDatabase]:
+    """Run ``case`` over the fixture's database, recording each driver write."""
+    port = RecordingCaseDatabase(profile_run.port)
+    return adapter.run_case(case.path, profile.on_stand_in(port)), port
+
+
+def _grade_write_run(
+    case: case_format.Case,
+    model: Metamodel,
+    envelope: dict[str, Any],
+    port: RecordingCaseDatabase,
+) -> None:
+    """Grade one write case's run: emissions, driver writes, and observations.
+
+    The run lane reports a scalar bind re-encoded as a Wire value, which spells a
+    managed ``-0.0`` as ``0.0``, so a scalar float write's sign is graded on the
+    driver bind recorded before the database stored it.
+    """
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
 
@@ -545,6 +569,7 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
             golden_binds,
             statement_bind_positions(model, golden_sql, golden_binds),
         )
+    assert_driver_write_zero_signs(model, port.dialect, golden_statements, port.writes)
     assert envelope["observations"]["roundTrips"] == case_document(case)["then"]["roundTrips"]
     _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
