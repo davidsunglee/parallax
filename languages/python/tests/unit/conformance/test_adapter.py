@@ -6,6 +6,7 @@ import dataclasses
 import datetime as dt
 import decimal
 import json
+import math
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
@@ -23,7 +24,7 @@ from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
-from parallax.core import inheritance
+from parallax.core import inheritance, wire
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
@@ -158,6 +159,37 @@ def test_case_write_adapter_accepts_canonical_case_temporal_bounds() -> None:
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
     assert prepared.bounds.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize(
+    ("member", "token"),
+    [("f64", "-1e-400"), ("f64", "-0.0"), ("f32", "-0.0")],
+)
+def test_case_write_adapter_hands_an_authored_float_token_to_wire_decoding(
+    member: str, token: str
+) -> None:
+    instruction = instructions.deserialize(
+        case_format.safe_load_yaml(
+            f"""
+mutation: insert
+entity: parallax.compatibility.WritableScalar
+rows:
+  - {{ id: 1, {member}: {token} }}
+"""
+        )
+    )
+    assert isinstance(instruction, instructions.KeyedWrite)
+    authored = instruction.rows[0][member]
+
+    with mock.patch.object(instructions, "decode_wire", wraps=wire.decode_wire) as decode_wire:
+        prepared = _case_ingress.prepare_case_write(
+            instruction, models.load_models()["writable-scalars"]
+        )
+
+    assert any(call.args[1] is authored for call in decode_wire.call_args_list)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    decoded = prepared.rows[0][member]
+    assert (decoded, math.copysign(1.0, cast("float", decoded))) == (0.0, 1.0)
 
 
 def test_case_write_adapter_leaves_malformed_values_for_core_classification() -> None:
