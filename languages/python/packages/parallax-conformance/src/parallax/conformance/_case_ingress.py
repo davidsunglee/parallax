@@ -38,12 +38,11 @@ type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 def prepare_case_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
     """Normalize one case-format instruction and invoke strict Wire preparation.
 
-    Case YAML represents Decimal values as JSON numbers even though canonical
-    Wire represents them as fixed-scale strings. Synthetic conformance cases may
-    also carry values already in their managed Python form. This seam converts
-    only those carrier differences, using the declared member type; structural
-    and semantic defects remain unchanged for ``prepare_wire_write`` to classify,
-    validate, freeze, and retain in its ``PreparedWrite`` result.
+    Synthetic conformance cases may carry values already in their managed Python
+    form. This seam encodes only those, using the declared member type; authored
+    JSON values, structural defects, and semantic defects reach
+    ``prepare_wire_write`` unchanged for it to decode, classify, validate, freeze,
+    and retain in its ``PreparedWrite`` result.
     """
     return instructions.prepare_wire_write(_normalize_instruction(instruction, model), model)
 
@@ -51,11 +50,11 @@ def prepare_case_write(instruction: WriteInstruction, model: AcceptedMetamodel) 
 def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> ObjectQueryNode:
     """Normalize case-format carriers without performing query validation.
 
-    Compatibility YAML uses JSON numbers for Decimal operands and accepts ISO
-    timestamp spellings that are broader than canonical Wire. This ingress
-    rewrites only those declared-type carrier differences. Core preflight still
-    owns model-aware validation, classification, and lowering of the returned
-    canonical query.
+    Synthetic conformance queries may carry managed Python values, such as
+    ``datetime`` temporal bounds, where canonical Wire has a string. This ingress
+    encodes only those, by declared type; authored JSON values pass through
+    unchanged. Core preflight still owns model-aware validation, classification,
+    and lowering of the returned canonical query.
     """
     temporal = {
         dimension: _normalize_temporal_selection(selection)
