@@ -88,6 +88,30 @@ Its snapshot/diff mode is attractive for ratcheting existing code, but a committ
 snapshot is another quality artifact to maintain. Adopt it as a hard gate only if
 the trial produces distinct, actionable findings; otherwise keep Ruff alone.
 
+#### Trial result (2026-09-27)
+
+Complexipy 8.0.1 ran report-only with `max-complexity-allowed = 15` over the same files as
+Ruff in both projects; on this code its scores are identical to 6.2.0's. Immediately before
+`C901` dropped to 10, 108 harness and 161 language functions scored over 15; immediately
+after, 84 and 140. The cleanup removed 47 and introduced 2, both helpers extracted to satisfy
+`C901` that hold the nested algorithm they were extracted to isolate. Of the 224, 219 pass
+`C901` at 10 and five carry a declared `C901` exception.
+
+The metrics overlap less than their names suggest: McCabe gives nothing for conditional
+expressions, boolean operators, or comprehension clauses, and 36 of the 219 score 5 or less.
+A 37-function sample weighted to the highest scores found 9 actionable (24%; 5 of the top
+11): chained conditional expressions and loop nests three or four deep that `C901` cannot
+see. 23 were cohesive: flat derivations scored for their expressions, single walks, oracle
+and test assertion blocks, and enumeration grids, including protected measurement controls.
+The other 5 sit on measured hot paths, where every decomposition adds per-row or per-value
+work or a per-level field the cost gates measure.
+
+A blocking gate at 15 would turn about 219 functions into refactors or exceptions, most
+without benefit, add hot-path exceptions beside those `C901` already needs, and penalize the
+helpers `C901` asks for. Keep Complexipy available for manual, report-only sweeps, where its
+highest-scoring findings are a useful review list, with no configuration, dependency, or
+recurring build step. Ruff `C901` at 10 remains the only complexity gate.
+
 ### SonarQube: capable but disproportionate alternative
 
 SonarQube 26.7.0 was the current Community Build release in July 2026
@@ -273,8 +297,10 @@ This note is evidence from before the gates existed. What was adopted differs
 from its recommendation in these respects; the configurations and the root
 [justfile](../../justfile) own the current settings and commands.
 
-- Ruff `C901` gates both projects at 15, tests and tools included. Lowering the
-  ceiling to 10 and the Complexipy trial are separate follow-up work.
+- Ruff `C901` gates both projects at 10, tests and tools included. It was
+  first adopted at 15; a retained finding is a declaration-local `# noqa: C901`
+  under [`TESTING.md`](../../TESTING.md#quality-exceptions).
+- Complexipy is not adopted as a gate; see its trial result above.
 - jscpd scans the two production targets with the settings above. Tests are not
   scanned at all, even report-only, and no mechanism compares new clones with a
   baseline: code review owns an actionable clone below the 1% ceiling.
