@@ -91,7 +91,7 @@ the trial produces distinct, actionable findings; otherwise keep Ruff alone.
 #### Trial result (2026-09-27)
 
 Complexipy 8.0.1 ran report-only with `max-complexity-allowed = 15` over the same files as
-Ruff in both projects; on this code its scores are identical to 6.2.0's. Immediately before
+Ruff in both projects; on the pre-cleanup code its scores match 6.2.0's. Immediately before
 `C901` dropped to 10, 108 harness and 161 language functions scored over 15; immediately
 after, 84 and 140. The cleanup removed 47 and introduced 2, both helpers extracted to satisfy
 `C901` that hold the nested algorithm they were extracted to isolate. Of the 224, 219 pass
