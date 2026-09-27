@@ -16,6 +16,7 @@ from . import portable_literal
 from ._statement_bind_inference import (
     CanonicalBindTarget,
     LiteralBindTarget,
+    document_members,
     infer_statement_bind_targets,
 )
 from .case import Case, Entity
@@ -567,20 +568,15 @@ def _relational_document(
         return
     for member in members:
         found, item = _path_value(value, member.path)
-        if not found or item is None:
-            continue
-        if member.type_spelling is not None:
-            _literal(
-                case, item, member.type_spelling, _path_where(where, member.path), canonical=True
-            )
-            continue
-        _top_level_value_object(
-            case,
-            member.address.owner,
-            member.address.path[0],
-            item,
-            _path_where(where, member.path),
-        )
+        if found and item is not None:
+            _document_member_value(case, member, item, _path_where(where, member.path))
+
+
+def _document_member_value(case: Case, member: DocumentMember, value: object, where: str) -> None:
+    if member.type_spelling is not None:
+        _literal(case, value, member.type_spelling, where, canonical=True)
+    else:
+        _top_level_value_object(case, member.address.owner, member.address.path[0], value, where)
 
 
 def _path_value(value: Mapping[str, object], path: Sequence[str]) -> tuple[bool, object]:
@@ -656,30 +652,15 @@ def _canonical_target_value(
         if value is not None:
             _literal(case, value, target.neutral_type, where, canonical=True)
         return
+    if isinstance(target, DocumentMember):
+        if value is not None:
+            _document_member_value(case, target, value, where)
+        return
     slot = target
     if not isinstance(slot.contributor, RelationalDocument):
         _declared_member_literal(case, slot.contributor, value, where)
     elif isinstance(value, Mapping):
-        candidates = tuple(
-            member
-            for entity in case.model.entities
-            if (view := case.model.storage_layout.entity(entity.canonical_name)) is not None
-            and slot in view.layout.columns
-            for member in case.model.storage_layout.document(entity.canonical_name).members
-        )
-        by_path: dict[tuple[str, ...], list[DocumentMember]] = {}
-        for member in candidates:
-            by_path.setdefault(member.path, []).append(member)
-        unambiguous = tuple(
-            members[0]
-            for members in by_path.values()
-            if all(
-                (member.address, member.type_spelling)
-                == (members[0].address, members[0].type_spelling)
-                for member in members[1:]
-            )
-        )
-        _relational_document(case, unambiguous, value, where)
+        _relational_document(case, document_members(case, slot), value, where)
 
 
 def _expected_graph(case: Case, value: object, where: str) -> None:
