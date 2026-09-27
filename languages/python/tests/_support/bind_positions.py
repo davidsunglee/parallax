@@ -40,7 +40,6 @@ __all__ = [
     "Document",
     "Elements",
     "assert_zero_signs",
-    "declares_float",
     "statement_bind_positions",
     "zero_signs_agree",
 ]
@@ -105,19 +104,6 @@ def assert_zero_signs(
                 f"{label} {index}: {observed[index]!r} carries a zero sign the golden "
                 f"{expected[index]!r} does not"
             )
-
-
-def declares_float(position: BindPosition) -> bool:
-    """Whether ``position`` is, or holds, a declared ``float32``/``float64``."""
-    match position:
-        case Float32() | Float64():
-            return True
-        case Document(members):
-            return any(declares_float(member) for member in members.values())
-        case Elements(element):
-            return declares_float(element)
-        case _:
-            return False
 
 
 def zero_signs_agree(observed: object, expected: object, position: BindPosition) -> bool:
@@ -226,8 +212,7 @@ class _Statement:
             return None
         operand = _unwrapped(operand)
         if isinstance(operand, exp.Column):
-            slot = self._column_slot(operand)
-            return None if slot is None else self._slot_position(slot, self._guards(operand))
+            return self._column_position(operand)
         if not isinstance(operand, exp.Cast):
             # A text extraction binds the stored text as it stands (m-sql
             # continuation coordinates), so only a casting one binds a declared value.
@@ -242,11 +227,9 @@ class _Statement:
         if not arguments or not isinstance(arguments[0], exp.Column):
             return None
         path = [self._bound_text(argument) for argument in arguments[1:]]
-        slot = self._column_slot(arguments[0])
-        if slot is None or not path or None in path:
+        if not path or None in path:
             return None
-        document = self._slot_position(slot, self._guards(arguments[0]))
-        leaf = _at_path(document, cast("list[str]", path))
+        leaf = _at_path(self._column_position(arguments[0]), cast("list[str]", path))
         return None if isinstance(leaf, (Document, Elements)) else leaf
 
     def _inserted(self, tree: exp.Insert) -> dict[int, BindPosition]:
@@ -277,7 +260,7 @@ class _Statement:
         layout = self._layouts.get(table.name) if isinstance(table, exp.Table) else None
         if layout is None:
             return {}
-        known = self._guards(tree)
+        known = self._guards(table)
         positions: dict[int, BindPosition] = {}
         for assignment in tree.expressions:
             if not isinstance(assignment, exp.EQ) or not isinstance(assignment.this, exp.Column):
@@ -345,9 +328,17 @@ class _Statement:
             return tagged[0]
         return _agreement([document for document, _column, _value in owners])
 
-    def _column_slot(self, column: exp.Column) -> ColumnSlot | None:
-        """The slot a Column reference reads, resolved through its own query scope
-        outward; a derived-table source stays unresolved."""
+    def _column_position(self, column: exp.Column) -> BindPosition | None:
+        table = self._column_source(column)
+        if table is None:
+            return None
+        layout = self._layouts.get(table.name)
+        slot = None if layout is None else _slot_named(layout, column.name)
+        return None if slot is None else self._slot_position(slot, self._guards(table))
+
+    def _column_source(self, column: exp.Column) -> exp.Table | None:
+        """The Table a Column reference reads, resolved through its own query
+        scope outward; a derived-table source stays unresolved."""
         scope = column.find_ancestor(exp.Select, exp.Update)
         while scope is not None:
             tables = [
@@ -356,29 +347,27 @@ class _Statement:
                 if not column.table or column.table == table.alias_or_name
             ]
             if len(tables) == 1:
-                layout = self._layouts.get(tables[0].name)
-                return None if layout is None else _slot_named(layout, column.name)
+                return tables[0]
             if tables or not column.table or scope.parent is None:
                 return None
             scope = scope.parent.find_ancestor(exp.Select, exp.Update)
         return None
 
-    def _guards(self, node: exp.Expr) -> dict[str, object]:
-        """The Column values the query scope around ``node`` pins by equality."""
-        scope = (
-            node
-            if isinstance(node, (exp.Select, exp.Update))
-            else node.find_ancestor(exp.Select, exp.Update)
-        )
+    def _guards(self, table: exp.Table) -> dict[str, object]:
+        """The Column values of ``table``'s row that its own query scope pins by
+        a top-level equality conjunct."""
+        scope = table.find_ancestor(exp.Select, exp.Update)
         where = None if scope is None else scope.args.get("where")
         guards: dict[str, list[object]] = {}
         if isinstance(where, exp.Where):
-            for comparison in where.find_all(exp.EQ):
+            for comparison in _conjuncts(where.this):
+                if not isinstance(comparison, exp.EQ):
+                    continue
                 for column, value in (
                     (comparison.this, comparison.expression),
                     (comparison.expression, comparison.this),
                 ):
-                    if isinstance(column, exp.Column):
+                    if isinstance(column, exp.Column) and self._column_source(column) is table:
                         guards.setdefault(column.name, []).append(self._literal(value))
         return {name: values[0] for name, values in guards.items() if len(values) == 1}
 
@@ -414,6 +403,15 @@ def _compared_operand(placeholder: exp.Placeholder) -> exp.Expr | None:
     if isinstance(parent, exp.In) and current is not parent.this:
         return parent.this
     return None
+
+
+def _conjuncts(condition: exp.Expr) -> Iterator[exp.Expr]:
+    condition = _unwrapped(condition)
+    if isinstance(condition, exp.And):
+        yield from _conjuncts(condition.this)
+        yield from _conjuncts(condition.expression)
+    else:
+        yield condition
 
 
 def _scope_tables(scope: exp.Expr) -> Iterator[exp.Table]:

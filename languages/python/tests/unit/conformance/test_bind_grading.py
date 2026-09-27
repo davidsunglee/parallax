@@ -107,3 +107,38 @@ def test_a_shared_document_is_typed_by_the_owner_its_row_tags() -> None:
         assert isinstance(document, Document)
         details.append(document.members["detail"])
     assert details == [STRING, Decimal(18, 2)]
+
+
+_CASH_DETAIL = "cast(jsonb_extract_path_text(p.payload, ?) as numeric) = ?"
+
+
+@pytest.mark.parametrize(
+    ("where", "binds", "expected"),
+    [
+        pytest.param(
+            f"p.kind = ? and {_CASH_DETAIL} and exists "
+            "(select 1 from payment_document q where q.kind = ?)",
+            ["cash", "detail", 25, "card"],
+            {2: Decimal(18, 2)},
+            id="its-own-scope-tags-the-owner",
+        ),
+        pytest.param(
+            f"{_CASH_DETAIL} and exists (select 1 from payment_document q where q.kind = ?)",
+            ["detail", 25, "cash"],
+            {},
+            id="a-nested-scope-tags-another-row",
+        ),
+        pytest.param(
+            f"p.kind = ? or {_CASH_DETAIL}",
+            ["cash", "detail", 25],
+            {},
+            id="a-disjunct-pins-nothing",
+        ),
+    ],
+)
+def test_a_shared_document_is_typed_only_by_a_tag_its_own_row_is_pinned_to(
+    where: str, binds: list[object], expected: dict[int, object]
+) -> None:
+    model = engine.load_case_metamodel(_CASES["m-inheritance-125"])
+    sql = f"select p.id from payment_document p where {where}"
+    assert statement_bind_positions(model, sql, binds) == expected
