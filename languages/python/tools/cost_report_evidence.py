@@ -784,9 +784,9 @@ def _shard_outcome(
 
 
 def _head_capture(entry: Document | None, reasons: list[str]) -> tuple[Capture, object] | None:
-    """The head capture an assembly entry holds and the portfolio beside it,
-    after the reasons the assembly recorded against its head; ``None`` once
-    one is missing or does not decode."""
+    """The head capture an assembly entry holds, and the portfolio beside it;
+    ``None`` when the entry, its head, or the capture is missing or does not
+    decode. The reasons the assembly recorded against the head come first."""
     if entry is None:
         reasons.append("the assembly has no entry for this planned shard")
         return None
