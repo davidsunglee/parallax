@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
-from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.inheritance import (
+    InheritanceEntityView,
+    InheritanceFacet,
+    InheritanceFamilyView,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -66,8 +70,8 @@ class _LayoutGroup:
     mapping_owner: EntityIdentity
     root: EntityIdentity
     row_owners: tuple[EntityIdentity, ...]
-    attributes: tuple[AttributeMetadata, ...]
-    value_objects: tuple[ValueObjectMetadata, ...]
+    attributes: Sequence[AttributeMetadata]
+    value_objects: Sequence[ValueObjectMetadata]
     tag_column: Column | None
     document: Document | None
 
@@ -84,11 +88,9 @@ class _SlotDraft:
 
 @dataclass(frozen=True, slots=True)
 class _CompilationIndex:
+    metadata: CompiledMetadata
+    inheritance: InheritanceFacet
     entities: tuple[EntityMetadata, ...]
-    entities_by_identity: Mapping[EntityIdentity, EntityMetadata]
-    views_by_identity: Mapping[EntityIdentity, InheritanceEntityView]
-    ancestries_by_identity: Mapping[EntityIdentity, tuple[EntityIdentity, ...]]
-    family_members_by_root: Mapping[EntityIdentity, tuple[EntityMetadata, ...]]
     roots: tuple[EntityIdentity, ...]
     joined: frozenset[AttributeIdentity]
 
@@ -121,9 +123,22 @@ def _entity_view(inheritance: InheritanceFacet, identity: EntityIdentity) -> Inh
     return view
 
 
+def _entity(index: _CompilationIndex, identity: EntityIdentity) -> EntityMetadata:
+    entity = index.metadata.entity(identity)
+    if entity is None:
+        raise RuntimeError(f"Entity {identity.canonical!r} is absent from accepted metadata")
+    return entity
+
+
+def _family(index: _CompilationIndex, root: EntityIdentity) -> InheritanceFamilyView:
+    family = index.inheritance.family(root)
+    if family is None:
+        raise RuntimeError(f"Family root {root.canonical!r} has no Inheritance Facet family stream")
+    return family
+
+
 def _declared_endpoint(
-    endpoint: AttributeIdentity,
-    views_by_identity: Mapping[EntityIdentity, InheritanceEntityView],
+    endpoint: AttributeIdentity, inheritance: InheritanceFacet
 ) -> AttributeIdentity:
     """The Identity the Attribute ``endpoint`` addresses actually bears.
 
@@ -132,7 +147,7 @@ def _declared_endpoint(
     ancestor's. Residency compares declarations, so the addressed Identity is
     resolved back to the declared one here.
     """
-    view = views_by_identity.get(endpoint.entity)
+    view = inheritance.entity(endpoint.entity)
     declared = None if view is None else view.applicable_attribute(endpoint.name)
     return endpoint if declared is None else declared.identity
 
@@ -142,82 +157,28 @@ def _compilation_index(
     inheritance: InheritanceFacet,
     relationship: RelationshipFacet,
 ) -> _CompilationIndex:
-    """Index accepted Entities, family facts, and join endpoints in one metadata visit.
+    """Index accepted Entities, family roots, and join endpoints in one metadata visit.
 
-    Both endpoints of every direction are collected, because both stay direct
-    Columns under Relational Document Layout. A reverse direction names the same
-    pair its defining peer does, with the sides exchanged.
+    Entity, view, and family-stream reads go to their owners rather than into
+    copies here. Both endpoints of every direction are collected, because both
+    stay direct Columns under Relational Document Layout. A reverse direction
+    names the same pair its defining peer does, with the sides exchanged.
     """
     entities = tuple(metadata.entities)
-    entities_by_identity = {entity.identity: entity for entity in entities}
-    views_by_identity: dict[EntityIdentity, InheritanceEntityView] = {}
-    ancestries_by_identity: dict[EntityIdentity, tuple[EntityIdentity, ...]] = {}
-    family_members: dict[EntityIdentity, list[EntityMetadata]] = {}
     roots: list[EntityIdentity] = []
     addressed: list[AttributeIdentity] = []
     for entity in entities:
-        view = _entity_view(inheritance, entity.identity)
-        views_by_identity[entity.identity] = view
-        ancestries_by_identity[entity.identity] = tuple(view.ancestry)
-        family_members.setdefault(view.root, []).append(entity)
-        if view.root == entity.identity:
+        if _entity_view(inheritance, entity.identity).root == entity.identity:
             roots.append(entity.identity)
         for direction in relationship.relationships(entity.identity) or ():
             addressed.extend((direction.join.source, direction.join.target))
-    joined = {_declared_endpoint(endpoint, views_by_identity) for endpoint in addressed}
+    joined = {_declared_endpoint(endpoint, inheritance) for endpoint in addressed}
     return _CompilationIndex(
+        metadata=metadata,
+        inheritance=inheritance,
         entities=entities,
-        entities_by_identity=entities_by_identity,
-        views_by_identity=views_by_identity,
-        ancestries_by_identity=ancestries_by_identity,
-        family_members_by_root={root: tuple(members) for root, members in family_members.items()},
         roots=tuple(roots),
         joined=frozenset(joined),
-    )
-
-
-def _family_members(
-    index: _CompilationIndex, root: EntityIdentity
-) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
-    """The complete family declaration stream behind layout composition.
-
-    Concrete positions establish canonical branch order. Their ancestors are
-    encountered root first, concrete declarations follow in canonical order,
-    and any rowless branch with no concrete descendant follows deterministically
-    so every accepted family participant still contributes to the shared shape.
-    """
-    family = index.family_members_by_root[root]
-    root_view = index.views_by_identity[root]
-    concrete_entities = tuple(root_view.concrete_subtypes)
-    encountered = set(concrete_entities)
-    contributors: list[EntityIdentity] = []
-    for concrete in concrete_entities:
-        for ancestor in index.ancestries_by_identity[concrete][:-1]:
-            if ancestor in encountered:
-                continue
-            encountered.add(ancestor)
-            contributors.append(ancestor)
-    contributors.extend(concrete_entities)
-    for entity in sorted(
-        family,
-        key=lambda entity: (entity.identity != root, entity.identity.sort_key),
-    ):
-        if entity.identity in encountered:
-            continue
-        encountered.add(entity.identity)
-        contributors.append(entity.identity)
-    by_identity = {entity.identity: entity for entity in family}
-    return (
-        tuple(
-            attribute
-            for identity in contributors
-            for attribute in by_identity[identity].declared_attributes
-        ),
-        tuple(
-            value_object
-            for identity in contributors
-            for value_object in by_identity[identity].declared_value_objects
-        ),
     )
 
 
@@ -228,7 +189,7 @@ def _document_layout(index: _CompilationIndex, root: EntityIdentity) -> Document
     from the family root's own declared metadata on every lookup rather than
     copied onto descendants.
     """
-    layout = index.entities_by_identity[root].declared_layout
+    layout = _entity(index, root).declared_layout
     return layout if isinstance(layout, Document) else None
 
 
@@ -255,18 +216,19 @@ def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGro
     its family's shared one, and a table-per-concrete-subtype concrete owns its
     own; no other family position owns a mapping.
     """
-    view = index.views_by_identity[entity.identity]
+    view = _entity_view(index.inheritance, entity.identity)
     strategy = view.strategy
     if strategy is None:
         if entity.declared_container is None:
             return None
+        family = _family(index, entity.identity)
         return _LayoutGroup(
             table=entity.declared_container,
             mapping_owner=entity.identity,
             root=entity.identity,
             row_owners=(entity.identity,),
-            attributes=tuple(entity.declared_attributes),
-            value_objects=tuple(entity.declared_value_objects),
+            attributes=family.attributes,
+            value_objects=family.value_objects,
             tag_column=None,
             document=_document_layout(index, entity.identity),
         )
@@ -277,14 +239,14 @@ def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGro
             raise RuntimeError(
                 f"TPH root {entity.identity.canonical!r} has no Table after validation"
             )
-        attributes, value_objects = _family_members(index, view.root)
+        family = _family(index, view.root)
         return _LayoutGroup(
             table=entity.declared_container,
             mapping_owner=entity.identity,
             root=view.root,
             row_owners=tuple(view.concrete_subtypes),
-            attributes=attributes,
-            value_objects=value_objects,
+            attributes=family.attributes,
+            value_objects=family.value_objects,
             tag_column=Column(strategy.tag_column),
             document=_document_layout(index, view.root),
         )
@@ -299,8 +261,8 @@ def _owned_group(index: _CompilationIndex, entity: EntityMetadata) -> _LayoutGro
         mapping_owner=entity.identity,
         root=view.root,
         row_owners=(entity.identity,),
-        attributes=tuple(view.applicable_attributes),
-        value_objects=tuple(view.applicable_value_objects),
+        attributes=view.applicable_attributes,
+        value_objects=view.applicable_value_objects,
         tag_column=None,
         document=_document_layout(index, view.root),
     )
@@ -341,7 +303,7 @@ def _applicability(
     attributes: dict[AttributeIdentity, set[EntityIdentity]] = {}
     value_objects: dict[ValueObjectIdentity, set[EntityIdentity]] = {}
     for concrete in row_owners:
-        view = index.views_by_identity[concrete]
+        view = _entity_view(index.inheritance, concrete)
         for attribute in view.applicable_attributes:
             attributes.setdefault(attribute.identity, set()).add(concrete)
         for value_object in view.applicable_value_objects:
@@ -481,7 +443,7 @@ def _layout(
     audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
-    root = index.entities_by_identity[group.root]
+    root = _entity(index, group.root)
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
     key_contributors = _key_contributors(root)
@@ -584,9 +546,8 @@ def _family_facts(
 ) -> tuple[StorageLayoutFamilyFacts, ...]:
     families: list[StorageLayoutFamilyFacts] = []
     for root in index.roots:
-        entity = index.entities_by_identity[root]
-        root_view = index.views_by_identity[root]
-        attributes, value_objects = _family_members(index, root)
+        root_view = _entity_view(index.inheritance, root)
+        family = _family(index, root)
         roles = roles_of_root[root]
         document = _document_layout(index, root)
         attribute_applicability, value_object_applicability = _applicability(
@@ -594,7 +555,7 @@ def _family_facts(
         )
         drafts: list[PositionColumnFacts] = []
         members: list[PositionMemberFacts] = []
-        for attribute in attributes:
+        for attribute in family.attributes:
             applicable = _interned(
                 attribute_applicability.get(attribute.identity, set()),
                 applicability_intern,
@@ -612,7 +573,7 @@ def _family_facts(
                     applicable,
                 )
             )
-        for value_object in value_objects:
+        for value_object in family.value_objects:
             applicable = _interned(
                 value_object_applicability.get(value_object.identity, set()),
                 applicability_intern,
@@ -646,7 +607,7 @@ def _family_facts(
         )
         families.append(
             StorageLayoutFamilyFacts(
-                root=entity.identity,
+                root=root,
                 concrete_entities=tuple(root_view.concrete_subtypes),
                 columns=ordered,
                 members=tuple(members),
@@ -674,7 +635,7 @@ def compile_facet(
     roles_of_root = {
         root: DirectRoles(
             joined=index.joined,
-            temporal=_temporal_designations(index.entities_by_identity[root]),
+            temporal=_temporal_designations(_entity(index, root)),
         )
         for root in index.roots
     }
@@ -696,7 +657,7 @@ def compile_facet(
         layout = by_table[group.table]
         discriminator_slot = layout.contribution(InheritanceDiscriminator(group.root))
         for concrete in group.row_owners:
-            inherited = index.views_by_identity[concrete]
+            inherited = _entity_view(index.inheritance, concrete)
             discriminator = None
             if discriminator_slot is not None:
                 if inherited.tag_value is None:
