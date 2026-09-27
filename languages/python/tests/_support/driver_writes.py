@@ -3,10 +3,13 @@
 A run lane reports each statement's binds re-encoded as Wire values, which
 spells a managed scalar ``-0.0`` as ``0.0``: the driver bind is the only place
 a scalar float write's sign is observable before the database stores it. The
-recording wraps both halves of a case database — the configuration a
-``Database`` is composed from, through every runtime, acquisition, connection,
-and transaction body it hands out, and the session the lane drives directly —
-and records each ``execute_write`` before forwarding it.
+recording wraps both halves of a case database and records each modeled
+``execute_write`` before forwarding it: every write through the configuration a
+``Database`` is composed from — its runtimes, acquisitions, connections, and
+transaction bodies — and every write in a transaction body the lane runs on its
+directly driven session. A statement the lane executes on that session outside
+a transaction is one the case authors verbatim, such as ``given.apply``, and is
+forwarded unrecorded.
 """
 
 from __future__ import annotations
@@ -31,11 +34,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
-from tests._support.bind_positions import (
-    assert_zero_signs,
-    declares_float,
-    statement_bind_positions,
-)
+from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
 from tests._support.sweep_goldens import wire_binds
 
 __all__ = ["RecordingCaseDatabase", "assert_driver_write_zero_signs"]
@@ -137,7 +136,8 @@ class _RecordingConnection:
 
 
 class RecordingCaseDatabase(_RecordingConnection):
-    """A case database that records every parameterized write its driver receives."""
+    """A case database that records every modeled parameterized write its driver
+    receives."""
 
     def __init__(self, inner: CaseDatabase) -> None:
         super().__init__(inner, [])
@@ -146,6 +146,9 @@ class RecordingCaseDatabase(_RecordingConnection):
     @property
     def writes(self) -> list[DriverWrite]:
         return self._writes
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        return self._case.execute_write(sql, binds)
 
     def open(self) -> DatabaseRuntime:
         return _RecordingRuntime(self._case.open(), self._writes)
@@ -157,28 +160,20 @@ def assert_driver_write_zero_signs(
     golden: Sequence[tuple[str, list[object]]],
     writes: Sequence[DriverWrite],
 ) -> None:
-    """Each golden write's driver binds carry the golden's zero sign at every
-    declared float position.
-
-    Golden writes pair with recorded writes in order by their driver spelling; a
-    recorded write no golden names — a case's own ``given.apply`` — is skipped.
-    A golden write declaring a float position must have reached the driver.
-    """
-    cursor = 0
-    for golden_sql, golden_binds in golden:
-        if not golden_sql.lstrip().lower().startswith(_WRITE_VERBS):
-            continue
-        positions = statement_bind_positions(model, golden_sql, golden_binds)
-        driver_sql = dialect.to_driver_sql(golden_sql)
-        match = next(
-            (index for index in range(cursor, len(writes)) if writes[index][0] == driver_sql), None
-        )
-        if match is None:
-            assert not any(map(declares_float, positions.values())), (
-                f"no driver write reached the database for {golden_sql!r}"
-            )
-            continue
-        cursor = match + 1
+    """The recorded modeled writes are the golden writes, in order, and each
+    carries the golden's zero sign at every declared float position."""
+    golden_writes = [
+        (sql, binds) for sql, binds in golden if sql.lstrip().lower().startswith(_WRITE_VERBS)
+    ]
+    assert [sql for sql, _binds in writes] == [
+        dialect.to_driver_sql(sql) for sql, _binds in golden_writes
+    ], "the driver writes are not the golden writes"
+    for (golden_sql, golden_binds), (_driver_sql, driver_binds) in zip(
+        golden_writes, writes, strict=True
+    ):
         assert_zero_signs(
-            wire_binds(writes[match][1]), wire_binds(golden_binds), positions, label="driver bind"
+            wire_binds(driver_binds),
+            wire_binds(golden_binds),
+            statement_bind_positions(model, golden_sql, golden_binds),
+            label="driver bind",
         )
