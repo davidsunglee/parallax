@@ -360,46 +360,15 @@ def nearest_float_at_width(
     plainly outside the target neighborhood are classified before constructing
     a ratio, so represented exponent size cannot drive allocation.
     """
-    if (
-        isinstance(declared, Float64)
-        and isinstance(value, float)
-        and not isinstance(value, ManagedValueExclusion)
-    ):
-        return _host_binary64(float.__float__(value))
+    if isinstance(declared, Float64):
+        return _nearest_binary64(value, declared)
     exact = _exact_number(value, declared)
     if exact is None:
         return None
     if exact.is_zero():
         return 0.0
+    negative = exact.is_signed()
     magnitude = exact.copy_abs()
-    projected = (
-        _binary64_magnitude(magnitude)
-        if isinstance(declared, Float64)
-        else _binary32_magnitude(magnitude)
-    )
-    if projected is None:
-        return None
-    return -projected if exact.is_signed() and projected else projected
-
-
-def _host_binary64(value: float) -> float | None:
-    # A finite host float is already a binary64 value; only a zero's sign changes.
-    if not _math.isfinite(value):
-        return None
-    return 0.0 if value == 0.0 else value
-
-
-def _binary64_magnitude(magnitude: _decimal.Decimal) -> float | None:
-    adjusted = magnitude.adjusted()
-    if adjusted > 308:
-        return None
-    if adjusted < -324:
-        return 0.0
-    projected = float(magnitude)
-    return projected if _math.isfinite(projected) else None
-
-
-def _binary32_magnitude(magnitude: _decimal.Decimal) -> float | None:
     adjusted = magnitude.adjusted()
     if adjusted > 38:
         return None
@@ -408,7 +377,32 @@ def _binary32_magnitude(magnitude: _decimal.Decimal) -> float | None:
     ratio = _Fraction(magnitude)
     if ratio >= _BINARY32_OVERFLOW:
         return None
-    return _nearest_binary32(ratio)
+    projected = _nearest_binary32(ratio)
+    return -projected if negative and projected else projected
+
+
+def _nearest_binary64(value: int | float | _decimal.Decimal, declared: Float64) -> float | None:
+    if isinstance(value, float) and not isinstance(value, ManagedValueExclusion):
+        # A finite host float is already a binary64 value; only a zero's sign changes.
+        base_value = float.__float__(value)
+        if not _math.isfinite(base_value):
+            return None
+        return 0.0 if base_value == 0.0 else base_value
+    exact = _exact_number(value, declared)
+    if exact is None:
+        return None
+    if exact.is_zero():
+        return 0.0
+    magnitude = exact.copy_abs()
+    adjusted = magnitude.adjusted()
+    if adjusted > 308:
+        return None
+    if adjusted < -324:
+        return 0.0
+    projected = float(magnitude)
+    if not _math.isfinite(projected):
+        return None
+    return -projected if exact.is_signed() and projected else projected
 
 
 def _exact_number(
