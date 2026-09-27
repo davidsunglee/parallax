@@ -1420,7 +1420,6 @@ def _projected_row(
 def _variant_members(
     model: AcceptedMetamodel, node: Mapping[str, object]
 ) -> frozenset[MemberIdentity]:
-    """The members the concrete Entity a node's ``familyVariant`` names applies."""
     variant = node.get("familyVariant")
     if not isinstance(variant, str):
         raise EngineError(

@@ -136,8 +136,9 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
     return _canonical_spelling(neutral_type, _base_managed_carrier(value, neutral_type))
 
 
-# One arm per Neutral Type variant. It runs per value on every Wire encode, so the arms
-# stay inline rather than behind a per-variant call.
+# One arm per Neutral Type variant. It runs per value on Wire encode (all of
+# `encode_wire`, and `encode_managed_wire` past its scalar fast path), so the arms stay
+# inline rather than behind a per-variant call.
 def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:  # noqa: C901
     """The canonical spelling of a value already known to be a managed member."""
     match neutral_type:
@@ -176,8 +177,9 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
             assert_never(unreachable)
 
 
-# One arm per Neutral Type variant, dispatched once per value on every Wire decode;
-# splitting the dispatch would add a call to that per-value path.
+# One arm per Neutral Type variant, dispatched once per value on Wire decode (all of
+# `decode_wire`, and `decode_canonical_wire` past its scalar fast path); splitting the
+# dispatch would add a call to that per-value path.
 def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLiteral:  # noqa: C901
     if _is_unrecognized_exclusion(value):
         _fail("type-mismatch", value, neutral_type)
@@ -581,8 +583,9 @@ def _fail(
     )
 
 
-# One arm per Neutral Type variant. It runs per value on every Wire encode, so the arms
-# stay inline rather than behind a per-variant call.
+# One arm per Neutral Type variant. It runs per value on Wire encode (all of
+# `encode_wire`, and `encode_managed_wire` past its scalar fast path), so the arms stay
+# inline rather than behind a per-variant call.
 def _base_managed_carrier(value: object, neutral_type: NeutralType) -> object:  # noqa: C901
     if isinstance(value, ManagedValueExclusion):
         return value

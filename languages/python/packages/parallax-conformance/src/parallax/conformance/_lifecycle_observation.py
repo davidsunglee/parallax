@@ -530,7 +530,6 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
 
 
 def _stated(key: str, value: object | None) -> dict[str, object]:
-    """``{key: value}``, or no field at all where ``value`` is absent."""
     return {} if value is None else {key: value}
 
 
