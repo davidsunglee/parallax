@@ -180,9 +180,10 @@ in direct Columns, and where the others live, is composed once by
 
 **Table-per-hierarchy.** The whole family maps to **one shared table** declared
 by the root; descendants never repeat it. The root's `tag` column distinguishes
-rows. The shared Table's complete contributor union, semantic order, and
-effective physical nullability are composed by `m-storage-layout` from this
-family topology. A contributor applicable only to one concrete branch is
+rows. The shared Table's contributors are the family's complete declaration
+stream (*The family declaration stream*); `m-storage-layout` composes their
+semantic tier order and effective physical nullability. A contributor
+applicable only to one concrete branch is
 physically nullable so sibling rows can omit it, while Entity-level validation
 retains its declared nullability. The `tag` column is **framework-owned
 metadata, not a declared attribute**: a concrete-subtype read injects
@@ -248,9 +249,12 @@ provenance through four stable category passes: model primary-key Attributes,
 the optional root-owned
 TPH tag, remaining Attributes, then top-level Value Objects. Within an Attribute
 or Value Object pass, a concrete-table group visits root-to-concrete ancestry,
-and a shared-table group visits ancestry root first and concrete contributors in
-canonical concrete Entity order. Every local category retains declaration order,
-and a declaration reached through several concrete chains appears once. This
+and a shared-table group visits its family's contributors in the family
+declaration stream order (*The family declaration stream*), rowless participants
+included; a candidate family with no concrete subtype visits its root first,
+then its other participants in canonical Entity Identity order. Every local
+category retains declaration order, and a declaration reached through several
+concrete chains appears once. This
 diagnostic encounter order does not define accepted physical order. The
 projection supplies mapping-owner boundaries and declaration streams only.
 `m-storage-layout` owns structural Table-owner uniqueness, physical-column
@@ -610,6 +614,7 @@ InheritanceFacet
   entity(EntityIdentity) -> InheritanceEntityView | absent
   position(members: nonempty sequence<EntityIdentity>)
     -> InheritancePositionView | absent
+  family(root: EntityIdentity) -> InheritanceFamilyView | absent
 
 EntityMemberSelection
   shape: MemberShape
@@ -645,6 +650,10 @@ InheritancePositionView
   concrete_subtypes: immutable sequence<EntityIdentity>
   superset_attributes: immutable sequence<AttributeMetadata>
   superset_value_objects: immutable sequence<ValueObjectMetadata>
+
+InheritanceFamilyView
+  attributes: immutable sequence<AttributeMetadata>
+  value_objects: immutable sequence<ValueObjectMetadata>
 ```
 
 `entity(...)` is total, nonthrowing, and expected amortized O(1); it returns
@@ -737,6 +746,36 @@ sequences rather than absence so the validator can classify the empty selection.
 member count plus the returned view's size — resolution over precomputed
 per-Entity formation output, never a repeated whole-model walk — and every
 returned sequence is immutable with O(1) access.
+
+### The family declaration stream
+
+A family's **complete declaration stream** is the order in which every family
+participant contributes its declared Attributes and top-level Value Objects.
+`m-storage-layout` composes shared Tables and position views from it.
+
+1. The root's projection over its effective concrete-subtype set, exactly as
+   `superset_attributes` and `superset_value_objects` order it above.
+2. Then every **rowless participant** — a participant whose effective
+   concrete-subtype set is empty — contributes in canonical Entity Identity
+   order. A rowless participant sorting before its rowless parent therefore
+   contributes before it.
+
+Each participant contributes exactly once, its own members in declaration
+order, so every Attribute and Value Object appears exactly once with its
+declaring identity preserved. An abstract participant with a concrete
+descendant is never rowless and contributes through step 1; in an accepted
+model the root is never rowless, and a rowless participant is never an
+ancestor of a concrete one. The root's superset sequences are therefore
+prefixes of the corresponding complete streams, equal to them whenever the
+family has no rowless participant, while each rowless participant's own
+superset sequences stay empty. A standalone Entity's stream is its own
+declared members.
+
+`family(root)` answers the two complete streams for a family root, including
+every standalone Entity, and is absent for any other identity. It is an
+expected amortized O(1) read of formation output: the sequences are the
+accepted declaration values, and reading them never recomputes contributor
+order.
 
 ## Prior art (Reladomo)
 

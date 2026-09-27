@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import chain
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard, cast, overload
 
+from parallax.core.inheritance._stream import declaration_order
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -28,6 +30,7 @@ __all__ = [
     "InheritanceEntityFacts",
     "InheritanceEntityView",
     "InheritanceFacet",
+    "InheritanceFamilyView",
     "InheritancePositionView",
     "inheritance_facet",
     "member_selection",
@@ -109,6 +112,20 @@ class InheritanceEntityView(Protocol):
     def applicable_value_object(self, name: str) -> ValueObjectMetadata | None: ...
 
 
+class InheritanceFamilyView(Protocol):
+    """One family's complete declaration stream, rowless branches included.
+
+    Every family participant contributes its declared members once, in the
+    order ``m-inheritance`` fixes, so the root's superset sequences are
+    prefixes of these. A standalone Entity's stream is its own declarations.
+    """
+
+    @property
+    def attributes(self) -> Sequence[AttributeMetadata]: ...
+    @property
+    def value_objects(self) -> Sequence[ValueObjectMetadata]: ...
+
+
 class InheritanceFacet(Protocol):
     """Every accepted Entity's family-effective answers, precomputed once.
 
@@ -118,11 +135,14 @@ class InheritanceFacet(Protocol):
     spread across more than one family; a standalone Entity forms a position
     only alone. Duplicate and overlapping members are valid input, and a
     position whose effective set is empty yields empty sequences rather than
-    absence.
+    absence. ``family`` is expected amortized ``O(1)`` and absent for any
+    Identity that is not a family root; every standalone Entity is its own
+    root.
     """
 
     def entity(self, identity: EntityIdentity) -> InheritanceEntityView | None: ...
     def position(self, members: Sequence[EntityIdentity]) -> InheritancePositionView | None: ...
+    def family(self, root: EntityIdentity) -> InheritanceFamilyView | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,34 +329,72 @@ class _InheritanceEntityView:
         return self.member_selection.value_object(name)
 
 
-def _project(
-    facts: Mapping[EntityIdentity, InheritanceEntityFacts], effective: tuple[EntityIdentity, ...]
-) -> _InheritancePositionView:
-    """The projection superset over an effective concrete-subtype set.
+type _Members = tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]
 
-    Ancestors contribute first: traversing the effective set in canonical order
-    and appending each member's root-first ancestor chain, an ancestor that is
-    not itself in the set contributes at its first encounter. Then the effective
-    members contribute, in canonical order. Each contributor's own members keep
-    declaration order, so the result is a duplicate-free concatenation.
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _Concatenated[T](Sequence[T]):
+    """``prefix`` followed by ``suffix``, joined without copying either."""
+
+    prefix: tuple[T, ...]
+    suffix: tuple[T, ...]
+
+    def __len__(self) -> int:
+        return len(self.prefix) + len(self.suffix)
+
+    @overload
+    def __getitem__(self, index: int) -> T: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[T]: ...
+
+    def __getitem__(self, index: int | slice) -> T | Sequence[T]:
+        if isinstance(index, slice):
+            return (*self.prefix, *self.suffix)[index]
+        boundary = len(self.prefix)
+        if index < 0:
+            index += len(self)
+            if index < 0:
+                raise IndexError("family stream index out of range")
+        if index < boundary:
+            return self.prefix[index]
+        return self.suffix[index - boundary]
+
+    def __iter__(self) -> Iterator[T]:
+        return chain(self.prefix, self.suffix)
+
+
+@dataclass(frozen=True, slots=True)
+class _InheritanceFamilyView:
+    attributes: Sequence[AttributeMetadata]
+    value_objects: Sequence[ValueObjectMetadata]
+
+
+_NO_SUFFIXES: Final[Mapping[EntityIdentity, _Members]] = MappingProxyType({})
+
+
+def _declared[T](members: Sequence[T]) -> tuple[T, ...]:
+    return members if isinstance(members, tuple) else tuple(members)
+
+
+def _members(
+    facts: Mapping[EntityIdentity, InheritanceEntityFacts], contributors: Sequence[EntityIdentity]
+) -> _Members:
+    """The declared members ``contributors`` add, in contributor order.
+
+    A lone contributor's accepted declaration tuples are the answer itself, so a
+    standalone Entity's supersets are its declarations rather than copies.
     """
-    contributors: list[EntityIdentity] = []
-    encountered = set(effective)
-    for concrete in effective:
-        for ancestor in facts[concrete].ancestry[:-1]:
-            if ancestor in encountered:
-                continue
-            encountered.add(ancestor)
-            contributors.append(ancestor)
-    contributors.extend(effective)
-    return _InheritancePositionView(
-        concrete_subtypes=effective,
-        superset_attributes=tuple(
+    if len(contributors) == 1:
+        declared = facts[contributors[0]].declared
+        return _declared(declared.declared_attributes), _declared(declared.declared_value_objects)
+    return (
+        tuple(
             member
             for identity in contributors
             for member in facts[identity].declared.declared_attributes
         ),
-        superset_value_objects=tuple(
+        tuple(
             member
             for identity in contributors
             for member in facts[identity].declared.declared_value_objects
@@ -344,9 +402,20 @@ def _project(
     )
 
 
-def _entity_view(
-    position: InheritanceEntityFacts, projection: _InheritancePositionView
-) -> InheritanceEntityView:
+def _chains(
+    facts: Mapping[EntityIdentity, InheritanceEntityFacts], effective: Sequence[EntityIdentity]
+) -> tuple[tuple[EntityIdentity, ...], ...]:
+    return tuple(facts[concrete].ancestry for concrete in effective)
+
+
+def _project(
+    facts: Mapping[EntityIdentity, InheritanceEntityFacts], effective: tuple[EntityIdentity, ...]
+) -> _InheritancePositionView:
+    contributors, _ = declaration_order(_chains(facts, effective))
+    return _InheritancePositionView(effective, *_members(facts, contributors))
+
+
+def _entity_view(position: InheritanceEntityFacts, superset: _Members) -> _InheritanceEntityView:
     return _InheritanceEntityView(
         entity=position.entity,
         root=position.root,
@@ -360,28 +429,45 @@ def _entity_view(
         persistence=position.persistence,
         member_selection=position.member_selection,
         applicable_relationships=position.applicable_relationships,
-        superset_attributes=projection.superset_attributes,
-        superset_value_objects=projection.superset_value_objects,
+        superset_attributes=superset[0],
+        superset_value_objects=superset[1],
     )
 
 
 class _InheritanceFacet:
-    """The compiled facet: one view per accepted Entity, plus position resolution."""
+    """The compiled facet: one view per accepted Entity, position resolution,
+    and each root's family stream.
 
-    __slots__ = ("_facts", "_views")
+    A root's supersets are its family stream's prefix, so only a family with
+    rowless participants retains anything more: the members of that suffix.
+    """
+
+    __slots__ = ("_facts", "_suffixes", "_views")
 
     _facts: Mapping[EntityIdentity, InheritanceEntityFacts]
-    _views: Mapping[EntityIdentity, InheritanceEntityView]
+    _suffixes: Mapping[EntityIdentity, _Members]
+    _views: Mapping[EntityIdentity, _InheritanceEntityView]
 
     def __init__(self, positions: Sequence[InheritanceEntityFacts]) -> None:
         facts = {position.entity: position for position in positions}
+        rowless: dict[EntityIdentity, list[EntityIdentity]] = {}
+        for position in positions:
+            if not position.concrete_subtypes:
+                rowless.setdefault(position.root, []).append(position.entity)
+        views: dict[EntityIdentity, _InheritanceEntityView] = {}
+        suffixes: dict[EntityIdentity, _Members] = {}
+        for position in positions:
+            contributors, prefix = declaration_order(
+                _chains(facts, position.concrete_subtypes),
+                rowless.get(position.entity, ()),
+                position.entity,
+            )
+            views[position.entity] = _entity_view(position, _members(facts, contributors[:prefix]))
+            if prefix < len(contributors):
+                suffixes[position.entity] = _members(facts, contributors[prefix:])
         self._facts = MappingProxyType(facts)
-        self._views = MappingProxyType(
-            {
-                position.entity: _entity_view(position, _project(facts, position.concrete_subtypes))
-                for position in positions
-            }
-        )
+        self._views = MappingProxyType(views)
+        self._suffixes = MappingProxyType(suffixes) if suffixes else _NO_SUFFIXES
 
     def entity(self, identity: EntityIdentity) -> InheritanceEntityView | None:
         return self._views.get(identity)
@@ -401,6 +487,19 @@ class _InheritanceFacet:
         if len(families) != 1:
             return None
         return _project(self._facts, tuple(sorted(effective, key=_canonical)))
+
+    def family(self, root: EntityIdentity) -> InheritanceFamilyView | None:
+        view = self._views.get(root)
+        if view is None or view.root != root:
+            return None
+        suffix = self._suffixes.get(root)
+        if suffix is None:
+            return _InheritanceFamilyView(view.superset_attributes, view.superset_value_objects)
+        attributes, value_objects = suffix
+        return _InheritanceFamilyView(
+            _Concatenated(view.superset_attributes, attributes),
+            _Concatenated(view.superset_value_objects, value_objects),
+        )
 
 
 def _canonical(identity: EntityIdentity) -> tuple[str, str]:

@@ -215,7 +215,8 @@ only groups whose family, strategy, ancestry, and intended Table are
 unambiguous. The Inheritance Rule Set reports malformed topology or Table
 ownership; Storage Layout neither duplicates those issues nor guesses a group.
 Rule Sets therefore remain independent of invocation order and no validation-
-time facet exists.
+time facet exists. After validation the compiler reads each family's complete
+declaration stream from the real `InheritanceFacet` instead.
 
 Relationship exposes a second projection of the same shape — pure, total, and
 issue-free — returning the locally-resolvable join endpoint Attributes of
@@ -233,12 +234,15 @@ into one physical key, contributor applicability set, or eventual layout. After
 all Rule Sets succeed, each structural Table therefore has one owner group and
 the compiler publishes exactly one coherent layout for it.
 
-Within a uniquely owned group, the declaration stream is deterministic.
-Ancestors are visited root first, each Entity's local Attributes and top-level
-Value Objects retain their respective declaration orders, and the concrete
-contributors of a shared Table are visited in canonical concrete Entity order.
-A contributor already encountered through another applicable concrete is
-retained once and accumulates that concrete's applicability.
+Within a uniquely owned group, the declaration stream is the one
+`m-inheritance` fixes: a standalone Entity's own declarations, a
+table-per-concrete-subtype concrete Entity's root-to-concrete ancestry, and a
+table-per-hierarchy family's complete family declaration stream
+(`m-inheritance` "The family declaration stream"), rowless participants
+included. Each Entity's local Attributes and top-level Value Objects retain
+their respective declaration orders. A contributor already encountered through
+another applicable concrete is retained once and accumulates that concrete's
+applicability.
 
 ## Layout values
 
@@ -425,8 +429,7 @@ assignable, so deeper paths exist for predicates, ordering, and materialization
 and do not make a nested member independently writable.
 
 **Logical placement order** is the order members occupy in the Table's
-deterministic declaration stream — root-first ancestry, each Entity's local
-declaration order, and canonical concrete order for a shared Table — before the
+declaration stream (*Physical table ownership and groups*), before the
 tier partition that fixes physical Column order. It is a member order, not a
 Column order, and it is what consumers use when several members must be applied
 in one deterministic sequence.
@@ -676,8 +679,9 @@ still have Document Paths inside their occurrence-owned Structured Columns.
 already resolved by Inheritance. An unknown Entity, a noncanonical sequence, or
 Entities from different families returns absent. An empty valid sequence
 returns an empty view. `columns` is one logical, declaration-provenance-bearing
-union for the position: root-first ancestry, local declaration order, and
-canonical concrete order, then stable tier partitioning, with an inherited
+union for the position: the family's complete declaration stream
+(`m-inheritance`), keeping each contributor that applies to at least one
+selected concrete, then stable tier partitioning, with an inherited
 contributor included once. It excludes physical discriminators because a TPCS
 position has none and `familyVariant` remains a result concern.
 
@@ -769,8 +773,8 @@ owner's declaration stream:
 4. top-level Value Objects; and
 5. the shared Structured Column, when the owner's layout is `Document`.
 
-Within each Attribute or Value Object category, ancestry is root first,
-shared-table concrete contributors use canonical concrete Entity order, and
+Within each Attribute or Value Object category, contributors follow the
+owner group's declaration stream (*Physical table ownership and groups*), and
 each local category retains declaration order. The category pass determines
 diagnostics only; the compiler's six-tier stable partition remains the sole
 accepted physical order. A contributor reached repeatedly through several

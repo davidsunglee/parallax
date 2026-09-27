@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 import pytest
 
@@ -19,6 +19,7 @@ from parallax.core.inheritance import (
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
+    InheritanceFamilyView,
 )
 from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.inheritance._compile import compile_facet
@@ -57,6 +58,13 @@ from tests.unit.core._family_owner_support import (
     DescendantsFirst,
     family_roots,
     record_root_derivations,
+)
+from tests.unit.core._rowless_family_support import (
+    DORMANT,
+    DORMANT_CHILD,
+    LIVE,
+    ROOT,
+    rowless_family,
 )
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
@@ -129,9 +137,13 @@ def test_a_formed_model_serves_its_facet_through_the_typed_view() -> None:
     assert inheritance.view(model) is model.facet(FACET_KEY)
 
 
-def test_the_facet_offers_only_entity_and_position_lookup() -> None:
+def test_the_facet_offers_only_entity_position_and_family_lookup() -> None:
     facet = _corpus("animal")
-    assert {name for name in dir(facet) if not name.startswith("_")} == {"entity", "position"}
+    assert {name for name in dir(facet) if not name.startswith("_")} == {
+        "entity",
+        "position",
+        "family",
+    }
 
 
 # --------------------------------------------------------------------------
@@ -629,6 +641,195 @@ def test_a_superset_collects_value_objects_down_the_same_contribution_order() ->
     tanker_view = facet.entity(tanker)
     assert tanker_view is not None
     assert _value_object_names(tanker_view.applicable_value_objects) == ["hull", "cargo"]
+
+
+# --------------------------------------------------------------------------
+# Family declaration streams.
+# --------------------------------------------------------------------------
+
+_ROWLESS_ATTRIBUTES: Final = [
+    (ROOT, "id"),
+    (ROOT, "title"),
+    (LIVE, "liveValue"),
+    (DORMANT_CHILD, "childZeta"),
+    (DORMANT_CHILD, "childAlpha"),
+    (DORMANT, "dormantValue"),
+]
+_ROWLESS_VALUE_OBJECTS: Final = [
+    (ROOT, "summary"),
+    (LIVE, "liveDetail"),
+    (DORMANT_CHILD, "childDetail"),
+    (DORMANT, "dormantDetail"),
+]
+
+
+def _family(facet: InheritanceFacet, root: EntityIdentity) -> InheritanceFamilyView:
+    found = facet.family(root)
+    assert found is not None, root
+    return found
+
+
+def _entity(facet: InheritanceFacet, identity: EntityIdentity) -> InheritanceEntityView:
+    found = facet.entity(identity)
+    assert found is not None, identity
+    return found
+
+
+def _attribute_owners(members: Sequence[AttributeMetadata]) -> list[tuple[EntityIdentity, str]]:
+    return [(member.identity.entity, member.identity.name) for member in members]
+
+
+def _value_object_owners(
+    members: Sequence[ValueObjectMetadata],
+) -> list[tuple[EntityIdentity, str]]:
+    return [(member.identity.entity, member.identity.path[-1]) for member in members]
+
+
+@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
+def test_a_family_stream_appends_rowless_participants_child_before_parent(
+    strategy: Literal["tph", "tpcs"],
+) -> None:
+    family = _family(inheritance.view(form_metamodel(rowless_family(strategy))), ROOT)
+    assert _attribute_owners(family.attributes) == _ROWLESS_ATTRIBUTES
+    assert _value_object_owners(family.value_objects) == _ROWLESS_VALUE_OBJECTS
+
+
+def test_a_root_projection_is_the_prefix_of_its_family_stream() -> None:
+    facet = inheritance.view(form_metamodel(rowless_family("tph")))
+    family = _family(facet, ROOT)
+    root = _entity(facet, ROOT)
+    for stream, prefix in (
+        (family.attributes, root.superset_attributes),
+        (family.value_objects, root.superset_value_objects),
+    ):
+        assert 0 < len(prefix) < len(stream)
+        assert all(member is stream[index] for index, member in enumerate(prefix))
+
+
+def test_rowless_participants_keep_empty_projections() -> None:
+    facet = inheritance.view(form_metamodel(rowless_family("tph")))
+    for rowless in (DORMANT, DORMANT_CHILD):
+        view = _entity(facet, rowless)
+        projected = facet.position([rowless])
+        assert projected is not None
+        for answer in (view, projected):
+            assert tuple(answer.concrete_subtypes) == (), rowless
+            assert tuple(answer.superset_attributes) == (), rowless
+            assert tuple(answer.superset_value_objects) == (), rowless
+
+
+def test_every_family_participant_contributes_its_accepted_members_once() -> None:
+    model = form_metamodel(rowless_family("tph"))
+    family = _family(inheritance.view(model), ROOT)
+    identities = [member.identity for member in (*family.attributes, *family.value_objects)]
+    assert len(identities) == len(set(identities))
+    for attribute in family.attributes:
+        declared = model.entity(attribute.identity.entity)
+        assert declared is not None
+        assert declared.attribute(attribute.identity.name) is attribute
+    for value_object in family.value_objects:
+        declared = model.entity(value_object.identity.entity)
+        assert declared is not None
+        assert declared.value_object(value_object.identity.path[-1]) is value_object
+
+
+def test_a_family_listed_descendants_first_compiles_the_same_stream() -> None:
+    model = form_metamodel(rowless_family("tph"))
+    metadata = DescendantsFirst(model)
+    listed = [entity.identity for entity in metadata.entities]
+    assert listed.index(DORMANT_CHILD) < listed.index(DORMANT) < listed.index(ROOT)
+    expected = _family(inheritance.view(model), ROOT)
+    compiled = _family(compile_facet(metadata), ROOT)
+    for stream, reference in (
+        (compiled.attributes, expected.attributes),
+        (compiled.value_objects, expected.value_objects),
+    ):
+        assert len(stream) == len(reference)
+        assert all(left is right for left, right in zip(stream, reference, strict=True))
+
+
+def test_a_family_stream_with_a_rowless_suffix_is_a_complete_sequence() -> None:
+    facet = inheritance.view(form_metamodel(rowless_family("tph")))
+    attributes = _family(facet, ROOT).attributes
+    boundary = len(_entity(facet, ROOT).superset_attributes)
+    expected = tuple(attributes)
+    assert _attribute_owners(expected) == _ROWLESS_ATTRIBUTES
+    assert len(attributes) == len(expected)
+    assert all(attributes[index] is member for index, member in enumerate(expected))
+    for index in (boundary - 1, boundary, -1, -len(expected)):
+        assert attributes[index] is expected[index], index
+    for outside in (len(expected), -len(expected) - 1):
+        with pytest.raises(IndexError):
+            attributes[outside]
+    for window in (
+        slice(None),
+        slice(boundary - 1, boundary + 1),
+        slice(1, -1),
+        slice(None, None, -2),
+    ):
+        assert tuple(attributes[window]) == expected[window], window
+    assert list(attributes) == list(attributes) == list(expected)
+    assert list(reversed(attributes)) == list(reversed(expected))
+    assert attributes.index(expected[boundary]) == boundary
+    assert expected[-1] in attributes
+
+
+@pytest.mark.parametrize(
+    ("stem", "root_name", "attribute_names", "value_object_names"),
+    [
+        (
+            "animal",
+            "Animal",
+            ["id", "name", "ownerId", "licenseId", "indoor", "barkVolume", "tuskLength"],
+            [],
+        ),
+        (
+            "document",
+            "Document",
+            ["id", "title", "folderId", "currency", "amountDue", "body", "paidAmount"],
+            ["annotation"],
+        ),
+    ],
+)
+def test_a_family_without_rowless_participants_streams_its_root_supersets(
+    stem: str, root_name: str, attribute_names: list[str], value_object_names: list[str]
+) -> None:
+    facet = _corpus(stem)
+    root = _view(facet, root_name)
+    family = _family(facet, root.entity)
+    assert family.attributes is root.superset_attributes
+    assert family.value_objects is root.superset_value_objects
+    assert _attribute_names(family.attributes) == attribute_names
+    assert _value_object_names(family.value_objects) == value_object_names
+
+
+def test_a_standalone_entitys_projection_and_stream_are_its_declared_tuples() -> None:
+    model = _formed("customer")
+    facet = inheritance.view(model)
+    customer = model.entity(_corpus_entity("Customer"))
+    assert customer is not None
+    assert customer.declared_value_objects
+    view = _view(facet, "Customer")
+    projected = facet.position([customer.identity])
+    assert projected is not None
+    family = _family(facet, customer.identity)
+    for answer in (
+        (view.superset_attributes, view.superset_value_objects),
+        (projected.superset_attributes, projected.superset_value_objects),
+        (family.attributes, family.value_objects),
+    ):
+        assert answer[0] is customer.declared_attributes
+        assert answer[1] is customer.declared_value_objects
+
+
+def test_a_family_stream_is_absent_for_every_identity_but_a_root() -> None:
+    animal = _corpus("animal")
+    assert animal.family(EntityIdentity("elsewhere", "Animal")) is None
+    assert animal.family(_corpus_entity("Pet")) is None
+    assert animal.family(_corpus_entity("Dog")) is None
+    rowless = inheritance.view(form_metamodel(rowless_family("tph")))
+    assert rowless.family(DORMANT) is None
+    assert rowless.family(LIVE) is None
 
 
 # --------------------------------------------------------------------------

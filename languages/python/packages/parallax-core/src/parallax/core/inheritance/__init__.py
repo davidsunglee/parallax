@@ -9,6 +9,7 @@ from parallax.core.inheritance._facet import (
     EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
+    InheritanceFamilyView,
     InheritancePositionView,
     view,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "InheritanceEntityView",
     "InheritanceError",
     "InheritanceFacet",
+    "InheritanceFamilyView",
     "InheritancePositionView",
     "InheritanceTableGroup",
     "TableGroupContributor",

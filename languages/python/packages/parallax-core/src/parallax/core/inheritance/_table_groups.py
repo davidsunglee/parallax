@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from parallax.core.inheritance._stream import declaration_order
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -259,31 +260,15 @@ def _contributor_declarations(
     row_owners: Sequence[EntityIdentity],
 ) -> tuple[EntityDeclaration, ...]:
     """The family declaration sequence behind one shared Table group."""
-    effective = set(row_owners)
-    encountered = set(effective)
-    contributors: list[EntityIdentity] = []
+    chains: list[tuple[EntityIdentity, ...]] = []
     for concrete in row_owners:
         resolution = topology.resolutions[concrete]
         if not isinstance(resolution, ResolvedAncestry):  # pragma: no cover - resolved members only
             continue
-        for ancestor in resolution.entities[:-1]:
-            if ancestor in encountered:
-                continue
-            encountered.add(ancestor)
-            contributors.append(ancestor)
-    contributors.extend(row_owners)
-    for member in sorted(
-        family.members,
-        key=lambda item: (
-            item.declaration.identity != family.root,
-            item.declaration.identity.sort_key,
-        ),
-    ):
-        identity = member.declaration.identity
-        if identity in encountered:
-            continue
-        encountered.add(identity)
-        contributors.append(identity)
+        chains.append(resolution.entities)
+    contributors, _ = declaration_order(
+        chains, (member.declaration.identity for member in family.members), family.root
+    )
     return tuple(topology.participants[identity].declaration for identity in contributors)
 
 

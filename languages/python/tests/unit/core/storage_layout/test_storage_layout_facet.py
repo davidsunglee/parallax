@@ -7,7 +7,7 @@ import enum
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import FrozenInstanceError
-from typing import Any, Literal, cast, overload
+from typing import Any, Final, Literal, cast, overload
 
 import pytest
 
@@ -18,7 +18,6 @@ from parallax.core.inheritance import _compile as inheritance_compile
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     AbstractRoot,
-    AbstractSubtype,
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeReference,
@@ -62,6 +61,13 @@ from tests.unit._metamodel_support import (
     instant,
     key,
     source,
+)
+from tests.unit.core._rowless_family_support import (
+    DORMANT,
+    DORMANT_CHILD,
+    LIVE,
+    ROOT,
+    rowless_family,
 )
 
 
@@ -158,6 +164,10 @@ class _CountingInheritanceFacet:
         self, members: Sequence[EntityIdentity]
     ) -> inheritance.InheritancePositionView | None:
         return self._facet.position(members)
+
+    def family(self, root: EntityIdentity) -> inheritance.InheritanceFamilyView | None:
+        self.visits += 1
+        return self._facet.family(root)
 
 
 def _retained_size(value: object) -> int:
@@ -920,37 +930,115 @@ def test_a_position_over_disjoint_branches_answers_placement_per_branch() -> Non
             assert placement == branch.layout.placement(member) or placement is None
 
 
-def test_rowless_tph_branch_still_contributes_to_the_complete_shared_layout() -> None:
-    root = identity("Record")
-    concrete = identity("ConcreteRecord")
-    dormant = identity("DormantRecord")
-    model = form_metamodel(
-        source(
-            Declaration(
-                identity=root,
-                container=Table("record"),
-                attributes=(key(root),),
-                inheritance=AbstractRoot(TablePerHierarchy("kind")),
-            ),
-            Declaration(
-                identity=dormant,
-                attributes=(attribute(dormant, "dormantValue", type=STRING),),
-                inheritance=AbstractSubtype(ExactEntityReference(root)),
-            ),
-            Declaration(
-                identity=concrete,
-                inheritance=ConcreteSubtype(ExactEntityReference(root), "record"),
-            ),
-        )
-    )
-    facet = storage_layout.view(model)
+def _rowless_slot(layout: storage_layout.TableLayout, column: str) -> storage_layout.ColumnSlot:
+    slot = layout.column(Column(column))
+    assert slot is not None, column
+    return slot
+
+
+_ROWLESS_DETAIL: Final = ValueObjectIdentity(DORMANT_CHILD, ("childDetail",))
+
+
+def test_a_nested_rowless_tph_branch_contributes_to_the_complete_shared_layout() -> None:
+    facet = storage_layout.view(form_metamodel(rowless_family("tph")))
     layout = _require_layout(facet, "record")
-    dormant_slot = layout.contribution(AttributeIdentity(dormant, "dormantValue"))
-    assert dormant_slot is not None
-    assert dormant_slot.applicable_entities == frozenset()
-    assert dormant_slot.effective_nullable
-    concrete_view = _require_entity(facet, concrete)
-    assert dormant_slot not in concrete_view.columns
+    assert [(slot.column.name, slot.tier.value) for slot in layout.columns] == [
+        ("id", "identity"),
+        ("kind", "discriminator"),
+        ("title", "domain"),
+        ("live_value", "domain"),
+        ("child_zeta", "domain"),
+        ("child_alpha", "domain"),
+        ("dormant_value", "domain"),
+        ("summary", "document"),
+        ("live_detail", "document"),
+        ("child_detail", "document"),
+        ("dormant_detail", "document"),
+    ]
+    rowless = {
+        "child_zeta": DORMANT_CHILD,
+        "child_alpha": DORMANT_CHILD,
+        "dormant_value": DORMANT,
+        "child_detail": DORMANT_CHILD,
+        "dormant_detail": DORMANT,
+    }
+    for column, owner in rowless.items():
+        slot = _rowless_slot(layout, column)
+        assert slot.declaring_owner == owner, column
+        assert slot.applicable_entities == frozenset(), column
+        assert slot.effective_nullable, column
+    live = _require_entity(facet, LIVE)
+    assert [slot.column.name for slot in live.columns] == [
+        "id",
+        "kind",
+        "title",
+        "live_value",
+        "summary",
+        "live_detail",
+    ]
+    detail = _rowless_slot(layout, "child_detail")
+    assert layout.placement(AttributeIdentity(DORMANT_CHILD, "childZeta")) == (
+        storage_layout.DirectColumn(_rowless_slot(layout, "child_zeta"))
+    )
+    assert layout.placement(_ROWLESS_DETAIL) == storage_layout.DirectColumn(detail)
+    assert layout.placement(ValueObjectAttributeIdentity(_ROWLESS_DETAIL, "label")) == (
+        storage_layout.DocumentPath(detail, ("label",))
+    )
+    position = facet.position((LIVE,))
+    assert position is not None
+    assert tuple(position.members) == (
+        AttributeIdentity(ROOT, "id"),
+        AttributeIdentity(ROOT, "title"),
+        AttributeIdentity(LIVE, "liveValue"),
+        ValueObjectIdentity(ROOT, ("summary",)),
+        ValueObjectIdentity(LIVE, ("liveDetail",)),
+    )
+
+
+def test_a_nested_rowless_branch_is_placed_inside_a_shared_document() -> None:
+    facet = storage_layout.view(
+        form_metamodel(rowless_family("tph", layout=Document(Column("payload"))))
+    )
+    layout = _require_layout(facet, "record")
+    assert _column_names(layout) == ["id", "kind", "payload"]
+    payload = _require_slot(layout, storage_layout.RelationalDocument(ROOT))
+    for member, path in (
+        (AttributeIdentity(DORMANT_CHILD, "childZeta"), ("childZeta",)),
+        (AttributeIdentity(DORMANT, "dormantValue"), ("dormantValue",)),
+        (_ROWLESS_DETAIL, ("childDetail",)),
+        (ValueObjectAttributeIdentity(_ROWLESS_DETAIL, "label"), ("childDetail", "label")),
+    ):
+        assert layout.placement(member) == storage_layout.DocumentPath(payload, path), member
+    residents = _require_entity(facet, LIVE).document_residents
+    assert residents is not None
+    assert [placement.path for placement in residents.placements] == [
+        ("title",),
+        ("liveValue",),
+        ("summary",),
+        ("liveDetail",),
+    ]
+
+
+def test_a_rowless_tpcs_branch_reaches_no_concrete_table() -> None:
+    facet = storage_layout.view(form_metamodel(rowless_family("tpcs")))
+    layout = _require_layout(facet, "live")
+    assert _column_names(layout) == ["id", "title", "live_value", "summary", "live_detail"]
+    for member in (
+        AttributeIdentity(DORMANT_CHILD, "childZeta"),
+        AttributeIdentity(DORMANT, "dormantValue"),
+        _ROWLESS_DETAIL,
+    ):
+        assert layout.contribution(member) is None, member
+        assert layout.placement(member) is None, member
+    position = facet.position((LIVE,))
+    assert position is not None
+    assert [column.contributor for column in position.columns] == [
+        AttributeIdentity(ROOT, "id"),
+        AttributeIdentity(ROOT, "title"),
+        AttributeIdentity(LIVE, "liveValue"),
+        ValueObjectIdentity(ROOT, ("summary",)),
+        ValueObjectIdentity(LIVE, ("liveDetail",)),
+    ]
 
 
 def test_private_applicability_intern_deduplicates_structurally_equal_keys() -> None:
@@ -1126,6 +1214,19 @@ class _AbsentInheritanceFacet:
     ) -> inheritance.InheritancePositionView | None:
         return None
 
+    def family(self, root: EntityIdentity) -> inheritance.InheritanceFamilyView | None:
+        return None
+
+
+class _FamilylessInheritanceFacet(_CountingInheritanceFacet):
+    def family(self, root: EntityIdentity) -> inheritance.InheritanceFamilyView | None:
+        return None
+
+
+class _RootlessMetadata(_CountingMetadata):
+    def entity(self, identity: EntityIdentity) -> EntityMetadata | None:
+        return None
+
 
 def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_family() -> None:
     entity = identity("Unviewed")
@@ -1137,6 +1238,28 @@ def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_fa
             metadata,
             cast(inheritance.InheritanceFacet, _AbsentInheritanceFacet()),
             relationship_compile.compile_facet(metadata),
+        )
+
+
+def test_compiling_without_a_family_stream_refuses_rather_than_rebuilding_one() -> None:
+    model = form_metamodel(rowless_family("tph"))
+    with pytest.raises(RuntimeError, match="has no Inheritance Facet family stream"):
+        storage_layout_compile.compile_facet(
+            cast(CompiledMetadata, model),
+            cast(
+                inheritance.InheritanceFacet, _FamilylessInheritanceFacet(inheritance.view(model))
+            ),
+            relationship.view(model),
+        )
+
+
+def test_compiling_without_a_roots_metadata_refuses_rather_than_guessing_its_policies() -> None:
+    model = form_metamodel(rowless_family("tph"))
+    with pytest.raises(RuntimeError, match="is absent from accepted metadata"):
+        storage_layout_compile.compile_facet(
+            _RootlessMetadata(cast(CompiledMetadata, model)),
+            inheritance.view(model),
+            relationship.view(model),
         )
 
 
@@ -1271,8 +1394,7 @@ def test_repeated_compilation_and_operation_scoped_positions_are_structurally_de
     assert first_position == second_position
 
 
-@pytest.mark.parametrize("count", [24, 96, 192])
-def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -> None:
+def _standalone_compile_visits(count: int) -> tuple[int, int]:
     declarations = tuple(
         Declaration(
             identity=(entity := identity(f"Standalone{index}")),
@@ -1289,8 +1411,14 @@ def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -
         cast(inheritance.InheritanceFacet, counted_inheritance),
         relationship.view(model),
     )
-    assert counted.visits == count
-    assert counted_inheritance.visits == count
+    return counted.visits, counted_inheritance.visits
+
+
+@pytest.mark.parametrize("count", [24, 96, 192])
+def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -> None:
+    metadata_visits, inheritance_reads = _standalone_compile_visits(1)
+    assert metadata_visits == 1
+    assert _standalone_compile_visits(count) == (count, count * inheritance_reads)
 
 
 def test_large_tph_retained_layout_size_scales_with_schema_not_entity_slot_tuples() -> None:
