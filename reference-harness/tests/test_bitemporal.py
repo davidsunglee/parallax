@@ -518,7 +518,7 @@ def test_bitemporal_conflict_close_valid_end_corruption_is_rejected() -> None:
     case = copy.deepcopy(_conflict_close_case("m-bitemp-write-017"))
     # Corrupt the addressed Valid-Time end VALUE: ①'s address bound no longer matches the
     # golden bind, so the bitemporal close ① ↔ ② cross-check MUST fail.
-    case.when["write"]["validEnd"] = "1999-12-31T00:00:00+00:00"
+    case.when["write"]["validEnd"] = "1999-12-31T00:00:00.000000Z"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 
@@ -528,7 +528,7 @@ def test_bitemporal_conflict_close_naming_a_second_coordinate_is_rejected() -> N
     # cannot supply. An ① carrying anything else — here the Valid-Time START the retired
     # gate shape bound — MUST be rejected rather than silently ordered into the binds.
     case = copy.deepcopy(_conflict_close_case("m-bitemp-write-004"))
-    case.when["write"]["validStart"] = "2024-06-01T00:00:00+00:00"
+    case.when["write"]["validStart"] = "2024-06-01T00:00:00.000000Z"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
 

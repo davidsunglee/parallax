@@ -38,7 +38,7 @@ from .case import Case, Entity
 from .case_assertions import CaseFailure, write_value_equal
 from .document_codec import encode_document, encode_leaf
 from .inheritance import tag_of
-from .keyed_write_validate import states_framework_marker
+from .keyed_write_validate import is_framework_marker, states_framework_marker
 from .sql_canonical import sqlglot_dialect
 from .storage_layout import DocumentMember
 from .temporality import TEMPORAL_DIMENSION_RANK
@@ -250,7 +250,9 @@ def classify_write_row(
     makes the golden bind graded rather than trusted: the harness derives the document
     a conforming writer must produce from the case's own member values, and
     :func:`assert_write_values` compares it to the authored bind — so a leaf spelled
-    any other way fails the case instead of surviving it. An OPENING statement
+    any other way fails the case instead of surviving it. A scalar attribute's literal
+    is encoded the same way at its declared type; a DB-computed marker and a temporal
+    end column's ``infinity`` are not literals and bind as authored. An OPENING statement
     additionally binds every `many` occurrence's column whether ① names it or not:
     absence and the empty array are one logical zero state (m-value-object).
 
@@ -312,9 +314,14 @@ def _member_column(
 ) -> tuple[str, Any]:
     """The physical column a ① row key names, and the value it binds there."""
     try:
-        return entity.attribute_by_name(key)["column"], value
+        attribute = entity.attribute_by_name(key)
     except KeyError:
         pass
+    else:
+        column = attribute["column"]
+        if column in resident_columns or not _literal_scalar(entity, column, value):
+            return column, value
+        return column, encode_leaf(attribute["type"], value)
     # Not an attribute — a value object binds as ONE document at its
     # Document-tier slot (m-value-object); the neutral input names it
     # like a scalar attribute and its value is the whole document.
@@ -330,6 +337,15 @@ def _member_column(
     if column in resident_columns:
         return column, value
     return column, encode_document(value_object, value)
+
+
+def _literal_scalar(entity: Entity, column: str, value: Any) -> bool:
+    """Whether a scalar attribute's ① value is a literal of its declared type, rather
+    than a DB-computed write marker or a temporal end column's open bound."""
+    if is_framework_marker(value):
+        return False
+    end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
+    return not (value == "infinity" and column in end_columns)
 
 
 def _unnamed_many_columns(

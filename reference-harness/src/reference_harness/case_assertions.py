@@ -13,6 +13,7 @@ seam can reach another through it.
 from __future__ import annotations
 
 import contextlib
+import math
 from collections.abc import Iterator, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,7 @@ from typing import Any
 from . import multiset
 from ._structural import is_structural_sequence
 from .case import Case
+from .portable_literal import DeclaredFloat
 
 
 class CaseFailure(AssertionError):
@@ -53,11 +55,17 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
     not repair Decimal/float, instant/string, UUID/string, or bytes/string carrier
     differences when no metadata says which value space they occupy.
     """
+    return _equal(left, right, tolerance, observe_declared_sign=False)
+
+
+def _equal(
+    left: Any, right: Any, tolerance: Decimal | None, *, observe_declared_sign: bool
+) -> bool:
     if isinstance(left, Mapping) or isinstance(right, Mapping):
         return (
             isinstance(left, Mapping)
             and isinstance(right, Mapping)
-            and _mappings_equal(left, right, tolerance)
+            and _mappings_equal(left, right, tolerance, observe_declared_sign=observe_declared_sign)
         )
     if is_structural_sequence(left) or is_structural_sequence(right):
         return (
@@ -65,7 +73,8 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
             and is_structural_sequence(right)
             and len(left) == len(right)
             and all(
-                scalars_equal(one, other, tolerance) for one, other in zip(left, right, strict=True)
+                _equal(one, other, tolerance, observe_declared_sign=observe_declared_sign)
+                for one, other in zip(left, right, strict=True)
             )
         )
     if isinstance(left, bool) or isinstance(right, bool):
@@ -77,14 +86,26 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
     if isinstance(left, int) and not isinstance(left, bool):
         return isinstance(right, int) and not isinstance(right, bool) and left == right
     if isinstance(left, float):
-        return isinstance(right, float) and left == right
+        return (
+            isinstance(right, float)
+            and left == right
+            and not (observe_declared_sign and _declared_zero_signs_differ(left, right))
+        )
     return type(left) is type(right) and left == right
+
+
+def _declared_zero_signs_differ(left: float, right: float) -> bool:
+    return (isinstance(left, DeclaredFloat) or isinstance(right, DeclaredFloat)) and (
+        math.copysign(1.0, left) != math.copysign(1.0, right)
+    )
 
 
 def _mappings_equal(
     left: Mapping[Any, Any],
     right: Mapping[Any, Any],
     tolerance: Decimal | None,
+    *,
+    observe_declared_sign: bool,
 ) -> bool:
     if len(left) != len(right):
         return False
@@ -101,7 +122,9 @@ def _mappings_equal(
         if right_index is None:
             return False
         right_key = unmatched.pop(right_index)
-        if not scalars_equal(left_value, right[right_key], tolerance):
+        if not _equal(
+            left_value, right[right_key], tolerance, observe_declared_sign=observe_declared_sign
+        ):
             return False
     return not unmatched
 
@@ -140,8 +163,13 @@ def rows_equal(
 
 
 def write_value_equal(left: Any, right: Any) -> bool:
-    """Exact structural equality for canonical Wire write values and binds."""
-    return scalars_equal(left, right, None)
+    """Exact structural equality for canonical Wire write values and binds.
+
+    A number encoded at a declared ``float32`` or ``float64`` position compares
+    as m-wire's canonical comparison does, observing a zero's sign; every other
+    value, a Json position's numbers included, compares as :func:`scalars_equal`.
+    """
+    return _equal(left, right, None, observe_declared_sign=True)
 
 
 def coerce_identity_key(value: Any) -> Any:

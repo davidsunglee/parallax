@@ -85,6 +85,12 @@ def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> li
 _FRAMEWORK_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
 
 
+def is_framework_marker(value: Any) -> bool:
+    """Whether a scalar attribute's ① value is a DB-computed write marker rather than a
+    literal (`m-value-object` "Writing")."""
+    return isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
+
+
 def states_framework_marker(entity: Entity, instruction: Mapping[str, Any]) -> bool:
     """Whether *instruction* assigns a DB-computed write marker AT A SCALAR
     ATTRIBUTE — the `m-value-object` "Writing" markers (`{computed: …}` /
@@ -99,7 +105,7 @@ def states_framework_marker(entity: Entity, instruction: Mapping[str, Any]) -> b
     scalars = {attribute["name"] for attribute in entity.attributes}
     rows = instruction.get("rows")
     return any(
-        name in scalars and isinstance(value, dict) and frozenset(value) in _FRAMEWORK_MARKER_KEYS
+        name in scalars and is_framework_marker(value)
         for row in (rows if isinstance(rows, list) else ())
         if isinstance(row, Mapping)
         for name, value in row.items()

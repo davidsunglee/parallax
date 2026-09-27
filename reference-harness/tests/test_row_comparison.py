@@ -6,8 +6,13 @@ from decimal import Decimal
 
 from reference_harness._structural import is_structural_sequence
 from reference_harness.case import FrozenDict, FrozenList
-from reference_harness.case_assertions import rows_equal, scalars_equal
-from reference_harness.portable_literal import AuthoredInteger, AuthoredNumber, values_equal
+from reference_harness.case_assertions import rows_equal, scalars_equal, write_value_equal
+from reference_harness.portable_literal import (
+    AuthoredInteger,
+    AuthoredNumber,
+    DeclaredFloat,
+    values_equal,
+)
 
 
 def test_distinct_high_precision_decimals_are_not_equal() -> None:
@@ -33,6 +38,19 @@ def test_retained_json_number_tokens_equal_the_same_native_carrier() -> None:
     assert scalars_equal(AuthoredInteger("2"), 2, None)
     assert scalars_equal(AuthoredNumber("1.5"), 1.5, None)
     assert not scalars_equal(AuthoredInteger("2"), 2.0, None)
+
+
+def test_write_grading_observes_a_declared_float_zero_sign() -> None:
+    assert write_value_equal(DeclaredFloat(0.0), AuthoredNumber("0.0"))
+    assert not write_value_equal(DeclaredFloat(-0.0), AuthoredNumber("0.0"))
+    assert not write_value_equal(AuthoredNumber("-0.0"), DeclaredFloat(0.0))
+    assert not write_value_equal({"leaf": [DeclaredFloat(-0.0)]}, {"leaf": [0.0]})
+    assert write_value_equal(-0.0, 0.0)  # no declared float position: JSON-value equality
+
+
+def test_row_grading_keeps_decimal_space_for_a_declared_float_zero() -> None:
+    assert scalars_equal(DeclaredFloat(-0.0), 0.0, None)
+    assert rows_equal([{"f": DeclaredFloat(-0.0)}], [{"f": 0.0}])
 
 
 def test_bool_and_none_stay_out_of_numeric_space() -> None:
