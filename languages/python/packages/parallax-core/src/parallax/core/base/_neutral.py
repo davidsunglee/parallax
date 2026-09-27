@@ -360,25 +360,46 @@ def nearest_float_at_width(
     plainly outside the target neighborhood are classified before constructing
     a ratio, so represented exponent size cannot drive allocation.
     """
+    if (
+        isinstance(declared, Float64)
+        and isinstance(value, float)
+        and not isinstance(value, ManagedValueExclusion)
+    ):
+        return _host_binary64(float.__float__(value))
     exact = _exact_number(value, declared)
     if exact is None:
         return None
     if exact.is_zero():
         return 0.0
-    negative = exact.is_signed()
     magnitude = exact.copy_abs()
+    projected = (
+        _binary64_magnitude(magnitude)
+        if isinstance(declared, Float64)
+        else _binary32_magnitude(magnitude)
+    )
+    if projected is None:
+        return None
+    return -projected if exact.is_signed() and projected else projected
 
-    if isinstance(declared, Float64):
-        adjusted = magnitude.adjusted()
-        if adjusted > 308:
-            return None
-        if adjusted < -324:
-            return 0.0
-        projected = float(magnitude)
-        if not _math.isfinite(projected):
-            return None
-        return -projected if negative and projected else projected
 
+def _host_binary64(value: float) -> float | None:
+    # A finite host float is already a binary64 value; only a zero's sign changes.
+    if not _math.isfinite(value):
+        return None
+    return 0.0 if value == 0.0 else value
+
+
+def _binary64_magnitude(magnitude: _decimal.Decimal) -> float | None:
+    adjusted = magnitude.adjusted()
+    if adjusted > 308:
+        return None
+    if adjusted < -324:
+        return 0.0
+    projected = float(magnitude)
+    return projected if _math.isfinite(projected) else None
+
+
+def _binary32_magnitude(magnitude: _decimal.Decimal) -> float | None:
     adjusted = magnitude.adjusted()
     if adjusted > 38:
         return None
@@ -387,8 +408,7 @@ def nearest_float_at_width(
     ratio = _Fraction(magnitude)
     if ratio >= _BINARY32_OVERFLOW:
         return None
-    projected = _nearest_binary32(ratio)
-    return -projected if negative and projected else projected
+    return _nearest_binary32(ratio)
 
 
 def _exact_number(
