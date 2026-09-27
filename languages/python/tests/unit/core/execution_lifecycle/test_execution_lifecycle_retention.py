@@ -953,6 +953,28 @@ def _concurrent_roots(count: int, providers: int, shape: _Chain) -> Seam:
     return run
 
 
+def _held_locks(count: int) -> list[threading.Lock]:
+    locks = [threading.Lock() for _ in range(count)]
+    for lock in locks:
+        lock.acquire()
+    return locks
+
+
+def _release_and_join(
+    parked: list[threading.Lock],
+    threads: list[threading.Thread],
+    failures: list[BaseException],
+) -> None:
+    """Hand every parked worker its lock, wait for every thread, and raise the
+    first failure a worker met."""
+    for lock in parked:
+        lock.release()
+    for thread in threads:
+        thread.join()
+    if failures:
+        raise failures[0]
+
+
 def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
     """``point.roots`` transactions open on ``db`` at once, each joined
     ``point.depth`` times, sampled with every one of them inside its deepest
@@ -980,10 +1002,8 @@ def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
     """
 
     def run(sample: Callable[[], None]) -> None:
-        arrived = [threading.Lock() for _ in range(point.roots)]
-        parked = [threading.Lock() for _ in range(point.roots)]
-        for lock in (*arrived, *parked):
-            lock.acquire()
+        arrived = _held_locks(point.roots)
+        parked = _held_locks(point.roots)
         failures: list[BaseException] = []
 
         def worker(index: int) -> None:
@@ -1018,12 +1038,7 @@ def _threaded_roots(point: _Point, db: ScopedDatabase) -> Seam:
         for lock in arrived:
             lock.acquire()
         sample()
-        for lock in parked:
-            lock.release()
-        for thread in threads:
-            thread.join()
-        if failures:
-            raise failures[0]
+        _release_and_join(parked, threads, failures)
 
     return run
 
