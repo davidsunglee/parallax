@@ -622,8 +622,6 @@ def _measure_runtime(
     recorder = spans if spans is not None else Spans()
     workloads = catalog(contract)
     cells = [cell for cell in expanded_cells(contract) if selected(cell.workload, cell.path)]
-    memory_children = contract.memory_children
-    scaling_arms = contract.memory_scaling_arms
     for workload_id in contract.workload_ids:
         workload_cells = [cell for cell in cells if cell.workload == workload_id]
         if not workload_cells:
@@ -649,14 +647,26 @@ def _measure_runtime(
             continue
         with recorder.span("workload", group, member=SUBJECT, runtime=runtime):
             for cell in chosen:
-                for _ in range(memory_children if is_memory_cell(cell.path) else 1):
-                    results[(runtime, cell.workload, cell.path)].append(
-                        runner(
-                            _request(
-                                contract, runtime, cell.workload, cell.path, scaling_arms[0], None
-                            )
-                        )
-                    )
+                _read_arm(
+                    contract, runner, runtime, results, cell, contract.memory_scaling_arms[0], None
+                )
+
+
+def _read_arm(
+    contract: BudgetContract,
+    runner: ChildRunner,
+    runtime: str,
+    results: dict[Address, list[ChildResult]],
+    cell: BudgetCell | GeometryCell,
+    roots: int,
+    provisioner: Provisioner | None,
+) -> None:
+    """Read ``cell`` at ``roots`` in isolated children: ``memory_children`` of
+    them for a memory cell, one otherwise."""
+    for _ in range(contract.memory_children if is_memory_cell(cell.path) else 1):
+        results[(runtime, cell.workload, cell.path)].append(
+            runner(_request(contract, runtime, cell.workload, cell.path, roots, provisioner))
+        )
 
 
 def _provision(
@@ -683,7 +693,6 @@ def _measure_workload(
     cells: Sequence[BudgetCell],
     recorder: Spans,
 ) -> None:
-    memory_children = contract.memory_children
     scaling_arms = contract.memory_scaling_arms
     live = [cell for cell in cells if needs_database(cell.path)]
     if live and provisioner is None:
@@ -694,52 +703,20 @@ def _measure_workload(
                     f"CPython {runtime} {cell.workload}.{cell.path} needs a provisioned database",
                 )
             )
-        live = []
-    if live:
+    elif live:
         assert provisioner is not None
         _provision(workload, provisioner, scaling_arms[0], runtime, recorder)
-    for cell in live:
-        assert provisioner is not None
-        for _ in range(memory_children if is_memory_cell(cell.path) else 1):
-            results[(runtime, cell.workload, cell.path)].append(
-                runner(
-                    _request(
-                        contract,
-                        runtime,
-                        cell.workload,
-                        cell.path,
-                        scaling_arms[0],
-                        provisioner,
-                    )
-                )
-            )
-    memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
-    for roots in scaling_arms[1:]:
-        if memory_live:
-            assert provisioner is not None
-            _provision(workload, provisioner, roots, runtime, recorder)
-        for cell in memory_live:
-            assert provisioner is not None
-            for _ in range(memory_children):
-                results[(runtime, cell.workload, cell.path)].append(
-                    runner(
-                        _request(
-                            contract,
-                            runtime,
-                            cell.workload,
-                            cell.path,
-                            roots,
-                            provisioner,
-                        )
-                    )
-                )
+        for cell in live:
+            _read_arm(contract, runner, runtime, results, cell, scaling_arms[0], provisioner)
+        memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
+        for roots in scaling_arms[1:]:
+            if memory_live:
+                _provision(workload, provisioner, roots, runtime, recorder)
+            for cell in memory_live:
+                _read_arm(contract, runner, runtime, results, cell, roots, provisioner)
     for cell in cells:
-        if needs_database(cell.path):
-            continue
-        for _ in range(memory_children if is_memory_cell(cell.path) else 1):
-            results[(runtime, cell.workload, cell.path)].append(
-                runner(_request(contract, runtime, cell.workload, cell.path, scaling_arms[0], None))
-            )
+        if not needs_database(cell.path):
+            _read_arm(contract, runner, runtime, results, cell, scaling_arms[0], None)
 
 
 def measure(
@@ -847,16 +824,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--metadata", type=Path, help="where the runtime identities are written; not evidence"
     )
     args = parser.parse_args(argv)
-    if (args.select or args.cell or args.runtime) and not args.diagnostic:
-        parser.error("--select, --cell, and --runtime are diagnostic options")
-    if args.diagnostic and args.out is not None:
-        parser.error("a diagnostic run is not evidence and is printed, never written to a file")
-    if args.durations is not None and (args.diagnostic or args.canary):
-        parser.error("--durations records a complete measurement, never a diagnostic or canary")
-    if args.metadata is not None and (args.diagnostic or args.canary):
-        parser.error("--metadata records a complete measurement, never a diagnostic or canary")
-    if args.workload and (args.diagnostic or args.canary):
-        parser.error("--workload selects evidence, never a diagnostic or canary")
+    _refuse_misplaced_options(parser, args)
     contract = BudgetContract.load()
     try:
         selected = workload_selection(args.workload, contract)
@@ -885,6 +853,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(rendered + "\n", encoding="utf-8")
     return 0
+
+
+def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if (args.select or args.cell or args.runtime) and not args.diagnostic:
+        parser.error("--select, --cell, and --runtime are diagnostic options")
+    if args.diagnostic and args.out is not None:
+        parser.error("a diagnostic run is not evidence and is printed, never written to a file")
+    if args.durations is not None and (args.diagnostic or args.canary):
+        parser.error("--durations records a complete measurement, never a diagnostic or canary")
+    if args.metadata is not None and (args.diagnostic or args.canary):
+        parser.error("--metadata records a complete measurement, never a diagnostic or canary")
+    if args.workload and (args.diagnostic or args.canary):
+        parser.error("--workload selects evidence, never a diagnostic or canary")
 
 
 def runtime_identities(
