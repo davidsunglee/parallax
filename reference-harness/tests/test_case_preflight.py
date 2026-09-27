@@ -698,14 +698,67 @@ def test_preflight_refuses_a_negative_float_zero_compared_with_a_document_extrac
         preflight_case_literals(_node_extraction_comparison(dialect, path, declared, value))
 
 
+def _read_statement(case: Case) -> Any:
+    return case.then["statements"][0]
+
+
+def _locking_session_statement(case: Case) -> Any:
+    return case.when["concurrency"]["rounds"][0]["A"]["statements"][0]
+
+
 @pytest.mark.parametrize("dialect", _DIALECTS)
+@pytest.mark.parametrize(
+    ("stem", "statement", "value_index", "damaged", "declared"),
+    [
+        (
+            "m-storage-layout-020-document-layout-path-predicate-ordering",
+            _read_statement,
+            {"postgres": 1, "mariadb": 1},
+            "5",
+            "int64",
+        ),
+        (
+            "m-inheritance-124-document-layout-tph-sibling-path-reuse",
+            _read_statement,
+            {"postgres": 5, "mariadb": 7},
+            10,
+            r"decimal\(18,2\)",
+        ),
+        (
+            "m-inheritance-127-document-layout-tpcs-nested-narrow-predicate",
+            _read_statement,
+            {"postgres": 3, "mariadb": 3},
+            "100",
+            "int32",
+        ),
+        (
+            "m-read-lock-010-document-layout-tph-partitioned",
+            _read_statement,
+            {"postgres": 5, "mariadb": 7},
+            10,
+            r"decimal\(18,2\)",
+        ),
+        (
+            "m-read-lock-011-document-layout-tph-partitioned-blocks-writer",
+            _locking_session_statement,
+            {"postgres": 2, "mariadb": 3},
+            10,
+            r"decimal\(18,2\)",
+        ),
+    ],
+)
 def test_preflight_types_the_extraction_comparison_of_a_corpus_document_predicate(
     dialect: str,
+    stem: str,
+    statement: Any,
+    value_index: dict[str, int],
+    damaged: object,
+    declared: str,
 ) -> None:
-    case = _damaged("m-storage-layout-020-document-layout-path-predicate-ordering")
-    case.then["statements"][0]["binds"][dialect][1] = "5"
+    case = _damaged(stem)
+    statement(case)["binds"][dialect][value_index[dialect]] = damaged
     with pytest.raises(
-        CaseFailure, match=rf"binds\.{dialect}\[1\]: '5' is type-mismatch for int64"
+        CaseFailure, match=rf"binds\.{dialect}\[{value_index[dialect]}\]: .* for {declared}"
     ):
         preflight_case_literals(case)
 
