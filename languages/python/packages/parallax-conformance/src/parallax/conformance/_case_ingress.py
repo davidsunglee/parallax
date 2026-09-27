@@ -7,6 +7,7 @@ from typing import cast
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate
+from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -175,37 +176,19 @@ def _normalize_predicate(
     element_container: OccurrenceMetadata | None = None,
 ) -> predicate.PredicateNode:
     match node:
-        case predicate.Comparison(attr=attr, value=value):
-            return replace(node, value=_predicate_leaf(model, attr, value))
-        case predicate.Between(attr=attr, lower=lower, upper=upper):
-            return replace(
-                node,
-                lower=_predicate_leaf(model, attr, lower),
-                upper=_predicate_leaf(model, attr, upper),
-            )
-        case predicate.Membership(attr=attr, values=values):
-            return replace(
-                node,
-                values=tuple(_predicate_leaf(model, attr, value) for value in values),
-            )
-        case predicate.NestedComparison(path=path, value=value):
-            return replace(
-                node,
-                value=_nested_predicate_leaf(model, element_container, path, value),
-            )
-        case predicate.NestedRange(path=path, lower=lower, upper=upper):
-            return replace(
-                node,
-                lower=_nested_predicate_leaf(model, element_container, path, lower),
-                upper=_nested_predicate_leaf(model, element_container, path, upper),
-            )
-        case predicate.NestedMembership(path=path, values=values):
-            return replace(
-                node,
-                values=tuple(
-                    _nested_predicate_leaf(model, element_container, path, value)
-                    for value in values
-                ),
+        case (
+            predicate.Comparison(attr=reference)
+            | predicate.Between(attr=reference)
+            | predicate.Membership(attr=reference)
+        ):
+            return _normalize_literals(node, _attribute_type(model, reference))
+        case (
+            predicate.NestedComparison(path=reference)
+            | predicate.NestedRange(path=reference)
+            | predicate.NestedMembership(path=reference)
+        ):
+            return _normalize_literals(
+                node, _nested_attribute_type(model, element_container, reference)
             )
         case predicate.And(operands=operands) | predicate.Or(operands=operands):
             return replace(
@@ -243,33 +226,60 @@ def _normalize_predicate(
             return node
 
 
-def _predicate_leaf(model: AcceptedMetamodel, reference: str, value: object) -> object:
+type _LiteralNode = (
+    predicate.Comparison
+    | predicate.Between
+    | predicate.Membership
+    | predicate.NestedComparison
+    | predicate.NestedRange
+    | predicate.NestedMembership
+)
+
+
+def _normalize_literals(node: _LiteralNode, neutral_type: NeutralType | None) -> _LiteralNode:
+    if neutral_type is None:
+        return node
+    match node:
+        case predicate.Comparison(value=value) | predicate.NestedComparison(value=value):
+            return replace(node, value=normalize_case_literal(neutral_type, value))
+        case (
+            predicate.Between(lower=lower, upper=upper)
+            | predicate.NestedRange(lower=lower, upper=upper)
+        ):
+            return replace(
+                node,
+                lower=normalize_case_literal(neutral_type, lower),
+                upper=normalize_case_literal(neutral_type, upper),
+            )
+        case predicate.Membership(values=values) | predicate.NestedMembership(values=values):
+            return replace(
+                node,
+                values=tuple(normalize_case_literal(neutral_type, value) for value in values),
+            )
+
+
+def _attribute_type(model: AcceptedMetamodel, reference: str) -> NeutralType | None:
     entity_name, path = split_reference(reference)
     if entity_name is None or len(path) != 1:
-        return value
+        return None
     entity = entity_by_name(model, entity_name)
     if entity is None:
-        return value
+        return None
     member = _entity_members(model, entity).get(path[0])
-    return (
-        normalize_case_literal(member.type, value)
-        if isinstance(member, AttributeMetadata)
-        else value
-    )
+    return member.type if isinstance(member, AttributeMetadata) else None
 
 
-def _nested_predicate_leaf(
+def _nested_attribute_type(
     model: AcceptedMetamodel,
     element_container: OccurrenceMetadata | None,
     reference: str,
-    value: object,
-) -> object:
+) -> NeutralType | None:
     leaf = (
         _relative_leaf(element_container, reference.split("."))
         if element_container is not None
         else _predicate_nested_leaf(model, reference)
     )
-    return normalize_case_literal(leaf.type, value) if leaf is not None else value
+    return None if leaf is None else leaf.type
 
 
 def _predicate_nested_leaf(

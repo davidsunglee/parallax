@@ -215,17 +215,7 @@ def _run_actions(
             tx.delete(current)
             current = None
         elif action == "join":
-            if database is None:
-                raise AssertionError(
-                    "a `join` action needs the ScopedDatabase running the boundary (`python.md` §5)"
-                )
-            joining_database = database
-            if step.actor_selection is not None:
-                if scope_for is None:
-                    raise AssertionError(
-                        "a qualified `join` action needs an authority scope selector"
-                    )
-                joining_database = scope_for(step.actor_selection)
+            joining_database = _joining_database(step, database, scope_for)
             return joining_database.transact(
                 lambda joined, rest=steps[index + 1 :], seen=current, scope=joining_database: (
                     _run_actions(joined, rest, seen, scope, scope_for)
@@ -240,6 +230,24 @@ def _run_actions(
         else:  # pragma: no cover - m-case-format's `when.boundary.action` enum is closed
             raise AssertionError(f"unrecognized boundary action {action!r}")
     return current
+
+
+def _joining_database(
+    step: BoundaryStep,
+    database: ScopedDatabase | None,
+    scope_for: Callable[[case_format.ActorSelection], ScopedDatabase] | None,
+) -> ScopedDatabase:
+    """The scope a `join` step opens through: the enclosing scope unqualified, or the
+    independent scope its actor selection derives from the same root."""
+    if database is None:
+        raise AssertionError(
+            "a `join` action needs the ScopedDatabase running the boundary (`python.md` §5)"
+        )
+    if step.actor_selection is None:
+        return database
+    if scope_for is None:
+        raise AssertionError("a qualified `join` action needs an authority scope selector")
+    return scope_for(step.actor_selection)
 
 
 @dataclass(frozen=True, slots=True)

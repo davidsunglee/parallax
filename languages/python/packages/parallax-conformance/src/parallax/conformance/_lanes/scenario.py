@@ -1362,9 +1362,14 @@ def graph_rows(
     carries, which is exactly why the format names the variant instead.
     """
     columns, family = _read_projection(model, query)
+    superset = (
+        dict.fromkeys(column for options in columns.values() for column, _member in options)
+        if family
+        else None
+    )
     projection = ActualWireProjection(model)
     return [
-        _projected_row(model, projection, columns, family, envelope.graph_root(root) or {})
+        _projected_row(model, projection, columns, superset, envelope.graph_root(root) or {})
         for root in roots
     ]
 
@@ -1373,26 +1378,16 @@ def _projected_row(
     model: AcceptedMetamodel,
     projection: ActualWireProjection,
     columns: Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]],
-    family: bool,
+    superset: Mapping[str, None] | None,
     node: Mapping[str, object],
 ) -> Mapping[str, object]:
-    """One published node as its projection's row."""
+    """One published node as its projection's row.
+
+    ``superset`` holds an abstract position's superset columns, each ``null``
+    until the node fills it, and is ``None`` for a concrete read.
+    """
     variant = node.get("familyVariant")
-    selected: frozenset[MemberIdentity] | None = None
-    if family and node:
-        if not isinstance(variant, str):
-            raise EngineError(
-                "an abstract-position read publishes a concrete node carrying "
-                f"`familyVariant`; this one published {sorted(node)}"
-            )
-        entity = case_entity(model, variant)
-        view = inheritance.view(model).entity(entity.identity)
-        if view is None:  # pragma: no cover - every accepted Entity has a view
-            raise EngineError(f"{entity.identity.canonical}: no inheritance position")
-        selected = frozenset(
-            member.identity
-            for member in (*view.applicable_attributes, *view.applicable_value_objects)
-        )
+    selected = _variant_members(model, node) if superset is not None and node else None
     published: dict[str, object] = {}
     for name, value in node.items():
         options = columns.get(name, ())
@@ -1417,13 +1412,28 @@ def _projected_row(
             published[column] = projection.published_scalar(member, value)
         else:
             published[column] = projection.published_value_object(member, value)
-    if not family or not node:
+    if superset is None or not node:
         return published
-    return {
-        **dict.fromkeys(column for options in columns.values() for column, _member in options),
-        **published,
-        "familyVariant": variant,
-    }
+    return {**superset, **published, "familyVariant": variant}
+
+
+def _variant_members(
+    model: AcceptedMetamodel, node: Mapping[str, object]
+) -> frozenset[MemberIdentity]:
+    """The members the concrete Entity a node's ``familyVariant`` names applies."""
+    variant = node.get("familyVariant")
+    if not isinstance(variant, str):
+        raise EngineError(
+            "an abstract-position read publishes a concrete node carrying "
+            f"`familyVariant`; this one published {sorted(node)}"
+        )
+    entity = case_entity(model, variant)
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - every accepted Entity has a view
+        raise EngineError(f"{entity.identity.canonical}: no inheritance position")
+    return frozenset(
+        member.identity for member in (*view.applicable_attributes, *view.applicable_value_objects)
+    )
 
 
 def _read_projection(
@@ -4138,45 +4148,49 @@ def _refuse_unentitled_observed_edge(
     attempts = (
         cast("list[Mapping[str, object]]", raw_attempts) if isinstance(raw_attempts, list) else []
     )
+    sources = [
+        ("`when`", when),
+        *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
+    ]
     if not is_temporal:
-        for pointer, source in [
-            ("`when`", when),
-            *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
-        ]:
+        for pointer, source in sources:
             if any(key in source for key in _MILESTONE_EDGE_KEYS):
                 raise EngineError(
                     f"{case.path.name}: a NON-temporal conflict target has no milestone to "
                     f"observe, so it may author neither of {sorted(_MILESTONE_EDGE_KEYS)} "
                     f"({pointer})"
                 )
-    for index, attempt in enumerate(attempts):
-        if "observedValidStart" in attempt:
-            raise EngineError(
-                f"{case.path.name}: attempt {index} names its observed milestone's edge "
-                "(`observedValidStart`), which selects among the case's own fixtures — a "
-                "retry re-reads what the concurrent writer left, so a retry attempt names "
-                "its address (`write.validEnd`) directly"
-            )
     if raw_attempts is not None:
-        for key in sorted(_MILESTONE_EDGE_KEYS):
-            if key in when:
-                raise EngineError(
-                    f"{case.path.name}: the root `when` authors {key!r} beside `attempts` — "
-                    "a retry sequence reads each attempt's own coordinates, so a root one is "
-                    "consumed by no attempt"
-                )
+        _refuse_retry_observed_edges(case.path.name, when, attempts)
     if case_document.concurrency(case) == "optimistic":
         return
-    for pointer, source in [
-        ("`when`", when),
-        *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
-    ]:
+    for pointer, source in sources:
         if "observedTxStart" in source and "observedValidStart" not in source:
             raise EngineError(
                 f"{case.path.name}: `locking` mode renders no gate, so a lone "
                 f"`observedTxStart` is consumed by nothing ({pointer}) — it is entitled "
                 "under `optimistic`, or beside `observedValidStart` as the observed "
                 "milestone's edge"
+            )
+
+
+def _refuse_retry_observed_edges(
+    case_name: str, when: Mapping[str, object], attempts: Sequence[Mapping[str, object]]
+) -> None:
+    for index, attempt in enumerate(attempts):
+        if "observedValidStart" in attempt:
+            raise EngineError(
+                f"{case_name}: attempt {index} names its observed milestone's edge "
+                "(`observedValidStart`), which selects among the case's own fixtures — a "
+                "retry re-reads what the concurrent writer left, so a retry attempt names "
+                "its address (`write.validEnd`) directly"
+            )
+    for key in sorted(_MILESTONE_EDGE_KEYS):
+        if key in when:
+            raise EngineError(
+                f"{case_name}: the root `when` authors {key!r} beside `attempts` — "
+                "a retry sequence reads each attempt's own coordinates, so a root one is "
+                "consumed by no attempt"
             )
 
 

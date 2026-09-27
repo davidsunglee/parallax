@@ -487,21 +487,23 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
 def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, object]:
     match event:
         case ReadStarted(target=target, interface=interface, edition=edition):
-            read_started: dict[str, object] = {
-                "target": target,
-                "interface": _READ_INTERFACE[interface],
+            return {
+                "readStarted": {
+                    "target": target,
+                    "interface": _READ_INTERFACE[interface],
+                    **_stated("edition", edition),
+                }
             }
-            if edition is not None:
-                read_started["edition"] = edition
-            return {"readStarted": read_started}
         case WriteBatchStarted(trigger=trigger):
             return {"writeBatchStarted": {"trigger": _WRITE_BATCH_TRIGGER[trigger]}}
         case DatabaseCallStarted(target=target, kind=kind, statement=statement):
-            started: dict[str, object] = {"target": target, "kind": _CALL_KIND[kind]}
-            index = indexer.take(statement)
-            if index is not None:
-                started["statement"] = index
-            return {"databaseCallStarted": started}
+            return {
+                "databaseCallStarted": {
+                    "target": target,
+                    "kind": _CALL_KIND[kind],
+                    **_stated("statement", indexer.take(statement)),
+                }
+            }
         case TransactionInvocationStarted(invocation=invocation):
             return {"transactionInvocationStarted": _invocation(invocation)}
         case TransactionAttemptStarted(edition=edition):
@@ -509,14 +511,14 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
         case SnapshotStreamStarted(
             target=target, interface=interface, batch_size=batch_size, edition=edition
         ):
-            stream_started: dict[str, object] = {
-                "target": target,
-                "interface": _READ_INTERFACE[interface],
-                "batchSize": batch_size,
+            return {
+                "snapshotStreamStarted": {
+                    "target": target,
+                    "interface": _READ_INTERFACE[interface],
+                    "batchSize": batch_size,
+                    **_stated("edition", edition),
+                }
             }
-            if edition is not None:
-                stream_started["edition"] = edition
-            return {"snapshotStreamStarted": stream_started}
         case StreamBatchStarted():
             return {"streamBatchStarted": {}}
         case AcquisitionStarted():
@@ -525,6 +527,11 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
             return {"releaseStarted": {}}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
+
+
+def _stated(key: str, value: object | None) -> dict[str, object]:
+    """``{key: value}``, or no field at all where ``value`` is absent."""
+    return {} if value is None else {key: value}
 
 
 def _finished(event: ActivityFinished) -> dict[str, object]:

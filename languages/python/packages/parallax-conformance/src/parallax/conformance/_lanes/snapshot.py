@@ -321,13 +321,12 @@ def run_scenario(
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
         for index, step in enumerate(steps):
+            observed: dict[str, object] | None = None
             match _snapshot_step_kind(step):
                 case "action":
                     _check_action_step(case, step)
                     if step.get("action") == "access":
                         observed = _access_step_graph(case, model, index, step, results)
-                        if observed is not None:
-                            step_graphs.append(observed)
                         results.append(_NO_SCENARIO_RESULT)
                     else:
                         error_class, edited = _grade_mutate_step(case, model, step, results)
@@ -370,13 +369,13 @@ def run_scenario(
                         step_rows(model, index, query, snapshot.checked().results())
                     )
                     observed = read_step_graph(case, model, index, step, query, snapshot)
-                    if observed is not None:
-                        step_graphs.append(observed)
                     results.append(
                         _ScenarioStepResult(
                             _root_members(snapshot), snapshot.pin, identity, materialized=True
                         )
                     )
+            if observed is not None:
+                step_graphs.append(observed)
         return ScenarioRun(emissions, round_trips, errors, rows_observed, step_graphs)
 
 

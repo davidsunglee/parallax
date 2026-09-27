@@ -256,6 +256,47 @@ def _commit_of_an_abandoned_transaction(result: _WorkerResult, step: Concurrency
     )
 
 
+def _prepare_peer_session(session: RoundsSession, isolation: IsolationLevel | None) -> None:
+    # The isolation override (when present) MUST run first: a peer
+    # session's whole choreography is ONE continuous transaction
+    # (`RoundsSession`'s own docstring), and the SQL-standard `SET
+    # TRANSACTION ISOLATION LEVEL` is only legal as a transaction's
+    # OWN first statement — never after `deadlock_timeout` /
+    # `lock_timeout` (plain session GUCs, safe at any point) have
+    # already opened it.
+    if isolation is not None:
+        spelling = isolation_spelling(isolation)
+        session.execute(f"set transaction isolation level {spelling}", [])
+    # Then both lock-contention GUCs, `deadlock_timeout` FIRST and
+    # strictly BELOW `lock_timeout` -- see the constants' own timer-race
+    # derivation. (Their relative order here is immaterial; their
+    # relative VALUES are not.)
+    session.execute(f"set deadlock_timeout = '{_DEADLOCK_TIMEOUT}'", [])
+    session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
+
+
+def _raise_originating_failure(results: Mapping[str, _WorkerResult]) -> None:
+    failures: dict[str, BaseException] = {}
+    for node in _NODES:
+        failure = results[node].failure
+        if failure is not None:
+            failures[node] = failure
+    if not failures:
+        return
+    originating_node = next(
+        (node for node in failures if not isinstance(failures[node], threading.BrokenBarrierError)),
+        next(iter(failures)),
+    )
+    originating = failures[originating_node]
+    # `from None` when no OTHER node also failed (never reachable under
+    # this module's own 2-node barrier — any genuine failure always
+    # aborts the barrier for the partner too, `threading.Barrier.abort`'s
+    # own documented effect — kept for defensive honesty rather than
+    # assumed): explicit "no cause", never an implicit, confusing one.
+    secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
+    raise originating from secondary
+
+
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
     control_factory: Callable[[], RoundsSession],
@@ -317,22 +358,7 @@ def run_rounds(
             stack.callback(session.close)
             sessions[node] = session
         for session in sessions.values():
-            # The isolation override (when present) MUST run first: a peer
-            # session's whole choreography is ONE continuous transaction
-            # (`RoundsSession`'s own docstring), and the SQL-standard `SET
-            # TRANSACTION ISOLATION LEVEL` is only legal as a transaction's
-            # OWN first statement — never after `deadlock_timeout` /
-            # `lock_timeout` (plain session GUCs, safe at any point) have
-            # already opened it.
-            if isolation is not None:
-                spelling = isolation_spelling(isolation)
-                session.execute(f"set transaction isolation level {spelling}", [])
-            # Then both lock-contention GUCs, `deadlock_timeout` FIRST and
-            # strictly BELOW `lock_timeout` -- see the constants' own timer-race
-            # derivation. (Their relative order here is immaterial; their
-            # relative VALUES are not.)
-            session.execute(f"set deadlock_timeout = '{_DEADLOCK_TIMEOUT}'", [])
-            session.execute(f"set lock_timeout = '{_LOCK_TIMEOUT}'", [])
+            _prepare_peer_session(session, isolation)
 
         barrier = threading.Barrier(len(_NODES))
         results: dict[str, _WorkerResult] = {node: _WorkerResult() for node in _NODES}
@@ -364,29 +390,7 @@ def run_rounds(
         for thread in threads:
             thread.join()
 
-    failures: dict[str, BaseException] = {}
-    for node in _NODES:
-        failure = results[node].failure
-        if failure is not None:
-            failures[node] = failure
-    if failures:
-        originating_node = next(
-            (
-                node
-                for node in failures
-                if not isinstance(failures[node], threading.BrokenBarrierError)
-            ),
-            next(iter(failures)),
-        )
-        originating = failures[originating_node]
-        # `from None` when no OTHER node also failed (never reachable under
-        # this module's own 2-node barrier — any genuine failure always
-        # aborts the barrier for the partner too, `threading.Barrier.abort`'s
-        # own documented effect — kept for defensive honesty rather than
-        # assumed): explicit "no cause", never an implicit, confusing one.
-        secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
-        raise originating from secondary
-
+    _raise_originating_failure(results)
     return RoundsRun(
         rounds=tuple(
             {

@@ -200,6 +200,16 @@ def _refuse_untrusted_terminations(
     )
 
 
+def _refuse_graph_oracles(steps: Sequence[Mapping[str, object]], case_name: str) -> None:
+    if any("expectGraph" in step for step in steps):
+        raise EngineError(
+            f"{case_name}: this entry point reports emissions, round trips and find "
+            "rows, and carries no `stepGraphs` channel — a step stating relationship "
+            "contents is an oracle nothing here would answer, so it is refused rather "
+            "than silently unasserted"
+        )
+
+
 def run_interleaved_scenario_case(
     case: case_format.Case,
     port: CaseDatabase,
@@ -258,20 +268,15 @@ def run_interleaved_scenario_case(
     refuse_a_conflict_retry_opt_in(
         case, case_format.effective_options(case), "`when.uow` or `given.databaseOptions`"
     )
-    if any("expectGraph" in step for step in steps):
-        raise EngineError(
-            f"{case.path.name}: this entry point reports emissions, round trips and find "
-            "rows, and carries no `stepGraphs` channel — a step stating relationship "
-            "contents is an oracle nothing here would answer, so it is refused rather "
-            "than silently unasserted"
-        )
+    _refuse_graph_oracles(steps, case.path.name)
     groups = scenario_group_step_indices(steps)
     if len(groups) != 2:
         raise EngineError(  # pragma: no cover - defensive: every case reaching this entry has two
             f"{case.path.name}: run_interleaved_scenario_case supports exactly the "
             f"TWO-group interleaved shape, not {len(groups)} uow groups"
         )
-    ungrouped = [i for i in range(len(steps)) if i not in {j for js in groups.values() for j in js}]
+    grouped = {index for indices in groups.values() for index in indices}
+    ungrouped = [index for index in range(len(steps)) if index not in grouped]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
     shadow = TemporalShadow()
     seed_shadow_from_fixtures(case, model, shadow)
