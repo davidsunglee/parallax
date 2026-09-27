@@ -407,6 +407,24 @@ def test_nearest_float_projection_is_exact_at_the_declared_width(
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (-0.0, 0.0),
+        (5e-324, 5e-324),
+        (-5e-324, -5e-324),
+        (-1.7976931348623157e308, -1.7976931348623157e308),
+        (0.1, 0.1),
+        (float("inf"), None),
+        (float("-inf"), None),
+    ],
+)
+def test_a_host_float_projects_to_itself_at_float64_with_a_positive_zero(
+    value: float, expected: float | None
+) -> None:
+    assert repr(base.nearest_float_at_width(value, base.FLOAT64)) == repr(expected)
+
+
+@pytest.mark.parametrize(
     ("value", "declared", "expected"),
     [
         (decimal.Decimal("-2e-324"), base.FLOAT64, 0.0),
