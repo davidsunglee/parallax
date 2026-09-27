@@ -442,11 +442,8 @@ def validate_snapshot_matrix(
         if reading_document.get("window") != window:
             raise ValueError(f"{_spelled(address)} reading window is not {window!r}")
         samples = _samples(reading_document)
-        sample_count = (
-            expected_readings(contract, path)
-            if expected_readings(contract, path) > 1
-            else contract.timing_measured
-        )
+        children = expected_readings(contract, path)
+        sample_count = children if children > 1 else contract.timing_measured
         if len(samples) != sample_count:
             raise ValueError(
                 f"{_spelled(address)} has {len(samples)} samples, expected {sample_count}"
@@ -464,19 +461,24 @@ def validate_snapshot_matrix(
             continue
         reading = Reading(workload, path, actual_value, expected_unit, samples)
         expected_comparison = snapshot_comparison(cell, reading, contract, complete=True)
-        comparison_document = comparisons[("", workload, path)]
-        fields = {
-            "operator": snapshot_operator(path),
-            "limit": float(cell.value),
-            "unit": expected_unit,
-            "outcome": expected_comparison.outcome,
-        }
-        for name, expected_field in fields.items():
-            if comparison_document[name] != expected_field:
-                raise ValueError(
-                    f"{workload}.{path} comparison {name} "
-                    f"{comparison_document[name]!r}, expected {expected_field!r}"
-                )
+        _match_comparison(
+            f"{workload}.{path}",
+            comparisons[("", workload, path)],
+            {
+                "operator": snapshot_operator(path),
+                "limit": float(cell.value),
+                "unit": expected_unit,
+                "outcome": expected_comparison.outcome,
+            },
+        )
+
+
+def _match_comparison(label: str, comparison: Document, expected: Mapping[str, object]) -> None:
+    for name, expected_field in expected.items():
+        if comparison[name] != expected_field:
+            raise ValueError(
+                f"{label} comparison {name} {comparison[name]!r}, expected {expected_field!r}"
+            )
 
 
 def validate_write_lowering_matrix(
@@ -596,12 +598,7 @@ def validate_instance_state_matrix(
         fields["outcome"] = (
             "within" if (value >= limit if aggregate else value <= limit) else "outside"
         )
-        for name, expected_field in fields.items():
-            if comparison_document[name] != expected_field:
-                raise ValueError(
-                    f"{workload}.{cell} comparison {name} "
-                    f"{comparison_document[name]!r}, expected {expected_field!r}"
-                )
+        _match_comparison(f"{workload}.{cell}", comparison_document, fields)
 
 
 def collect(runner: Runner = run_member, spans: Spans | None = None) -> Collection:
@@ -989,30 +986,24 @@ def verify(
     if is_diagnostic(document):
         return ["a diagnostic reading set is not evidence and cannot be verified"]
     active = contract or BudgetContract.load()
-    snapshot, failures = _required_member(document, SNAPSHOT_SUBJECT)
+    snapshot, failures = _valid_member(
+        document,
+        SNAPSHOT_SUBJECT,
+        lambda member: validate_snapshot_matrix(
+            member, active, require_controls=SNAPSHOT_SUBJECT in required
+        ),
+    )
     if snapshot is None:
         return failures
-    try:
-        validate(snapshot)
-        validate_snapshot_matrix(snapshot, active, require_controls=SNAPSHOT_SUBJECT in required)
-    except (KeyError, TypeError, ValueError, ValidationError) as error:
-        return [*failures, f"the snapshot-delivery envelope is invalid: {error}"]
-    if snapshot.get("authority") != "authoritative":
-        failures.append("the snapshot-delivery envelope is not authoritative")
-    if snapshot.get("incomplete"):
-        failures.append("the snapshot-delivery envelope is incomplete")
-    if snapshot.get("errors"):
-        failures.append("the snapshot-delivery envelope contains errors")
-    failures += _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest())
-    write, write_failures = _required_member(document, WRITE_SUBJECT)
+    failures += _snapshot_failures(snapshot)
+    write, write_failures = _valid_member(
+        document,
+        WRITE_SUBJECT,
+        lambda member: validate_write_lowering_matrix(member, current=WRITE_SUBJECT in required),
+    )
     failures += write_failures
     if write is None:
         return failures
-    try:
-        validate(write)
-        validate_write_lowering_matrix(write, current=WRITE_SUBJECT in required)
-    except (KeyError, TypeError, ValueError, ValidationError) as error:
-        return [*failures, f"the write-lowering envelope is invalid: {error}"]
     if write.get("incomplete") or write.get("errors"):
         failures.append("the write-lowering envelope is incomplete")
     failures += _provenance_failures(
@@ -1028,17 +1019,43 @@ def verify(
     return failures
 
 
+def _valid_member(
+    document: Document, subject: str, matrix: Callable[[Document], None]
+) -> tuple[Document | None, list[str]]:
+    """The one ``subject`` envelope of ``document`` when it validates against
+    the envelope schema and ``matrix``; otherwise no envelope, and why."""
+    member, failures = _required_member(document, subject)
+    if member is None:
+        return None, failures
+    try:
+        validate(member)
+        matrix(member)
+    except (KeyError, TypeError, ValueError, ValidationError) as error:
+        return None, [f"the {subject} envelope is invalid: {error}"]
+    return member, []
+
+
+def _snapshot_failures(snapshot: Document) -> list[str]:
+    """Why a valid snapshot-delivery envelope is not authoritative, complete,
+    clean, and current evidence."""
+    failures: list[str] = []
+    if snapshot.get("authority") != "authoritative":
+        failures.append("the snapshot-delivery envelope is not authoritative")
+    if snapshot.get("incomplete"):
+        failures.append("the snapshot-delivery envelope is incomplete")
+    if snapshot.get("errors"):
+        failures.append("the snapshot-delivery envelope contains errors")
+    return failures + _provenance_failures(snapshot, SNAPSHOT_SUBJECT, workload_digest())
+
+
 def _instance_state_failures(document: Document, commits: set[str]) -> list[str]:
     """Why the instance-state member is not the complete, current evidence a
     verification requiring it needs."""
-    member, failures = _required_member(document, INSTANCE_STATE_SUBJECT)
+    member, failures = _valid_member(
+        document, INSTANCE_STATE_SUBJECT, validate_instance_state_matrix
+    )
     if member is None:
         return failures
-    try:
-        validate(member)
-        validate_instance_state_matrix(member)
-    except (KeyError, TypeError, ValueError, ValidationError) as error:
-        return [f"the instance-state envelope is invalid: {error}"]
     if member.get("incomplete") or member.get("errors"):
         failures.append("the instance-state envelope is incomplete")
     failures += _provenance_failures(member, INSTANCE_STATE_SUBJECT, workload_digest())
@@ -1364,9 +1381,15 @@ def _member_compatibility(
         assert base_recorded is not None and head_recorded is not None
         failures += _source_differences(subject, base_recorded, head_recorded, notes)
         failures += _runtime_differences(subject, runtimes, base_recorded, head_recorded)
+    failures += _pair_differences(subject, base_envelope, head_envelope, notes)
+    return failures, notes
+
+
+def _pair_differences(subject: str, base: Document, head: Document, notes: list[str]) -> list[str]:
+    failures: list[str] = []
     head_only = HEAD_ONLY.get(subject, frozenset())
-    base_pairs = _pairs(base_envelope)
-    head_pairs = _pairs(head_envelope)
+    base_pairs = _pairs(base)
+    head_pairs = _pairs(head)
     for address in sorted(base_pairs.keys() - head_pairs.keys()):
         failures.append(f"{subject} {_spelled_pair(address)} is missing on head")
     for address in sorted(head_pairs.keys() - base_pairs.keys()):
@@ -1392,7 +1415,7 @@ def _member_compatibility(
                 f"{subject} {_spelled_pair(address)} carries {base_samples} samples on base "
                 f"and {head_samples} on head"
             )
-    return failures, notes
+    return failures
 
 
 def _source_differences(
@@ -1582,6 +1605,16 @@ def validate_plan(
     """``ValueError`` unless ``plan`` names each shard uniquely and safely,
     covers every other member exactly once as a whole, and covers every
     Snapshot address on every supported runtime exactly once."""
+    _validate_shards(plan)
+    active = contract if contract is not None else BudgetContract.load()
+    minors = tuple(runtimes) if runtimes is not None else supported_minors()
+    for member in MEMBERS:
+        _validate_coverage(
+            member, [shard for shard in plan if shard.member == member], active, minors
+        )
+
+
+def _validate_shards(plan: Sequence[Shard]) -> None:
     seen: set[str] = set()
     for shard in plan:
         if SHARD_ID_PATTERN.fullmatch(shard.id) is None or shard.id == ALL_SHARDS:
@@ -1595,32 +1628,34 @@ def validate_plan(
             raise ValueError(f"shard {shard.id!r} splits {shard.subject}, which has no workloads")
         if shard.workloads is not None and not shard.workloads:
             raise ValueError(f"shard {shard.id!r} selects no workload")
-    active = contract if contract is not None else BudgetContract.load()
-    minors = tuple(runtimes) if runtimes is not None else supported_minors()
-    for member in MEMBERS:
-        shards = [shard for shard in plan if shard.member == member]
-        if member.subject != SNAPSHOT_SUBJECT or all(s.workloads is None for s in shards):
-            if len(shards) != 1:
-                raise ValueError(f"{member.subject} must be one whole shard, found {len(shards)}")
-            continue
-        if any(shard.workloads is None for shard in shards):
-            raise ValueError(f"{member.subject} mixes a whole-member shard with workload shards")
-        covered: dict[tuple[str, str, str], str] = {}
-        for shard in shards:
-            for address in selected_addresses(active, minors, shard.selection(active)):
-                if address in covered:
-                    raise ValueError(
-                        f"{_spelled(address)} is covered by both {covered[address]!r} "
-                        f"and {shard.id!r}"
-                    )
-                covered[address] = shard.id
-        missing = [
-            address
-            for address in selected_addresses(active, minors, every_cell)
-            if address not in covered
-        ]
-        if missing:
-            raise ValueError(f"no shard covers {_spelled(missing[0])}")
+
+
+def _validate_coverage(
+    member: Member, shards: Sequence[Shard], contract: BudgetContract, minors: Sequence[str]
+) -> None:
+    """``ValueError`` unless ``shards``, every shard of ``member``, are one
+    whole-member shard or split the Snapshot member's addresses exactly once."""
+    if member.subject != SNAPSHOT_SUBJECT or all(s.workloads is None for s in shards):
+        if len(shards) != 1:
+            raise ValueError(f"{member.subject} must be one whole shard, found {len(shards)}")
+        return
+    if any(shard.workloads is None for shard in shards):
+        raise ValueError(f"{member.subject} mixes a whole-member shard with workload shards")
+    covered: dict[tuple[str, str, str], str] = {}
+    for shard in shards:
+        for address in selected_addresses(contract, minors, shard.selection(contract)):
+            if address in covered:
+                raise ValueError(
+                    f"{_spelled(address)} is covered by both {covered[address]!r} and {shard.id!r}"
+                )
+            covered[address] = shard.id
+    missing = [
+        address
+        for address in selected_addresses(contract, minors, every_cell)
+        if address not in covered
+    ]
+    if missing:
+        raise ValueError(f"no shard covers {_spelled(missing[0])}")
 
 
 def plan_ids(layout: str, plan: Sequence[Shard] | None = None) -> list[str]:
@@ -2264,13 +2299,7 @@ def _discovered(directory: Path, source: str) -> ShardCapture:
                 raise TypeError("the portfolio is not an object")
         except (TypeError, ValueError, OSError) as error:
             problems.append(f"portfolio.json does not decode: {error}")
-        if (directory / DURATIONS_FILE).exists():
-            try:
-                durations = Spans.load(directory / DURATIONS_FILE)
-            except (KeyError, TypeError, ValueError, OSError) as error:
-                durations_reason = f"the durations sidecar does not decode: {error}"
-        else:
-            durations_reason = "no durations sidecar arrived"
+        durations, durations_reason = _durations_beside(directory)
     if (directory / UNAVAILABLE_FILE).exists():
         try:
             marker = _object(_load(directory / UNAVAILABLE_FILE), "unavailable marker")
@@ -2299,6 +2328,16 @@ def _discovered(directory: Path, source: str) -> ShardCapture:
         unavailable_commit,
         tuple(problems),
     )
+
+
+def _durations_beside(directory: Path) -> tuple[Spans | None, str | None]:
+    """The durations sidecar a capture carries, or why its attribution is unavailable."""
+    if not (directory / DURATIONS_FILE).exists():
+        return None, "no durations sidecar arrived"
+    try:
+        return Spans.load(directory / DURATIONS_FILE), None
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        return None, f"the durations sidecar does not decode: {error}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2730,12 +2769,17 @@ def _side_reasons(
                 f"the capture measured {capture.commit}, expected {expected_commit}",
             )
         )
+    return reasons + _envelope_reasons(shard, side, capture)
+
+
+def _envelope_reasons(shard: Shard, side: ShardCapture, capture: Capture) -> list[Reason]:
+    """Every reason the portfolio ``capture`` arrived with holds no valid
+    ``shard`` envelope produced where the capture says, judged against the
+    selection and contract that envelope records."""
     if side.portfolio is None:
-        reasons.append(Reason("envelope-missing", None, "no portfolio arrived"))
-        return reasons
+        return [Reason("envelope-missing", None, "no portfolio arrived")]
     if is_diagnostic(side.portfolio):
-        reasons.append(Reason("diagnostic", None, "a diagnostic reading set is not evidence"))
-        return reasons
+        return [Reason("diagnostic", None, "a diagnostic reading set is not evidence")]
     envelope = side.envelope
     if envelope is None:
         recorded = [
@@ -2743,15 +2787,14 @@ def _side_reasons(
             for failure in cast("Sequence[object]", side.portfolio.get("failures", ()))
             if isinstance(failure, Mapping)
         ]
-        reasons.append(
+        return [
             Reason(
                 "envelope-missing",
                 None,
                 f"the portfolio holds no single {shard.subject} envelope"
                 + (f": {'; '.join(recorded)}" if recorded else ""),
             )
-        )
-        return reasons
+        ]
     try:
         validate(envelope)
         contract = Provenance.from_document(cast("Document", envelope["provenance"])).contract()
@@ -2763,8 +2806,8 @@ def _side_reasons(
             sorted(capture.runtimes),
         )
     except (KeyError, TypeError, ValueError, ValidationError) as error:
-        reasons.append(Reason("envelope-invalid", None, f"the envelope is invalid: {error}"))
-        return reasons
+        return [Reason("envelope-invalid", None, f"the envelope is invalid: {error}")]
+    reasons: list[Reason] = []
     provenance = _provenance(envelope)
     assert provenance is not None
     if provenance.get("commit") != capture.commit:
@@ -3242,28 +3285,40 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
     ]
     if len(modes) > 1:
         parser.error(f"{' and '.join(modes)} are separate modes")
-    if args.lock_file is not None and args.freshness_only is None:
-        parser.error("--lock-file requires --freshness-only")
-    if (args.member or args.select or args.runtime) and not args.diagnostic:
-        parser.error("--member, --select, and --runtime are diagnostic options")
-    if args.layout is not None and not args.plan:
-        parser.error("--layout is a --plan option")
-    if args.base_commit is not None and args.shard is None:
-        parser.error("--base-commit is a --shard option")
-    if args.against is not None and args.assemble is None:
-        parser.error("--against is an --assemble option")
-    if args.request is not None and args.shard is None and args.assemble is None:
-        parser.error("--request is a --shard or --assemble option")
-    if args.require_member and args.verify is None and args.compare is None:
-        parser.error("--require-member is a --verify or --compare option")
     unknown_members = sorted(set(args.require_member) - set(REQUIRABLE_MEMBERS))
-    if unknown_members:
-        parser.error(
+    refusals = (
+        (
+            args.lock_file is not None and args.freshness_only is None,
+            "--lock-file requires --freshness-only",
+        ),
+        (
+            bool(args.member or args.select or args.runtime) and not args.diagnostic,
+            "--member, --select, and --runtime are diagnostic options",
+        ),
+        (args.layout is not None and not args.plan, "--layout is a --plan option"),
+        (args.base_commit is not None and args.shard is None, "--base-commit is a --shard option"),
+        (args.against is not None and args.assemble is None, "--against is an --assemble option"),
+        (
+            args.request is not None and args.shard is None and args.assemble is None,
+            "--request is a --shard or --assemble option",
+        ),
+        (
+            bool(args.require_member) and args.verify is None and args.compare is None,
+            "--require-member is a --verify or --compare option",
+        ),
+        (
+            bool(unknown_members),
             f"--require-member {', '.join(unknown_members)}: requirable members are "
-            f"{list(REQUIRABLE_MEMBERS)}"
-        )
-    if args.require_compatible and args.compare is None:
-        parser.error("--require-compatible is a --compare option")
+            f"{list(REQUIRABLE_MEMBERS)}",
+        ),
+        (
+            args.require_compatible and args.compare is None,
+            "--require-compatible is a --compare option",
+        ),
+    )
+    for refused, message in refusals:
+        if refused:
+            parser.error(message)
 
 
 def _run_shard(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
