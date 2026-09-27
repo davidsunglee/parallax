@@ -406,6 +406,24 @@ def test_nearest_float_projection_is_exact_at_the_declared_width(
     assert base.nearest_float_at_width(value, declared) == expected
 
 
+@pytest.mark.parametrize(
+    ("value", "declared", "expected"),
+    [
+        (decimal.Decimal("-2e-324"), base.FLOAT64, 0.0),
+        (decimal.Decimal("-1e-400"), base.FLOAT64, 0.0),
+        (decimal.Decimal("-3e-324"), base.FLOAT64, -5e-324),
+        (decimal.Decimal("-1e-46"), base.FLOAT32, 0.0),
+        (decimal.Decimal("-1e-50"), base.FLOAT32, 0.0),
+    ],
+)
+def test_a_negative_underflow_projects_to_positive_zero(
+    value: decimal.Decimal,
+    declared: base.Float32 | base.Float64,
+    expected: float,
+) -> None:
+    assert repr(base.nearest_float_at_width(value, declared)) == repr(expected)
+
+
 def test_float64_projection_refuses_a_decimal_that_rounds_to_infinity_at_the_boundary() -> None:
     assert (
         base.nearest_float_at_width(decimal.Decimal("1.7976931348623159e308"), base.FLOAT64) is None
