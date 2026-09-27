@@ -133,7 +133,9 @@ def _entity(index: _CompilationIndex, identity: EntityIdentity) -> EntityMetadat
 def _family(index: _CompilationIndex, root: EntityIdentity) -> InheritanceFamilyView:
     family = index.inheritance.family(root)
     if family is None:
-        raise RuntimeError(f"Family root {root.canonical!r} has no Inheritance Facet family stream")
+        raise RuntimeError(
+            f"Family root {root.canonical!r} has no Inheritance Facet declaration sequence"
+        )
     return family
 
 
@@ -159,7 +161,7 @@ def _compilation_index(
 ) -> _CompilationIndex:
     """Index accepted Entities, family roots, and join endpoints in one metadata visit.
 
-    Entity, view, and family-stream reads go to their owners rather than into
+    Entity, view, and family declaration reads go to their owners rather than into
     copies here. Both endpoints of every direction are collected, because both
     stay direct Columns under Relational Document Layout. A reverse direction
     names the same pair its defining peer does, with the sides exchanged.

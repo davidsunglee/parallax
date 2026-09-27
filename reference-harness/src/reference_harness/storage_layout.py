@@ -453,7 +453,7 @@ def _family_declarations(
     root: str,
     row_owners: Sequence[str],
 ) -> tuple[dict[str, Any], ...]:
-    """The root-first, canonical-concrete declaration stream of one family."""
+    """The root-first, canonical-concrete declaration sequence of one family."""
     encountered = set(row_owners)
     contributor_identities: list[str] = []
     for concrete in row_owners:
