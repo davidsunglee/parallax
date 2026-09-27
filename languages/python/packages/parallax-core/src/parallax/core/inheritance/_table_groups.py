@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from parallax.core.inheritance._stream import declaration_order
+from parallax.core.inheritance._declaration_order import declaration_order
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -106,7 +106,7 @@ class InheritanceTopology:
 
 @dataclass(frozen=True, slots=True)
 class AttributeTableContributor:
-    """One declared scalar Attribute in a Table group's diagnostic stream."""
+    """One declared scalar Attribute in a Table group's diagnostic declaration sequence."""
 
     attribute: AttributeMetadata
 

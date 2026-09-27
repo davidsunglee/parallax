@@ -1,4 +1,4 @@
-"""A family whose nested dormant branch contributes to its declaration stream.
+"""A family whose nested dormant branch contributes to its declaration sequence.
 
 ``ZDormant`` and its abstract child ``ADormantChild`` reach no concrete, so both
 are dormant, and the child's identity sorts first: the canonical suffix places

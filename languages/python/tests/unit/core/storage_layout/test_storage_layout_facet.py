@@ -1241,9 +1241,9 @@ def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_fa
         )
 
 
-def test_compiling_without_a_family_stream_refuses_rather_than_rebuilding_one() -> None:
+def test_compiling_without_a_declaration_sequence_refuses_rather_than_rebuilding_one() -> None:
     model = form_metamodel(dormant_family("tph"))
-    with pytest.raises(RuntimeError, match="has no Inheritance Facet family stream"):
+    with pytest.raises(RuntimeError, match="has no Inheritance Facet declaration sequence"):
         storage_layout_compile.compile_facet(
             cast(CompiledMetadata, model),
             cast(

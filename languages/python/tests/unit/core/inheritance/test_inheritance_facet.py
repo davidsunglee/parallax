@@ -644,7 +644,7 @@ def test_a_superset_collects_value_objects_down_the_same_contribution_order() ->
 
 
 # --------------------------------------------------------------------------
-# Family declaration streams.
+# Family declaration sequences.
 # --------------------------------------------------------------------------
 
 _DORMANT_ATTRIBUTES: Final = [
@@ -686,7 +686,7 @@ def _value_object_owners(
 
 
 @pytest.mark.parametrize("strategy", ["tph", "tpcs"])
-def test_a_family_stream_appends_dormant_participants_child_before_parent(
+def test_a_family_declaration_sequence_appends_dormant_participants_child_before_parent(
     strategy: Literal["tph", "tpcs"],
 ) -> None:
     family = _family(inheritance.view(form_metamodel(dormant_family(strategy))), ROOT)
@@ -694,16 +694,16 @@ def test_a_family_stream_appends_dormant_participants_child_before_parent(
     assert _value_object_owners(family.value_objects) == _DORMANT_VALUE_OBJECTS
 
 
-def test_a_root_projection_is_the_prefix_of_its_family_stream() -> None:
+def test_a_root_projection_is_the_prefix_of_its_family_declaration_sequence() -> None:
     facet = inheritance.view(form_metamodel(dormant_family("tph")))
     family = _family(facet, ROOT)
     root = _entity(facet, ROOT)
-    for stream, prefix in (
+    for sequence, prefix in (
         (family.attributes, root.superset_attributes),
         (family.value_objects, root.superset_value_objects),
     ):
-        assert 0 < len(prefix) < len(stream)
-        assert all(member is stream[index] for index, member in enumerate(prefix))
+        assert 0 < len(prefix) < len(sequence)
+        assert all(member is sequence[index] for index, member in enumerate(prefix))
 
 
 def test_dormant_participants_keep_empty_projections() -> None:
@@ -733,22 +733,22 @@ def test_every_family_participant_contributes_its_accepted_members_once() -> Non
         assert declared.value_object(value_object.identity.path[-1]) is value_object
 
 
-def test_a_family_listed_descendants_first_compiles_the_same_stream() -> None:
+def test_a_family_listed_descendants_first_compiles_the_same_declaration_sequence() -> None:
     model = form_metamodel(dormant_family("tph"))
     metadata = DescendantsFirst(model)
     listed = [entity.identity for entity in metadata.entities]
     assert listed.index(DORMANT_CHILD) < listed.index(DORMANT) < listed.index(ROOT)
     expected = _family(inheritance.view(model), ROOT)
     compiled = _family(compile_facet(metadata), ROOT)
-    for stream, reference in (
+    for sequence, reference in (
         (compiled.attributes, expected.attributes),
         (compiled.value_objects, expected.value_objects),
     ):
-        assert len(stream) == len(reference)
-        assert all(left is right for left, right in zip(stream, reference, strict=True))
+        assert len(sequence) == len(reference)
+        assert all(left is right for left, right in zip(sequence, reference, strict=True))
 
 
-def test_a_family_stream_with_a_dormant_suffix_is_a_complete_sequence() -> None:
+def test_a_family_declaration_sequence_with_a_dormant_suffix_behaves_as_a_sequence() -> None:
     facet = inheritance.view(form_metamodel(dormant_family("tph")))
     attributes = _family(facet, ROOT).attributes
     boundary = len(_entity(facet, ROOT).superset_attributes)
@@ -791,7 +791,7 @@ def test_a_family_stream_with_a_dormant_suffix_is_a_complete_sequence() -> None:
         ),
     ],
 )
-def test_a_family_without_dormant_participants_streams_its_root_supersets(
+def test_a_family_without_dormant_participants_answers_its_root_supersets(
     stem: str, root_name: str, attribute_names: list[str], value_object_names: list[str]
 ) -> None:
     facet = _corpus(stem)
@@ -803,7 +803,7 @@ def test_a_family_without_dormant_participants_streams_its_root_supersets(
     assert _value_object_names(family.value_objects) == value_object_names
 
 
-def test_a_standalone_entitys_projection_and_stream_are_its_declared_tuples() -> None:
+def test_a_standalone_entitys_projection_and_declaration_sequence_are_its_declared_tuples() -> None:
     model = _formed("customer")
     facet = inheritance.view(model)
     customer = model.entity(_corpus_entity("Customer"))
@@ -822,7 +822,7 @@ def test_a_standalone_entitys_projection_and_stream_are_its_declared_tuples() ->
         assert answer[1] is customer.declared_value_objects
 
 
-def test_a_family_stream_is_absent_for_every_identity_but_a_root() -> None:
+def test_a_family_declaration_sequence_is_absent_for_every_identity_but_a_root() -> None:
     animal = _corpus("animal")
     assert animal.family(EntityIdentity("elsewhere", "Animal")) is None
     assert animal.family(_corpus_entity("Pet")) is None

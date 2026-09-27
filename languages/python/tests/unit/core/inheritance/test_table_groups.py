@@ -1,4 +1,4 @@
-"""m-inheritance: the validation-time table-group projection's declaration streams."""
+"""m-inheritance: the validation-time table-group projection's declaration sequences."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def _entry(contributor: TableGroupContributor) -> _Entry:
 def _category_passes(
     attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
 ) -> list[_Entry]:
-    """The diagnostic category passes over a compiled family stream."""
+    """The diagnostic category passes over a compiled family declaration sequence."""
     keyed = [
         ("key", member.identity.entity, member.identity.name)
         for member in attributes
@@ -88,7 +88,7 @@ def _category_passes(
     return [*keyed, _TAG, *rest, *documents]
 
 
-def test_a_shared_table_group_passes_over_the_compiled_family_stream() -> None:
+def test_a_shared_table_group_passes_over_the_compiled_family_declaration_sequence() -> None:
     model = dormant_family("tph")
     group = _group(model, ROOT)
     family = inheritance.view(form_metamodel(model)).family(ROOT)
@@ -111,7 +111,7 @@ def test_a_shared_table_group_passes_over_the_compiled_family_stream() -> None:
     assert _category_passes(family.attributes, family.value_objects) == expected
 
 
-def test_a_candidate_family_without_a_concrete_streams_its_root_first() -> None:
+def test_a_candidate_family_without_a_concrete_orders_its_root_first() -> None:
     dormant = identity("ADormant")
     group = _group(
         source(

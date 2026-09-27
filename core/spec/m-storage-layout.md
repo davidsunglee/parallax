@@ -205,7 +205,7 @@ of those forms are independent owners even when they name equal Table values.
 During validation, Storage Layout obtains one owner group per unambiguous
 standalone mapping, TPH family, or TPCS concrete mapping from Inheritance's
 pure, total projection. Each group exposes its structural Table, mapping owner,
-row owners, and complete declaration stream. The mapping provenance is the
+row owners, and complete declaration sequence. The mapping provenance is the
 `EntityLocation` of the standalone Entity, TPH root, or TPCS concrete Entity
 whose declaration supplies the Table. Descendant TPH participants have no
 separate Table mapping provenance.
@@ -216,7 +216,7 @@ unambiguous. The Inheritance Rule Set reports malformed topology or Table
 ownership; Storage Layout neither duplicates those issues nor guesses a group.
 Rule Sets therefore remain independent of invocation order and no validation-
 time facet exists. After validation the compiler reads each family's complete
-declaration stream from the real `InheritanceFacet` instead.
+declaration sequence from the real `InheritanceFacet` instead.
 
 Relationship exposes a second projection of the same shape — pure, total, and
 issue-free — returning the locally-resolvable join endpoint Attributes of
@@ -234,11 +234,11 @@ into one physical key, contributor applicability set, or eventual layout. After
 all Rule Sets succeed, each structural Table therefore has one owner group and
 the compiler publishes exactly one coherent layout for it.
 
-Within a uniquely owned group, the declaration stream is the one
+Within a uniquely owned group, the declaration sequence is the one
 `m-inheritance` fixes: a standalone Entity's own declarations, a
 table-per-concrete-subtype concrete Entity's root-to-concrete ancestry, and a
-table-per-hierarchy family's complete family declaration stream
-(`m-inheritance` "The family declaration stream"), dormant participants
+table-per-hierarchy family's complete family declaration sequence
+(`m-inheritance` "The family declaration sequence"), dormant participants
 included. Each Entity's local Attributes and top-level Value Objects retain
 their respective declaration orders. A contributor already encountered through
 another applicable concrete is retained once and accumulates that concrete's
@@ -429,7 +429,7 @@ assignable, so deeper paths exist for predicates, ordering, and materialization
 and do not make a nested member independently writable.
 
 **Logical placement order** is the order members occupy in the Table's
-declaration stream (*Physical table ownership and groups*), before the
+declaration sequence (*Physical table ownership and groups*), before the
 tier partition that fixes physical Column order. It is a member order, not a
 Column order, and it is what consumers use when several members must be applied
 in one deterministic sequence.
@@ -517,7 +517,7 @@ also names it. Absence of temporal axes or Audit Metadata leaves the
 corresponding tier empty.
 
 The compiler performs a stable partition of the deterministic declaration
-stream by `ColumnTier` order. Declaration order remains stable inside each
+sequence by `ColumnTier` order. Declaration order remains stable inside each
 tier, but tier precedence is table-wide and takes precedence over ancestry. A
 descendant Domain Attribute may therefore precede a root-owned Temporal or
 Audit Attribute. No per-ancestor or pre-capability column prefix is preserved.
@@ -679,7 +679,7 @@ still have Document Paths inside their occurrence-owned Structured Columns.
 already resolved by Inheritance. An unknown Entity, a noncanonical sequence, or
 Entities from different families returns absent. An empty valid sequence
 returns an empty view. `columns` is one logical, declaration-provenance-bearing
-union for the position: the family's complete declaration stream
+union for the position: the family's complete declaration sequence
 (`m-inheritance`), keeping each contributor that applies to at least one
 selected concrete, then stable tier partitioning, with an inherited
 contributor included once. It excludes physical discriminators because a TPCS
@@ -765,7 +765,7 @@ slots.
 
 For every uniquely owned Table, physical Column claims share one registry. Their
 diagnostic encounter order is an explicit stable category pass over that
-owner's declaration stream:
+owner's declaration sequence:
 
 1. model primary-key Attributes;
 2. TPH discriminators;
@@ -774,7 +774,7 @@ owner's declaration stream:
 5. the shared Structured Column, when the owner's layout is `Document`.
 
 Within each Attribute or Value Object category, contributors follow the
-owner group's declaration stream (*Physical table ownership and groups*), and
+owner group's declaration sequence (*Physical table ownership and groups*), and
 each local category retains declaration order. The category pass determines
 diagnostics only; the compiler's six-tier stable partition remains the sole
 accepted physical order. A contributor reached repeatedly through several

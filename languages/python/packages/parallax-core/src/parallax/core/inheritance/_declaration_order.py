@@ -12,7 +12,7 @@ def declaration_order(
     family: Iterable[EntityIdentity] = (),
     root: EntityIdentity | None = None,
 ) -> tuple[tuple[EntityIdentity, ...], int]:
-    """The contributor order of a family declaration stream, and its prefix length.
+    """The contributor order of a family declaration sequence, and its prefix length.
 
     ``chains`` holds each effective concrete's root-first ancestry, in canonical
     concrete order. Ancestors contribute first, each at its first encounter

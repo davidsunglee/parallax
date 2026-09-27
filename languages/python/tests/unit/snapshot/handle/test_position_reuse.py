@@ -1,6 +1,6 @@
 """Which position resolutions each real Typed and Wire operation performs.
 
-Model formation reads every root's family declaration stream and precomputes
+Model formation reads every root's family declaration sequence and precomputes
 every Entity's own position; read planning then reuses those answers, resolving
 only a query-wide narrowing and the one Storage Layout position its read arm
 projects. Counting wrappers over the two facets' resolving methods
@@ -166,7 +166,7 @@ def _served(profile_run: Any, spies: _Spies) -> _Served:
     """A fresh handle over a freshly formed and prepared model, seeded outside
     every counted window.
 
-    Formation is the only stage that reads family streams, and it reads one for
+    Formation is the only stage that reads family declaration sequences, and it reads one for
     every root; preparation reuses the accepted model and resolves nothing.
     """
     model = DomainModel(*_CLASSES)

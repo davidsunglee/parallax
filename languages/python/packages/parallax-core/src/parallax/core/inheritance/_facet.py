@@ -6,7 +6,7 @@ from itertools import chain
 from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard, cast, overload
 
-from parallax.core.inheritance._stream import declaration_order
+from parallax.core.inheritance._declaration_order import declaration_order
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -113,11 +113,11 @@ class InheritanceEntityView(Protocol):
 
 
 class InheritanceFamilyView(Protocol):
-    """One family's complete declaration stream, dormant branches included.
+    """One family's complete declaration sequence, dormant branches included.
 
     Every family participant contributes its declared members once, in the
     order ``m-inheritance`` fixes, so the root's superset sequences are
-    prefixes of these. A standalone Entity's stream is its own declarations.
+    prefixes of these. A standalone Entity's sequence is its own declarations.
     """
 
     @property
@@ -355,7 +355,7 @@ class _Concatenated[T](Sequence[T]):
         if index < 0:
             index += len(self)
             if index < 0:
-                raise IndexError("family stream index out of range")
+                raise IndexError("family declaration index out of range")
         if index < boundary:
             return self.prefix[index]
         return self.suffix[index - boundary]
@@ -436,9 +436,9 @@ def _entity_view(position: InheritanceEntityFacts, superset: _Members) -> _Inher
 
 class _InheritanceFacet:
     """The compiled facet: one view per accepted Entity, position resolution,
-    and each root's family stream.
+    and each root's family declaration sequence.
 
-    A root's supersets are its family stream's prefix, so only a family with
+    A root's supersets are its family declaration sequence's prefix, so only a family with
     dormant participants retains anything more: the members of that suffix.
     """
 
