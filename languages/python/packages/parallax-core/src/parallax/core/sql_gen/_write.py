@@ -474,7 +474,9 @@ def _temporal_gate(
     return f" and {dialect.quote(column)} = ?"
 
 
-def _member_cells(
+# One arm per Column contributor kind, in Table Layout slot order. It runs per written row
+# and visits every slot, so the arms stay inline rather than behind a per-slot call.
+def _member_cells(  # noqa: C901
     view: EntityLayoutView,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],

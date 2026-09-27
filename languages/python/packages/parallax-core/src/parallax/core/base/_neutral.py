@@ -237,7 +237,10 @@ def utc_instant(value: _dt.datetime) -> _dt.datetime | None:
         return None
 
 
-def matches_neutral_type(value: object, declared: NeutralType) -> bool:
+# One arm per variant of the closed Neutral Type algebra. Membership runs per value on the
+# read path (Wire publication) and the write path (typed row binds), so the arms stay
+# inline rather than behind a per-variant call.
+def matches_neutral_type(value: object, declared: NeutralType) -> bool:  # noqa: C901
     """Whether ``value`` is a member of ``declared``'s logical value space.
 
     Exact membership, not a category guess: an integer outside its declared
